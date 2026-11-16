@@ -476,8 +476,16 @@ class NoGraphServer:
                             length = int(self.headers.get('Content-Length') or 0)
                             if 0 < length <= (SESSION_BODY if path == '/api/session-files' else MAX_BODY):
                                 from .library_engines import LIBRARY_ITEM_ENGINES
-                                self.connection.settimeout(LIBRARY_ITEM_ENGINES['tool_workshop']['params']['worker_join_ms'] / 1000)
-                                self.rfile.read(length)
+                                deadline = time.monotonic() + LIBRARY_ITEM_ENGINES['tool_workshop']['params']['worker_join_ms'] / 1000
+                                while length > 0:
+                                    remaining = deadline - time.monotonic()
+                                    if remaining <= 0:
+                                        break
+                                    self.connection.settimeout(remaining)
+                                    chunk = self.rfile.read1(min(length, 65536))
+                                    if not chunk:
+                                        break
+                                    length -= len(chunk)
                         except (OSError, ValueError):
                             self.close_connection = True
                     self.send_json(refusal.status, {'ok': False, 'error': str(refusal)})

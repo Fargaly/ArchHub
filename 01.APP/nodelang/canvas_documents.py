@@ -529,7 +529,8 @@ def solve(document, changed, *, invoke=None, stopped=None, path=None):
             results[key] = ran['results'].get(key, {'status': 'Idle', 'output': {}})
     for key in stale:
         held = nodes[key].get('result') or {}
-        results[key] = {'status': 'Disabled' if nodes[key].get('frozen') else 'Out of date',
+        attempt = document.get('properties', {}).get('canvasRun', {}).get('attempts', {}).get(key)
+        results[key] = {'status': 'Unconfirmed' if attempt and 'outcome' not in attempt else 'Disabled' if nodes[key].get('frozen') else 'Out of date',
                         'output': held.get('output', {}), 'error': ''}
     for key, result in results.items():
         nodes[key]['result'] = {k: v for k, v in result.items() if k in ('status', 'output', 'error', 'display')}

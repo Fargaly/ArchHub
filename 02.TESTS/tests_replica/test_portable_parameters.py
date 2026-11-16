@@ -1,6 +1,7 @@
 """F169: typed paths move with the document; legacy saves keep their bytes."""
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -160,3 +161,61 @@ def test_file_trigger_uses_document_relative_folder(tmp_path):
         assert armed[0]['params']['folder'] == str(inputs)
     finally:
         service.close()
+
+
+def test_relative_escape_and_normalization(tmp_path, monkeypatch):
+    from nodelang.session_files import resolve_file_parameter
+    from nodelang.settings_owner import SettingsOwner
+    monkeypatch.setattr(SettingsOwner, '_roots', lambda self: [])
+    project = tmp_path / 'project'
+    project.mkdir()
+    path = project / 'test.archhub'
+    with pytest.raises(ValueError, match='escapes'):
+        resolve_file_parameter('../outside.txt', path)
+    assert resolve_file_parameter('inputs/../inside.txt', path) == str(project / 'inside.txt')
+
+
+def test_symlink_escape_is_refused(tmp_path, monkeypatch):
+    from nodelang.session_files import resolve_file_parameter
+    from nodelang.settings_owner import SettingsOwner
+    monkeypatch.setattr(SettingsOwner, '_roots', lambda self: [])
+    project = tmp_path / 'project'
+    project.mkdir()
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    link = project / 'link'
+    # Directory junctions exercise Windows reparse-point resolution without symlink privilege.
+    import subprocess
+    result = subprocess.run(['cmd', '/d', '/c', 'mklink', '/J', str(link), str(outside)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    try:
+        normalized = resolve_file_parameter('link/../outside.txt', project / 'test.archhub')
+        assert normalized == str((project / 'link/../outside.txt').resolve())
+        assert Path(normalized).is_relative_to(project)
+        with pytest.raises(ValueError, match='escapes'):
+            resolve_file_parameter('link/input.txt', project / 'test.archhub')
+    finally:
+        link.rmdir()
+
+
+def test_named_workspace_root_follows_settings_relocation(tmp_path, monkeypatch):
+    from nodelang.session_files import SessionFiles, resolve_file_parameter
+    from nodelang.settings_owner import SettingsOwner
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    source = workspace / 'input.txt'
+    source.write_text('workspace input', encoding='utf-8')
+    roots = [{'root_id': 'shared-inputs', 'path': str(workspace)}]
+    monkeypatch.setattr(SettingsOwner, '_roots', lambda self: roots)
+    project = tmp_path / 'project'
+    project.mkdir()
+    path = project / 'portable.archhub'
+    owner = SessionFiles(tmp_path / 'owner')
+    doc = owner.dispatch({'action': 'save', 'path': str(path), 'document': parameter('file', str(source))})['document']
+    reference = doc['nodes'][0]['params']['value']
+    assert reference == 'workspace://shared-inputs/input.txt'
+    moved = tmp_path / 'relocated'
+    workspace.rename(moved)
+    roots[0]['path'] = str(moved)
+    assert resolve_file_parameter(reference, path) == str(moved / 'input.txt')
+    assert Path(resolve_file_parameter(reference, path)).read_text(encoding='utf-8') == 'workspace input'

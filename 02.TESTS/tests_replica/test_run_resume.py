@@ -183,14 +183,25 @@ def test_upstream_parameter_only_invalidates_third_effect(running):
 
 def test_compiled_browser_uses_same_run_and_existing_approve_card(running):
     from nodelang.nograph_server import NoGraphServer
+    from nodelang import session_files
     path, counts, _run = running
+    recovery_path = path.parent / 'recovery.archhub'
+    target = path.parent / 'recovered.txt'
+    target.write_text('Already written', encoding='utf-8')
+    recovery = session_files.new_document('Unconfirmed write')
+    recovery['nodes'] = [{'id': 'uncertain', 'type': 'thing.file.write', 'title': 'Unconfirmed write',
+                          'params': {'path': str(target), 'content': 'Already written'}, 'position': {'x': 0, 'y': 0}}]
+    session_files.validate(recovery)
+    node = recovery['nodes'][0]
+    recovery['properties']['canvasRun'] = {'id': 'crashed-run', 'inputs': {'uncertain': session_files.input_signature(node, [], recovery_path)}}
+    session_files.begin_attempt({'document': recovery, 'path': recovery_path, 'completed': {}}, node, node['params'], {})
     server = NoGraphServer(path.parent / 'server')
     thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
     thread.start()
     try:
         result = subprocess.run(['node', str(Path(__file__).resolve().parents[1] / 'tests_js' / 'run_resume.test.cjs')],
                                 input=json.dumps({'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
-                                                  'path': str(path)}), capture_output=True, text=True, timeout=120,
+                                                  'path': str(path), 'recovery_path': str(recovery_path)}), capture_output=True, text=True, timeout=120,
                                 env=os.environ.copy(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stderr
@@ -229,3 +240,184 @@ def test_rejected_post_consumes_bounded_body_before_closing(running, length, con
         assert handler.close_connection
     finally:
         server.httpd.server_close()
+
+
+def test_relative_file_reject_ends_run(tmp_path):
+    from nodelang.session_files import SessionFiles, new_document, read_document
+    doc = new_document('Reject portable write')
+    doc['nodes'] = [
+        {'id': 'write', 'type': 'thing.file.write', 'params': {'path': 'output.txt', 'content': 'value'}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'read', 'type': 'thing.file', 'params': {'path': ''}, 'position': {'x': 300, 'y': 0}}]
+    doc['wires'] = [{'id': 'next', 'from': {'node': 'write', 'socket': 'path'}, 'to': {'node': 'read', 'socket': 'path'}}]
+    path = tmp_path / 'reject.archhub'
+    owner = SessionFiles(tmp_path / 'files')
+    saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': doc})['document']
+    approve(owner.dispatch({'action': 'run', 'path': str(path), 'document': saved}), 'deny')
+    held = read_document(path)
+    assert held['nodes'][0]['result']['display'] == 'Rejected'
+    assert held['nodes'][1]['result']['status'] == 'Blocked'
+    assert held['properties']['canvasRun']['state'] == 'Ended'
+    assert not (tmp_path / 'output.txt').exists()
+
+
+@pytest.mark.parametrize('change', ['run', 'upstream'])
+def test_stale_approval_refused(running, change):
+    from nodelang.session_files import read_document, write_document
+    from nodelang import agent_work, hook_decision
+    path, counts, run = running
+    paused = run()
+    # Retain the issued replay payload even if the one-shot owner withdraws its card.
+    captured = []
+    original = agent_work.request_approval
+    def capture(*args, **kwargs):
+        captured.append(copy.deepcopy(kwargs['continuation']))
+        return original(*args, **kwargs)
+    from unittest.mock import patch
+    with patch.object(agent_work, 'request_approval', capture):
+        run(again=True)
+    continuation = captured[0]
+    issued = read_document(path)
+    payload = {'node': copy.deepcopy(issued['nodes'][1]), 'feeds': {}, 'continuation': continuation}
+    if change == 'run':
+        run(again=True)
+    else:
+        issued['nodes'][0]['params']['task'] = 'changed upstream'
+        write_document(path, issued)
+    token = hook_decision._RELEASING.set(True)
+    try:
+        with pytest.raises(ValueError, match='changed after this approval'):
+            agent_work.release(payload)
+    finally:
+        hook_decision._RELEASING.reset(token)
+    assert counts['two'] == 0
+    assert paused['approvalId']
+
+
+def test_crash_after_effect_before_outcome_is_unconfirmed(running):
+    from nodelang.session_files import read_document
+    path, counts, _run = running
+    counter = path.parent / 'effect-count.txt'
+    script = r'''
+import sys, os, json
+sys.path.insert(0, sys.argv[3])
+from pathlib import Path
+from nodelang import canvas_documents, session_files
+counter = Path(sys.argv[2])
+def effect(engine, params, feeds):
+    counter.write_text(counter.read_text() + '1' if counter.exists() else '1')
+    os._exit(91)
+canvas_documents.run_thing = effect
+owner = session_files.SessionFiles(Path(sys.argv[1]).parent / 'files')
+opened = owner.dispatch({'action': 'open', 'path': sys.argv[1]})['document']
+result = owner.dispatch({'action': 'run', 'path': sys.argv[1], 'document': opened})
+print(json.dumps(result))
+'''
+    command = [sys.executable, '-c', script, str(path), str(counter), str(Path(__file__).resolve().parents[2] / '01.APP')]
+    crashed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    assert crashed.returncode == 91, crashed.stderr
+    assert counter.read_text() == '1'
+    restarted = subprocess.run(command, capture_output=True, text=True, check=True, timeout=20)
+    result = json.loads(restarted.stdout)
+    assert counter.read_text() == '1'
+    assert result['results']['one']['status'] == 'Unconfirmed'
+    assert result['results']['two']['status'] == 'Blocked'
+    assert result['results']['three']['status'] == 'Blocked'
+    attempt = read_document(path)['properties']['canvasRun']['attempts']['one']
+    assert attempt['nodeId'] == 'one' and attempt['inputSignature'] and attempt['runId']
+    assert 'outcome' not in attempt
+    assert counts == {'one': 0, 'two': 0, 'three': 0}
+
+
+def test_linked_skill_concurrent_runs_execute_child_once(running, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from nodelang import session_files
+    path, counts, _run = running
+    child = session_files.read_document(path)
+    child['nodes'][1]['approvalRequired'] = False
+    session_files.write_document(path, child)
+    parents = []
+    for index in range(2):
+        doc = session_files.new_document('Parent')
+        canvas_documents_path = path.parent / ('parent%d.archhub' % index)
+        session_files.insert_session(doc, str(path))
+        session_files.write_document(canvas_documents_path, doc)
+        parents.append(canvas_documents_path)
+    def run(parent):
+        owner = session_files.SessionFiles(parent.parent / 'files')
+        return owner.dispatch({'action': 'run', 'path': str(parent), 'document': session_files.read_document(parent)})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(run, parents))
+    assert all(result['succeeded'] for result in results), results
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+
+
+def test_rejected_body_slow_trickle_has_total_deadline(running, monkeypatch):
+    from email.message import Message
+    from io import BytesIO
+    from types import SimpleNamespace
+    from nodelang import nograph_server
+    path, _counts, _run = running
+    server = nograph_server.NoGraphServer(path.parent / 'trickle-server')
+    elapsed, budgets = [0.0], []
+    class Trickle:
+        def read1(self, length):
+            elapsed[0] += 0.01
+            return b'x'
+    monkeypatch.setattr(nograph_server.time, 'monotonic', lambda: elapsed[0])
+    try:
+        handler = object.__new__(server._handler())
+        handler.headers = Message()
+        handler.headers['Content-Length'] = '1000000'
+        handler.headers['Host'] = '127.0.0.1:' + str(server.port)
+        handler.headers['X-ArchHub-Session'] = 'unknown'
+        handler.path, handler.command = '/api/session-files', 'POST'
+        handler.request_version, handler.requestline = 'HTTP/1.1', 'POST /api/session-files HTTP/1.1'
+        handler.rfile, handler.wfile = Trickle(), BytesIO()
+        handler.connection = SimpleNamespace(settimeout=budgets.append)
+        handler.dispatch('POST')
+        from nodelang.library_engines import LIBRARY_ITEM_ENGINES
+        deadline = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['worker_join_ms'] / 1000
+        assert elapsed[0] <= deadline + 0.011
+        assert budgets[-1] < budgets[0]
+        assert handler.wfile.getvalue().startswith(b'HTTP/1.1 403')
+    finally:
+        server.httpd.server_close()
+
+
+@pytest.mark.parametrize('decision', ['check', 'retry'])
+def test_unconfirmed_file_requires_explicit_recovery(tmp_path, monkeypatch, decision):
+    from nodelang import canvas_documents, session_files
+    owner = session_files.SessionFiles(tmp_path / 'files')
+    path, target = tmp_path / 'recover.archhub', tmp_path / 'output.txt'
+    doc = session_files.new_document('Recover write')
+    doc['nodes'] = [{'id': 'write', 'type': 'thing.file.write', 'params': {'path': str(target), 'content': 'one\r\ntwo'}, 'position': {'x': 0, 'y': 0}}]
+    saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': doc})['document']
+    paused = owner.dispatch({'action': 'run', 'path': str(path), 'document': saved})
+    effect, calls = canvas_documents.run_thing, []
+    def crash(engine, params, feeds):
+        calls.append(engine)
+        effect(engine, params, feeds)
+        raise SystemExit('crash before outcome')
+    with monkeypatch.context() as fault:
+        fault.setattr(canvas_documents, 'run_thing', crash)
+        with pytest.raises(SystemExit, match='crash before outcome'):
+            approve(paused)
+    reopened = owner.dispatch({'action': 'open', 'path': str(path)})['document']
+    assert reopened['nodes'][0]['result']['status'] == 'Unconfirmed'
+    resumed = owner.dispatch({'action': 'run', 'path': str(path), 'document': reopened, 'again': True})
+    assert resumed['results']['write']['status'] == 'Unconfirmed'
+    assert calls == ['thing.file.write']
+    if decision == 'check':
+        target.write_text('different', encoding='utf-8')
+        with pytest.raises(ValueError, match='does not match'):
+            owner.dispatch({'action': 'recover-run', 'path': str(path), 'node': 'write', 'decision': decision})
+        target.write_bytes(b'one\r\ntwo')
+    recovered = owner.dispatch({'action': 'recover-run', 'path': str(path), 'node': 'write', 'decision': decision})
+    ran = owner.dispatch({'action': 'run', 'path': str(path), 'document': recovered['document']})
+    if decision == 'retry':
+        assert ran['results']['write']['status'] == 'Waiting for approval'
+        approve(ran)
+    else:
+        assert ran['succeeded']
+    assert target.read_bytes() == b'one\r\ntwo'
+    assert session_files.read_document(path)['nodes'][0]['result']['status'] == 'Done'

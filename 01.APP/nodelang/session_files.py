@@ -198,6 +198,8 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         granted = {**params, 'grant': {'digest': digest, 'operations': [params.get('operation', '*')], 'scope': params.get('scope', 'revit.write')}}
         produced, _display = approval_gate(granted, feeds)
         return produced, 'Approved'
+    if continuation and not canvas_documents.is_pure(engine, params):
+        begin_attempt(continuation, node, params, feeds)
     if engine == PARAM_ENGINE:
         value = bound_value(document, node) if node.get('bind') else feeds.get('value', params.get('value'))
         owner = next((n for n in document['nodes'] if n['id'] == (node.get('bind') or {}).get('node')), node)
@@ -413,10 +415,28 @@ def resolve_file_parameter(value, path):
     sample = resolve_sample_input(value)
     if sample:
         return sample
-    target = Path(value)
+    from urllib.parse import urlsplit, unquote
+    from .settings_owner import SettingsOwner
+    root = local_path(str(path)).parent.resolve()
+    if value.startswith('workspace://'):
+        reference = urlsplit(value)
+        root = Path(SettingsOwner(None, dependencies=object())._workspace(unquote(reference.netloc))['path']).resolve()
+        target = Path(unquote(reference.path.lstrip('/')))
+        if target.is_absolute() or target.drive:
+            raise ValueError('Workspace path must be relative to its registered root.')
+    else:
+        target = Path(value)
     if target.drive and not target.is_absolute():
         raise ValueError('Choose an absolute path or a path relative to the document.')
-    return str(target if target.is_absolute() else (local_path(str(path)).parent / target).resolve())
+    if target.is_absolute():
+        return str(target)
+    resolved = (root / target).resolve()
+    allowed = [root] + [Path(row['path']).resolve() for row in SettingsOwner(None, dependencies=object())._roots() if row.get('path')]
+    if not any(resolved.is_relative_to(folder) for folder in allowed):
+        raise ValueError('Relative file path escapes the document folder and registered workspaces.')
+    if value.startswith('workspace://') and not resolved.is_relative_to(root):
+        raise ValueError('Workspace path escapes its registered root.')
+    return str(resolved)
 
 
 def portable_parameters(document, path, previous=None):
@@ -433,7 +453,15 @@ def portable_parameters(document, path, previous=None):
             if resolve_sample_input(value):
                 continue
             target = Path(resolve_file_parameter(value, path)).resolve()
-            node['params'][key] = target.relative_to(root).as_posix() if target.is_relative_to(root) else str(target)
+            if target.is_relative_to(root):
+                node['params'][key] = target.relative_to(root).as_posix()
+            else:
+                from .settings_owner import SettingsOwner
+                from urllib.parse import quote
+                match = next((row for row in SettingsOwner(None, dependencies=object())._roots()
+                              if row.get('path') and target.is_relative_to(Path(row['path']).resolve())), None)
+                node['params'][key] = ('workspace://' + quote(match.get('root_id', match.get('id')), safe='') + '/' +
+                                       quote(target.relative_to(Path(match['path']).resolve()).as_posix(), safe='/')) if match else str(target)
 
 
 def write_document(path, document):
@@ -971,6 +999,19 @@ def node_type_document(document, ids, name, category='Scripts', public=(), kind=
 
 
 def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
+    path = params.get('session_file')
+    if path:
+        path, _skill = linked_session(params)
+    else:
+        saved = next((row for row in load_skills() if row['skill']['id'] == params.get('skill')), None)
+        path = str(saved['path']) if saved else None
+    if not path:
+        raise ValueError('Saved session is unavailable')
+    with canvas_documents.locked(path):
+        return _run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds, parent=parent)
+
+
+def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
     if depth > 8:
         raise ValueError('Skills nest at most 8 deep')
     name = str(params.get('skill',''))
@@ -1019,7 +1060,10 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
             if inner.get('run'):
                 document.setdefault('properties', {})['canvasRun'] = inner['run']
             return []
-        canvas_documents.edit(path, 'Session', 'called by ' + str(params.get('called_by') or 'canvas'), record, solve_changed=False, always_record=True)
+        recorded = copy.deepcopy(source)
+        record(recorded)
+        canvas_documents._stamp(recorded, source, 'Session', 'called by ' + str(params.get('called_by') or 'canvas'))
+        write_document(path, recorded)
     if inner.get('approvalId'):
         return {'approvalId': inner['approvalId']}, 'Waiting for approval'
     if not inner['succeeded']:
@@ -1176,6 +1220,70 @@ def split_sessions(path):
     return saved
 
 
+def approval_current(document, continuation, identity):
+    expected = continuation['document'].get('properties', {}).get('canvasRun', {})
+    current = document.get('properties', {}).get('canvasRun', {})
+    if not current.get('id') or current['id'] != expected.get('id') or current.get('inputs', {}).get(identity) != expected.get('inputs', {}).get(identity):
+        return False
+    def canonical(value):
+        value = copy.deepcopy(value)
+        for row in value['nodes']:
+            row.pop('result', None)
+            for key in file_parameters(row):
+                if key in row['params']:
+                    row['params'][key] = resolve_file_parameter(row['params'][key], continuation['path'])
+        return value['nodes'], value['wires']
+    if canonical(document) != canonical(continuation.get('source') or continuation['document']):
+        return False
+    execution = continuation['document'] if continuation.get('source') else document
+    for row in execution['nodes']:
+        incoming = [wire for wire in execution['wires'] if wire['to']['node'] == row['id'] and not wire.get('inferred') and wire.get('enabled') is not False]
+        if input_signature(row, incoming, continuation['path']) != expected.get('inputs', {}).get(row['id']):
+            return False
+    return True
+
+
+def input_signature(node, incoming, path):
+    return hashlib.sha256(json.dumps({
+        'node': {k: v for k, v in node.items() if k not in ('result', 'position', 'title', 'color', 'icon')},
+        'incoming': incoming,
+        'paths': {p: resolve_file_parameter(node['params'].get(p), path) for p in file_parameters(node)}},
+        sort_keys=True).encode()).hexdigest()
+
+
+def persist_run(document, path, source=None):
+    """Caller holds the document lock; retain portable inputs for linked invocations."""
+    saved = copy.deepcopy(source) if source is not None else document
+    if source is not None:
+        results = {node['id']: node.get('result') for node in document['nodes']}
+        for node in saved['nodes']:
+            if results.get(node['id']) is not None:
+                node['result'] = copy.deepcopy(results[node['id']])
+        saved.setdefault('properties', {})['canvasRun'] = copy.deepcopy(document['properties']['canvasRun'])
+    write_document(path, saved)
+
+
+def begin_attempt(continuation, node, params, feeds):
+    document = continuation['document']
+    run = document['properties']['canvasRun']
+    attempts = run.setdefault('attempts', {})
+    previous = copy.deepcopy(attempts.get(node['id'], {}))
+    history = previous.pop('history', [])
+    attempts[node['id']] = {
+        'runId': run['id'], 'nodeId': node['id'],
+        'inputSignature': hashlib.sha256(json.dumps({'params': params, 'feeds': feeds}, sort_keys=True).encode()).hexdigest(),
+        'history': history + ([previous] if previous else [])}
+    if node['type'] == 'thing.file.write':
+        attempts[node['id']]['check'] = {'path': params['path'], 'sha256': hashlib.sha256(str(params.get('content', '')).encode('utf-8')).hexdigest()}
+    for row in document['nodes']:
+        if row['id'] in continuation['completed']:
+            row['result'] = copy.deepcopy(continuation['completed'][row['id']])
+        if row['id'] == node['id']:
+            row['result'] = {'status': 'Unconfirmed', 'output': {},
+                             'error': 'This step may have run. Check result or Run this step again.'}
+    persist_run(document, continuation['path'], continuation.get('source'))
+
+
 def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, _resume=None, _each=None, _source=None, _parent=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
@@ -1242,11 +1350,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     raise ValueError('Unknown socket on '+node.get('title',key))
     run = None
     if only is None:
-        signatures = {key: hashlib.sha256(json.dumps({
-            'node': {k: v for k, v in nodes[key].items() if k not in ('result', 'position', 'title', 'color', 'icon')},
-            'incoming': incoming[key],
-            'paths': {p: resolve_file_parameter(nodes[key]['params'].get(p), path) for p in file_parameters(nodes[key])}},
-            sort_keys=True).encode()).hexdigest() for key in nodes}
+        signatures = {key: input_signature(nodes[key], incoming[key], path) for key in nodes}
         previous = document.get('properties', {}).get('canvasRun', {})
         invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)])
         if previous and (invalid or again) and _resume is None:
@@ -1258,7 +1362,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 identity = nodes[key]['result'].get('output', {}).get('approvalId')
                 if identity in pending:
                     withdraw_approval(os.environ, identity, 'canvas input changed' if not again else 'Run all again')
-        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures}
+        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures,
+               'attempts': copy.deepcopy(previous.get('attempts', {}))}
         if again:
             run['id'] = str(uuid4())
         elif _resume is None:
@@ -1267,11 +1372,23 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                        and nodes[key]['result'].get('status') not in ('Idle', 'Running', 'Out of date')
                        and not (nodes[key]['type'] == 'skill' and nodes[key]['params'].get('session_file'))}
         document.setdefault('properties', {})['canvasRun'] = run
+        # Uncertain effects survive edits and Run all again until explicitly reconciled.
+        for key, attempt in run['attempts'].items():
+            if key in nodes and 'outcome' not in attempt:
+                if _resume is None:
+                    _resume = {}
+                for downstream in canvas_documents.downstream(document, [key]) - {key}:
+                    _resume.pop(downstream, None)
+                _resume[key] = {'status': 'Unconfirmed', 'output': {},
+                                'error': 'This step may have run. Check result or Run this step again.'}
 
     def finish(results, approval_id=None):
         if run is not None:
             for key, result in results.items():
                 nodes[key]['result'] = copy.deepcopy(result)
+            run['state'] = 'Unconfirmed' if any(r['status'] == 'Unconfirmed' for r in results.values()) else 'Waiting' if approval_id else 'Ended'
+            if path:
+                persist_run(document, path, _source)
         answer = {'ok': True, 'succeeded': all(r['status'] in ('Done', 'Disabled', 'Skipped') for r in results.values()),
                   'results': results, 'order': order}
         if run is not None:
@@ -1349,11 +1466,18 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 for port in node_ports(node, node.get('ports') or entry.get('ports', {}))['target']:
                     if engine != PARAM_ENGINE and port.get('type') == 'file' and port['id'] in bound:
                         bound[port['id']] = resolve_file_parameter(bound[port['id']], path)
-                return _dispatch_node(
+                produced, display = _dispatch_node(
                     document, node, engine, params, bound,
                     invoke=invoke, stopped=stopped, depth=depth,
                     continuation={'document': document, 'source': _source or document, 'roots': roots, 'completed': results,
                                   'path': str(path), 'each': each_state, 'parent': _parent, 'depth': depth} if path else None)
+                if run is not None and key in run['attempts'] and 'outcome' not in run['attempts'][key]:
+                    outcome = {'status': 'Waiting for approval' if isinstance(produced, dict) and produced.get('approvalId') else 'Done', 'output': produced, 'display': display}
+                    run['attempts'][key]['outcome'] = copy.deepcopy(outcome)
+                    nodes[key]['result'] = copy.deepcopy(outcome)
+                    if path:
+                        persist_run(document, path, _source)
+                return produced, display
 
             if plans is None:
                 produced, display = run_once(constants)
@@ -1405,6 +1529,12 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 results[key] = held_result
         except Exception as error:
             results[key] = {'status':'Error', 'output':{}, 'error':str(error), 'elapsed_ms': round((time.perf_counter() - started) * 1000, 2)}
+        if run is not None:
+            nodes[key]['result'] = copy.deepcopy(results[key])
+            if key in run['attempts']:
+                run['attempts'][key]['outcome'] = copy.deepcopy(results[key])
+            if path:
+                persist_run(document, path, _source)
     return finish(results)
 
 
@@ -1704,6 +1834,33 @@ class SessionFiles:
             return {'ok': True, 'document': validate(document), 'changed': changed}
         if action == 'validate':
             return {'ok':True,'document':validate(body.get('document'))}
+        if action == 'recover-run':
+            def recover(document):
+                identity = body.get('node')
+                node = next(row for row in document['nodes'] if row['id'] == identity)
+                run = document.get('properties', {}).get('canvasRun', {})
+                attempt = run.get('attempts', {}).get(identity)
+                if not attempt or 'outcome' in attempt:
+                    raise ValueError('This step has no unconfirmed attempt.')
+                if body.get('decision') == 'check':
+                    if node['type'] != 'thing.file.write':
+                        raise ValueError('This step does not support Check result. Verify the target before running it again.')
+                    target = Path(attempt['check']['path'])
+                    if hashlib.sha256(target.read_bytes()).hexdigest() != attempt['check']['sha256']:
+                        raise ValueError('The real target does not match this attempted write.')
+                    node['result'] = {'status': 'Done', 'output': {'path': str(target)}, 'display': 'Checked the real file'}
+                    attempt['outcome'] = copy.deepcopy(node['result'])
+                elif body.get('decision') == 'retry':
+                    attempt['outcome'] = {'status': 'Retry requested', 'output': {}}
+                    node['result'] = {'status': 'Out of date', 'output': {}}
+                else:
+                    raise ValueError('Choose Check result or Run this step again.')
+                for row in document['nodes']:
+                    if row['id'] != identity and row['id'] in canvas_documents.downstream(document, [identity]):
+                        row['result'] = {'status': 'Out of date', 'output': {}}
+                return []
+            document, _ = canvas_documents.edit(local_path(body['path']), 'You', 'resolve unconfirmed step', recover, solve_changed=False)
+            return {'ok': True, 'document': document, 'revision': canvas_documents.revision(document)}
         if action == 'run':
             outcome = {}
             def execute(document):

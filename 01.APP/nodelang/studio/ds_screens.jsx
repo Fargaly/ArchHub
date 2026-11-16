@@ -1198,6 +1198,10 @@
             ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
             [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
             ['Run all again', () => executeAction('projects.ds_screens.Run.15', {api,u,again:true})],
+            ...(selected.length===1&&s.graph.nodes.find(n=>n.id===selected[0])?.status==='Unconfirmed' ? [
+              ['Check result',()=>u.act(()=>api.recoverRun(selected[0],'check')),s.graph.nodes.find(n=>n.id===selected[0])?.type!=='thing.file.write'],
+              ['Run this step again',()=>u.act(()=>api.recoverRun(selected[0],'retry'))],
+            ] : []),
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],

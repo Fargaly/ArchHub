@@ -1853,6 +1853,12 @@ api.runNode=async(id,again=false)=>{
  }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();queueAutosave();}throw error;}
 };
 api.runToHere=api.runNode;
+api.recoverRun=async(node,decision)=>{
+ const result=await sessionRequest('recover-run',{path:sessionPath,node,decision});
+ sessionDocument=copy(result.document);sessionRevision=result.revision;projectFile();
+ if(decision==='retry')return api.runNode(node);
+ return result;
+};
 api.runSelection=ids=>api.runNode(ids);
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};

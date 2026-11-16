@@ -226,14 +226,15 @@ def decline_canvas(payload):
         return
     def change(document):
         node = next((row for row in document['nodes'] if row['id']==payload['node']['id']), None)
-        original = next(row for row in continuation['document']['nodes'] if row['id']==payload['node']['id'])
-        if not node or node['params'] != original['params']:
+        from .session_files import approval_current
+        if not node or not approval_current(document, continuation, node['id']):
             return []
         # Keep the saved status understood by existing approval readers.
         node['result'] = {'status': 'Declined', 'display': 'Rejected', 'output': {}, 'error': 'Rejected by you.'}
         for row in document['nodes']:
             if row['id'] != node['id'] and row.get('result', {}).get('status') == 'Waiting':
                 row['result'] = {'status': 'Blocked', 'output': {}, 'error': 'Canvas approval was rejected.'}
+        document['properties']['canvasRun']['state'] = 'Ended'
         return []
     canvas_documents.edit(continuation['path'], 'You', 'reject Canvas Run', change, solve_changed=False)
     if continuation.get('parent'):
@@ -248,7 +249,7 @@ def release(payload):
     continuation = payload.get('continuation')
     if continuation:
         from . import canvas_documents
-        from .session_files import read_document, run_document, skill_result
+        from .session_files import read_document, run_document, skill_result, approval_current, persist_run
         from .hook_decision import _RELEASING
         def inputs(document):
             return {'id': document['id'], 'title': document['title'], 'nodes': [{key:value for key,value in row.items() if key != 'result'} for row in document['nodes']],
@@ -256,7 +257,7 @@ def release(payload):
                     'taskContext': document.get('properties', {}).get('taskContext')}
         outcome = {}
         def resume(document):
-            if inputs(document) != inputs(continuation.get('source') or continuation['document']):
+            if not approval_current(document, continuation, node['id']) or inputs(document) != inputs(continuation.get('source') or continuation['document']):
                 raise ValueError('The canvas changed after this approval. Run its current values again.')
             execution = copy.deepcopy(continuation['document'])
             released = payload.get('released')
@@ -264,7 +265,8 @@ def release(payload):
             if released is None:
                 try:
                     output, display = _dispatch_node(execution, node, node['type'], node['params'], feeds,
-                                                     invoke=guard_effect, stopped=None, depth=continuation.get('depth', 0))
+                                                     invoke=guard_effect, stopped=None, depth=continuation.get('depth', 0),
+                                                     continuation={**continuation, 'document': execution})
                 except Exception as failure:
                     output, display, error = {}, str(failure), str(failure)
             else:
@@ -277,6 +279,11 @@ def release(payload):
             else:
                 completed[node['id']] = {'status': 'Error' if error else 'Done', 'output': output, 'display': display,
                                          **({'error': error} if error else {})}
+            attempt = execution['properties']['canvasRun'].get('attempts', {}).get(node['id'])
+            if attempt:
+                attempt['outcome'] = {'status': 'Error' if error else 'Done', 'output': output, 'display': display}
+                next(row for row in execution['nodes'] if row['id'] == node['id'])['result'] = copy.deepcopy(attempt['outcome'])
+                persist_run(execution, continuation['path'], continuation.get('source'))
             token = _RELEASING.set(False)
             try:
                 result = run_document(execution, invoke=guard_effect, roots=continuation['roots'], path=continuation['path'],
@@ -294,7 +301,7 @@ def release(payload):
         parent = continuation.get('parent')
         ancestor = parent
         while ancestor:
-            if inputs(read_document(ancestor['path'])) != inputs(ancestor.get('source') or ancestor['document']):
+            if not approval_current(read_document(ancestor['path']), ancestor, ancestor['node']['id']):
                 raise ValueError('The calling canvas changed after this approval. Run its current values again.')
             ancestor = ancestor.get('parent')
         document, _ = canvas_documents.edit(continuation['path'], 'You', 'approve and resume Canvas Run', resume, solve_changed=False)

@@ -76,7 +76,7 @@ def _checked_router_settings(values):
     for agent, profile in agents.items():
         if (type(agent) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', agent) or
                 type(profile) is not dict or set(profile) - {'model', 'prompt', 'purpose', 'humanOwner',
-                    'admins', 'autonomy', 'questionsPerDay', 'memoryScope', 'skillIds', 'acp'} or
+                    'admins', 'autonomy', 'questionsPerDay', 'memoryScope', 'skillIds'} or
                 type(profile.get('prompt', '')) is not str or len(profile.get('prompt', '')) > 4096):
             raise ValueError('Use a named agent profile with a model and short prompt.')
         if 'model' in profile:
@@ -88,14 +88,6 @@ def _checked_router_settings(values):
             if name in profile and (type(profile[name]) is not list or len(profile[name]) > 128 or
                     any(type(item) is not str or len(item) > 200 for item in profile[name])):
                 raise ValueError('Agent profile list is invalid.')
-        acp = profile.get('acp')   # the agent's ACP start command (acp_client.AGENTS row override); never env or secrets
-        if acp is not None and (type(acp) is not dict or set(acp) - {'command', 'args'} or type(acp.get('command')) is not str
-                or not 0 < len(acp['command']) <= 260 or type(acp.get('args', [])) is not list or len(acp.get('args', [])) > 16
-                or any(type(item) is not str or len(item) > 200 for item in acp.get('args', []))):
-            raise ValueError('An agent start command is a command and a short list of arguments.')
-        if acp is not None:
-            from .acp_client import check_start_command
-            check_start_command(agent, acp['command'], acp.get('args'))   # no shell character, no permission-skipping flag
         if 'questionsPerDay' in profile and (type(profile['questionsPerDay']) is not int or profile['questionsPerDay'] < 0):
             raise ValueError('Questions per day must be a nonnegative integer.')
         autonomy = profile.get('autonomy', {})

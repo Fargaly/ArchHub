@@ -2,7 +2,8 @@
 
 Founder 2026-11-16: "even its chat does not work"; take what exists (ACP, our goose_adapter client) and fit it.
 Every agent here is a FAKE that speaks ACP over stdio, started through the same start-command table as a real one
-(a .cmd shim on PATH, as npm installs them). No real agent, no paid model, no live Workshop.
+(a .cmd shim on PATH, as npm installs them; the client starts what the shim points to, never cmd.exe).
+No real agent, no paid model, no live Workshop.
 """
 import json
 import os
@@ -13,9 +14,9 @@ import time
 import pytest
 
 FAKE_AGENT = r'''
-import json, sys
-log = open(sys.argv[1], "a", encoding="utf-8")
-log.write(json.dumps(sys.argv[2:]) + "\n"); log.flush()
+import json, os, sys
+log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
+log.write(json.dumps(sys.argv[1:]) + "\n"); log.flush()
 def send(value):
     sys.stdout.write(json.dumps({"jsonrpc": "2.0", **value}) + "\n"); sys.stdout.flush()
 def update(session, item):
@@ -61,8 +62,8 @@ CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--input-format', 'stream
 
 FAKE_CLAUDE = r"""
 import json, os, sys
-log = open(sys.argv[1], "a", encoding="utf-8")
-log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
+log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
+log.write(json.dumps(sys.argv[1:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
     "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
 def grandchild():
     import subprocess
@@ -117,8 +118,8 @@ if stubborn:
 
 FAKE_CODEX = r"""
 import json, os, sys
-log = open(sys.argv[1], "a", encoding="utf-8")
-log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
+log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
+log.write(json.dumps(sys.argv[1:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
     "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
 def grandchild():
     import subprocess
@@ -196,9 +197,16 @@ def installed(tmp_path, monkeypatch):
                          ('fake_mute.py', mute)):
         (bin_dir / name).write_text(source, encoding='utf-8')
 
-    def install(command):
-        (bin_dir / (command + '.cmd')).write_text(
-            '@"%s" "%s" "%s" %%*\r\n' % (sys.executable, bin_dir / scripts.get(command, 'fake_acp.py'), log), encoding='utf-8')
+    def install(command, folder=bin_dir):
+        # the shim npm writes: it only starts an interpreter on a script beside it (node on .js; here Python on .py)
+        folder.mkdir(parents=True, exist_ok=True)
+        script = scripts.get(command, 'fake_acp.py')
+        (folder / script).write_text((bin_dir / script).read_text(encoding='utf-8'), encoding='utf-8')
+        (folder / (command + '.cmd')).write_text(
+            '@ECHO off\r\nSETLOCAL\r\n"%%_prog%%"  "%%dp0%%\\%s" %%*\r\n' % script, encoding='utf-8')
+    from nodelang import acp_client
+    monkeypatch.setitem(acp_client._INTERPRETERS, '.py', sys.executable)
+    monkeypatch.setenv('FAKE_AGENT_LOG', str(log))
     monkeypatch.setenv('PATH', str(bin_dir))
     return install, log
 
@@ -346,31 +354,6 @@ def test_the_agent_gets_the_users_environment_without_archhubs_own_variables(ins
     assert [name for name in seen['archhub'] if not name.startswith('ARCHHUB_TEST_')] == [] and seen['user'] is True
 
 
-@pytest.mark.parametrize('agent, command, args', [
-    ('claude', 'claude', ['--dangerously-skip-permissions']), ('claude', 'claude', ['--permission-mode', 'bypassPermissions']),
-    ('claude', 'claude', ['--permission-mode=acceptEdits']), ('codex', 'codex', ['--dangerously-bypass-approvals-and-sandbox']),
-    ('codex', 'codex', ['--full-auto']), ('codex', 'codex', ['-s', 'danger-full-access']), ('codex', 'codex', ['-c', 'approval_policy=never']),
-    ('gemini', 'gemini', ['--acp', '--yolo']), ('gemini', 'gemini', ['--acp', '-y']), ('opencode', 'opencode', ['acp', '--yes']),
-    ('opencode', 'opencode', ['acp', '& calc']), ('opencode', 'open"code', ['acp']), ('opencode', 'opencode', ['acp', '%COMSPEC%']),
-    ('opencode', 'opencode', ['acp', 'a|b']), ('opencode', 'opencode', ['acp', 'a\nb']), ('opencode', 'opencode', ['acp', '>out.txt'])])
-def test_a_start_command_that_skips_permissions_or_carries_shell_characters_is_refused_when_set_and_when_started(
-        installed, agent, command, args):
-    from nodelang import acp_client, nograph_server
-    from nodelang.settings_owner import read_router_settings, router_settings_path
-    install, log = installed
-    for name in ('claude', 'codex', 'gemini', 'opencode'):
-        install(name)
-    with pytest.raises(ValueError, match='start command'):
-        acp_client.check_start_command(agent, command, args)
-    router_settings_path().parent.mkdir(parents=True, exist_ok=True)
-    router_settings_path().write_text(json.dumps({'agents': {agent: {'acp': {'command': command, 'args': args}}}}), encoding='utf-8')
-    with pytest.raises(ValueError, match='start command'):                # set time: the settings owner refuses the file
-        read_router_settings()
-    with pytest.raises(ValueError, match='start command'):                # launch time: nothing is started in its place
-        nograph_server._chat({'prompt': '@%s how many sheets?' % agent}, lambda text: None)
-    assert not log.exists()
-
-
 @pytest.mark.parametrize('quiet, states', [(10, ['starting…', 'answering']), (0, ['starting…', 'not responding', 'answering'])])
 def test_one_state_row_says_starting_then_answering_and_says_when_the_agent_is_quiet(installed, monkeypatch, quiet, states):
     from nodelang import acp_client, nograph_server
@@ -391,23 +374,67 @@ def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permi
     for agent in ('claude', 'codex'):
         row = acp_client.AGENTS[agent]
         assert row['commands'] == (agent,)                               # no claude-agent-acp / codex-acp dependency
-        with pytest.raises(ValueError, match='start command'):           # the table itself would not pass a skipping flag
-            acp_client.check_start_command(agent, agent, list(row['args']) + ['--dangerously-skip-permissions'])
-        acp_client.check_start_command('opencode', 'my-opencode', ['acp', '--quiet'])   # an ordinary override is fine
         assert not [arg for arg in row['args'] if 'skip' in arg or 'bypass' in arg or 'dangerous' in arg]
 
 
-def test_a_settings_start_command_replaces_the_table_row(installed):
+def test_settings_cannot_replace_an_agent_start_command(installed):
+    """Only the built-in table starts an agent: a start command in Settings is refused and never run."""
     from nodelang import nograph_server
-    from nodelang.settings_owner import router_settings_path
+    from nodelang.settings_owner import read_router_settings, router_settings_path
     install, log = installed
+    install('opencode')
     install('my-opencode')
     router_settings_path().parent.mkdir(parents=True, exist_ok=True)
     router_settings_path().write_text(json.dumps({'agents': {'opencode': {'acp': {'command': 'my-opencode', 'args': ['acp', '--quiet']}}}}),
                                       encoding='utf-8')
-    result = nograph_server._chat({'prompt': '@opencode how many sheets?'}, lambda text: None)
-    assert result['text'] == 'There are 12 sheets.'
-    assert json.loads(log.read_text(encoding='utf-8').splitlines()[0]) == ['acp', '--quiet']
+    with pytest.raises(ValueError):
+        read_router_settings()
+    assert nograph_server._chat({'prompt': '@opencode how many sheets?'}, lambda text: None)['text'] == 'There are 12 sheets.'
+    assert [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()] == [['acp']]   # the table row, nothing else
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex', 'gemini', 'opencode', 'goose'])
+def test_an_agent_starts_as_the_program_its_shim_points_to_and_cmd_never_runs(installed, monkeypatch, agent):
+    from nodelang import acp_client
+    install, _log = installed
+    install(agent)
+    started = []
+    real = acp_client.subprocess.Popen
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda argv, **kw: (started.append(list(argv)), real(argv, **kw))[1])
+    argv = acp_client.start_command(agent)[0]
+    assert argv[0] == sys.executable and argv[1].endswith('.py') and argv[2:] == list(acp_client.AGENTS[agent]['args'])
+    if agent != 'gemini':   # the mute fake never answers
+        acp_client.ask(agent, 'how many sheets?')
+        assert started and all(line[0] == sys.executable and 'cmd' not in os.path.basename(line[0]).lower() and '/C' not in line
+                               for line in started)
+
+
+@pytest.mark.parametrize('folder', ['%COMSPEC%', 'a&b', 'a^b'])
+def test_a_shim_in_a_folder_with_a_shell_character_is_refused_and_nothing_starts(installed, tmp_path, monkeypatch, folder):
+    from nodelang import acp_client
+    install, log = installed
+    install('opencode', tmp_path / folder / 'bin')
+    monkeypatch.setenv('PATH', str(tmp_path / folder / 'bin'))
+    started = []
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda *a, **kw: started.append(a))
+    with pytest.raises(ValueError, match='is not started from there'):
+        acp_client.ask('opencode', 'how many sheets?')
+    assert not started and not log.exists()
+
+
+@pytest.mark.parametrize('shim', ['@python "%dp0%\\fake_acp.py" & calc.exe %*\r\n', '@echo nothing here\r\n',
+                                  '"%_prog%"  "%dp0%\\missing.py" %*\r\n', '"%_prog%"  "%dp0%\\fake_acp.txt" %*\r\n'])
+def test_a_shim_that_does_not_point_to_one_program_is_refused_with_a_plain_message(installed, tmp_path, monkeypatch, shim):
+    from nodelang import acp_client
+    install, log = installed
+    install('opencode')
+    (tmp_path / 'bin' / 'fake_acp.txt').write_text('x', encoding='utf-8')
+    (tmp_path / 'bin' / 'opencode.cmd').write_text(shim, encoding='utf-8')
+    started = []
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda *a, **kw: started.append(a))
+    with pytest.raises(ValueError, match='could not be resolved to a program'):
+        acp_client.ask('opencode', 'how many sheets?')
+    assert not started and not log.exists()
 
 
 def test_an_agent_that_is_not_installed_is_named_and_nothing_is_downloaded(installed):
@@ -437,7 +464,7 @@ def test_baboom_answers_through_the_same_acp_client(installed, tmp_path):
     from nodelang.goose_adapter import GooseAdapter
     install, _log = installed
     install('goose')
-    process = subprocess.Popen([os.environ['COMSPEC'], '/C', str(tmp_path / 'bin' / 'goose.cmd'), 'acp'],
+    process = subprocess.Popen(acp_client.start_command('goose')[0], env=acp_client.child_environment(),
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 

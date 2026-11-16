@@ -1,8 +1,7 @@
 """The one Agent Client Protocol (ACP) client: every installed agent answers in a session's thread through it.
 
 Lifted from goose_adapter (its transport now lives here; Goose is one row of the table below). Behaviour taken
-from ACP UI (MIT, read as reference): an agent table name -> {command, args}, a stdio pipe started through
-`cmd /C` with no console window, and the agent's permission request turned into the user's decision.
+from ACP UI (MIT, read as reference): an agent table name -> {command, args}, a stdio pipe with no console window, and the agent's permission request turned into the user's decision.
 From AionUi (Apache-2.0, as summarised by R&D res-051): an agent is offered only when its command is installed.
 Nothing starts by itself: a session starts only because the user sent it a message.
 
@@ -35,7 +34,7 @@ ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 
 # The start-command table, keyed by the agent registry's ids. First installed command wins; never a download.
 # 'speaks' names the CLI's own stdio mode (a dialect below); a row without it speaks ACP itself.
 # No row carries a flag that skips the agent's permission prompts: they come here and become the Approve card.
-# A Settings override (router.json agents.<id>.acp = {command, args}) replaces a row with an ACP command; see start_command().
+# Only this table starts an agent: an admitted command with a fixed ask policy. Settings cannot replace a row.
 AGENTS = {
     'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
@@ -359,27 +358,6 @@ def agent_for(handle):
     return None
 
 
-# A start command set in Settings is checked when it is set (settings_owner) and again when it is started.
-_SHELL = re.compile(r'[&|<>^%!"\r\n]')   # cmd.exe would read these in a .cmd launch line
-_UNASKED = re.compile(r'(?i)danger|bypass|skip[-_]?perm|yolo|full[-_]?auto|auto[-_]?(approve|accept|edit|review)|approve[-_]?for'
-                      r'|always[-_]?(allow|approve)|allow[-_]?all|trust[-_]?all|no[-_]?(confirm|prompt|ask)|approval|permission'
-                      r'|sandbox|^-y$|^--yes$')
-_UNASKED_BY_AGENT = {'claude': ('acceptedits', 'dontask', 'allowedtools', 'allowed-tools', '--settings'),
-                     'codex': ('-c', '--config', '-s', '-p', '--profile', 'never'),
-                     'gemini': ('--approval-mode', 'auto_edit'), 'opencode': (), 'goose': ()}
-
-
-def check_start_command(agent, command, args):
-    """Refuses a start command that carries a cmd.exe character or a flag that lets the agent act without asking."""
-    words = [str(command), *map(str, args or ())]
-    if any(_SHELL.search(word) for word in words):
-        raise ValueError('An agent start command cannot contain & | < > ^ % ! " or a line break.')
-    for word in words[1:]:
-        low = word.casefold()
-        if _UNASKED.search(low) or any(low == flag or (len(flag) > 3 and flag in low) for flag in _UNASKED_BY_AGENT.get(agent, ())):
-            raise ValueError("An agent start command cannot change how %s asks for permission (%s)." % (label(agent), word[:60]))
-
-
 def child_environment():
     """The boundary: the agent is the user's own CLI, so it gets the user's environment (its login, PATH, proxy),
     minus what ArchHub put there for itself: every ARCHHUB_* name (state folders, the cloud token, test markers)
@@ -388,21 +366,52 @@ def child_environment():
             if not name.upper().startswith('ARCHHUB_') and name.upper() not in ('QTWEBENGINE_CHROMIUM_FLAGS', 'QT_OPENGL')}
 
 
+_INTERPRETERS = {'.js': 'node'}        # what runs the script an npm shim points to
+_UNSAFE_PATH = re.compile(r'[%^&|"\']')
+
+
+def _launcher(agent, found):
+    """The program behind an installed command, as an argv list for CreateProcess: cmd.exe never runs.
+    npm installs a .cmd shim that only starts `node <script>` or an .exe beside it; that target is started directly.
+    A shim that does not point to exactly one such program is refused, not handed to a shell."""
+    refused = ValueError("%s's launcher (%s) could not be resolved to a program. Reinstall %s, then send again."
+                         % (label(agent), Path(found).name, label(agent)))
+    if found.lower().endswith(('.cmd', '.bat')):
+        try:
+            text = Path(found).read_text(encoding='utf-8', errors='replace')[:16384]
+        except OSError:
+            raise refused from None
+        targets = re.findall(r'"%dp0%\\([^"%]+)"[ \t]+%\*', text)
+        target = Path(found).parent / targets[0] if len(targets) == 1 else None
+        if target is None or not target.is_file():
+            raise refused
+        runner = _INTERPRETERS.get(target.suffix.lower())
+        if target.suffix.lower() == '.exe':
+            argv = [str(target)]
+        elif runner:
+            beside = Path(found).parent / (runner + '.exe')
+            program = str(beside) if beside.is_file() else runner if Path(runner).is_absolute() else shutil.which(runner)
+            if not program or not program.lower().endswith('.exe'):
+                raise refused
+            argv = [program, str(target)]
+        else:
+            raise refused
+    else:
+        argv = [found]
+    if any(_UNSAFE_PATH.search(part) for part in argv):
+        raise ValueError('%s is installed in a folder whose name has %% ^ & | or a quote; it is not started from there.'
+                         % label(agent))
+    return argv
+
+
 def start_command(agent):
     """(argv, fallback argv or None, the dialect it speaks or None) for an installed agent; refuses (names it) when it is not installed."""
-    row = dict(AGENTS[agent])
-    from .settings_owner import read_router_settings
-    chosen = (read_router_settings()['agents'].get(agent) or {}).get('acp')   # unreadable or refused settings start nothing
-    if chosen:
-        check_start_command(agent, chosen['command'], chosen.get('args'))
-        row = {'commands': (chosen['command'],), 'args': tuple(chosen.get('args') or ())}
+    row = AGENTS[agent]
     found = next((path for path in map(shutil.which, row['commands']) if path), None)
     if found is None:
         raise ValueError('%s is not installed on this PC (looked for %s). Install it, then send again.'
                          % (label(agent), ' or '.join(row['commands'])))
-    # npm installs agents as .cmd shims: run them through cmd /C like ACP UI. The line is an argv list (quoted by
-    # subprocess), and its words come from the table above or passed check_start_command: none has a cmd.exe character.
-    head = [os.environ.get('COMSPEC') or 'cmd.exe', '/C', found] if found.lower().endswith(('.cmd', '.bat')) else [found]
+    head = _launcher(agent, found)
     fallback = row.get('fallback_args')
     return head + list(row['args']), (head + list(fallback)) if fallback else None, row.get('speaks')
 

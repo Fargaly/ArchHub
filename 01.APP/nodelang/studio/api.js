@@ -1137,7 +1137,7 @@ async function settingsAction(functionName, args=[]) {
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','sessionListFilters','homeLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','sessionListFilters','homeLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
@@ -1162,6 +1162,7 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
  api[functionName]=(...args)=>settingsAction(functionName,args);
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
+api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value){
  const identity=state.profile.id;

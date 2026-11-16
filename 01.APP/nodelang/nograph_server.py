@@ -1256,6 +1256,9 @@ def r_settings_action(s, req):
     function, args = body.get('function'), body.get('args') or []
     companion = s.files['companion']
     settings = s.files['settings']
+    from .access_owner import FUNCTIONS as ACCESS_FUNCTIONS, access_action
+    if function in ACCESS_FUNCTIONS:
+        return {'ok': True, 'result': access_action(settings, function, list(args))}
     if function == 'exposeSettingsPage':
         if len(args) != 1:
             raise Refused('Choose a Settings page.')

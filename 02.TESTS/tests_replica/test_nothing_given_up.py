@@ -302,3 +302,28 @@ def test_knowledge_network_quarantines_and_judges_once(app):
     assert judged['patterns'][0]['status'] == 'Accepted'
     status, answer = app.post('/api/universal/canvas-op', {'op': 'review_community_pattern', 'args': [incoming, 'Reject']})
     assert status == 400 and 'final judgement' in answer['error']
+
+
+# ---- Plan & access ----------------------------------------------------------------
+
+def settings_action(app, function, *args):
+    return app.post('/api/universal/settings-action', {'function': function, 'args': list(args)})
+
+
+def test_devices_list_this_pc_and_keep_the_choice(app):
+    status, answer = settings_action(app, 'readDevices')
+    devices = answer['result']['devices']
+    assert status == 200 and [d['id'] for d in devices] == ['this-pc'] and devices[0]['available'] is True
+    assert answer['result']['deviceNotice'].startswith('Not restored yet: your other signed-in devices')
+    status, chosen = settings_action(app, 'selectDevice', 'this-pc')
+    assert status == 200 and chosen['result']['activeDevice'] == 'this-pc'
+    held = json.loads((app.state_dir / 'settings' / 'settings.json').read_text(encoding='utf-8'))
+    assert held['activeDevice'] == 'this-pc'
+    status, answer = settings_action(app, 'selectDevice', 'other-pc')
+    assert status == 400 and answer['error'].startswith('Not restored yet: sending work to another device')
+
+
+@pytest.mark.parametrize('function', ['grantAccess', 'rollBack'])
+def test_access_functions_without_an_owner_answer_a_visible_notice(app, function):
+    status, answer = settings_action(app, function, 'item')
+    assert status == 400 and answer['error'].startswith('Not restored yet:')

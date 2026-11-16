@@ -2444,6 +2444,16 @@ def _canvas_extra_items():
         "engine": "data.convert", "params": {"target_type": "text"},
         "ports": {"source": [{"id": "out", "type": "any"}], "target": [{"id": "in", "type": "any"}]},
     }]
+    rows.append({
+        "id": "ui_element", "cat": "input", "title": "UI element",
+        "sub": "An editable Button, Card, or Text element",
+        "engine": "data.constant",
+        "params": dict(element="Button", label="Button", value="Button", width=160, height=48,
+                       colour="#3b82f6", enabled=True, action="Canvas"),
+        "_types": {"colour": "color", "element": "enum"},
+        "paramDefs": [{"id": "element", "options": ["Button", "Card", "Text"]}],
+        "ports": {"source": [{"id": "value", "type": "string"}], "target": []},
+    })
     rows.extend(thing_items())
     rows.extend(dict(item) for item in (CATALOGUE_ITEM, dataset_item, FIELD_ITEM))
     return rows

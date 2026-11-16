@@ -327,3 +327,42 @@ def test_devices_list_this_pc_and_keep_the_choice(app):
 def test_access_functions_without_an_owner_answer_a_visible_notice(app, function):
     status, answer = settings_action(app, function, 'item')
     assert status == 400 and answer['error'].startswith('Not restored yet:')
+
+
+def test_interface_element_persists_in_current_workflow(app, tmp_path):
+    from nodelang.session_files import SessionFiles, new_document, read_document, write_document
+
+    path = tmp_path / 'interface.archhub'
+    document = new_document('Interface')
+    write_document(path, document)
+    files = SessionFiles()
+    files.remember(path, document)
+
+    def add(kind):
+        return app.post('/api/universal/canvas-op', {
+            'op': 'add_interface_element', 'args': [kind, str(path)],
+        })
+
+    baseline = path.read_bytes()
+    assert add('Button')[1]['ok'] is False
+    assert path.read_bytes() == baseline
+
+    files._current(document['id'], path)
+    assert add('Unsupported')[1]['ok'] is False
+    assert path.read_bytes() == baseline
+
+    for kind in ('Button', 'Card', 'Text'):
+        status, response = add(kind)
+        assert status == 200 and response['ok']
+        node = next(row for row in read_document(path)['nodes'] if row['id'] == response['result']['id'])
+        assert node['item'] == 'ui_element'
+        assert node['title'] == kind
+        assert node['params'] == {
+            'element': kind, 'label': kind, 'value': kind, 'width': 160, 'height': 48,
+            'colour': '#3b82f6', 'enabled': True, 'action': 'Canvas',
+        }
+        types = {row['id']: row['type'] for row in node['paramDefs']}
+        assert types['width'] in ('number', 'integer')
+        assert types['enabled'] == 'bool'
+        assert types['colour'] == 'color'
+    assert len(read_document(path)['nodes']) == 3

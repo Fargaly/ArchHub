@@ -1386,7 +1386,15 @@ async function refreshProjectState(){
   suggestions:state.suggestions.filter(row=>!result.dismissed.includes(row.id))});
  return result;
 }
-api.addInterfaceElement=async kind=>{const result=await canvasOperation('add_interface_element',[kind]);return state.graph.nodes.find(n=>n.id===result.id)||result;};
+api.addInterfaceElement=async kind=>{
+ if(!sessionDocument)throw Error('Open a workflow before adding an interface element.');
+ const navigation=fileNavigation;
+ if(localDirty||!sessionPath)await flushAutosave();
+ if(fileNavigation!==navigation)throw Error('The open workflow changed.');
+ const {result}=await request('/api/universal/canvas-op',{op:'add_interface_element',args:[kind,sessionPath]});
+ if(fileNavigation===navigation)await pollFile(true);
+ return result;
+};
 
 
 api.refreshMods=async()=>{const result=await request('/api/universal/mods',{action:'state'});publish({mods:result.mods.rows});project();return result.mods.rows;};

@@ -111,13 +111,11 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
 
 test('OPS projects actions call their owner and retain confirmed state on refusal',async()=>{
  const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas-op':body=>{
-  if(body.op==='add_interface_element')return {ok:true,result:{id:'ui-real'}};
   if(body.op==='project_state')return {ok:true,result:{versions:[],modelReview:{operation:'',results:[],issues:[]},dismissed:[]}};
   return {ok:false,error:'Refresh the actual owner and retry.'};
  }});
- const made=await api.addInterfaceElement('Button');
- assert.equal(made.id,'ui-real');
- assert.deepEqual(requests.find(r=>r.body?.op==='add_interface_element').body.args,['Button']);
+ await assert.rejects(()=>api.addInterfaceElement('Button'),/Open a workflow/);
+ assert.equal(requests.some(r=>r.body?.op==='add_interface_element'),false);
  const before=api.getSnapshot().graph;
  await assert.rejects(()=>api.saveGraphVersion(),/actual owner/);
  assert.equal(api.getSnapshot().graph,before);

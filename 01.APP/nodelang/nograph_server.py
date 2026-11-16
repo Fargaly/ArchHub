@@ -779,6 +779,33 @@ def r_canvas_op(s, req):
     if op == 'library_ports':
         from .session_files import catalogue
         return {'ok': True, 'result': catalogue()}
+    if op == 'add_interface_element':
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        from uuid import uuid4
+        from . import canvas_documents
+        from . import session_files
+        kind = args[0] if args else None
+        if kind not in ('Button', 'Card', 'Text'):
+            raise Refused('Choose Button, Card or Text.')
+        interface_path = session_files.SessionFiles().current_path()
+        if not interface_path:
+            raise Refused('Open a workflow before adding an interface element.')
+        if len(args) > 1 and session_files.local_path(args[1]) != session_files.local_path(interface_path):
+            raise Refused('The open workflow changed. Reopen it before adding an element.', 409)
+        item = next(row for row in session_files.catalogue() if row['id'] == 'ui_element')
+        identity = str(uuid4())
+
+        def place(document):
+            document['nodes'].append({
+                'id': identity, 'type': item['engine'], 'item': item['id'], 'title': kind,
+                'params': {**item['params'], 'element': kind, 'label': kind, 'value': kind},
+                'paramDefs': item['paramDefs'], 'position': {'x': 80, 'y': 100},
+            })
+            return [identity]
+
+        canvas_documents.edit(interface_path, 'Studio', 'Add interface element', place, solve_changed=False)
+        return {'ok': True, 'result': {'id': identity}}
     if op == 'fork_node':
         from .session_files import SessionFiles, read_document
         from .canvas_documents import edit

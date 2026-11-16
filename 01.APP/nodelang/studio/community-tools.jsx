@@ -83,7 +83,7 @@
           }}><Btn sm onClick={(event) => dispatch("community-tools.4", event)}>Verify invitation</Btn><Btn p disabled={c.joinStatus !== 'Verified · account matches'} onClick={(event) => dispatch("community-tools.5", event)}>Join group</Btn></div></Card></details><details><summary>Marketplace · shared nodes, skills &amp; templates</summary><Card style={{
           padding: 20,
           marginTop: 14
-        }}><input aria-label="Search marketplace" placeholder="Find a node, skill or template…" value={c.marketQuery} onChange={(e) => actionState.run(() => api.setMarketplace({
+        }}>{!c.marketplace.length && <p className="muted" role="note">Not restored yet: the marketplace catalogue. It is read from the ArchHub cloud with your signed-in account.</p>}<input aria-label="Search marketplace" placeholder="Find a node, skill or template…" value={c.marketQuery} onChange={(e) => actionState.run(() => api.setMarketplace({
             marketQuery: e.target.value
           }))} /><div className="reference-grid" style={{
             marginTop: 16

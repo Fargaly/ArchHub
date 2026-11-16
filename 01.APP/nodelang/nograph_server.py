@@ -146,7 +146,7 @@ class NoGraphServer:
         self.files = {name: files(name, default) for name, default in (
             ('workspaces', {'roots': []}), ('mods', {'packages': {}, 'enabled': {}}),
             ('companion', {'mode': 'idle', 'x': None, 'y': None, 'pinned': False}),
-            ('social', {'state': {}}), ('hosts', {'disabled': []}), ('project-files', {'files': []}),
+            ('social', {'state': {}}), ('community', {}), ('hosts', {'disabled': []}), ('project-files', {'files': []}),
             ('settings', {'settingsScope': 'User'}))}
         self._hosts = Cached(30.0, self._probe_hosts)
         self._local = Cached(10.0, self._probe_local)
@@ -731,6 +731,7 @@ SYSTEM_OWNERS = (
     ('owner:settings', 'Settings', 'Settings', 'settings/*.json', ['router']),
     ('owner:secrets', 'Secrets', 'Settings', 'Windows Credential Manager (by reference)', ['router']),
     ('owner:social', 'Social media', 'Social', 'settings/social.json', ['workshop']),
+    ('owner:community', 'Community', 'Social', 'settings/community.json', []),
 )
 
 
@@ -744,9 +745,10 @@ def r_canvas(s, req):
     wires = [{'id': root + '->' + ids[target], 'source': root, 'target': ids[target],
               'source_interface': 'out', 'target_interface': 'in'}
              for root, _label, _group, _store, feeds in SYSTEM_OWNERS for target in feeds]
+    from .community_owner import bindings
     return {'ok': True, 'revision': 0, 'root': 'app:system', 'canvas_root': 'app:system', 'graph_id': 'app:system',
             'scope': {'current': 'app:system', 'current_label': 'System graph'}, 'nodes': nodes, 'wires': wires,
-            'catalog': [], 'interaction_projection': {'bindings': []}, 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
+            'catalog': [], 'interaction_projection': {'bindings': bindings()}, 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
 
 
 def r_canvas_op(s, req):
@@ -754,7 +756,10 @@ def r_canvas_op(s, req):
     op, args = body.get('op'), body.get('args') or []
     if op == 'project_schedules':
         return {'ok': True, 'result': _schedules()}
-    reads = {'list_skills': [], 'mcp_servers': [], 'community_state': {},
+    from .community_owner import CommunityOwner
+    if op in CommunityOwner.PUBLIC:
+        return {'ok': True, 'result': CommunityOwner(s.files['community']).dispatch(op, list(args))}
+    reads = {'list_skills': [], 'mcp_servers': [],
              'project_state': {'versions': [], 'modelReview': {'operation': '', 'results': [], 'issues': []}, 'dismissed': []}}
     if op in reads:
         return {'ok': True, 'result': reads[op]}
@@ -1633,6 +1638,16 @@ def r_social_approve(s, req):
             'card': card, **({'message': card['error']} if card.get('error') else {})}
 
 
+def r_interaction(s, req):
+    """Owner-declared commands (community_owner.bindings); every other graph interaction is retired."""
+    from .community_owner import COMMANDS, CommunityOwner
+    body = req.body or {}
+    control = body.get('control')
+    if control in COMMANDS and body.get('interaction') == 'owner:community:' + control:
+        out = CommunityOwner(s.files['community']).command(control, body.get('event_facts') or [])
+        return {'ok': True, 'result': {**out['result'], 'community': out['community']}}
+    return not_available('Graph interaction')
+
 
 def r_provider_key(s, req):
     from .model_router import save_provider_key
@@ -1780,7 +1795,7 @@ ROUTES = {
     '/api/universal/node-create': ('graph only', r_graph_only('Creating a node this way')),
     '/api/universal/run-graph': ('graph only', r_graph_only('This kind of run (press Run on the open workflow)')),
     '/api/universal/set-property': ('graph only', r_graph_only('Graph property editing')),
-    '/api/universal/interaction': ('graph only', r_graph_only('Graph interaction')),
+    '/api/universal/interaction': ('community_owner commands (settings/community.json)', r_interaction),
     '/api/universal/gesture': ('graph only', r_graph_only('Graph gesture')),
     '/api/universal/focus': ('graph only', r_graph_only('Graph focus')),
     '/api/universal/select': ('graph only', r_graph_only('Graph selection')),
@@ -1838,5 +1853,5 @@ POST_ONLY = frozenset({
     '/api/universal/pick-file', '/api/universal/mods', '/api/universal/cloud-signout', '/api/universal/social-credential-remove',
     '/api/universal/social-surface', '/api/universal/studio-surface', '/api/universal/provider-key', '/api/universal/notion-connect', '/stop-all', '/resume',
     '/api/universal/social-credential', '/api/universal/social-linkedin-finish', '/api/universal/social-meta-finish',
-    '/api/universal/social-approve',
+    '/api/universal/social-approve', '/api/universal/interaction',
 } | {path for path, (owner, _handler) in ROUTES.items() if owner == 'graph only'})

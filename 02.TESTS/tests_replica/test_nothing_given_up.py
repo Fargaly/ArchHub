@@ -233,3 +233,72 @@ def test_unsupported_posts_answer_a_visible_open_item(app, monkeypatch):
     now = social(app, 'save_social_draft', {'platform': 'LinkedIn', 'text': 'Now', 'kind': 'post'})[1]['result']
     assert 'Connect LinkedIn' in _prepare_tool()(work_root=now['id'])['reason']
     assert app.get('/api/universal/social-approvals')[1]['items'] == []
+
+
+# ---- Community --------------------------------------------------------------------
+
+def command(app, control, **facts):
+    body = {'interaction': 'owner:community:' + control, 'control': control, 'event': 'activate', 'revision': 0}
+    if facts:
+        body['event_facts'] = [{'input': key, 'value': value if isinstance(value, str) else json.dumps(value)}
+                               for key, value in facts.items()]
+    return app.post('/api/universal/interaction', body)
+
+
+def test_community_commands_are_exposed_and_kept_in_one_file(app):
+    canvas = app.get('/api/universal/canvas')[1]
+    controls = {b['control']: [f['input'] for f in b['event_facts']] for b in canvas['interaction_projection']['bindings']}
+    assert controls['createCommunityGroup'] == ['name'] and controls['issueCommunityInvite'] == ['group', 'email']
+    assert any(node['id'] == 'owner:community' for node in canvas['nodes'])
+    status, made = command(app, 'createCommunityGroup', name='Design studio')
+    assert status == 200 and made['result']['name'] == 'Design studio'
+    group = made['result']['id']
+    assert made['result']['community']['groups'][0]['id'] == group
+    assert command(app, 'createCommunityGroup', name='design STUDIO')[0] == 400
+    assert command(app, 'createCommunityGroup', name='pk' + '_' + 'fixture' + 'notreal01')[0] == 400  # key-shaped name
+    status, invite = command(app, 'issueCommunityInvite', group=group, email='colleague@example.test')
+    assert status == 200 and 'not sent' in invite['result']['status']
+    assert command(app, 'issueCommunityInvite', group=group, email='colleague@example.test')[0] == 400
+    assert command(app, 'issueCommunityInvite', group=group, email='not-an-email')[0] == 400
+    revoked = command(app, 'revokeCommunityInvite', group=group, invite=invite['result']['id'])[1]['result']
+    assert revoked['status'] == 'Revoked'
+    command(app, 'setMarketplace', values={'marketQuery': 'stairs'})
+    command(app, 'setProjectCharge', values={'client': 'Client A', 'basis': 'Per project', 'amount': 1200})
+    assert command(app, 'setProjectCharge', values={'basis': 'Per hour'})[0] == 400
+    held = json.loads((app.state_dir / 'settings' / 'community.json').read_text(encoding='utf-8'))
+    assert held['groups'][0]['invites'][0]['status'] == 'Revoked'
+    assert held['marketQuery'] == 'stairs' and held['charge']['amount'] == 1200
+    assert app.post('/api/universal/interaction', {'interaction': 'x', 'control': 'retired', 'event': 'activate'})[1]['status'] == 'not_available'
+
+
+@pytest.mark.parametrize('control', ['verifyCommunityInvite', 'joinCommunityGroup', 'proposeMarketplaceListing', 'proposeProjectCharge'])
+def test_community_effects_without_an_owner_answer_a_visible_notice(app, control):
+    status, answer = command(app, control)
+    assert status == 400 and answer['error'].startswith('Not restored yet:')
+
+
+def test_marketplace_install_answers_a_visible_notice(app):
+    status, answer = command(app, 'installMarketplaceItem', item='pack-1')
+    assert status == 400 and answer['error'].startswith('Not restored yet: installing from the marketplace')
+
+
+def test_knowledge_network_quarantines_and_judges_once(app):
+    from nodelang.community_owner import CommunityOwner
+    owner = CommunityOwner(app.server.files['community'])
+    peer = owner.join('office-network')
+    incoming = owner.receive(peer, 'A reusable non-secret pattern')
+    with pytest.raises(ValueError, match='already received'):
+        owner.receive(peer, 'A reusable non-secret pattern')
+    with pytest.raises(ValueError, match='credential'):
+        owner.receive(peer, 'pass' + 'word' + ': ' + 'placeholder')  # credential-shaped claim
+    state = app.post('/api/universal/canvas-op', {'op': 'community_state', 'args': []})[1]['result']
+    assert state['peers'] == [{'id': peer, 'name': 'office-network', 'subscribed': True}]
+    assert state['patterns'][0]['status'] == 'Quarantine'
+    toggled = app.post('/api/universal/canvas-op', {'op': 'subscribe_community', 'args': [peer]})[1]['result']
+    assert toggled['peers'][0]['subscribed'] is False
+    with pytest.raises(ValueError, match='did not subscribe'):
+        owner.receive(peer, 'Another pattern')
+    judged = app.post('/api/universal/canvas-op', {'op': 'review_community_pattern', 'args': [incoming, 'Accept']})[1]['result']
+    assert judged['patterns'][0]['status'] == 'Accepted'
+    status, answer = app.post('/api/universal/canvas-op', {'op': 'review_community_pattern', 'args': [incoming, 'Reject']})
+    assert status == 400 and 'final judgement' in answer['error']

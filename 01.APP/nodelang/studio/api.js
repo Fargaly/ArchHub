@@ -1241,6 +1241,11 @@ for(const operationName of ['createCommunityGroup','issueCommunityInvite','revok
  'setWatcherDimension','setWatcherOptions','removeDimension']) {
  api[operationName]=(...args)=>restCommand(operationName,args);
 }
+// The Community owner answers its commands with its current records; show them at once.
+for(const operationName of ['createCommunityGroup','issueCommunityInvite','revokeCommunityInvite','verifyCommunityInvite','joinCommunityGroup',
+ 'setMarketplace','installMarketplaceItem','proposeMarketplaceListing','setProjectCharge','proposeProjectCharge']) {
+ api[operationName]=async(...args)=>{const result=await restCommand(operationName,args);if(result?.community)publish({community:{...state.community,...result.community}});return result;};
+}
 
 
 api.getDecisionState=id=>state.graph.nodes.find(node=>node.id===id)?.output?.decision??null;

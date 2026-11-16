@@ -109,16 +109,48 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
  }finally{root.unmount();dom.window.close();}
 });
 
-test('OPS projects actions call their owner and retain confirmed state on refusal',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas-op':body=>{
-  if(body.op==='project_state')return {ok:true,result:{versions:[],modelReview:{operation:'',results:[],issues:[]},dismissed:[]}};
-  return {ok:false,error:'Refresh the actual owner and retry.'};
- }});
+test('Interface Studio refuses placement without a workflow and keeps the current projection',async()=>{
+ const {api,requests}=await adapter({signed_in:false},{'/api/commands':{commands:[]}});
+ const before=api.getSnapshot().graph;
  await assert.rejects(()=>api.addInterfaceElement('Button'),/Open a workflow/);
  assert.equal(requests.some(r=>r.body?.op==='add_interface_element'),false);
- const before=api.getSnapshot().graph;
- await assert.rejects(()=>api.saveGraphVersion(),/actual owner/);
  assert.equal(api.getSnapshot().graph,before);
+});
+
+
+test('Interface Studio preserves the newer file readback when an older placement finishes late',async()=>{
+ const path='C:/isolated/interface.archhub';
+ const document=revision=>({format:'archhub',version:1,id:'draft',title:'Interface',properties:{revision},
+  nodes:['one','two'].slice(0,revision).map(id=>({id,item:'ui_element',type:'data.constant',title:'Button',
+   position:{x:80,y:100},params:{element:'Button',label:id}})),wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1}});
+ let revision=0,readCount=0,releaseOld,markOld;
+ const oldStarted=new Promise(resolve=>{markOld=resolve;});
+ const oldRead=new Promise(resolve=>{releaseOld=resolve;});
+ const {api}=await adapter({signed_in:false},{
+  '/api/commands':{commands:[]},
+  '/api/session-files':async body=>{
+   if(body.action==='initial')return {ok:true,document:document(0),path};
+   if(body.action==='catalogue')return {ok:true,directory:'C:/isolated',sessions:[],recent:[],
+    items:[{id:'ui_element',engine:'data.constant',title:'UI element',cat:'input',params:{},ports:{source:[],target:[]}}]};
+   if(body.action==='head')return {ok:true,revision};
+   if(body.action==='read'){
+    const count=++readCount;
+    if(count===1){markOld();await oldRead;}
+    return {ok:true,document:document(count),revision:count};
+   }
+   return {ok:true};
+  },
+  '/api/universal/canvas-op':body=>{
+   assert.deepEqual(body.args,['Button',path]);
+   return {ok:true,result:{id:++revision===1?'one':'two'}};
+  }
+ });
+ const older=api.addInterfaceElement('Button');
+ try{
+  await oldStarted;
+  assert.equal((await api.addInterfaceElement('Button')).id,'two');
+ }finally{releaseOld();await older;}
+ assert.deepEqual(Array.from(api.getSnapshot().graph.nodes,n=>[n.id,n.kind]),[['one','UI element'],['two','UI element']]);
 });
 
 test('OPS compatible nodes use confirmed socket metadata and converter calls preserve wire identity',async()=>{

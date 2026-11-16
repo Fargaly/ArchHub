@@ -347,7 +347,7 @@ def test_interface_element_persists_in_current_workflow(app, tmp_path):
     assert add('Button')[1]['ok'] is False
     assert path.read_bytes() == baseline
 
-    files._current(document['id'], path)
+    files._current(document['id'], str(path))
     assert add('Unsupported')[1]['ok'] is False
     assert path.read_bytes() == baseline
 

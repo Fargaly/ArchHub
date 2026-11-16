@@ -1524,6 +1524,15 @@ def _validate_send(body):
     return target, text, control, reply, retry_key
 
 
+def _task_refs(history, message_id):
+    """The Workshop task ids a message is bound to (its refs that name a task row)."""
+    held = history._db.execute("SELECT refs FROM messages WHERE conversation_id=? AND id=?", (ROOM, message_id)).fetchone()
+    if not held or not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
+        return ()
+    return tuple(ref for ref in json.loads(held[0] or "[]") if isinstance(ref, str)
+                 and history._db.execute("SELECT 1 FROM workshop_tasks WHERE id=?", (ref,)).fetchone())
+
+
 def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_live=False):
     target, text, control, reply, retry_key = _validate_send(body)
     retry_key = sha256((identity["sender_key"] + ":" + retry_key).encode()).hexdigest()
@@ -1561,6 +1570,8 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
             if found:
                 recipients.extend(found)
                 resolved.add(part)
+    if reply and not queued:
+        queued = _task_refs(history, reply)   # a reply stays in the session thread its question was asked in
     with history._transaction(write=True):
         routing = {"recipients":[{key: row.get(key) for key in
             ("session", "agent", "runtime", "native_session_id")} for row in recipients],

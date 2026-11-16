@@ -298,8 +298,9 @@ def live_agents(with_status=False):
     return agents
 
 
-def send_as_founder(text, handles, *, reply_to=None):
-    """The composer's @mention path: one Workshop message from Ahmed, pushed live to each mentioned agent."""
+def send_as_founder(text, handles, *, reply_to=None, task=None):
+    """The composer's @mention path: one Workshop message from Ahmed, pushed live to each mentioned agent.
+    Sent from a session's thread, the message is bound to that task (refs), so it and the replies show there."""
     from .workshop_mailbox import application_history, _send
     agents = live_agents()
     chosen = agents if 'everyone' in handles else [a for a in agents if a['handle'] in handles]
@@ -311,20 +312,21 @@ def send_as_founder(text, handles, *, reply_to=None):
     target = 'Everyone' if 'everyone' in handles else ', '.join(a['agent'] for a in chosen)
     with application_history() as history:
         sent = _send(history, {'to': target, 'text': text, **({'reply_to': reply_to} if reply_to else {})}, identity,
-                     sender_binding={'session': 'founder'})
+                     queued=(task,) if task else (), sender_binding={'session': 'founder'})
         rows = deliver(history, sent['message_id'], [{'session': a['session'], 'agent': a['name'], 'runtime': a['app'],
                                                        'native_session_id': a['native_session_id']} for a in chosen],
                        FOUNDER, text, permission_mode='bypass')
     return {'message_id': sent['message_id'], 'deliveries': rows, 'unknown': unknown}
 
 
-def record_answer(question, answer, model):
-    """A plain composer question and the model's answer join the one Workshop history."""
+def record_answer(question, answer, model, task=None):
+    """A plain composer question and the model's answer join the one Workshop history (that task's thread if given)."""
     from .workshop_mailbox import application_history
     from .workshop_mailbox import ROOM, CATEGORY
+    refs = (task,) if task else ()
     with application_history() as history:
         with history._transaction(write=True):
-            asked = history.append(ROOM, author=FOUNDER, content='To Router:\n' + question, category=CATEGORY,
+            asked = history.append(ROOM, author=FOUNDER, content='To Router:\n' + question, category=CATEGORY, refs=refs,
                                    recipients=(), reply_principal=FOUNDER, idempotency_key='composer:' + os.urandom(8).hex())
-            history.append(ROOM, author=model, content='To Ahmed:\n' + answer, category=CATEGORY, recipients=(),
+            history.append(ROOM, author=model, content='To Ahmed:\n' + answer, category=CATEGORY, recipients=(), refs=refs,
                            reply_to=asked['id'], reply_principal=model, idempotency_key='composer:' + os.urandom(8).hex())

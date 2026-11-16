@@ -555,7 +555,6 @@ class NoGraphServer:
         handler.send_json(200, {'ok': True, 'token': self.browser_session_token, 'csrf': self.browser_csrf_token})
 
     def _router_chat(self, handler):
-        from .model_router import composer_chat
         body = handler.body()
         if self.is_halted():
             raise Refused('Stopped by you. Press Resume to continue.', 403)
@@ -574,23 +573,7 @@ class NoGraphServer:
             handler.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode('utf-8'))
             handler.wfile.flush()
         try:
-            import re
-            prompt = str(body.get('prompt') or '')
-            handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
-            if handles:
-                # The composer is the router: @agents go live into those sessions, no mention goes to a model.
-                result = _route_to_agents(prompt, handles, body.get('reply_to') or None)
-            else:
-                if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
-                    result = _ask_baboom(prompt)
-                else:
-                    result = composer_chat(body, on_delta=lambda text: event({'delta': text}))
-                try:
-                    from .workshop_live import record_answer
-                    record_answer(prompt, result['answer'], result['model'])
-                except Exception as error:  # noqa: BLE001 - the answer stands even if history is busy
-                    result['history_error'] = str(error)
-            event({'result': result})
+            event({'result': _chat(body, lambda text: event({'delta': text}))})
         except Exception as error:  # noqa: BLE001 - the composer shows the refusal text
             message = str(error) or 'The router is unavailable. Check provider availability.'
             if streaming:
@@ -650,13 +633,41 @@ def _ask_baboom(prompt):
             'request_id': record['id'], 'applied': [], 'steps': result.get('steps', [])}
 
 
-def _route_to_agents(prompt, handles, reply_to=None):
+def _chat(body, on_delta):
+    """One composer turn. @agents go live into those sessions; no mention goes to BABOOM or the model.
+    With a task, the question, the answer and every later reply are that task's thread."""
+    import re
+    from .model_router import composer_chat
+    prompt = str(body.get('prompt') or '')
+    task = body.get('task') or None
+    if task is not None:
+        from .workshop_mailbox import application_history
+        from .workshop_tasks import get
+        with application_history() as history:
+            if type(task) is not str or get(history, task) is None:
+                raise ValueError('This session is no longer in the Workshop. Reopen it from Home.')
+    handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
+    if handles:
+        return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task)
+    if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
+        result = _ask_baboom(prompt)
+    else:
+        result = composer_chat(body, on_delta=on_delta)
+    try:
+        from .workshop_live import record_answer
+        record_answer(prompt, result['answer'], result['model'], task=task)
+    except Exception as error:  # noqa: BLE001 - the answer stands even if history is busy
+        result['history_error'] = str(error)
+    return result
+
+
+def _route_to_agents(prompt, handles, reply_to=None, task=None):
     """@mentions: one Workshop message from Ahmed, pushed live; a profiling row per recipient."""
     import uuid
     from .model_router import request_profiles
     from .workshop_live import send_as_founder
     started = time.monotonic()
-    sent = send_as_founder(prompt, handles, reply_to=reply_to)
+    sent = send_as_founder(prompt, handles, reply_to=reply_to, task=task)
     for row in sent['deliveries']:
         request_profiles({'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': str(row.get('agent')), 'model': 'agent session',
                           'provider': 'workshop:' + str(row.get('channel')), 'tokens': None, 'ms': row.get('ms') or 0,

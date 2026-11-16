@@ -9087,6 +9087,7 @@
         "01.APP/nodelang/native_agent_mcp.py",
         "01.APP/nodelang/workshop_api.py",
         "01.APP/nodelang/session_link/",
+        "02.TESTS/tests_replica/test_workshop_retention_lock.py",
         "02.TESTS/tests_replica/test_ng_workshop.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]

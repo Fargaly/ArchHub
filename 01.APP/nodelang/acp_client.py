@@ -39,7 +39,7 @@ ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 
 AGENTS = {
     'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
-        '--include-partial-messages', '--permission-prompt-tool', 'stdio')},
+        '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual')},
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
     'opencode': {'commands': ('opencode',), 'args': ('acp',)},
@@ -152,9 +152,10 @@ class _Codex:
             self.sent[ident] = method
             self.wire({'id': ident, 'method': 'initialize',
                        'params': {'clientInfo': {'name': 'archhub', 'title': 'ArchHub', 'version': '1'}}})
-        elif method == 'session/new':   # its approval policy and sandbox stay as the user's own Codex config sets them
+        elif method == 'session/new':   # never the user's ambient Codex config: it asks, it may only read, a person decides
             self.sent[ident] = method
-            self.wire({'id': ident, 'method': 'thread/start', 'params': {'cwd': params.get('cwd')}})
+            self.wire({'id': ident, 'method': 'thread/start', 'params': {
+                'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only', 'approvalsReviewer': 'user'}})
         elif method == 'session/prompt':
             self.sent[ident], self.prompt = method, ident
             self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [
@@ -358,21 +359,49 @@ def agent_for(handle):
     return None
 
 
+# A start command set in Settings is checked when it is set (settings_owner) and again when it is started.
+_SHELL = re.compile(r'[&|<>^%!"\r\n]')   # cmd.exe would read these in a .cmd launch line
+_UNASKED = re.compile(r'(?i)danger|bypass|skip[-_]?perm|yolo|full[-_]?auto|auto[-_]?(approve|accept|edit|review)|approve[-_]?for'
+                      r'|always[-_]?(allow|approve)|allow[-_]?all|trust[-_]?all|no[-_]?(confirm|prompt|ask)|approval|permission'
+                      r'|sandbox|^-y$|^--yes$')
+_UNASKED_BY_AGENT = {'claude': ('acceptedits', 'dontask', 'allowedtools', 'allowed-tools', '--settings'),
+                     'codex': ('-c', '--config', '-s', '-p', '--profile', 'never'),
+                     'gemini': ('--approval-mode', 'auto_edit'), 'opencode': (), 'goose': ()}
+
+
+def check_start_command(agent, command, args):
+    """Refuses a start command that carries a cmd.exe character or a flag that lets the agent act without asking."""
+    words = [str(command), *map(str, args or ())]
+    if any(_SHELL.search(word) for word in words):
+        raise ValueError('An agent start command cannot contain & | < > ^ % ! " or a line break.')
+    for word in words[1:]:
+        low = word.casefold()
+        if _UNASKED.search(low) or any(low == flag or (len(flag) > 3 and flag in low) for flag in _UNASKED_BY_AGENT.get(agent, ())):
+            raise ValueError("An agent start command cannot change how %s asks for permission (%s)." % (label(agent), word[:60]))
+
+
+def child_environment():
+    """The boundary: the agent is the user's own CLI, so it gets the user's environment (its login, PATH, proxy),
+    minus what ArchHub put there for itself: every ARCHHUB_* name (state folders, the cloud token, test markers)
+    and the launcher's two Qt switches. Nothing is added."""
+    return {name: value for name, value in os.environ.items()
+            if not name.upper().startswith('ARCHHUB_') and name.upper() not in ('QTWEBENGINE_CHROMIUM_FLAGS', 'QT_OPENGL')}
+
+
 def start_command(agent):
     """(argv, fallback argv or None, the dialect it speaks or None) for an installed agent; refuses (names it) when it is not installed."""
     row = dict(AGENTS[agent])
-    try:
-        from .settings_owner import read_router_settings
-        chosen = (read_router_settings()['agents'].get(agent) or {}).get('acp')
-    except ValueError:
-        chosen = None
+    from .settings_owner import read_router_settings
+    chosen = (read_router_settings()['agents'].get(agent) or {}).get('acp')   # unreadable or refused settings start nothing
     if chosen:
+        check_start_command(agent, chosen['command'], chosen.get('args'))
         row = {'commands': (chosen['command'],), 'args': tuple(chosen.get('args') or ())}
     found = next((path for path in map(shutil.which, row['commands']) if path), None)
     if found is None:
         raise ValueError('%s is not installed on this PC (looked for %s). Install it, then send again.'
                          % (label(agent), ' or '.join(row['commands'])))
-    # npm installs agents as .cmd shims: run them through cmd /C like ACP UI; args come from this table only.
+    # npm installs agents as .cmd shims: run them through cmd /C like ACP UI. The line is an argv list (quoted by
+    # subprocess), and its words come from the table above or passed check_start_command: none has a cmd.exe character.
     head = [os.environ.get('COMSPEC') or 'cmd.exe', '/C', found] if found.lower().endswith(('.cmd', '.bat')) else [found]
     fallback = row.get('fallback_args')
     return head + list(row['args']), (head + list(fallback)) if fallback else None, row.get('speaks')
@@ -422,39 +451,52 @@ class AgentSession:
         self.transport, self.job, self.session_id = None, None, None
         self.lock = threading.Lock()
 
-    def start(self):
+    def start(self, stopped=lambda: False):
         argv, fallback, self.speaks = start_command(self.agent)
         try:
-            self._open(argv)
+            self._open(argv, stopped)
         except AcpRefused:
-            if fallback is None:
+            if fallback is None or stopped():
                 raise
-            self._open(fallback)   # Gemini: --acp on newer builds, --experimental-acp on older ones
+            self._open(fallback, stopped)   # Gemini: --acp on newer builds, --experimental-acp on older ones
         return self
 
-    def _open(self, command):
+    def _open(self, command, stopped):
         try:
-            self._connect(command)
+            self._connect(command, stopped)
         except BaseException:
             self.close()
             raise
 
-    def _connect(self, command):
+    def _connect(self, command, stopped):
         Path(self.cwd).mkdir(parents=True, exist_ok=True)
+        windows = os.name == 'nt'
+        # Started suspended, put in its job, then resumed: nothing it starts can be outside the job that ends it.
         process = subprocess.Popen(command, cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        self.transport = AcpTransport(process, label=self.label, speaks=self.speaks)
-        from .workshop_transport import _OwnedProcessJob
-        self.job = _OwnedProcessJob(process)   # the agent closes with the app
+                                   stderr=subprocess.DEVNULL, env=child_environment(),
+                                   creationflags=(subprocess.CREATE_NO_WINDOW | 0x4) if windows else 0)   # 0x4 CREATE_SUSPENDED
+        try:
+            from .workshop_transport import _OwnedProcessJob
+            self.job = _OwnedProcessJob(process)   # the agent and everything under it close with the session and the app
+            if windows:
+                import ctypes
+                resume = ctypes.WinDLL('ntdll').NtResumeProcess
+                resume.argtypes = [ctypes.c_void_p]
+                if resume(int(process._handle)):
+                    raise AcpRefused('%s could not be started.' % self.label)
+            self.transport = AcpTransport(process, label=self.label, speaks=self.speaks)
+        except BaseException:
+            process.kill()   # no orphan on any way out; _open then closes the job
+            raise
         deadline = time.monotonic() + ACP_NODE['params']['start_seconds']
         init = self.transport.request('initialize', {'protocolVersion': 1,
             'clientInfo': {'name': 'ArchHub', 'version': '1'},
             'clientCapabilities': {'fs': {'readTextFile': False, 'writeTextFile': False}, 'terminal': False}},
-            deadline=deadline)
+            deadline=deadline, stopped=stopped)
         if init.get('protocolVersion') != 1:
             raise AcpRefused('%s speaks a different ACP version.' % self.label)
         # shortcut: no mcpServers are handed over; the agent keeps the ArchHub connector it is already registered with.
-        session = self.transport.request('session/new', {'cwd': self.cwd, 'mcpServers': []}, deadline=deadline)
+        session = self.transport.request('session/new', {'cwd': self.cwd, 'mcpServers': []}, deadline=deadline, stopped=stopped)
         if not isinstance(session.get('sessionId'), str) or not session['sessionId']:
             raise AcpRefused('%s did not open a session.' % self.label)
         self.session_id = session['sessionId']
@@ -527,7 +569,7 @@ def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s
         else:
             fresh = False
     if fresh:
-        current.start()
+        current.start(stopped)
     return {**current.ask(prompt, on_delta=on_delta, on_step=on_step, stopped=stopped), 'label': current.label}
 
 

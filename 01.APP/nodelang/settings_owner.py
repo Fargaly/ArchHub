@@ -93,6 +93,9 @@ def _checked_router_settings(values):
                 or not 0 < len(acp['command']) <= 260 or type(acp.get('args', [])) is not list or len(acp.get('args', [])) > 16
                 or any(type(item) is not str or len(item) > 200 for item in acp.get('args', []))):
             raise ValueError('An agent start command is a command and a short list of arguments.')
+        if acp is not None:
+            from .acp_client import check_start_command
+            check_start_command(agent, acp['command'], acp.get('args'))   # no shell character, no permission-skipping flag
         if 'questionsPerDay' in profile and (type(profile['questionsPerDay']) is not int or profile['questionsPerDay'] < 0):
             raise ValueError('Questions per day must be a nonnegative integer.')
         autonomy = profile.get('autonomy', {})

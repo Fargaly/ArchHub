@@ -57,12 +57,18 @@ for line in sys.stdin:
 # Claude Code and Codex are started as the CLIs already installed, in the structured mode each one already has;
 # these fakes speak those two modes (claude -p stream-json; codex app-server), not ACP.
 CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
-               '--include-partial-messages', '--permission-prompt-tool', 'stdio']
+               '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual']
 
 FAKE_CLAUDE = r"""
 import json, os, sys
 log = open(sys.argv[1], "a", encoding="utf-8")
-log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid()}) + "\n"); log.flush()
+log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
+    "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
+def grandchild():
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log.write(json.dumps({"grandchild": child.pid}) + "\n"); log.flush()
 def send(value):
     sys.stdout.write(json.dumps(value) + "\n"); sys.stdout.flush()
 def delta(text):
@@ -81,6 +87,7 @@ for line in sys.stdin:
         continue
     text = message["message"]["content"][0]["text"]
     if "hang" in text:
+        grandchild()
         delta("Thinking")
         stubborn = True
         continue
@@ -111,7 +118,13 @@ if stubborn:
 FAKE_CODEX = r"""
 import json, os, sys
 log = open(sys.argv[1], "a", encoding="utf-8")
-log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid()}) + "\n"); log.flush()
+log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
+    "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
+def grandchild():
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log.write(json.dumps({"grandchild": child.pid}) + "\n"); log.flush()
 def send(value):
     sys.stdout.write(json.dumps(value) + "\n"); sys.stdout.flush()
 def note(method, **params):
@@ -127,12 +140,14 @@ for line in sys.stdin:
     elif method == "initialized":
         ready = True
     elif method == "thread/start":
-        send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") else
+        asks = (params.get("approvalPolicy"), params.get("sandbox"), params.get("approvalsReviewer")) == ("untrusted", "read-only", "user")
+        send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") and asks else
              {"id": ident, "error": {"code": -32600, "message": "Not initialized"}})
     elif method == "turn/start":
         text = params["input"][0]["text"]
         send({"id": ident, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
         if "hang" in text:
+            grandchild()
             note("item/agentMessage/delta", itemId="m1", delta="Thinking")
             stubborn = True
             continue
@@ -175,8 +190,10 @@ def installed(tmp_path, monkeypatch):
     """Put fake agents on PATH under their real start commands; returns the argv log."""
     bin_dir, log = tmp_path / 'bin', tmp_path / 'argv.log'
     bin_dir.mkdir()
-    scripts = {'claude': 'fake_claude.py', 'codex': 'fake_codex.py'}   # these two speak their own CLI mode
-    for name, source in (('fake_acp.py', FAKE_AGENT), ('fake_claude.py', FAKE_CLAUDE), ('fake_codex.py', FAKE_CODEX)):
+    scripts = {'claude': 'fake_claude.py', 'codex': 'fake_codex.py', 'gemini': 'fake_mute.py'}   # their own CLI mode; one never answers
+    mute = 'import sys\nfor line in sys.stdin:\n    pass\n'
+    for name, source in (('fake_acp.py', FAKE_AGENT), ('fake_claude.py', FAKE_CLAUDE), ('fake_codex.py', FAKE_CODEX),
+                         ('fake_mute.py', mute)):
         (bin_dir / name).write_text(source, encoding='utf-8')
 
     def install(command):
@@ -279,11 +296,79 @@ def test_stop_ends_the_agent_process(installed, agent):
         acp_client.ask(agent, 'hang on this one', on_delta=lambda text: (seen.append(text), halted.set()),
                        stopped=halted.is_set)
     assert seen == ['Thinking']                                          # it was mid-answer when Stop was pressed
+    lines = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    pid, grandchild = lines[1]['pid'], lines[2]['grandchild']
+    deadline = time.monotonic() + 10
+    while (_alive(pid) or _alive(grandchild)) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)                                               # the CLI itself, not only its .cmd shim
+    assert not _alive(grandchild)                                        # and whatever the CLI started
+
+
+def test_a_start_that_never_answers_ends_on_stop_not_on_its_timeout(installed):
+    from nodelang import acp_client
+    install, _log = installed
+    install('gemini')
+    began = time.monotonic()
+    with pytest.raises(acp_client.AcpRefused, match='Stopped by you'):
+        acp_client.ask('gemini', 'how many sheets?', stopped=lambda: time.monotonic() - began > 1)
+    assert time.monotonic() - began < acp_client.ACP_NODE['params']['start_seconds'] / 2
+
+
+@pytest.mark.parametrize('ending', ['halt_all', 'close'])
+def test_stop_everything_and_closing_the_app_end_every_agent(installed, tmp_path, ending):
+    import types
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('codex')
+    assert acp_client.ask('codex', 'how many sheets?')['text'] == 'There are 12 sheets.'
     pid = json.loads(log.read_text(encoding='utf-8').splitlines()[1])['pid']
+    assert _alive(pid)                                                   # the session is kept for the next message
+    quiet = types.SimpleNamespace(shutdown=lambda: None, server_close=lambda: None)
+    server = types.SimpleNamespace(_halted=threading.Event(), triggers=None, cloud_relay=None, httpd=quiet, state_dir=tmp_path)
+    getattr(nograph_server.NoGraphServer, ending)(server)
     deadline = time.monotonic() + 10
     while _alive(pid) and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert not _alive(pid)                                               # the CLI itself, not only its .cmd shim
+    assert not _alive(pid) and not acp_client._SESSIONS
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+def test_the_agent_gets_the_users_environment_without_archhubs_own_variables(installed, monkeypatch, agent):
+    from nodelang import acp_client
+    install, log = installed
+    install(agent)
+    monkeypatch.setenv('ARCHHUB_CLOUD_TOKEN', 'not-for-the-agent')
+    monkeypatch.setenv('QTWEBENGINE_CHROMIUM_FLAGS', '--disable-gpu')
+    assert acp_client.ask(agent, 'how many sheets?')['text'] == 'There are 12 sheets.'
+    seen = json.loads(log.read_text(encoding='utf-8').splitlines()[1])
+    # the test Python's own start-up stamps ARCHHUB_TEST_* markers into every Python it starts, the fake included
+    assert [name for name in seen['archhub'] if not name.startswith('ARCHHUB_TEST_')] == [] and seen['user'] is True
+
+
+@pytest.mark.parametrize('agent, command, args', [
+    ('claude', 'claude', ['--dangerously-skip-permissions']), ('claude', 'claude', ['--permission-mode', 'bypassPermissions']),
+    ('claude', 'claude', ['--permission-mode=acceptEdits']), ('codex', 'codex', ['--dangerously-bypass-approvals-and-sandbox']),
+    ('codex', 'codex', ['--full-auto']), ('codex', 'codex', ['-s', 'danger-full-access']), ('codex', 'codex', ['-c', 'approval_policy=never']),
+    ('gemini', 'gemini', ['--acp', '--yolo']), ('gemini', 'gemini', ['--acp', '-y']), ('opencode', 'opencode', ['acp', '--yes']),
+    ('opencode', 'opencode', ['acp', '& calc']), ('opencode', 'open"code', ['acp']), ('opencode', 'opencode', ['acp', '%COMSPEC%']),
+    ('opencode', 'opencode', ['acp', 'a|b']), ('opencode', 'opencode', ['acp', 'a\nb']), ('opencode', 'opencode', ['acp', '>out.txt'])])
+def test_a_start_command_that_skips_permissions_or_carries_shell_characters_is_refused_when_set_and_when_started(
+        installed, agent, command, args):
+    from nodelang import acp_client, nograph_server
+    from nodelang.settings_owner import read_router_settings, router_settings_path
+    install, log = installed
+    for name in ('claude', 'codex', 'gemini', 'opencode'):
+        install(name)
+    with pytest.raises(ValueError, match='start command'):
+        acp_client.check_start_command(agent, command, args)
+    router_settings_path().parent.mkdir(parents=True, exist_ok=True)
+    router_settings_path().write_text(json.dumps({'agents': {agent: {'acp': {'command': command, 'args': args}}}}), encoding='utf-8')
+    with pytest.raises(ValueError, match='start command'):                # set time: the settings owner refuses the file
+        read_router_settings()
+    with pytest.raises(ValueError, match='start command'):                # launch time: nothing is started in its place
+        nograph_server._chat({'prompt': '@%s how many sheets?' % agent}, lambda text: None)
+    assert not log.exists()
 
 
 @pytest.mark.parametrize('quiet, states', [(10, ['starting…', 'answering']), (0, ['starting…', 'not responding', 'answering'])])
@@ -306,6 +391,9 @@ def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permi
     for agent in ('claude', 'codex'):
         row = acp_client.AGENTS[agent]
         assert row['commands'] == (agent,)                               # no claude-agent-acp / codex-acp dependency
+        with pytest.raises(ValueError, match='start command'):           # the table itself would not pass a skipping flag
+            acp_client.check_start_command(agent, agent, list(row['args']) + ['--dangerously-skip-permissions'])
+        acp_client.check_start_command('opencode', 'my-opencode', ['acp', '--quiet'])   # an ordinary override is fine
         assert not [arg for arg in row['args'] if 'skip' in arg or 'bypass' in arg or 'dangerous' in arg]
 
 

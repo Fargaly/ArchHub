@@ -257,6 +257,8 @@ class NoGraphServer:
             return self.cloud_relay
 
     def close(self):
+        from .acp_client import close_all
+        close_all()   # no agent this app started outlives it
         if getattr(self, 'triggers', None) is not None:
             self.triggers.close()
         relay, self.cloud_relay = self.cloud_relay, None
@@ -286,6 +288,8 @@ class NoGraphServer:
 
     def halt_all(self):
         self._halted.set()
+        from .acp_client import close_all
+        close_all()   # Stop everything ends every agent this app started; the next send starts one again
 
     def resume_all(self):
         self._halted.clear()

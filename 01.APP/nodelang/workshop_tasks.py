@@ -20,8 +20,7 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
           "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
           "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT) STRICT")
-TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2,
-                                                  'done_check_seconds': 300}}
+TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
 
@@ -1406,27 +1405,15 @@ def _file_state(row, state):
 
 
 def _check_passes(document, check, row):
-    """Run the done check: a command in the session's registered workspace, or one check node on the canvas."""
-    import subprocess
+    """Run the done check: one check node on the canvas. A command held in a session file is never executed."""
     if 'node' in check:
         from .enforce import guard_effect
         from .session_files import run_document
         ran = run_document(document, invoke=guard_effect, roots=[check['node']])
         result = ran['results'].get(check['node']) or {}
         return result.get('status') == 'Done', str(result.get('error') or result.get('status') or 'did not run')
-    from .session_files import _project_of, _registered_roots
-    roots = _registered_roots()
-    root = (roots.get(_project_of(document.get('properties') or {}, roots, row)['id']) or {}).get('path')
-    if not root:
-        return False, 'A done check command runs only in a registered workspace project.'
-    try:
-        done = subprocess.run(check['command'], shell=True, cwd=root, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=TASKS_NODE['params']['done_check_seconds'],
-                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    except subprocess.TimeoutExpired:
-        return False, 'The check ran longer than %s seconds.' % TASKS_NODE['params']['done_check_seconds']
-    tail = ((done.stderr or '') + (done.stdout or '')).strip().splitlines()[-3:]
-    return done.returncode == 0, ' '.join(tail)[:400] or 'exit code %d' % done.returncode
+    # A shared .archhub file can carry any command; completing a task is not an Approve card.
+    return False, 'A command check cannot run without approval; use a node check.'
 
 
 def _done_check(task, row):

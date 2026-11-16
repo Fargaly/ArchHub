@@ -17,7 +17,7 @@ One session file is one piece of work. These optional `properties` keys hold the
 | `project` | registered workspace `root_id`; the label is read live from `settings/workspaces.json` | `taskContext.workspace`, else the task's project label mapped to its root, else none | `session_files.set_session_fields` |
 | `state` | `open`, `done` or `archived`; finished leaves Home unless pinned | the linked task row (archived, done), else `open` | task completion, archive and board moves write it |
 | `pinned` | keeps the session on Home | legacy `taskContext.homePinned`, else false | `set_session_fields`, `workshop_tasks.update_session(homePinned)` |
-| `doneCheck` | `{command}` (runs in the project's registered workspace) or `{node}` (a check node on this canvas), plus `tries`, `blocked`, `lastError` | none: Done on the agent's word | `workshop_tasks.complete()` runs it; a failure is a failed step, three failures block Done |
+| `doneCheck` | `{command}` (old files still open; a command is never executed, the check reports not passed) or `{node}` (a check node on this canvas), plus `tries`, `blocked`, `lastError` | none: Done on the agent's word | `workshop_tasks.complete()` runs it; a failure is a failed step, three failures block Done |
 | `settings` | per-session values keyed by Settings row id, resolved above the global value | none: every value global | `set_session_fields`, `resolve_setting` |
 | `inputLinks` | `[{source:{path,id}, output, input, rule?}]`: path relative to the workspace root plus the source document id (D-038); no value, state or hash | none | link state (waiting, ready, failed, source missing) is read live; a cycle is refused |
 

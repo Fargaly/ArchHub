@@ -118,11 +118,36 @@ def test_done_check_fails_three_times_then_blocks_and_a_pass_finishes(profile):
         step = next(n for n in read_document(path)['nodes'] if n['id'] == 'done-check')
         assert step['result']['status'] == 'Error'
         assert workshop_tasks.get(history, task)['status'] != 'done'
-        set_session_fields(path, {'doneCheck': {'command': 'exit 0'}})
+        from nodelang.session_files import write_document
+        document = read_document(path)
+        document['nodes'].append({'id': 'ok', 'item': 'n_text', 'type': 'data.constant', 'title': 'Text',
+                                  'params': {'value': 'ok'}, 'position': {'x': 900, 'y': 0}})
+        write_document(path, document)
+        set_session_fields(path, {'doneCheck': {'node': 'ok'}})
         workshop_tasks.claim(history, task, 'agent-a', 'Agent A')
         assert workshop_tasks.complete(history, task, 'agent-a', 'finished')
         assert workshop_tasks.get(history, task)['status'] == 'done'
     assert model(path)['state'] == 'done' and model(path)['doneCheck']['tries'] == 0
+
+
+def test_done_check_command_from_a_session_file_never_runs(profile):
+    """A shared .archhub file can carry any command: completing a task must not execute it."""
+    import sys
+    workshop_tasks, application_history = tasks()
+    from nodelang.session_files import set_session_fields
+    marker = profile / 'ran.txt'
+    with application_history() as history:
+        view = workshop_tasks.create_session(history, 'Shared work', select=False, workspace='tower')
+        task, path = view['taskId'], view['path']
+        set_session_fields(path, {'doneCheck': {
+            'command': '"%s" -c "open(r\'%s\', \'w\').close()"' % (sys.executable, marker)}})
+        workshop_tasks.claim(history, task, 'agent-a', 'Agent A')
+        with pytest.raises(workshop_tasks.TaskCheckFailed):
+            workshop_tasks.complete(history, task, 'agent-a', 'finished')
+        assert not marker.exists()
+        check = model(path)['doneCheck']
+        assert check['tries'] == 1 and 'cannot run without approval' in check['lastError']
+        assert workshop_tasks.get(history, task)['status'] != 'done'
 
 
 def test_no_done_check_keeps_todays_completion(profile):

@@ -11295,6 +11295,25 @@
         "02.TESTS/tests_replica/test_chat_works.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DESIGNV51": {
+      "source": "Founder 2026-11-13 on the installed app: apply the design (archhub-directions, frozen v52 then v53) all at once, in one release. Founder 2026-11-16: 'we are not redoing the work again'; Community, Cloud, Website, Profiles must not look removed, 'where is Settings, where is Social media'. Package 1 of 4 (Shell): tokens (canvas colour, node radius) in one place, header status, bell dropdown, tray and ArchHub menus with All pages listing every working page (Cockpit never), BABOOM parked in the rail, account popover, one composer size and style on Home and Canvas only, top-centre notice. Commit only on lane/design-v51; no push, install, release or live profile access.",
+      "scope": [
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/companion.jsx",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "01.APP/nodelang/studio/design-tokens.json",
+        "01.APP/nodelang/studio/style.css",
+        "01.APP/nodelang/studio/tokens.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_js/checkpoint_browser.cjs",
+        "02.TESTS/tests_js/settingsmatch.test.cjs",
+        "02.TESTS/tests_js/studio_foundations_tokens.test.cjs",
+        "02.TESTS/tests_js/studio_shell_v51.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

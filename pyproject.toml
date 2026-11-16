@@ -5,3 +5,5 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 pythonpath = ["01.APP", "02.TESTS", "03.TOOLS", "06.CLOUD"]
+# Windows fd capture closes the native stdin handle inherited by later children.
+addopts = "--capture=sys"

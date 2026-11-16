@@ -421,3 +421,95 @@ def test_unconfirmed_file_requires_explicit_recovery(tmp_path, monkeypatch, deci
         assert ran['succeeded']
     assert target.read_bytes() == b'one\r\ntwo'
     assert session_files.read_document(path)['nodes'][0]['result']['status'] == 'Done'
+
+
+def test_retry_from_failed_node_reuses_upstream(running, monkeypatch):
+    from nodelang import canvas_documents, session_files
+    path, counts, run = running
+    effect = canvas_documents.run_thing
+    failing = {'three': True}
+    def flaky(engine, params, feeds):
+        if failing.get(params.get('agent')):
+            raise ValueError('Third effect refused once')
+        return effect(engine, params, feeds)
+    monkeypatch.setattr(canvas_documents, 'run_thing', flaky)
+    approve(run())
+    held = session_files.read_document(path)
+    assert held['nodes'][2]['result']['status'] == 'Error'
+    assert counts == {'one': 1, 'two': 1, 'three': 0}
+    failing['three'] = False
+    retried = run()
+    assert retried['succeeded']
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    assert retried['run']['id'] == held['properties']['canvasRun']['id']
+
+
+def test_one_engine_for_run_button_agent_tool_and_trigger(running, monkeypatch):
+    import asyncio
+    from nodelang import session_files
+    from nodelang.native_agent_mcp import build_server
+    from nodelang.canvas_triggers import TriggerService
+    path, counts, run = running
+    callers = []
+    engine = session_files.run_document
+    def spy(*args, **kwargs):
+        callers.append(sys._getframe(1).f_code.co_filename.rsplit(os.sep, 1)[-1])
+        return engine(*args, **kwargs)
+    monkeypatch.setattr(session_files, 'run_document', spy)
+    server = build_server()
+    paused = asyncio.run(server.call_tool('canvas.run', {'path': str(path)}))
+    assert counts == {'one': 1, 'two': 0, 'three': 0}
+    waiting = session_files.read_document(path)['nodes'][1]['result']
+    assert waiting['status'] == 'Waiting for approval'
+    button = run()
+    assert button['approvalId'] == waiting['output']['approvalId']
+    approve(button)
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    asyncio.run(server.call_tool('canvas.run', {'path': str(path)}))
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    trigger = path.parent / 'triggered.archhub'
+    items = {row['id']: row for row in session_files.catalogue()}
+    doc = session_files.new_document('Triggered')
+    doc['nodes'] = [
+        {'id': 't', 'item': 'tr_schedule', 'type': items['tr_schedule']['engine'], 'title': 'Trigger',
+         'params': {**copy.deepcopy(items['tr_schedule']['params']), 'every_seconds': '600'}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'c', 'item': 'data.convert', 'type': 'data.convert', 'title': 'Convert',
+         'params': {'target_type': 'text'}, 'position': {'x': 300, 'y': 0}}]
+    doc['wires'] = [{'id': 'w', 'from': {'node': 't', 'socket': 'payload'}, 'to': {'node': 'c', 'socket': 'in'}}]
+    session_files.write_document(trigger, doc)
+    service = TriggerService()
+    try:
+        assert service.fire((str(trigger), 't'), 'trigger.schedule')['outcome'] == 'ran'
+    finally:
+        service.close()
+    assert set(callers) == {'canvas_tools.py', 'session_files.py', 'agent_work.py', 'canvas_triggers.py'}
+    assert paused is not None
+
+
+def test_run_budget_stops_deterministically_and_nothing_polls(running, monkeypatch):
+    import threading
+    import time
+    from nodelang import canvas_documents, session_files
+    path, counts, run = running
+    effect = canvas_documents.run_thing
+    def slow(engine, params, feeds):
+        if params.get('agent') == 'one':
+            time.sleep(0.2)
+        return effect(engine, params, feeds)
+    monkeypatch.setattr(canvas_documents, 'run_thing', slow)
+    stopped = run(budget_s=0.05)
+    assert counts == {'one': 1, 'two': 0, 'three': 0}
+    assert stopped['run']['budget_s'] == 0.05
+    for key in ('two', 'three'):
+        assert stopped['results'][key] == {'status': 'Stopped', 'output': {}, 'error': 'Run budget of 0.05 s reached before this step.'}
+    held = session_files.read_document(path)
+    assert held['properties']['canvasRun']['state'] == 'Ended'
+    before = {thread.ident for thread in threading.enumerate()}
+    paused = run()
+    assert paused['run']['budget_s'] == sum(canvas_documents.BUDGET_DEFAULT['seconds'] for _ in range(3))
+    assert {thread.ident for thread in threading.enumerate()} <= before
+    assert counts == {'one': 1, 'two': 0, 'three': 0}
+    approve(paused)
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    with pytest.raises(ValueError, match='budget'):
+        run(budget_s=-1)

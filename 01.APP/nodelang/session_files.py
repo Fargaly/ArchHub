@@ -1284,7 +1284,7 @@ def begin_attempt(continuation, node, params, feeds):
     persist_run(document, continuation['path'], continuation.get('source'))
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, _resume=None, _each=None, _source=None, _parent=None):
+def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
     from .library_engines import STEM_RUN_ENGINES
@@ -1330,6 +1330,12 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         raise ValueError('Cycle detected: disconnect a feedback wire before Run')
     if plan_only:
         return {'ok': True, 'order': order}
+    # SPEC 3.2: every run has an explicit budget; by default the sum of its nodes' own seconds.
+    if budget_s is None:
+        budget_s = sum((nodes[key].get('budget') or {}).get('seconds', canvas_documents.BUDGET_DEFAULT['seconds']) for key in order)
+    if type(budget_s) not in (int, float) or budget_s < 0:
+        raise ValueError('Run budget must be non-negative seconds')
+    deadline = time.monotonic() + budget_s
     from .canvas_documents import THING_ENGINES
     from .node_params import PARAM_ENGINE, ports as node_ports
     for key in order:
@@ -1362,14 +1368,15 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 identity = nodes[key]['result'].get('output', {}).get('approvalId')
                 if identity in pending:
                     withdraw_approval(os.environ, identity, 'canvas input changed' if not again else 'Run all again')
-        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures,
+        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures, 'budget_s': budget_s,
                'attempts': copy.deepcopy(previous.get('attempts', {}))}
         if again:
             run['id'] = str(uuid4())
         elif _resume is None:
             _resume = {key: copy.deepcopy(nodes[key]['result']) for key in order
                        if key not in invalid and nodes[key].get('result')
-                       and nodes[key]['result'].get('status') not in ('Idle', 'Running', 'Out of date')
+                       # A failed, blocked or stopped step runs again from itself; upstream results are reused.
+                       and nodes[key]['result'].get('status') not in ('Idle', 'Running', 'Out of date', 'Error', 'Blocked', 'Stopped')
                        and not (nodes[key]['type'] == 'skill' and nodes[key]['params'].get('session_file'))}
         document.setdefault('properties', {})['canvasRun'] = run
         # Uncertain effects survive edits and Run all again until explicitly reconciled.
@@ -1409,6 +1416,11 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             for pending_key in order:
                 if pending_key not in results:
                     results[pending_key] = {'status':'Stopped','output':{},'error':'Stopped by you.'}
+            break
+        if time.monotonic() > deadline:
+            for pending_key in order:
+                if pending_key not in results:
+                    results[pending_key] = {'status': 'Stopped', 'output': {}, 'error': 'Run budget of %g s reached before this step.' % budget_s}
             break
         node = nodes[key]
         if only is not None and key not in only:
@@ -1871,7 +1883,7 @@ class SessionFiles:
                 if inputs(shown) != inputs(document):
                     raise ValueError('The canvas changed before Run. Reopen its current values.')
                 outcome.update(run_document(document, invoke=invoke, roots=body.get('roots'), stopped=stopped,
-                                            path=body.get('path'), again=body.get('again') is True))
+                                            path=body.get('path'), again=body.get('again') is True, budget_s=body.get('budget_s')))
                 return []
             if body.get('path'):
                 document, _ = canvas_documents.edit(local_path(body['path']), 'You', 'Run all again' if body.get('again') else 'Run',

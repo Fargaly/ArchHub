@@ -44,7 +44,7 @@ def test_agent_tools_come_from_registry():
 
 def test_every_preexisting_agent_tool_keeps_its_schema_and_callable():
     from nodelang.native_agent_mcp import build_server
-    source = subprocess.check_output(['git', 'show', '60dc0f8e:01.APP/nodelang/native_agent_mcp.py'],
+    source = subprocess.check_output(['git', 'show', 'e100ce93:01.APP/nodelang/native_agent_mcp.py'],
                                      text=True, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE)
     baseline = types.ModuleType('nodelang._command_registry_baseline')
     baseline.__file__ = str(Path(__file__).resolve().parents[2] / '01.APP/nodelang/native_agent_mcp.py')

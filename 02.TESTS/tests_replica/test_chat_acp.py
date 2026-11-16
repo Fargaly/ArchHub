@@ -369,6 +369,105 @@ def test_one_state_row_says_starting_then_answering_and_says_when_the_agent_is_q
     assert not [s for s in result['steps'] if s['id'] == 'agent-state']  # the state row is not part of the settled answer
 
 
+def _held_start(monkeypatch, point):
+    """Hold a start at a point where its session is registered but not yet usable; returns (entered, release, seen)."""
+    from nodelang import acp_client, workshop_transport
+    entered, release, seen = threading.Event(), threading.Event(), []
+
+    def hold(real):
+        def held(*args, **kwargs):
+            seen.extend(args)
+            entered.set()
+            assert release.wait(20)
+            return real(*args, **kwargs)
+        return held
+    if point == 'before the launch':
+        monkeypatch.setattr(acp_client, 'start_command', hold(acp_client.start_command))
+    else:   # the process exists, suspended; it is not yet in its job and not resumed
+        monkeypatch.setattr(workshop_transport, '_OwnedProcessJob', hold(workshop_transport._OwnedProcessJob))
+    return entered, release, seen
+
+
+def test_two_sends_on_one_thread_while_its_agent_starts_start_exactly_one_agent(installed, monkeypatch):
+    from nodelang import acp_client
+    install, log = installed
+    install('codex')
+    entered, release, _seen = _held_start(monkeypatch, 'before the launch')
+    results = []
+
+    def send():
+        try:
+            results.append(acp_client.ask('codex', 'how many sheets?', task='one')['text'])
+        except acp_client.AcpRefused as refused:
+            results.append(str(refused))
+    workers = [threading.Thread(target=send, daemon=True) for _ in range(2)]
+    workers[0].start()
+    assert entered.wait(10)
+    workers[1].start()
+    time.sleep(0.5)                                                      # the second send is now at the same start
+    release.set()
+    for worker in workers:
+        worker.join(20)
+    starts = [line for line in map(json.loads, log.read_text(encoding='utf-8').splitlines()) if isinstance(line, list)]
+    assert starts == [['app-server']]                                    # one child, not two
+    assert 'There are 12 sheets.' in results and len(results) == 2
+    assert len(acp_client._SESSIONS) == 1
+
+
+@pytest.mark.parametrize('point', ['before the launch', 'before the resume'])
+@pytest.mark.parametrize('ending', ['close_all', 'stop_then_resume', 'app_close'])
+def test_stop_during_a_start_leaves_no_agent_and_a_later_resume_does_not_revive_it(installed, monkeypatch, tmp_path, point, ending):
+    import types
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('codex')
+    entered, release, seen = _held_start(monkeypatch, point)
+    outcome = []
+
+    def send():
+        try:
+            outcome.append(acp_client.ask('codex', 'how many sheets?')['text'])
+        except BaseException as refused:  # noqa: BLE001 - the test reads what the send returned
+            outcome.append(refused)
+    worker = threading.Thread(target=send, daemon=True)
+    worker.start()
+    assert entered.wait(10)
+    quiet = types.SimpleNamespace(shutdown=lambda: None, server_close=lambda: None)
+    server = types.SimpleNamespace(_halted=threading.Event(), triggers=None, cloud_relay=None, httpd=quiet, state_dir=tmp_path)
+    if ending == 'close_all':
+        acp_client.close_all()
+    elif ending == 'app_close':
+        nograph_server.NoGraphServer.close(server)
+    else:
+        nograph_server.NoGraphServer.halt_all(server)
+        nograph_server.NoGraphServer.resume_all(server)                  # Resume does not bring the stopped start back
+    release.set()
+    worker.join(20)
+    assert len(outcome) == 1 and isinstance(outcome[0], acp_client.AcpRefused) and str(outcome[0]) == 'Stopped by you'
+    assert not log.exists()                                              # the agent never ran one instruction
+    assert not acp_client._SESSIONS
+    if point == 'before the resume':
+        process = seen[0]
+        process.wait(10)
+        assert process.poll() is not None                                # the suspended child was ended, not left behind
+
+
+def test_nothing_is_sent_to_an_agent_after_its_session_is_stopped(installed):
+    from nodelang import acp_client
+    install, _log = installed
+    install('codex')
+    assert acp_client.ask('codex', 'how many sheets?', task='t')['text'] == 'There are 12 sheets.'
+    session = acp_client._SESSIONS[('codex', 't')]
+    sent = []
+    session.transport.dialect.wire = sent.append
+    session.cancelled.set()
+    with pytest.raises(acp_client.AcpRefused, match='Stopped by you'):
+        session.ask('how many sheets?')
+    assert sent == []
+    acp_client.ask('codex', 'how many sheets?', task='t')                # the next send starts a new session
+    assert acp_client._SESSIONS[('codex', 't')] is not session
+
+
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():
     from nodelang import acp_client
     for agent in ('claude', 'codex'):

@@ -282,6 +282,8 @@ class AcpTransport:
         self.sequence += 1
         request_id = self.sequence
         tool_calls = {}
+        if stopped():
+            raise AcpRefused("Stopped by you")
         self.send({"id": request_id, "method": method, "params": params})
         while not self.closed:
             if stopped():
@@ -301,6 +303,8 @@ class AcpTransport:
                 if "id" in message:
                     if message["method"] == "session/request_permission":
                         outcome = permission(message.get("params") or {}, params, tool_calls)
+                        if stopped():
+                            raise AcpRefused("Stopped by you")
                         self.send({"id": message["id"], "result": {"outcome": outcome}})
                     else:
                         self.send({"id": message["id"], "error": {"code": -32601, "message": "Capability not admitted"}})
@@ -459,8 +463,19 @@ class AgentSession:
         self.agent, self.label, self.cwd = agent, label(agent), str(cwd)
         self.transport, self.job, self.session_id = None, None, None
         self.lock = threading.Lock()
+        self.starting = threading.Lock()     # one start per session: a second send on the same key waits here
+        self.ready = False
+        self.cancelled = threading.Event()   # set by close/Stop/app close and never cleared: Resume cannot revive it
+
+    def _stopped(self, stopped):
+        return lambda: self.cancelled.is_set() or stopped()
+
+    def _check(self):
+        if self.cancelled.is_set():
+            raise AcpRefused('Stopped by you')
 
     def start(self, stopped=lambda: False):
+        stopped = self._stopped(stopped)
         argv, fallback, self.speaks = start_command(self.agent)
         try:
             self._open(argv, stopped)
@@ -468,16 +483,18 @@ class AgentSession:
             if fallback is None or stopped():
                 raise
             self._open(fallback, stopped)   # Gemini: --acp on newer builds, --experimental-acp on older ones
+        self.ready = True
         return self
 
     def _open(self, command, stopped):
         try:
             self._connect(command, stopped)
         except BaseException:
-            self.close()
+            self._release()   # not close(): Gemini's second start command may still be tried
             raise
 
     def _connect(self, command, stopped):
+        self._check()                        # before the launch
         Path(self.cwd).mkdir(parents=True, exist_ok=True)
         windows = os.name == 'nt'
         # Started suspended, put in its job, then resumed: nothing it starts can be outside the job that ends it.
@@ -487,6 +504,7 @@ class AgentSession:
         try:
             from .workshop_transport import _OwnedProcessJob
             self.job = _OwnedProcessJob(process)   # the agent and everything under it close with the session and the app
+            self._check()                    # before the resume: a start stopped meanwhile never runs one instruction
             if windows:
                 import ctypes
                 resume = ctypes.WinDLL('ntdll').NtResumeProcess
@@ -494,6 +512,7 @@ class AgentSession:
                 if resume(int(process._handle)):
                     raise AcpRefused('%s could not be started.' % self.label)
             self.transport = AcpTransport(process, label=self.label, speaks=self.speaks)
+            self._check()                    # close() may have run between the two lines above and seen no transport
         except BaseException:
             process.kill()   # no orphan on any way out; _open then closes the job
             raise
@@ -514,6 +533,10 @@ class AgentSession:
         if not self.lock.acquire(blocking=False):
             raise AcpRefused('%s is answering another message in this session. Wait for its answer.' % self.label)
         try:
+            stopped, transport = self._stopped(stopped), self.transport
+            if transport is None:
+                self.cancelled.set()
+            self._check()
             deadline = time.monotonic() + ACP_NODE['params']['turn_seconds']
             chunks, steps = [], {}
 
@@ -535,9 +558,9 @@ class AgentSession:
                         row['tool'] = str(item['title'])[:4000]
                     row['status'] = {'completed': 'ok', 'failed': 'failed'}.get(item.get('status'), 'running')
                     on_step(dict(row))
-            final = self.transport.request('session/prompt', {'sessionId': self.session_id,
+            final = transport.request('session/prompt', {'sessionId': self.session_id,
                 'prompt': [{'type': 'text', 'text': prompt}]}, deadline=deadline, update=update, stopped=stopped,
-                permission=approve_card(self.label, deadline, lambda: stopped() or self.transport is None or self.transport.closed))
+                permission=approve_card(self.label, deadline, lambda: stopped() or transport.closed))
             text = ''.join(chunks).strip()
             if final.get('stopReason') not in ('end_turn', 'max_tokens') or not text:
                 raise AcpResponseRefused('%s stopped before it answered. No action was approved.' % self.label)
@@ -551,6 +574,10 @@ class AgentSession:
             self.lock.release()
 
     def close(self):
+        self.cancelled.set()   # first, and for good: a start still under way sees it at its next step
+        self._release()
+
+    def _release(self):
         try:   # the job first: a CLI behind its .cmd shim outlives the shim and would hold the pipe (and this close) open
             if self.job is not None:
                 self.job.close()
@@ -570,15 +597,20 @@ def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s
     """One message to an installed agent; started for this thread on first use (only because the user sent it)."""
     from .user_paths import state_directory
     key = (agent, task or '')
-    with _SESSIONS_LOCK:
+    with _SESSIONS_LOCK:   # registration: one session object per key; a stopped one is never used again
         current = _SESSIONS.get(key)
-        if current is None or current.transport is None or current.transport.closed:
+        if current is None or current.cancelled.is_set():
             current = _SESSIONS[key] = AgentSession(agent, state_directory() / 'agents' / agent)
-            fresh = True
-        else:
-            fresh = False
-    if fresh:
-        current.start(stopped)
+    try:
+        with current.starting:   # start and publication: a second send on this key waits, then finds it ready
+            if not current.ready:
+                current.start(stopped)
+    except BaseException:
+        current.close()
+        with _SESSIONS_LOCK:
+            if _SESSIONS.get(key) is current:
+                del _SESSIONS[key]
+        raise
     return {**current.ask(prompt, on_delta=on_delta, on_step=on_step, stopped=stopped), 'label': current.label}
 
 

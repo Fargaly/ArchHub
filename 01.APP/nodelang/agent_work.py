@@ -252,6 +252,7 @@ def release(payload):
         from . import canvas_documents
         from .session_files import read_document, run_document, skill_result, approval_current, persist_run
         from .hook_decision import _RELEASING
+        from .host_exec import UnconfirmedHostRun
         def inputs(document):
             return {'id': document['id'], 'title': document['title'],
                     'nodes': [{key: value for key, value in row.items() if key not in ('result', 'position')}
@@ -265,26 +266,34 @@ def release(payload):
             execution = copy.deepcopy(continuation['document'])
             released = payload.get('released')
             error = payload.get('error')
+            unconfirmed = payload.get('unconfirmed', False)
             if released is None:
                 try:
                     output, display = _dispatch_node(execution, node, node['type'], node['params'], feeds,
                                                      invoke=guard_effect, stopped=None, depth=continuation.get('depth', 0),
                                                      continuation={**continuation, 'document': execution, 'source': document})
+                except UnconfirmedHostRun as failure:
+                    output, display, error = {}, str(failure), str(failure)
+                    unconfirmed = True
                 except Exception as failure:
                     output, display, error = {}, str(failure), str(failure)
             else:
                 output, display = released
             completed = dict(continuation['completed'])
             each = continuation.get('each')
-            if each:
+            waiting = isinstance(output, dict) and output.get('approvalId')
+            status = 'Unconfirmed' if unconfirmed else 'Error' if error else 'Waiting for approval' if waiting else 'Done'
+            if each and not (waiting or unconfirmed):
                 from .stem_graph_evaluation import each_fault
                 each = {node['id']: {'rows': each['rows'] + [(output, display, error or each_fault(output, display))], 'remaining': each['remaining']}}
             else:
-                completed[node['id']] = {'status': 'Error' if error else 'Done', 'output': output, 'display': display,
+                completed[node['id']] = {'status': status, 'output': output, 'display': display,
                                          **({'error': error} if error else {})}
             attempt = execution['properties']['canvasRun'].get('attempts', {}).get(node['id'])
-            if attempt:
-                attempt['outcome'] = {'status': 'Error' if error else 'Done', 'output': output, 'display': display}
+            if attempt and unconfirmed:
+                attempt.pop('outcome', None)
+            elif attempt:
+                attempt['outcome'] = {'status': status, 'output': output, 'display': display}
                 next(row for row in execution['nodes'] if row['id'] == node['id'])['result'] = copy.deepcopy(attempt['outcome'])
                 persist_run(execution, continuation['path'], document)
             token = _RELEASING.set(False)
@@ -311,7 +320,8 @@ def release(payload):
         if parent and not outcome.get('approvalId'):
             error = '; '.join(row.get('error', '') for row in outcome['results'].values() if row.get('error'))
             produced = skill_result(outcome) if outcome['succeeded'] else ({}, error)
-            return release({'node': parent['node'], 'feeds': {}, 'continuation': parent, 'released': produced, 'error': error})
+            return release({'node': parent['node'], 'feeds': {}, 'continuation': parent, 'released': produced, 'error': error,
+                            'unconfirmed': outcome.get('run', {}).get('state') == 'Unconfirmed'})
         return {**outcome, 'path': continuation['path']}
     document = new_document('Approved step')
     document['nodes'] = [node]

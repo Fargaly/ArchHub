@@ -8,7 +8,10 @@ import os
 import re
 import subprocess
 import tempfile
+from builtins import ConnectionResetError
 from pathlib import Path
+
+import pytest
 
 _root = Path(tempfile.mkdtemp(prefix="hostexec-"))
 for _name in ("USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP"):
@@ -42,16 +45,17 @@ def _params(**over):
 
 
 def _mode(mode):
-    folder = Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "settings"
+    folder = host_exec.hook_decision._settings_dir(os.environ)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "permissions.json"
     if mode is None:
-        path.unlink(missing_ok=True)
-        return
-    path.write_text(json.dumps({"runMode": mode, "tools": {}}), encoding="utf-8")
+        settings = {"runMode": "Accept edits", "tools": {"write": "Allowed"}}
+    else:
+        settings = {"runMode": mode, "tools": {}}
+    path.write_text(json.dumps(settings), encoding="utf-8")
 
 
-def _broker(monkeypatch, titles):
+def _broker(monkeypatch, titles, *, outcome="ok"):
     calls = []
     pending = list(titles)
 
@@ -61,6 +65,17 @@ def _broker(monkeypatch, titles):
             return {"ok": True, "document": pending.pop(0) if pending else titles[-1]}
         if route == "/exec" and body is None:
             raise AssertionError("exec was not expected")
+        if route == "/exec" and outcome == "timeout":
+            raise TimeoutError("broker executed but the reply was lost")
+        if route == "/exec" and outcome == "reset":
+            raise ConnectionResetError("broker executed but reset the connection")
+        if route == "/exec" and outcome == "refused":
+            return {"ok": False, "status": "error", "http_status": 403, "reason": "Bridge refused the code."}
+        if route == "/exec" and outcome == "pending":
+            return {"ok": False, "status": "error",
+                    "error": "Revit has not completed the change (Pending); its outcome is unresolved."}
+        if route == "/exec" and outcome == "over_limit":
+            return {"ok": True, "status": "ok", "result": {"count": 151}}
         return {"ok": True, "result": {"count": 1}, "document": titles[-1] if titles else ""}
 
     monkeypatch.setattr("nodelang.host_brokers.broker_call", fake)
@@ -89,6 +104,123 @@ def test_revit_routes_through_decide_and_wraps_return(monkeypatch):
     assert body["transaction"] is False
     assert produced["result"]["count"] == 1
     assert display
+
+
+def test_fresh_settings_hold_host_code_and_replay_reviewed_inputs_once(tmp_path, monkeypatch):
+    from nodelang import hook_decision
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    calls = _broker(monkeypatch, ["Sheet 1", "Sheet 1"])
+    ordinary = hook_decision.decide({"tool_name": "write", "tool_input": {"path": str(tmp_path / "note.txt")}})
+    assert ordinary["verdict"] == "allow"
+
+    params = _params(document="Sheet 1", transaction=False)
+    output, display = host_exec.host_exec(params, {"width": 12})
+    assert display == "Waiting for you"
+    assert not calls
+    card = next(card for card in hook_decision.ask_reviews() if card["id"] == output["approvalId"])
+    assert json.loads(card["text"]) == {"parameters": params, "inputs": {"width": 12}}
+    hook_decision.ask_apply(card["id"], card["input_digest"], "approve")
+    assert [route for _service, route, _body in calls] == ["/info", "/info", "/exec"]
+    assert calls[-1][2]["transaction"] is False
+    assert "var width = 12;" in calls[-1][2]["code"]
+    hook_decision.ask_apply(card["id"], card["input_digest"], "approve")
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('outcome', ['ok', 'timeout', 'reset', 'refused', 'pending', 'over_limit'])
+def test_canvas_host_approval_resumes_the_same_saved_run(tmp_path, monkeypatch, outcome):
+    from nodelang import hook_decision
+    from nodelang.enforce import guard_effect
+    from nodelang.session_files import SessionFiles, new_document, read_document, write_document
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    calls = _broker(monkeypatch, ["Sheet 1", "Sheet 1"], outcome=outcome)
+    path = str(tmp_path / 'host.archhub')
+    doc = new_document('Host proof')
+    host = _card('host_exec', 'write', 0)
+    host['params'].update(_params(document='Sheet 1', transaction=False))
+    doc['nodes'] = [host, _card('data.convert', 'after', 400)]
+    doc['wires'] = [{'id': 'out', 'from': {'node': 'write', 'socket': 'result'},
+                     'to': {'node': 'after', 'socket': 'in'}}]
+    write_document(path, doc)
+    waiting = SessionFiles().dispatch({'action': 'run', 'path': path, 'document': doc}, invoke=guard_effect)
+    assert waiting['results']['write']['status'] == 'Waiting for approval'
+    assert not calls
+    before = read_document(path)['properties']['canvasRun']
+    assert not before['attempts']
+    card = next(card for card in hook_decision.ask_reviews() if card['id'] == waiting['approvalId'])
+    assert card['approvalKind'] == 'canvas' and card['path'] == path
+    hook_decision.ask_apply(card['id'], card['input_digest'], 'approve')
+    saved = read_document(path)
+    assert saved['properties']['canvasRun']['id'] == before['id']
+    assert [route for _service, route, _body in calls] == ["/info", "/info", "/exec"]
+    assert calls[-1][2]['transaction'] is False
+    if outcome in ('timeout', 'reset', 'pending', 'over_limit'):
+        assert saved['properties']['canvasRun']['state'] == 'Unconfirmed'
+        assert 'outcome' not in saved['properties']['canvasRun']['attempts']['write']
+        assert saved['nodes'][0]['result']['status'] == 'Unconfirmed'
+        if outcome == 'pending':
+            assert 'its outcome is unresolved' in saved['nodes'][0]['result']['error']
+        if outcome == 'over_limit':
+            assert 'completed run with 151 elements' in saved['nodes'][0]['result']['error']
+        assert saved['nodes'][1]['result']['status'] == 'Blocked'
+        retried = SessionFiles().dispatch({'action': 'run', 'path': path, 'document': saved}, invoke=guard_effect)
+        assert retried['results']['write']['status'] == 'Unconfirmed'
+        assert len(calls) == 3
+    elif outcome == 'refused':
+        assert saved['nodes'][0]['result']['status'] == 'Error'
+        assert saved['nodes'][0]['result']['error'] == 'Bridge refused the code.'
+        assert saved['nodes'][1]['result']['status'] == 'Blocked'
+    else:
+        assert saved['nodes'][0]['result']['status'] == saved['nodes'][1]['result']['status'] == 'Done'
+
+
+@pytest.mark.parametrize('decision', ['approve', 'deny'])
+def test_approving_an_outer_skill_does_not_approve_its_host_code(tmp_path, monkeypatch, decision):
+    from nodelang import hook_decision, session_files
+    from nodelang.enforce import guard_effect
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    calls = _broker(monkeypatch, ["Sheet 1", "Sheet 1"])
+    child_path = tmp_path / 'child.archhub'
+    child = session_files.new_document('Write inside a skill')
+    child['properties']['nodeType'] = {'kind': 'effect'}
+    write = _card('host_exec', 'write', 0)
+    write['params'].update(_params(document='Sheet 1', transaction=False, code='result = width;', width=12))
+    child['nodes'] = [write]
+    session_files.write_document(child_path, child)
+
+    path = str(tmp_path / 'parent.archhub')
+    doc = session_files.new_document('Call a skill')
+    skill = session_files.insert_session(doc, str(child_path))
+    skill['approvalRequired'] = True
+    doc['nodes'].append(_card('data.convert', 'after', 400))
+    doc['wires'].append({'id': 'out', 'from': {'node': skill['id'], 'socket': 'out:write:result'},
+                         'to': {'node': 'after', 'socket': 'in'}})
+    session_files.write_document(path, doc)
+    waiting = session_files.SessionFiles().dispatch({'action': 'run', 'path': path, 'document': doc}, invoke=guard_effect)
+    original_run = waiting['run']['id']
+    outer = next(card for card in hook_decision.ask_reviews() if card['id'] == waiting['approvalId'])
+    hook_decision.ask_apply(outer['id'], outer['input_digest'], 'approve')
+
+    saved = session_files.read_document(path)
+    assert saved['nodes'][0]['result']['status'] == 'Waiting for approval'
+    assert saved['nodes'][1]['result']['status'] == 'Waiting'
+    assert not calls
+    child_id = saved['nodes'][0]['result']['output']['approvalId']
+    inner = next(card for card in hook_decision.ask_reviews() if card['id'] == child_id)
+    assert inner['id'] != outer['id'] and inner['path'] == str(child_path)
+    reviewed = json.loads(inner['text'])['parameters']
+    assert (reviewed['code'], reviewed['transaction'], reviewed['width']) == ('result = width;', False, 12)
+
+    hook_decision.ask_apply(inner['id'], inner['input_digest'], decision)
+    finished = session_files.read_document(path)
+    assert finished['properties']['canvasRun']['id'] == original_run
+    if decision == 'approve':
+        assert [route for _service, route, _body in calls] == ["/info", "/info", "/exec"]
+        assert finished['nodes'][0]['result']['status'] == finished['nodes'][1]['result']['status'] == 'Done'
+    else:
+        assert not calls
+        assert finished['nodes'][0]['result']['status'] == 'Declined'
+        assert finished['nodes'][1]['result']['status'] == 'Blocked'
 
 
 def test_revit_refuses_a_changed_document_and_a_long_batch(monkeypatch):

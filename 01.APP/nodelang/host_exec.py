@@ -17,7 +17,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from builtins import BrokenPipeError, ConnectionAbortedError, ConnectionResetError
 from collections.abc import Mapping
+from http.client import HTTPException
 from pathlib import Path
 
 from . import hook_decision
@@ -85,6 +87,14 @@ _CONSOLE_NAMES = (
 _ADMITTED = ("allow", "organize")
 _REACHABLE = {"Connected", "Installed", "Ready to connect"}
 _TIMED_OUT = object()
+_UNCONFIRMED = object()
+
+
+class UnconfirmedHostRun(ValueError):
+    """The host could have executed code whose outcome remains unresolved."""
+
+
+UNCONFIRMED_HOST_MESSAGE = "The program did not confirm the result. Check what it changed before retrying."
 
 
 class ConnectorUnreachable(ValueError):
@@ -134,10 +144,11 @@ def _captured(value):
     return str(value)
 
 
-def _wait_timed_out(exc):
-    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
-        return True
-    return isinstance(getattr(exc, "reason", None), TimeoutError)
+def _reply_lost(exc):
+    return isinstance(getattr(exc, "reason", exc), (
+        TimeoutError, subprocess.TimeoutExpired, ConnectionResetError,
+        ConnectionAbortedError, BrokenPipeError, HTTPException,
+    ))
 
 
 def _timeout_log(exc):
@@ -169,7 +180,7 @@ def _held(decision, preview=""):
     }, word
 
 
-def _admit_write(host, code, document, transaction_name):
+def _admit_write(host, code, document, transaction_name, replay):
     """Every host run is action write. The verdict decides whether it is sent."""
     return hook_decision.decide({
         "tool_name": "write",
@@ -178,10 +189,10 @@ def _admit_write(host, code, document, transaction_name):
             "transaction_name": transaction_name,
         },
         "cwd": os.getcwd(),
-    })
+    }, replay=replay)
 
 
-def host_exec(params, feeds=None):
+def host_exec(params, feeds=None, *, node=None, continuation=None):
     """Run in program. Inputs bound into the code; outputs result and log."""
     host = str(params.get("host") or "")
     code = params.get("code")
@@ -197,7 +208,7 @@ def host_exec(params, feeds=None):
     isolate_user = params.get("isolate_user")
     isolate_folder = params.get("isolate_folder")
     time_limit = params.get("timeout")
-    wired = feeds if isinstance(feeds, Mapping) else {}
+    wired = dict(feeds) if isinstance(feeds, Mapping) else {}
     if wired.get("code") not in (None, ""):
         code = wired.get("code")
     if wired.get("document") not in (None, ""):
@@ -205,19 +216,34 @@ def host_exec(params, feeds=None):
     code = "" if code is None else str(code)
     document = "" if document is None else str(document)
     transaction_name = "" if transaction_name is None else str(transaction_name)
-    decision = _admit_write(host, code, document, transaction_name)
+    effective = {**params, "host": host, "code": code, "document": document, "transaction_name": transaction_name}
+    if node is None:
+        replay = {"kind": "host", "params": effective, "feeds": wired}
+    else:
+        held_node = {key: value for key, value in node.items() if key != "result"}
+        replay = {"kind": "canvas", "payload": {
+            "node": {**held_node, "params": effective}, "feeds": wired, "continuation": continuation,
+        }}
+    decision = _admit_write(host, code, document, transaction_name, replay)
     if decision["verdict"] not in _ADMITTED:
-        return _held(decision)
+        output, display = _held(decision)
+        if decision.get("hold"):
+            output["approvalId"] = decision["hold"]
+        elif node is not None and decision["verdict"] == "ask":
+            raise ValueError("The approval could not be saved.")
+        return output, display
     if not code.strip():
         return {"result": None, "log": "Add code, then run.", "action": decision["action"]}, "Failed"
     try:
         seconds = _limit_seconds(time_limit)
+        limits = (_whole(element_limit, "the element limit"), _whole(sheet_limit, "the sheet limit"),
+                  _whole(min_free_bytes, "the free memory"), _whole(max_hidden_core, "the background limit"))
+        if continuation:
+            from .session_files import begin_attempt
+            begin_attempt(continuation, node, effective, wired)
         result, log = _dispatch(
             host, code, transaction_name, transaction, document, _bound(params, wired),
-            _whole(element_limit, "the element limit"),
-            _whole(sheet_limit, "the sheet limit"),
-            _whole(min_free_bytes, "the free memory"),
-            _whole(max_hidden_core, "the background limit"),
+            *limits,
             "" if log_sentinel is None else str(log_sentinel),
             "" if load_module is None else str(load_module),
             "" if isolate_user is None else str(isolate_user),
@@ -226,8 +252,12 @@ def host_exec(params, feeds=None):
         )
     except (OSError, ValueError) as exc:
         return {"result": None, "log": str(exc), "action": decision["action"]}, "Failed"
-    if result is _TIMED_OUT:
-        return {"result": "Timed out", "log": log, "action": decision["action"]}, "Timed out"
+    if result is _TIMED_OUT or result is _UNCONFIRMED:
+        if node is not None:
+            note = log[:400] + " Check what the program changed before retrying." if log and log != UNCONFIRMED_HOST_MESSAGE else UNCONFIRMED_HOST_MESSAGE
+            raise UnconfirmedHostRun(note)
+        display = "Timed out" if result is _TIMED_OUT else "Unconfirmed"
+        return {"result": display, "log": log, "action": decision["action"], "status": "Unconfirmed"}, display
     return {"result": result, "log": log, "action": decision["action"]}, log or host
 
 
@@ -254,15 +284,28 @@ def _dispatch(host, code, transaction_name, transaction, document, wired,
                     "transaction": use_transaction}
             try:
                 answer = brokers.broker_call(host, "/exec", body, timeout=seconds)
-            except OSError as exc:
-                if not _wait_timed_out(exc):
+            except (OSError, HTTPException) as exc:
+                if not _reply_lost(exc):
                     raise
                 return _TIMED_OUT, _timeout_log(exc)
-            result = answer.get("result", answer) if isinstance(answer, dict) else answer
+            if not isinstance(answer, Mapping):
+                return _UNCONFIRMED, UNCONFIRMED_HOST_MESSAGE
+            if answer.get("status") == "error" or answer.get("ok") is False and answer.get("reason"):
+                reason = str(answer.get("reason") or answer.get("error") or answer.get("message") or "")
+                if answer.get("http_status") in (401, 403, 413):
+                    raise ValueError(reason or "The program refused the run.")
+                # A generic error can follow a pending commit, a failed rollback, or a script's side effect.
+                return _UNCONFIRMED, reason or UNCONFIRMED_HOST_MESSAGE
+            if answer.get("ok") is not True:
+                return _UNCONFIRMED, UNCONFIRMED_HOST_MESSAGE
+            result = answer.get("result", answer)
             if host == "revit":
                 made, made_sheets = _result_count(result)
                 if made > element_limit or made_sheets > sheet_limit:
-                    raise ValueError("The program returned more than this run allows.")
+                    return _UNCONFIRMED, (
+                        "Revit reported a completed run with %d elements and %d sheets. "
+                        "The limits were %d elements and %d sheets." % (made, made_sheets, element_limit, sheet_limit)
+                    )
             log = _title(answer) or title
             return result, log
         if host == "acad-core":

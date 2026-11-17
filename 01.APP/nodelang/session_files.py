@@ -185,7 +185,7 @@ def _params_and_feeds(node, engine, feeds):
 
 
 def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, depth, continuation=None,
-                   trigger_admission=None):
+                   trigger_admission=None, pure_only=False):
     """One engine call. Effect engines receive the application invoke boundary."""
     from .canvas_documents import THING_ENGINES, run_thing
     from .library_engines import STEM_RUN_ENGINES
@@ -193,10 +193,13 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     from .pipeline_engines import PIPELINE_ENGINES
     from .stem_graph_evaluation import run_stem_operation
     from .hook_decision import _RELEASING
+    pure = canvas_documents.is_pure(engine, params)
+    if pure_only and not pure:
+        raise ValueError('A done check can only run pure nodes. Run effects separately.')
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not canvas_documents.is_pure(engine, params) and (work.get('role') == 'step' or node.get('approvalRequired') or engine in ('thing.file.write', 'script.python'))):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
@@ -207,7 +210,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         granted = {**params, 'grant': {'digest': digest, 'operations': [params.get('operation', '*')], 'scope': params.get('scope', 'revit.write')}}
         produced, _display = approval_gate(granted, feeds)
         return produced, 'Approved'
-    if continuation and not canvas_documents.is_pure(engine, params):
+    if continuation and not pure and engine != 'host.exec':
         begin_attempt(continuation, node, params, feeds)
     if engine == PARAM_ENGINE:
         value = bound_value(document, node) if node.get('bind') else feeds.get('value', params.get('value'))
@@ -221,9 +224,13 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     if engine in THING_ENGINES:
         return run_thing(engine, params, feeds)
     if engine == 'skill':
-        return run_skill({**params, 'called_by': document['title']}, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds,
-                         parent={**continuation, 'node': node} if continuation else None,
-                         trigger_admission=trigger_admission)
+        token = _RELEASING.set(False)
+        try:
+            return run_skill({**params, 'called_by': document['title']}, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds,
+                             parent={**continuation, 'node': node} if continuation else None,
+                             trigger_admission=trigger_admission, pure_only=pure_only)
+        finally:
+            _RELEASING.reset(token)
     if engine == 'note':
         return {}, node.get('title', 'Note')
     if engine == 'script.python':
@@ -237,6 +244,12 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     effect = PIPELINE_ENGINES[engine]
     if invoke is None:
         raise ValueError('This engine needs the application effect boundary')
+    if engine == 'host.exec':
+        from functools import partial
+        output, display = invoke(engine, partial(effect, node=node, continuation=continuation), params, feeds)
+        if display == 'Failed' and output.get('result') is None:
+            raise ValueError(output['log'])
+        return output, display
     return invoke(engine, effect, params, feeds)
 
 
@@ -1081,7 +1094,7 @@ def node_type_document(document, ids, name, category='Scripts', public=(), kind=
     return saved
 
 
-def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigger_admission=None):
+def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigger_admission=None, pure_only=False):
     path = params.get('session_file')
     if path:
         path, _skill = linked_session(params)
@@ -1092,10 +1105,10 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigge
         raise ValueError('Saved session is unavailable')
     with canvas_documents.locked(path):
         return _run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds, parent=parent,
-                          trigger_admission=trigger_admission)
+                          trigger_admission=trigger_admission, pure_only=pure_only)
 
 
-def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigger_admission=None):
+def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigger_admission=None, pure_only=False):
     if depth > 8:
         raise ValueError('Skills nest at most 8 deep')
     name = str(params.get('skill',''))
@@ -1111,6 +1124,8 @@ def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigg
     if skill is None:
         raise ValueError('Saved session is unavailable')
     pure = skill.get('properties', {}).get('nodeType', {}).get('kind') == 'pure'
+    if pure_only and not pure:
+        raise ValueError('A done check can only run pure nodes. Run effects separately.')
     if pure and not all(canvas_documents.is_pure(node['type'], node['params']) for node in skill['nodes']):
         raise ValueError('A pure saved node cannot run a node with effects')
     source = None if pure else copy.deepcopy(skill)
@@ -1140,7 +1155,8 @@ def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigg
     # A pure call computes outputs without recording a run in its definition file.
     only = {node['id'] for node in skill['nodes']} if pure else None
     inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1, path=path,
-                         only=only, _source=source, _parent=parent, trigger_admission=trigger_admission)
+                         only=only, _source=source, _parent=parent, trigger_admission=trigger_admission,
+                         pure_only=pure_only)
     if path and not pure:
         def record(document):
             for node in document['nodes']:
@@ -1155,6 +1171,9 @@ def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigg
         write_document(path, recorded)
     if inner.get('approvalId'):
         return {'approvalId': inner['approvalId']}, 'Waiting for approval'
+    if inner.get('run', {}).get('state') == 'Unconfirmed':
+        from .host_exec import UNCONFIRMED_HOST_MESSAGE, UnconfirmedHostRun
+        raise UnconfirmedHostRun(UNCONFIRMED_HOST_MESSAGE)
     if not inner['succeeded']:
         raise ValueError('Skill failed: '+'; '.join(r.get('error','') for r in inner['results'].values() if r.get('error')))
     return skill_result(inner)
@@ -1457,9 +1476,10 @@ class TriggerWaitingForApproval(ValueError):
     pass
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None, trigger_admission=None):
+def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None, trigger_admission=None, pure_only=False):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
+    from .host_exec import UnconfirmedHostRun
     from .library_engines import STEM_RUN_ENGINES
     from .pipeline_engines import PIPELINE_ENGINES
     from .stem_graph_evaluation import longest_each_plans, collect_each_runs, each_fault
@@ -1536,7 +1556,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     if trigger_admission is not None:
         trigger_admission()
     run = None
-    if only is None:
+    if only is None and not pure_only:
         signatures = {key: input_signature(nodes[key], incoming[key], path) for key in nodes}
         previous = document.get('properties', {}).get('canvasRun', {})
         invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)], wires=wires)
@@ -1570,8 +1590,10 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     _resume = {}
                 for downstream in canvas_documents.downstream(document, [key]) - {key}:
                     _resume.pop(downstream, None)
+                prior = _resume.get(key) or nodes[key].get('result') or {}
+                reason = prior.get('error') if prior.get('status') == 'Unconfirmed' else None
                 _resume[key] = {'status': 'Unconfirmed', 'output': {},
-                                'error': 'This step may have run. Check result or Run this step again.'}
+                                'error': reason or 'This step may have run. Check result or Run this step again.'}
 
     def finish(results, approval_id=None):
         if run is not None:
@@ -1665,6 +1687,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 produced, display = _dispatch_node(
                     document, node, engine, params, bound,
                     invoke=invoke, stopped=stopped, depth=depth, trigger_admission=trigger_admission,
+                    pure_only=pure_only,
                     continuation={'document': document, 'source': _source or document, 'roots': roots, 'completed': results,
                                   'path': str(path), 'each': each_state, 'parent': _parent, 'depth': depth} if path else None)
                 if run is not None and key in run['attempts'] and 'outcome' not in run['attempts'][key]:
@@ -1709,6 +1732,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                             return finish(results, produced['approvalId'])
                         json.dumps(produced, allow_nan=False)
                         rows.append((produced, display, each_fault(produced, display)))
+                    except UnconfirmedHostRun:
+                        raise
                     except Exception as error:
                         rows.append((None, None, str(error)))
                 entry = known.get(node.get('item')) or next(
@@ -1723,11 +1748,13 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 if error:
                     held_result['error'] = error
                 results[key] = held_result
+        except UnconfirmedHostRun as error:
+            results[key] = {'status': 'Unconfirmed', 'output': {}, 'error': str(error)}
         except Exception as error:
             results[key] = {'status':'Error', 'output':{}, 'error':str(error), 'elapsed_ms': round((time.perf_counter() - started) * 1000, 2)}
         if run is not None:
             nodes[key]['result'] = copy.deepcopy(results[key])
-            if key in run['attempts']:
+            if key in run['attempts'] and results[key]['status'] != 'Unconfirmed':
                 run['attempts'][key]['outcome'] = copy.deepcopy(results[key])
             if path:
                 persist_run(document, path, _source)

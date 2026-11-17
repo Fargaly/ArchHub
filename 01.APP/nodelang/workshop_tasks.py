@@ -1413,13 +1413,14 @@ def _file_state(row, state):
 
 
 def _check_passes(document, check, row):
-    """Run the done check: one check node on the canvas. A command held in a session file is never executed."""
+    """Evaluate a check and its inputs without running effects from the session file."""
     if 'node' in check:
         from .enforce import guard_effect
         from .session_files import run_document
-        ran = run_document(document, invoke=guard_effect, roots=[check['node']])
+        ran = run_document(document, invoke=guard_effect, roots=[check['node']], pure_only=True)
         result = ran['results'].get(check['node']) or {}
-        return result.get('status') == 'Done', str(result.get('error') or result.get('status') or 'did not run')
+        error = next((step['error'] for step in ran['results'].values() if step['status'] == 'Error'), '')
+        return result.get('status') == 'Done', str(error or result.get('error') or result.get('status') or 'did not run')
     # A shared .archhub file can carry any command; completing a task is not an Approve card.
     return False, 'A command check cannot run without approval; use a node check.'
 

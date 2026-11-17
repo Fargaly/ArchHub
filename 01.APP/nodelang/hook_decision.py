@@ -1173,10 +1173,15 @@ def mode_verdict(event: dict, action: str, permissions: dict, environment):
         if fnmatch.fnmatchcase(tool, pattern.lower()):
             return None if mode == "Allowed" else ("refuse", "tool-off") if mode == "Off" else ("ask", "tool-ask")
     run = permissions["runMode"]
-    if action == "read" or run == "Accept edits":  # Accept edits adds no prompt; the agent's own mode stays
+    if action == "read":
         return None
     if run == "Plan only":
         return "refuse", "plan-only"
+    data = event["input"]
+    if tool == "host.exec" or (tool == "write" and isinstance(data, dict) and "host" in data and "code" in data):
+        return "ask", "host-effect-approval"
+    if run == "Accept edits":
+        return None
     if action in _ROUTINE and own_folder(event, environment):
         return None  # F1/A14: his own agents' routine work in his folders never prompts
     return "ask", "ask-first"
@@ -1324,7 +1329,7 @@ def trace_rules(event, action, facts, environment):
 
 # ---- the one function ----------------------------------------------------------------
 
-def decide(payload: dict, vendor: str = "", *, environment=None):
+def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
     """A tool call (pre-tool payload + vendor) or an Approve/Deny ({"approval": kind, ...})."""
     environment = os.environ if environment is None else environment
     if "approval" in payload:
@@ -1393,12 +1398,12 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
             # its own way and the chat client answers No.
             notes.append(_REASONS.get(mode[1], mode[1]) + "; actions are not available in chat yet.")
         else:
-            digest = _call_digest(event, action, mode[1])
+            digest = _call_digest(event, action, mode[1], replay=replay)
             if _take_permit(digest, environment):
                 mode = None
             else:
                 summary = _REASONS.get(mode[1], mode[1])
-                hold_id = _remember(event, action, mode[1], digest, summary, environment)
+                hold_id = _remember(event, action, mode[1], digest, summary, environment, replay=replay)
                 notes.append(summary + "; confirm to run it.")
     if mode:
         rules = [mode[1]]
@@ -1481,6 +1486,7 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "tool-off": "this tool is Off in Settings",
             "plan-only": "Plan only is on in Settings, so nothing changes",
             "tool-ask": "this tool is set to Ask in Settings",
+            "host-effect-approval": "running code in a program requires approval",
             "ask-first": "Ask first is on in Settings and this deletes, publishes, sends or works outside your folders"}
 
 
@@ -1496,10 +1502,12 @@ _ASK_VENDORS = {"claude-code": "Claude", "codex": "Codex", "gemini-cli": "Gemini
                 "antigravity": "Gemini", "opencode": "OpenCode"}
 
 
-def _call_digest(event, action, rule) -> str:
+def _call_digest(event, action, rule, *, replay=None) -> str:
     data = event["input"] if isinstance(event["input"], dict) else {"value": event["input"]}
     material = {"vendor": event.get("vendor") or "", "session": event.get("session") or "",
                 "tool": event["tool"], "action": action, "rule": rule, "input": data}
+    if replay is not None:
+        material["replay"] = replay
     raw = json.dumps(material, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -1547,11 +1555,6 @@ def _ask_replay(event, action) -> dict:
                 "action": event["tool"], "arguments": data.get("arguments")}
     if event.get("session") == "archhub-remote-relay":
         return {"kind": "remote", "tool": event["tool"], "arguments": data}
-    if event["tool"] == "write" and "code" in data and data.get("host") is not None:
-        return {"kind": "host", "params": {
-            "host": data.get("host") or "", "code": data.get("code") or "",
-            "document": data.get("path") or "", "transaction_name": data.get("transaction_name") or "",
-            "transaction": True}}
     return {"kind": "permit", "tool": event["tool"], "arguments": data}
 
 
@@ -1776,7 +1779,14 @@ def agent_permission(environment, agent_label, title, action, raw_input, session
 
 def _remember(event, action, rule, digest, summary, environment, replay=None, who=None) -> str:
     data = event["input"] if isinstance(event["input"], dict) else {}
-    text, label = _ask_text(action, data)
+    preview = data
+    if replay and replay.get("kind") == "canvas":
+        preview = replay["payload"]
+    elif replay and replay.get("kind") == "host":
+        preview = {"node": {"params": replay["params"]}, "feeds": replay["feeds"]}
+    elif event["tool"].lower() == "host.exec":
+        preview = {"node": {"params": data}, "feeds": {}}
+    text, label = _ask_text(action, preview)
     saved = {"id": ""}
 
     def change(path):
@@ -1873,10 +1883,11 @@ def _release_ask(replay: dict):
             arguments = {"value": arguments}
         return invoker(replay.get("action") or "", arguments)
     if kind == "host":
-        from .library_engines import LIBRARY_ITEM_ENGINES
-        params = dict(LIBRARY_ITEM_ENGINES["host_exec"]["params"])
-        params.update(replay.get("params") or {})
-        produced, display = host_runtime.host_exec(params)
+        if "feeds" not in replay:
+            raise ValueError("Run the host node again to review its exact inputs.")
+        produced, display = host_runtime.host_exec(replay["params"], replay["feeds"])
+        if produced.get("status") == "Unconfirmed":
+            raise host_runtime.UnconfirmedHostRun(produced.get("log") or host_runtime.UNCONFIRMED_HOST_MESSAGE)
         if display in ("Failed", "Waiting for you"):
             note = produced.get("log") if isinstance(produced, dict) else ""
             raise ValueError(note or display)

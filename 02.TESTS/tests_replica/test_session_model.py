@@ -150,6 +150,34 @@ def test_done_check_command_from_a_session_file_never_runs(profile):
         assert workshop_tasks.get(history, task)['status'] != 'done'
 
 
+@pytest.mark.parametrize('upstream', [False, True])
+def test_done_check_cannot_run_a_host_node(profile, upstream):
+    from nodelang.hook_decision import ask_reviews
+    from nodelang.session_files import read_document, set_session_fields, write_document
+    workshop_tasks, application_history = tasks()
+    marker = profile / 'host-ran.txt'
+    code = 'from pathlib import Path\nPath(%r).write_text("ran")\nresult = True' % str(marker)
+    with application_history() as history:
+        view = workshop_tasks.create_session(history, 'Shared work', select=False, workspace='tower')
+        path, task = view['path'], view['taskId']
+        document = read_document(path)
+        document['nodes'].append({'id': 'host', 'item': 'host_exec', 'type': 'host.exec', 'title': 'Host',
+                                  'params': {'host': 'python', 'code': code}, 'position': {'x': 300, 'y': 0}})
+        if upstream:
+            document['nodes'].append(convert('check', x=650))
+            document['wires'].append({'id': 'w', 'from': {'node': 'host', 'socket': 'result'},
+                                      'to': {'node': 'check', 'socket': 'in'}})
+        write_document(path, document)
+        set_session_fields(path, {'doneCheck': {'node': 'check' if upstream else 'host'}})
+        workshop_tasks.claim(history, task, 'agent-a', 'Agent A')
+        with pytest.raises(workshop_tasks.TaskCheckFailed):
+            workshop_tasks.complete(history, task, 'agent-a', 'finished')
+        assert not marker.exists()
+        assert not ask_reviews()
+        assert model(path)['doneCheck']['tries'] == 1
+        assert workshop_tasks.get(history, task)['status'] != 'done'
+
+
 def test_no_done_check_keeps_todays_completion(profile):
     workshop_tasks, application_history = tasks()
     with application_history() as history:

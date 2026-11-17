@@ -11391,6 +11391,21 @@
         "02.TESTS/tests_replica/test_workshop_returned_truth.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CHATPICKER": {
+      "source": "Founder F389 CHAT-PICKER-OFFERS-CLAUDE (T0), 2026-11-17: chat with Claude Code from the installed app, from Home, the Canvas composer and a Workshop card. The Studio had no start choice and every send went to BABOOM. The composer menu offers the installed chat agents from one server route, a start launches Claude Code with read-only tools only and a start that lists a tool that acts is ended, one thread keeps one chat, and an ended chat starts nothing. Fake agents only in tests; no test starts Claude on the founder's login; branch-only commits on lane/chat-picker, hooks on.",
+      "scope": [
+        "01.APP/nodelang/acp_client.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ui.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "02.TESTS/tests_replica/test_chat_acp.py",
+        "02.TESTS/tests/test_chat_picker_live.py",
+        "02.TESTS/tests_js/chat_picker_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

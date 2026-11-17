@@ -849,19 +849,25 @@ def test_claude_with_only_its_built_in_tools_is_asked(installed, monkeypatch):
 
 @pytest.mark.parametrize('body', [{'prompt': '@gemini how many sheets?'}, {'prompt': '@opencode how many sheets?'},
                                   {'prompt': '@goose how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'gemini'},
-                                  {'prompt': 'how many sheets?', 'agent': 'OpenCode'}, {'prompt': '@claude and @gemini: sheets?'}])
-def test_only_claude_and_codex_are_offered_in_chat_and_the_others_start_nothing(installed, monkeypatch, body):
+                                  {'prompt': 'how many sheets?', 'agent': 'OpenCode'}, {'prompt': '@claude and @gemini: sheets?'},
+                                  {'prompt': '@codex how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'codex'},
+                                  {'prompt': 'how many sheets?', 'agent': 'Codex'}, {'prompt': '@claude and @codex: sheets?'}])
+def test_only_claude_is_offered_in_chat_and_the_others_start_nothing(installed, monkeypatch, body):
+    """Until 2026-11-17 this read "only claude and codex". An independent review found Codex is still given tools that
+    act with no request (hosted web search, helper agents, a background memory job), so Codex is not admitted either."""
     from nodelang import acp_client, nograph_server
     install, log = installed
     for name in ('claude', 'codex', 'gemini', 'opencode', 'goose'):
         install(name)
     for name in acp_client._NOT_YET:
         monkeypatch.delitem(acp_client.AGENTS, name)                     # the table as it ships
-    assert sorted(acp_client.AGENTS) == ['claude', 'codex']
+    assert sorted(acp_client.AGENTS) == ['claude'] and 'codex' in acp_client._NOT_YET
     started = []
     monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda *a, **kw: started.append(a))
-    with pytest.raises(ValueError, match='is not available in chat yet'):
+    with pytest.raises(ValueError, match='is not available in chat yet') as refused:
         nograph_server._chat(body, lambda text: None)
+    if 'codex' in json.dumps(body).lower():
+        assert str(refused.value) == 'Codex is not available in chat yet.'   # one plain line, and nothing was started
     for name in acp_client._NOT_YET:
         with pytest.raises(ValueError, match='is not available in chat yet'):
             acp_client.ask(name, 'how many sheets?')
@@ -948,6 +954,8 @@ def canaries(tmp_path, monkeypatch):
     import socket
     if not shutil.which('codex', path=_REAL_PATH):
         pytest.skip('Codex is not installed on this PC')
+    from nodelang import acp_client
+    monkeypatch.setitem(acp_client.AGENTS, 'codex', acp_client._NOT_YET['codex'])   # its row is kept and tested, not offered
     home, marker, script = tmp_path / 'codex-home', tmp_path / 'canary-started.txt', tmp_path / 'canary.py'
     home.mkdir()
     script.write_text(_CANARY, encoding='utf-8')
@@ -971,7 +979,6 @@ def canaries(tmp_path, monkeypatch):
         % (json.dumps(sys.executable), json.dumps(str(script)), json.dumps(str(marker)), listener.getsockname()[1]), encoding='utf-8')
     monkeypatch.setenv('CODEX_HOME', str(home))
     monkeypatch.setenv('PATH', _REAL_PATH)
-    from nodelang import acp_client
     monkeypatch.setattr(acp_client, '_CODEX_CONFIG_TOP', tmp_path)   # not the real folders above the test's own
     yield marker, hits
     done.set()
@@ -1337,7 +1344,7 @@ def test_the_users_own_hook_makes_no_card_for_an_agent_started_for_chat(monkeypa
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():
     from nodelang import acp_client
     for agent in ('claude', 'codex'):
-        row = acp_client.AGENTS[agent]
+        row = {**acp_client._NOT_YET, **acp_client.AGENTS}[agent]        # Codex's row is kept, not offered
         assert row['commands'] == (agent,)                               # no claude-agent-acp / codex-acp dependency
         assert not [arg for arg in row['args'] if 'skip' in arg or 'bypass' in arg or 'dangerous' in arg]
 

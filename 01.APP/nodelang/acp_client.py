@@ -48,7 +48,6 @@ AGENTS = {
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
         '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
         '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers. The user's hooks stay ON.
-    'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
 }
 # The first chat release grants no action (CHAT_ACTIONS below). Answering every request with No is not enough: a CLI
 # also has tools that never ask (measured on Claude Code 2.1.325 with every request denied: CronCreate scheduled a
@@ -69,7 +68,12 @@ _CODEX_ACTING = ('shell_tool', 'code_mode_host', 'code_mode', 'multi_agent', 'mu
                  'goals', 'sleep_tool', 'in_app_local_automation', 'skill_mcp_dependency_install')
 # Not offered in chat yet: these speak ACP themselves, and nothing here can switch off or check their own connectors
 # (session/new mcpServers=[] only adds none). Their rows are kept for the day that is proven; no route reaches them.
+# Codex is here too (independent review 2026-11-17): the start words and proofs above cannot yet show that it is
+# given no tool that acts. Its hosted web search needs no local tool and asks nobody; its helper-agent and exec
+# tools are still declared to the model; its memories feature sends a past session to its provider when a process
+# starts. Picking Codex in chat says so in one line and starts no process. Its dialect and gates are kept and tested.
 _NOT_YET = {
+    'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
     'opencode': {'commands': ('opencode',), 'args': ('acp',)},
     'goose': {'commands': ('goose',), 'args': ('acp',)},
@@ -528,7 +532,7 @@ def agent_for(handle):
 def _offered(agent):
     """The agent, when the table offers it; a plain refusal for one that is known but not offered in chat yet."""
     if agent not in AGENTS:
-        raise ValueError('%s is not available in chat yet. Claude Code and Codex are.' % label(agent))
+        raise ValueError('%s is not available in chat yet.' % label(agent))
     return agent
 
 

@@ -660,7 +660,16 @@ def undo_last(path, by):
 
 
 def merge(base, ours, theirs):
-    """Three-way merge at node/wire id granularity: the other editor's changes survive ours."""
+    """Apply fields changed by this editor to the current nodes and wires."""
+    def apply_changes(before, edited, current):
+        merged = copy.deepcopy(current)
+        for key in before.keys() - edited.keys():
+            merged.pop(key, None)
+        for key, value in edited.items():
+            if key not in before or before[key] != value:
+                merged[key] = copy.deepcopy(value)
+        return merged
+
     result = copy.deepcopy(theirs)
     for field in ('nodes', 'wires'):
         b = {x['id']: x for x in (base or {}).get(field, [])}
@@ -670,7 +679,15 @@ def merge(base, ours, theirs):
             if b.get(key) == o.get(key):
                 continue  # we did not touch it: theirs stands
             if key in o:
-                t[key] = o[key]
+                if key in b and key not in t:
+                    raise ValueError('An item you edited was removed elsewhere. Reopen the workflow before saving.')
+                if key in b and key in t:
+                    merged = apply_changes(b[key], o[key], t[key])
+                    if field == 'nodes':
+                        merged['params'] = apply_changes(b[key]['params'], o[key]['params'], t[key]['params'])
+                    t[key] = merged
+                else:
+                    t[key] = o[key]
             else:
                 t.pop(key, None)
         result[field] = list(t.values())
@@ -700,17 +717,22 @@ def remember(path, document):
     held = _SNAPSHOTS.setdefault(str(path).lower(), {})
     held[revision(document)] = copy.deepcopy(document)
     for old in sorted(held)[:-20]:
-        held.pop(old)
+        held.pop(old, None)
 
 
-def commit_ui(path, document, base_revision, by='You'):
+def commit_ui(path, document, base_revision, by='You', *, record_creation=True):
     """The founder's window saves: merge with any agent edit made since its base."""
     from .session_files import read_document, write_document, validate, portable_parameters
+    document = copy.deepcopy(document)
     validate(document)
     with locked(path):
         current = read_document(path) if Path(path).exists() else None
+        if current is not None and current['id'] != document['id']:
+            raise ValueError('This path now contains a different workflow. Reopen it before saving.')
         if current is not None and revision(current) != base_revision:
             base = _SNAPSHOTS.get(str(path).lower(), {}).get(base_revision)
+            if base is None or base['id'] != document['id']:
+                raise ValueError('This workflow changed and its earlier revision is unavailable. Reopen it before saving.')
             document = merge(base, document, current)
             validate(document)
         portable_parameters(document, path, current)
@@ -720,9 +742,10 @@ def commit_ui(path, document, base_revision, by='You'):
                 json.dumps({k: v for k, v in current.items() if k != 'properties'}, sort_keys=True):
             remember(path, current)
             return current
-        document['properties'] = {**(current or {}).get('properties', {}), **{k: v for k, v in (document.get('properties') or {}).items()
-                                                                          if k not in ('revision', 'history', 'checkpoints')}}
-        _stamp(document, current, by, 'edit in ArchHub')
+        if current is not None or record_creation:
+            document['properties'] = {**(current or {}).get('properties', {}), **{k: v for k, v in (document.get('properties') or {}).items()
+                                                                              if k not in ('revision', 'history', 'checkpoints')}}
+            _stamp(document, current, by, 'edit in ArchHub')
         write_document(path, document)
         remember(path, document)
         return document

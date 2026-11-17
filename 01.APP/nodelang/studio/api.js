@@ -1743,7 +1743,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
  if(navigation!==fileNavigation)return {cancelled:true};
- const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs});
+ const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,base_revision:sessionRevision});
  if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };
@@ -2018,7 +2018,7 @@ api.saveSkill=async name=>{if(name)fileEdit(d=>{d.title=String(name).trim()||d.t
 api.openTemplateGraph=async id=>{const row=state.templates.find(t=>t.id===id);if(row?.path)return api.openSession(row.path);return api.openStarter(id);};
 api.readSessionsFolder=()=>settingsAction('readSessionsFolder').then(result=>{publish({sessionsFolder:result.sessionsFolder});return result;});
 api.chooseSessionsFolder=async()=>{await flushAutosave();const result=await settingsAction('setSessionsFolder',[]);sessionPath=result.moved?.find(([old])=>old===sessionPath)?.[1]||sessionPath;publish({sessionsFolder:result.sessionsFolder,sessionFile:sessionPath});await api.refreshLibraryPorts();return result;};
-window.addEventListener('pagehide',()=>{if(sessionDocument){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
+window.addEventListener('pagehide',()=>{if(sessionDocument&&localDirty){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath,base_revision:sessionRevision});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
 
 const initialState=copy(state);
 api.ready=(async()=>{

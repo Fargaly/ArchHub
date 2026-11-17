@@ -215,6 +215,61 @@ def test_ui_save_merges_concurrent_agent_edit(profile):
     assert {n['id'] for n in undone['nodes']} == {'list', 'slice', 'count'}
 
 
+@pytest.mark.parametrize('edit_kind', ['parameter', 'wire', 'group'])
+def test_opening_autosave_merges_only_its_own_edit(profile, edit_kind):
+    from nodelang import canvas_documents as docs
+    from nodelang.session_files import SessionFiles, read_document, write_document
+
+    owner = SessionFiles()
+    path = profile / 'merge.archhub'
+    original = workflow()
+    wire = original['wires'].pop() if edit_kind == 'wire' else None
+    write_document(path, original)
+    opened = owner.dispatch({'action': 'open', 'path': str(path)})['document']
+
+    def edit(document):
+        node = document['nodes'][1]
+        if edit_kind == 'parameter':
+            node['params']['count'] = '2'
+        elif edit_kind == 'wire':
+            document['wires'].append(wire)
+        else:
+            node['parent'] = 'group'
+            document['nodes'].append({'id': 'group', 'type': 'group', 'children': [node['id']],
+                                      'params': {}, 'position': {'x': 250, 'y': 0}})
+
+    docs.edit(path, 'agent:claude', edit_kind, edit, solve_changed=False)
+    opened['nodes'][1]['position']['x'] = 320
+    saved = owner.dispatch({'action': 'autosave', 'path': str(path), 'document': opened,
+                            'base_revision': docs.revision(opened)})['document']
+    assert read_document(path) == saved
+    node = next(node for node in saved['nodes'] if node['id'] == 'slice')
+    assert node['position']['x'] == 320
+    if edit_kind == 'parameter':
+        assert node['params']['count'] == '2'
+    elif edit_kind == 'wire':
+        assert wire in saved['wires']
+    else:
+        assert node['parent'] == 'group'
+        assert next(node for node in saved['nodes'] if node['id'] == 'group')['children'] == ['slice']
+
+
+def test_stale_autosave_without_a_base_leaves_file_untouched(profile):
+    from nodelang import canvas_documents as docs
+    from nodelang.session_files import write_document
+
+    path = profile / 'unknown-base.archhub'
+    original = workflow()
+    write_document(path, original)
+    docs.edit(path, 'agent:claude', 'set count',
+              lambda document: document['nodes'][1]['params'].update(count='2'), solve_changed=False)
+    committed = path.read_bytes()
+    original['nodes'][1]['position']['x'] = 320
+    with pytest.raises(ValueError, match='earlier revision is unavailable'):
+        docs.commit_ui(str(path), original, 0)
+    assert path.read_bytes() == committed
+
+
 def test_model_node_param_writes_router_json(profile):
     from nodelang.settings_owner import read_router_settings
     from nodelang.session_files import SessionFiles, catalogue

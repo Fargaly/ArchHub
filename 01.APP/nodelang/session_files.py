@@ -1856,6 +1856,8 @@ class SessionFiles:
             if migrated:
                 before_migration.setdefault('properties', {})['sessionMigration'] = 1
             document = read_document(selected_path) if before_migration else new_document()
+            if before_migration:
+                canvas_documents.remember(local_path(str(selected_path)), document)
             return {'ok':True,'document':document,'path':str(launch or held.get('path', '')),
                     **({'migrationDocument': before_migration} if migrated else {})}
         if action == 'starter':
@@ -1880,6 +1882,7 @@ class SessionFiles:
             if migrated:
                 before_migration.setdefault('properties', {})['sessionMigration'] = 1
             document = read_document(path)
+            canvas_documents.remember(local_path(path), document)
             self.remember(local_path(path),document)
             self._current(document['id'], path)
             return {'ok':True,'document':document,'path':str(local_path(path)),
@@ -1892,7 +1895,8 @@ class SessionFiles:
                 # Autosave is in place: the open file IS the document agents edit too.
                 from .canvas_documents import commit_ui
                 path = str(local_path(body['path'])) if body.get('path') else str(document_path(self.directory, document))
-                merged = commit_ui(path, document, int(body.get('base_revision') or 0))
+                base = int(body.get('base_revision', canvas_documents.revision(document)))
+                merged = commit_ui(path, document, base)
                 # APPTIDY owns names only in Sessions; external filenames belong to the user.
                 renamed = move_session(path, Path(path).parent) if Path(path).parent == self.directory.resolve() else path
                 if renamed != path:
@@ -1912,12 +1916,17 @@ class SessionFiles:
                 return {'ok':True,'cancelled':True}
             if body.get('save_as'):
                 document = {**document, 'title': Path(path).stem}
-            portable_parameters(document, path, read_document(path) if Path(path).exists() else None)
-            path = write_document(path,document)
-            canvas_documents.remember(path, document)
+            path = str(local_path(path))
+            if body.get('save_as'):
+                portable_parameters(document, path, read_document(path) if Path(path).exists() else None)
+                path = write_document(path, document)
+                canvas_documents.remember(path, document)
+            else:
+                base = int(body.get('base_revision', canvas_documents.revision(document)))
+                document = canvas_documents.commit_ui(path, document, base, record_creation=False)
             self.remember(path,document)
             self._current(document['id'], path)
-            return {'ok':True,'path':path,'document':document}
+            return {'ok':True,'path':path,'document':document,'revision':canvas_documents.revision(document)}
         if action == 'save-skill':
             document = validate(body.get('document'))
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):

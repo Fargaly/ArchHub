@@ -359,6 +359,35 @@ def test_persisted_schedule_edit_blocks_old_timer_before_refresh(profile, monkey
         service.close()
 
 
+def test_opening_autosave_keeps_committed_schedule_retime(profile):
+    from nodelang import canvas_triggers, session_files
+
+    path = profile / 'retimed.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': 600, 'armed': True})
+    files = session_files.SessionFiles()
+    service = canvas_triggers.TriggerService(files)
+    key = (str(path), 't')
+    try:
+        opened = files.dispatch({'action': 'open', 'path': str(path)})
+        service.refresh()
+        old_timer = service.timers[key]
+        old_timer.cancel()
+
+        service.change_schedule('set_schedule_time', [str(path) + '#t', '18:30'])
+        opened['document']['nodes'][0]['position']['x'] = 20
+        files.dispatch({'action': 'autosave', 'path': str(path), 'document': opened['document'],
+                        'base_revision': opened['document']['properties'].get('revision', 0)})
+
+        saved = session_files.read_document(path)['nodes'][0]
+        assert saved['position']['x'] == 20
+        assert saved['params']['daily_at'] == '18:30'
+        assert saved['params']['every_seconds'] is None
+        old_timer.function()
+        assert session_files.read_runs(path) == []
+    finally:
+        service.close()
+
+
 def test_timed_approval_uses_the_same_saved_parameters_as_admission(profile, monkeypatch):
     from nodelang.canvas_triggers import TriggerService
     from nodelang.session_files import read_runs

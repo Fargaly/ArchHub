@@ -11312,6 +11312,7 @@
         "01.APP/nodelang/workshop_tasks.py",
         "02.TESTS/tests_replica/test_chat_acp.py",
         "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/native_stop_hook.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

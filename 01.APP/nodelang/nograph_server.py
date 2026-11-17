@@ -680,9 +680,17 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
                 raise ValueError('This session is no longer in the Workshop. Reopen it from Home.')
     handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
     from .acp_client import agent_for
-    if not handles and agent_for(body.get('agent')):   # the composer's agent picker only STARTS a chat agent (or is
-        # refused); it never messages a joined session: that is the typed @handle's route alone
-        return _ask_installed(agent_for(body['agent']), prompt, task, on_delta, on_step, cancelled)
+    if agent_for(body.get('agent')) and (body.get('continue') is True or not handles):
+        # the composer's agent picker only STARTS a chat agent (or is refused); it never messages a joined session:
+        # that is the typed @handle's route alone. continue=True: the message is for this thread's running chat, and that
+        # chat owns it, @words included (text, never a route); if that chat ended it is refused, never restarted
+        try:
+            return _ask_installed(agent_for(body['agent']), prompt, task, on_delta, on_step, cancelled,
+                                  resume_only=body.get('continue') is True)
+        except Exception:
+            if task is not None and body.get('fresh') is True and body.get('continue') is not True:
+                _archive_if_empty(task)   # a refused start leaves no empty session behind; only one made for this start
+            raise
     if handles:
         return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step,
                                 cancelled=cancelled)
@@ -696,6 +704,25 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
     except Exception as error:  # noqa: BLE001 - the answer stands even if history is busy
         result['history_error'] = str(error)
     return result
+
+
+def _archive_if_empty(task):
+    """A session made for a chat start that was refused (the composer says so: fresh=True), with nothing in its thread,
+    leaves the active list. An existing session is never archived by a failed start, and neither is any session whose
+    canvas holds a node of its own (the fixed nodes every canvas has do not count), whatever flags the request carried."""
+    from .workshop_mailbox import application_history
+    from .session_files import read_document
+    from . import workshop_tasks
+    with application_history() as history:
+        row = next((r for r in workshop_tasks.column(history) if r['id'] == task), None)
+        if row is None or row['agentLog'] or row['fileMessages'] or row.get('messages'):
+            return
+        try:
+            nodes = read_document(row['sessionPath'])['nodes'] if row.get('sessionPath') else []
+        except (OSError, ValueError):
+            return   # a canvas that cannot be read is kept
+        if not any(not node.get('fixed') for node in nodes):
+            workshop_tasks.archive(history, task)
 
 
 def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda text: None, on_step=lambda step: None,
@@ -718,7 +745,7 @@ def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda 
             'steps': [s for a in answers for s in a.get('steps') or []]}
 
 
-def _ask_installed(agent, prompt, task, on_delta, on_step, cancelled=lambda: False):
+def _ask_installed(agent, prompt, task, on_delta, on_step, cancelled=lambda: False, resume_only=False):
     """One message to an installed agent over the one ACP client; the settled reply is recorded once in the thread."""
     import uuid
     from . import acp_client
@@ -745,9 +772,15 @@ def _ask_installed(agent, prompt, task, on_delta, on_step, cancelled=lambda: Fal
             phase[0] = 'answering'
             on_step({**state, 'status': 'answering'})
         on_delta(text)
+
+    def agent_step(step):   # any step from the agent is life: it is working, so it is never "not responding"
+        if phase[0] in ('starting', 'quiet'):
+            phase[0] = 'working'
+            on_step({**state, 'status': 'working…'})
+        on_step(step)
     try:
-        reply = acp_client.ask(agent, prompt, task=task, on_delta=delta, on_step=on_step, stopped=stopped,
-                               cancelled=cancelled)
+        reply = acp_client.ask(agent, prompt, task=task, on_delta=delta, on_step=agent_step, stopped=stopped,
+                               cancelled=cancelled, resume_only=resume_only)
         record['outcome'] = 'answered'
     finally:
         record['ms'] = int((time.monotonic() - started) * 1000)
@@ -834,6 +867,12 @@ def r_router_settings(s, req):
         return {'ok': True, **owner.routerSettings(refresh_catalogue=req.query.get('refresh_catalogue') == ['1']),
                 'live_agents': s._live_agents.get() or {'processes': [], 'complete': False}}
     return {'ok': True, **owner.setRouterSettings(req.body)}
+
+
+def r_chat_agents(_s, _req):
+    """Which chat agents the composer's picker can START (acp_client.chat_agents): looked up on PATH now, nothing started."""
+    from .acp_client import chat_agents
+    return {'ok': True, 'agents': chat_agents()}
 
 
 # The System graph is logic only: the owners of this server, wired by what feeds what.
@@ -1989,6 +2028,7 @@ ROUTES = {
 
     '/api/commands': ('command_registry', r_commands),
     '/api/router/settings': ('settings/router.json + router.sqlite', r_router_settings),
+    '/api/router/chat-agents': ('acp_client.AGENTS + PATH (read only)', r_chat_agents),
     '/api/documentation': ('site_export + SPEC.md terms', r_documentation),
     '/api/session-files': ('session_files (.archhub)', r_session_files),
     '/api/universal/canvas': ('System graph (logic only)', r_canvas),

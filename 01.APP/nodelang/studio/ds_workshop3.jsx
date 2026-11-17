@@ -158,14 +158,53 @@
       // The To list: every agent in People & agents (one not joined is shown, but cannot receive yet), Everyone, BABOOM.
       const choices = [...(agents.length > 1 ? [{key: 'everyone', handle: 'everyone', name: 'Everyone', detail: agents.length + ' joined sessions'}] : []),
         ...people.filter(p => p.key !== 'founder').map(p => ({key: p.key, handle: p.handle, name: p.name, detail: p.role, gate: p.gate, breaches: p.breaches})),
-        {key: 'baboom', handle: '', name: 'BABOOM', detail: 'Free models first'}];
+        {key: 'baboom', handle: '', name: 'BABOOM', detail: 'Free models first'}, ...startChoices(s.chatAgents)];
       return {agents, people, choices, whoIs};
+  }
+  // START a chat agent (never a joined session): the server's one answer to "which chat agents can start here"
+  // (api.listChatAgents, asked when a Recipient menu opens). Last in the list, so the default stays BABOOM.
+  function startChoices(chat) {
+    const row = (key, name, detail, extra) => ({key, handle: undefined, name, detail, reason: detail, ...extra});
+    if (!chat || chat.status === 'waiting') return [row('start-waiting', 'Start a chat', 'Checking which agents this PC can start…', {})];
+    if (chat.status === 'error') return [row('start-error', 'Start a chat', 'Could not check which agents can start: ' + chat.error + ' Choose to retry.', {act: api.listChatAgents})];
+    if (!chat.rows.length) return [row('start-none', 'Start a chat', 'No chat agent can be started on this PC.', {})];
+    return chat.rows.map(r => r.startable ? {key: 'start:' + r.id, handle: 'start:' + r.id, start: r.id, name: r.name, detail: 'Start a new chat · it can read files, not change them'}
+      : row('start:' + r.id, r.name, r.reason || r.name + ' cannot be started on this PC.', {}));
+  }
+  // One composer turn: a start choice sends the plain prompt with agent=<id> (the server starts that chat agent or
+  // refuses); any other choice is the @mention of a joined session, or BABOOM.
+  function chatTurn(choices, to, body) {
+    const chosen = choices.find(c => c.handle === to) || {};
+    if (chosen.start) return {prompt: body, agent: chosen.start, resume: Boolean(chosen.resume)};
+    return {prompt: (!to || new RegExp('(^|\\s)@' + to + '\\b').test(body) ? '' : '@' + to + ' ') + body, agent: 'BABOOM', resume: false};
+  }
+  // The chat agent a thread is talking to: the one this app started in it (state.chatThreads), or, after a restart,
+  // the chat agent that sent the thread's last answer. '' when none, or when that chat ended.
+  function threadChat(s, task) {
+    const key = task?.id || '', rows = s.chatAgents?.rows || [];
+    if (!task || (s.chatEnded || {})[key]) return '';
+    if ((s.chatThreads || {})[key] !== undefined) return s.chatThreads[key];
+    const last = [...(task.messages || []), ...(task.agentLog || [])].filter(m => !(m.sender_key && m.sender_key === m.viewer_key)).at(-1);
+    return rows.find(r => last && r.name === last.who)?.id || '';
+  }
+  // A thread's own choices: its running chat first ("continue"), then the shared list; an ended chat says so on its start row.
+  function threadChoices(s, task, choices) {
+    const chat = threadChat(s, task), ended = (s.chatEnded || {})[task?.id || ''];
+    const row = (s.chatAgents?.rows || []).find(r => r.id === chat);
+    const marked = choices.map(c => ended && c.start === ended ? {...c, detail: 'Your chat in this thread ended · start a new one'} : c);
+    return row ? [{key: 'chat:' + row.id, handle: 'chat:' + row.id, start: row.id, resume: true, name: row.name + ' chat', detail: 'This thread\'s chat · your next message continues it'}, ...marked] : marked;
+  }
+  // Who a thread's composer addresses when the user has not picked: its running chat, then an ended chat's start choice.
+  function threadDefault(s, task) {
+    const chat = threadChat(s, task), ended = (s.chatEnded || {})[task?.id || ''];
+    return chat ? 'chat:' + chat : ended ? 'start:' + ended : null;
   }  // DESIGNSYS-050 4.9 AgentPicker: one styled To-list; an agent that has not joined is shown but cannot receive yet.
   function AgentPicker({choices, to, setTo, startOpen = false, label = 'Recipient'}) {
     const [listOpen, setListOpen] = React.useState(startOpen);
+    const chosen = choices.find(c => c.handle === to);
     return <div className="ws-to" onKeyDown={e => e.key === 'Escape' && setListOpen(false)}>
-      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}><window.UI.Av id={choices.find(c => c.handle === to)?.name || to || 'BABOOM'} size={22}/><span className="recipient-name">@{choices.find(c => c.handle === to)?.name || to || 'BABOOM'}</span><window.AHIcon name="arrow" size={12} style={{transform:'rotate(90deg)'}}/></button>
-      {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
+      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => { if (!listOpen) api.listChatAgents?.(); setListOpen(!listOpen); })}><window.UI.Av id={chosen?.name || to || 'BABOOM'} size={22}/><span className="recipient-name">{chosen?.resume ? chosen.name : chosen?.start ? 'Start ' + chosen.name : '@' + (chosen?.name || to || 'BABOOM')}</span><window.AHIcon name="arrow" size={12} style={{transform:'rotate(90deg)'}}/></button>
+      {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} data-chat-start={c.key.startsWith('start') ? c.start || 'unavailable' : undefined} data-chat-continue={c.resume ? c.start : undefined} aria-selected={c.handle === to} disabled={c.handle === undefined && !c.act} className="listbutton spread" title={c.reason || (c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : (c.start && !c.resume ? 'Start a new ' : 'Send to ') + c.name)} onClick={() => executeAction("ui.select", () => { if (c.act) { c.act(); return; } setTo(c.handle); setListOpen(false); })}><span>{c.start && !c.resume ? 'Start ' + c.name : c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }
   function TaskComposer({choices, to, setTo, sendRef, replyTo, setReplyTo, draft, setDraft, onSend, docked = false, thread = false, busy = false}) {
@@ -177,12 +216,12 @@
     const send = async (body = text) => {
       if (onSend) return onSend();
       if (!body.trim()) return null;
-      const prompt = (!to || new RegExp('(^|\\s)@' + to + '\\b').test(body) ? '' : '@' + to + ' ') + body +
-        (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(f => ({id: f.id, path: f.path}))) : '');
+      const turn = chatTurn(choices, to, body);
+      const prompt = turn.prompt + (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(f => ({id: f.id, path: f.path}))) : '');
       if (body === text) setText('');
       setSending(true);
       try {
-        const sent = await u.act(() => api.apiRouterChat(prompt, 'BABOOM', replyTo && replyTo.handle === to ? replyTo.id : undefined));
+        const sent = await u.act(() => api.sendChatTurn({...turn, prompt}, replyTo && replyTo.handle === to ? replyTo.id : undefined, undefined));
         if (!sent) { if (body === text) setText(body); return null; }
         files.forEach(f => api.removeComposerAttachment(f.id));
         setReplyTo?.(null);
@@ -331,6 +370,9 @@
   window.UI.TaskSession = TaskSession;
   window.UI.AgentPicker = AgentPicker;
   window.UI.workshopPeople = workshopPeople;
+  window.UI.chatTurn = chatTurn;
+  window.UI.threadChoices = threadChoices;
+  window.UI.threadDefault = threadDefault;
   window.UI.Messages = Messages;
   window.UI.Task = Task;
 })();

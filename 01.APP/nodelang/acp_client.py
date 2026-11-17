@@ -622,13 +622,27 @@ def _launcher(agent, found):
     return argv
 
 
+def _not_installed(agent):
+    return ('%s is not installed on this PC (looked for %s). Install it, then send again.'
+            % (label(agent), ' or '.join(AGENTS[agent]['commands'])))
+
+
+def chat_agents():
+    """The one answer to "which chat agents can be started on this PC", for every composer's picker. Each admitted
+    row is looked up on PATH when this is asked; nothing is started. Rows chat does not start (_NOT_YET) are not listed."""
+    rows = []
+    for agent, row in AGENTS.items():
+        found = any(map(shutil.which, row['commands']))
+        rows.append({'id': agent, 'name': label(agent), 'startable': found, 'reason': '' if found else _not_installed(agent)})
+    return rows
+
+
 def start_command(agent):
     """(argv, fallback argv or None, the dialect it speaks or None) for an installed agent; refuses (names it) when it is not installed."""
     row = AGENTS[_offered(agent)]
     found = next((path for path in map(shutil.which, row['commands']) if path), None)
     if found is None:
-        raise ValueError('%s is not installed on this PC (looked for %s). Install it, then send again.'
-                         % (label(agent), ' or '.join(row['commands'])))
+        raise ValueError(_not_installed(agent))
     head = _launcher(agent, found)
     fallback = row.get('fallback_args')
     args = list(row['args'])
@@ -892,17 +906,41 @@ _SESSIONS = {}
 _SESSIONS_LOCK = threading.Lock()
 
 
+class ChatEnded(AcpRefused):
+    """A message meant for a running chat whose chat is gone: nothing was started and nothing was sent."""
+
+
+def running(agent, task=None):
+    """True while this thread's chat with `agent` is open: started, not stopped, its process still there."""
+    current = _SESSIONS.get((agent, task or ''))
+    transport = current and current.transport
+    return bool(current and current.ready and not current.cancelled.is_set() and transport is not None
+                and not transport.closed and transport.process.poll() is None)
+
+
 def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s: None, stopped=lambda: False,
-        cancelled=lambda: False):
+        cancelled=lambda: False, resume_only=False):
     """One message to an installed agent; started for this thread on first use (only because the user sent it).
     `cancelled` is the caller's irreversible stop for this one request (the server: Stop or app close since the
-    request was admitted). When true, no session is registered, launched or resumed, and nothing is sent."""
+    request was admitted). When true, no session is registered, launched or resumed, and nothing is sent.
+    `resume_only`: the message continues a chat already open in this thread; when that chat has ended it is refused
+    (ChatEnded) and nothing is started."""
     from .user_paths import state_directory
     key = (_offered(agent), task or '')
     halted = lambda: cancelled() or stopped()
     with _SESSIONS_LOCK:   # registration: one session object per key; a stopped one is never used again
         if cancelled():
             raise AcpRefused('Stopped by you')
+        starting = _SESSIONS.get(key)
+        if resume_only and starting is not None and not starting.ready and not starting.cancelled.is_set():
+            # a chat that is still starting has not ended: the follow-up is refused and the start goes on untouched
+            raise AcpRefused('%s is still starting. Send again when it has answered.' % label(agent))
+        if resume_only and not running(*key):
+            stale = _SESSIONS.pop(key, None)
+            if stale is not None:
+                stale.close()   # its process is gone or stopped; bounded by close_seconds
+            raise ChatEnded('Your %s chat in this thread has ended, so this message was not sent. Choose Start %s '
+                            'to start a new chat.' % (label(agent), label(agent)))
         current = _SESSIONS.get(key)
         if current is None or current.cancelled.is_set():
             current = _SESSIONS[key] = AgentSession(agent, state_directory() / 'agents' / agent)

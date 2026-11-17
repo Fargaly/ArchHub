@@ -83,12 +83,19 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}
-async function routerChat(prompt,agent,replyTo,task) {
+// Every end of a turn that did not answer (refused, error, ended) clears its live status line under the composer.
+async function routerChat(prompt,agent,replyTo,task,extra) {
+ const generation=composerGeneration+1;
+ try{return await streamChat(prompt,agent,replyTo,task,extra);}
+ catch(error){if(generation===composerGeneration)publish({composerAnswer:null});throw error;}
+}
+// extra: {continue:true} for the thread's running chat, {fresh:true} for a session made for this start, or nothing
+async function streamChat(prompt,agent,replyTo,task,extra) {
  const generation=++composerGeneration;let answer='',who='Routing',steps=[];
  publish({composerAnswer:{answer:'',provider:'Routing',model:'Free model'}});
  const response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
   'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',
-  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});
+  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(extra||{}),...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});
  if(!response.ok){const result=await response.json();throw Error(result.error||'The model request was refused.');}
  const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',result;
  try{for(;;){const {done,value}=await reader.read();pending+=decoder.decode(value||new window.Uint8Array(),{stream:!done});
@@ -487,7 +494,7 @@ Object.assign(api,{
   }
   throw Error('Choose a saved graph or a completed node result to export.');
  },
- getSnapshot:()=>state,subscribe(fn){listeners.add(fn);watchRefresh();return()=>{listeners.delete(fn);if(listeners.size===0)stopRefresh();};},
+ getSnapshot:()=>state,subscribe(fn){listeners.add(fn);watchRefresh();if(!state.chatAgents)api.listChatAgents();return()=>{listeners.delete(fn);if(listeners.size===0)stopRefresh();};},
  listTasks:refreshTasks,listAgentsWorking:refreshAgents,
  async setTaskActivity(id,values){const result=await workshop('setTaskActivity',[id,values]);await refreshTasks();return result;},
  async listWorkshopMessages(before){const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());const page=await workshop('listWorkshopMessages',[before??null]);return epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())?page:null;},
@@ -500,7 +507,7 @@ Object.assign(api,{
  getKnowledgeGraph:()=>({nodes:[],edges:[],status:'not_connected',message:'Knowledge graph is unavailable.'}),
  contextLabel:id=>state.files.find(x=>x.id===id)?.name||state.graph.nodes.find(x=>x.id===id)?.title||id,
  compatibleNodes:()=>[],getDecisionState:()=>null,
- async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId);},
+ async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId,false);},
  async setSetting(id,value){
   if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return setAppearance(id,value);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
@@ -1058,7 +1065,30 @@ api.exposeSettingsPage=async page=>{
  }else{await commands.load();project();}
  return state.graph.nodes.find(n=>n.id===result.id)||result;
 };
-api.apiRouterChat=(prompt,agent,replyTo,task)=>routerChat(prompt,agent,replyTo,task);  // replyTo: the Workshop message this answers; task: the session thread it belongs to
+// Which chat agents this PC can START, asked of the server each time a Recipient menu opens (it looks on PATH, starts nothing).
+// One answer for the Home, Canvas and Workshop pickers: state.chatAgents = {status: waiting|loaded|error, rows, error}.
+api.listChatAgents=async()=>{
+ if(state.chatAgents?.status==='waiting')return state.chatAgents;
+ publish({chatAgents:{status:'waiting',rows:state.chatAgents?.rows||[],error:''}});
+ try{const result=await request('/api/router/chat-agents');publish({chatAgents:{status:'loaded',rows:Array.isArray(result.agents)?result.agents:[],error:''}});}
+ catch(error){publish({chatAgents:{status:'error',rows:[],error:error.message||'The check did not answer.'}});}
+ return state.chatAgents;
+};
+api.apiRouterChat=(prompt,agent,replyTo,task)=>routerChat(prompt,agent,replyTo,task,false);
+// One composer turn from window.UI.chatTurn. A thread remembers the chat agent that answered in it (state.chatThreads,
+// and after a restart its last answer's sender), so the next message continues that chat (continue=true). When
+// the server says that chat has ended, the thread is marked ended (state.chatEnded) and nothing else is sent.
+api.sendChatTurn=async(turn,replyTo,task)=>{
+ const key=task||'';
+ try{
+  const result=await routerChat(turn.prompt,turn.agent,replyTo,task,turn.resume?{continue:true}:turn.fresh?{fresh:true}:{});
+  if(turn.agent!=='BABOOM')publish({chatThreads:{...state.chatThreads,[key]:turn.agent},chatEnded:{...state.chatEnded,[key]:''}});
+  return result;
+ }catch(error){
+  if(turn.resume&&/chat in this thread has ended/.test(error.message||''))publish({chatThreads:{...state.chatThreads,[key]:''},chatEnded:{...state.chatEnded,[key]:turn.agent}});
+  throw error;
+ }
+};  // replyTo: the Workshop message this answers; task: the session thread it belongs to
 function documentationTutorials(rows){return rows.map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account','workshop':'workshop','tasks':'workshop','approvals':'settings/Hooks','routines':'canvas'})[d.id]||'canvas',bookSource:'ArchHub documentation'}));}
 api.refreshDocs=async()=>{
  const result=await request('/api/documentation');

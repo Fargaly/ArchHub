@@ -481,6 +481,37 @@ def test_one_state_row_says_starting_then_answering_and_says_when_the_agent_is_q
     assert not [s for s in result['steps'] if s['id'] == 'agent-state']  # the state row is not part of the settled answer
 
 
+def _states_with(monkeypatch, step):
+    """A fake agent behind the one client: optionally one tool step, then silence past quiet_seconds (the client keeps
+    polling `stopped`), then its answer. Returns the state row's statuses in order."""
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setitem(acp_client.ACP_NODE['params'], 'quiet_seconds', 0.2)
+
+    def ask(agent, prompt, *, task=None, on_delta, on_step, stopped, cancelled, resume_only):
+        if step:
+            on_step({'id': 't1', 'tool': 'Read sheets', 'status': 'running'})
+        deadline = time.monotonic() + 0.6
+        while time.monotonic() < deadline:   # the client's own poll while the agent says nothing
+            stopped()
+            time.sleep(0.05)
+        on_delta('There are 12 sheets.')
+        return {'text': 'There are 12 sheets.', 'steps': [], 'label': 'Claude Code'}
+    monkeypatch.setattr(acp_client, 'ask', ask)
+    events = []
+    nograph_server._ask_installed('claude', 'how many sheets?', None, lambda text: None, events.append)
+    return [e['status'] for e in events if e.get('id') == 'agent-state']
+
+
+def test_a_step_is_life_so_a_working_agent_is_never_called_not_responding(monkeypatch):
+    """Research measured a real ACP agent: first tool step at 3.6 s, first word at 6.7 s warm and 10.9 s cold. A chat
+    that reads before it writes is working, not quiet."""
+    assert _states_with(monkeypatch, step=True) == ['starting…', 'working…', 'answering']
+
+
+def test_an_agent_that_sends_nothing_past_quiet_seconds_is_called_not_responding(monkeypatch):
+    assert _states_with(monkeypatch, step=False) == ['starting…', 'not responding', 'answering']
+
+
 def _held_start(monkeypatch, point):
     """Hold a start at a point where its session is registered but not yet usable; returns (entered, release, seen)."""
     from nodelang import acp_client, workshop_transport
@@ -1549,3 +1580,229 @@ def test_baboom_answers_through_the_same_acp_client(installed, tmp_path):
     finally:
         runtime.close()
     assert answer['text'] == 'There are 12 sheets.'
+
+
+# -- CHATPICKER: the composer's Recipient menu offers START choices from one server answer -------------------
+def _chat_agents_route():
+    from types import SimpleNamespace
+    from nodelang import nograph_server
+    assert nograph_server.ROUTES['/api/router/chat-agents'][1] is nograph_server.r_chat_agents
+    assert '/api/router/chat-agents' not in nograph_server.POST_ONLY      # a read: a GET from the picker is enough
+    return nograph_server.r_chat_agents(None, SimpleNamespace(method='GET', query={}, body=None))
+
+
+def test_the_picker_list_offers_claude_when_it_is_on_path_and_starts_nothing(installed, monkeypatch):
+    """F389 CHAT-PICKER-OFFERS-CLAUDE: which chat agents can start is the server's one answer, looked up on PATH when
+    it is asked. Codex (and every agent chat does not start) is not listed, even when installed."""
+    from nodelang import acp_client
+    install, log = installed
+    for name in ('claude', 'codex', 'gemini'):
+        install(name)
+    for name in acp_client._NOT_YET:
+        monkeypatch.delitem(acp_client.AGENTS, name)                     # the table as it ships
+    started = []
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda *a, **kw: started.append(a))
+    assert _chat_agents_route() == {'ok': True, 'agents': [{'id': 'claude', 'name': 'Claude Code', 'startable': True, 'reason': ''}]}
+    assert not started and not log.exists() and not acp_client._SESSIONS
+
+
+def test_the_picker_list_has_nothing_startable_when_claude_is_not_on_path(installed, monkeypatch, tmp_path):
+    from nodelang import acp_client
+    install, log = installed
+    install('codex')
+    for name in acp_client._NOT_YET:
+        monkeypatch.delitem(acp_client.AGENTS, name)
+    monkeypatch.setenv('PATH', str(tmp_path / 'bin'))                    # only codex is there
+    rows = _chat_agents_route()['agents']
+    assert [row['startable'] for row in rows] == [False]
+    assert rows[0]['reason'] == 'Claude Code is not installed on this PC (looked for claude). Install it, then send again.'
+    with pytest.raises(ValueError) as refused:                          # the same sentence a send gets
+        acp_client.start_command('claude')
+    assert str(refused.value) == rows[0]['reason'] and not log.exists()
+
+
+@pytest.mark.parametrize('tools', [['Read', 'Glob', 'Grep', 'Write'], ['Read', 'Bash']])
+def test_a_picker_start_refused_by_its_first_lines_leaves_no_session_and_no_thread_line(installed, monkeypatch, tools):
+    """The picker starts Claude Code; when its own first lines list a tool that acts, the start is refused, the process
+    ends, no ACP session is kept, and the session's thread gets no answer line."""
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, log = installed
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': tools}))
+    sent, started = _joined(monkeypatch)
+    task = _task('Picker refusal')
+    with pytest.raises(acp_client.AcpRefused, match='tools that act'):
+        nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude', 'task': task, 'fresh': True}, lambda text: None)
+    assert len(started) == 1 and sent == [] and not acp_client._SESSIONS
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:   # its session had nothing in it, so it left the active list
+        assert task not in [row['id'] for row in workshop_tasks.rows(history, include_archived=False)]
+    pid = json.loads(log.read_text(encoding='utf-8').splitlines()[1])['pid']
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)
+
+
+def test_a_typed_handle_with_the_claude_start_choice_still_sends_one_workshop_message_and_starts_nothing(installed, monkeypatch):
+    """The composer sends agent=claude with a start choice; a typed @handle in the text still wins and is exactly one
+    Workshop message to that joined session, as before."""
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, log = installed
+    install('claude')
+    sent, started = _joined(monkeypatch, {'handle': 'reviewer', 'name': 'Reviewer', 'agent': 'Codex', 'app': 'codex'})
+    nograph_server._chat({'prompt': '@reviewer how many sheets?', 'agent': 'claude'}, lambda text: None)
+    assert sent == [('@reviewer how many sheets?', ['reviewer'])] and started == [] and not log.exists()
+
+
+def test_a_started_chat_continues_three_messages_in_one_session_and_an_ended_one_starts_nothing(installed, monkeypatch):
+    """Coordinator 717: a chat that takes one message is not a chat. After the picker started Claude Code in a thread,
+    each next message (continue=True) goes to the same running chat, in order, and every answer lands in that thread.
+    When that chat's process is gone, the next one is refused in plain words and nothing is started or sent elsewhere."""
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install = installed[0]
+    install('claude')
+    sent, started = _joined(monkeypatch)
+    task = _task('Picker chat')
+    for number, body in enumerate(('how many sheets?', 'and the second?', 'and the third?')):
+        answer = nograph_server._chat({'prompt': body, 'agent': 'claude', 'task': task, 'continue': number > 0}, lambda text: None)
+        assert answer['text'] == 'There are 12 sheets.'
+    assert len(started) == 1 and sent == [] and len(acp_client._SESSIONS) == 1
+    assert sum('There are 12 sheets.' in line for line in _thread(task)) == 3
+    child = acp_client._SESSIONS[('claude', task)].transport.process   # the one fake this test started
+    child.terminate()
+    child.wait(10)
+    with pytest.raises(acp_client.ChatEnded) as ended:
+        nograph_server._chat({'prompt': 'still there?', 'agent': 'claude', 'task': task, 'continue': True}, lambda text: None)
+    assert str(ended.value) == ('Your Claude Code chat in this thread has ended, so this message was not sent. '
+                                'Choose Start Claude Code to start a new chat.')
+    assert len(started) == 1 and sent == [] and not acp_client._SESSIONS
+    assert sum('There are 12 sheets.' in line for line in _thread(task)) == 3   # the thread is kept, not archived
+
+
+def test_a_refused_start_in_a_new_session_archives_that_empty_session(installed, monkeypatch):
+    from nodelang import acp_client, nograph_server, workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install = installed[0]
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': ['Read', 'Bash']}))
+    task = _task('how many sheets?')
+    with pytest.raises(acp_client.AcpRefused, match='tools that act'):
+        nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude', 'task': task, 'fresh': True}, lambda text: None)
+    with application_history() as history:
+        assert task not in [row['id'] for row in workshop_tasks.rows(history, include_archived=False)]
+
+
+# -- review r2 (b), (g) and the starting note --------------------------------------------------------------------
+@pytest.mark.parametrize('follow_up', ['@claude and the second?', '@reviewer and the second?', 'is it a @dataclass?'])
+def test_a_continuing_chat_owns_its_message_whatever_at_words_it_holds(installed, monkeypatch, follow_up):
+    """Review r2 (b): with continue=True the thread's running chat gets the text, @words included: it starts nothing,
+    messages no joined session, and never fails for an @word that names nobody."""
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install = installed[0]
+    install('claude')
+    sent, started = _joined(monkeypatch, {'handle': 'reviewer', 'name': 'Reviewer', 'agent': 'Codex', 'app': 'codex'})
+    task = _task('Picker chat')
+    nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude', 'task': task}, lambda text: None)
+    answer = nograph_server._chat({'prompt': follow_up, 'agent': 'claude', 'task': task, 'continue': True}, lambda text: None)
+    assert answer['text'] == 'There are 12 sheets.' and answer['provider'] == 'Claude Code'
+    assert len(started) == 1 and sent == [] and len(acp_client._SESSIONS) == 1
+
+
+def test_an_ended_chat_with_an_at_claude_follow_up_starts_nothing(installed, monkeypatch):
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install = installed[0]
+    install('claude')
+    sent, started = _joined(monkeypatch)
+    task = _task('Picker chat')
+    nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude', 'task': task}, lambda text: None)
+    child = acp_client._SESSIONS[('claude', task)].transport.process   # the one fake this test started
+    child.terminate()
+    child.wait(10)
+    with pytest.raises(acp_client.ChatEnded):
+        nograph_server._chat({'prompt': '@claude still there?', 'agent': 'claude', 'task': task, 'continue': True}, lambda text: None)
+    assert len(started) == 1 and sent == [] and not acp_client._SESSIONS
+
+
+def test_a_failed_start_never_archives_an_existing_session_only_one_made_for_it(installed, monkeypatch):
+    """Review r2 (g): an existing session (canvas nodes, no thread lines) stays active and unarchived when a start in
+    it fails; a session the composer made for this start (fresh=True) is still archived."""
+    from nodelang import acp_client, nograph_server, workshop_tasks
+    from nodelang.session_files import read_document, write_document
+    from nodelang.workshop_mailbox import application_history
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install = installed[0]
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': ['Read', 'Bash']}))
+    with application_history() as history:
+        existing = workshop_tasks.create_session(history, 'Sheet review', 'founder', select=False)
+    document = read_document(existing['path'])
+    document['nodes'].append({'id': 'count', 'type': 'param.value', 'params': {'type': 'number', 'value': 12},
+                              'position': {'x': 0, 'y': 0}})
+    write_document(existing['path'], document)
+    fresh = _task('how many sheets?')
+    for task, made_for_it in ((existing['taskId'], False), (fresh, True)):
+        with pytest.raises(acp_client.AcpRefused, match='tools that act'):
+            nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude', 'task': task,
+                                  **({'fresh': True} if made_for_it else {})}, lambda text: None)
+    with application_history() as history:
+        active = [row['id'] for row in workshop_tasks.rows(history, include_archived=False)]
+        assert existing['taskId'] in active and not workshop_tasks.get(history, existing['taskId']).get('archived')
+        assert fresh not in active
+    assert any(node['id'] == 'count' for node in read_document(existing['path'])['nodes'])
+
+
+def test_a_follow_up_while_the_chat_starts_is_refused_and_does_not_close_it(installed, monkeypatch):
+    """Review r2 note: a chat that is still starting has not ended. A continue message then is refused in one sentence
+    and the start goes on to answer."""
+    from nodelang import acp_client, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, log = installed
+    install('claude')
+    entered, release, _seen = _held_start(monkeypatch, 'before the launch')
+    task, results = _task('Picker chat'), []
+    first = threading.Thread(target=lambda: results.append(nograph_server._chat(
+        {'prompt': 'how many sheets?', 'agent': 'claude', 'task': task}, lambda text: None)['text']), daemon=True)
+    first.start()
+    assert entered.wait(10)
+    with pytest.raises(acp_client.AcpRefused) as refused:
+        nograph_server._chat({'prompt': 'and the second?', 'agent': 'claude', 'task': task, 'continue': True}, lambda text: None)
+    assert str(refused.value) == 'Claude Code is still starting. Send again when it has answered.'
+    assert not acp_client._SESSIONS[('claude', task)].cancelled.is_set()
+    release.set()
+    first.join(30)
+    assert results == ['There are 12 sheets.']
+    assert len([line for line in map(json.loads, log.read_text(encoding='utf-8').splitlines()) if isinstance(line, list)]) == 1
+
+
+@pytest.mark.parametrize('flags', [{'continue': True, 'fresh': True}, {'fresh': True}])
+def test_no_flag_archives_a_session_whose_canvas_holds_a_node(installed, monkeypatch, flags):
+    """Re-review r3 residual: the server does not trust `fresh`. A hand-made continue+fresh request (refused at once as
+    an ended chat) and a fresh-only failed start both leave a session with a canvas node active, unarchived, node kept."""
+    from nodelang import acp_client, nograph_server, workshop_tasks
+    from nodelang.session_files import read_document, write_document
+    from nodelang.workshop_mailbox import application_history
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install = installed[0]
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': ['Read', 'Bash']}))
+    with application_history() as history:
+        existing = workshop_tasks.create_session(history, 'Sheet review', 'founder', select=False)
+    document = read_document(existing['path'])
+    document['nodes'].append({'id': 'count', 'type': 'param.value', 'params': {'type': 'number', 'value': 12},
+                              'position': {'x': 0, 'y': 0}})
+    write_document(existing['path'], document)
+    with pytest.raises(acp_client.AcpRefused):
+        nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude', 'task': existing['taskId'], **flags},
+                             lambda text: None)
+    with application_history() as history:
+        assert existing['taskId'] in [row['id'] for row in workshop_tasks.rows(history, include_archived=False)]
+        assert not workshop_tasks.get(history, existing['taskId']).get('archived')
+    assert any(node['id'] == 'count' for node in read_document(existing['path'])['nodes'])

@@ -174,6 +174,7 @@
       [sending, setSending] = React.useState(false),
       [contextOpen, setContextOpen] = React.useState(false);
     const pending = React.useRef(0);
+    const choices = window.UI.workshopPeople ? window.UI.workshopPeople(s).choices : [];
     const inputRef = React.useRef(null), [composerWidth, setComposerWidth] = React.useState(760);
     React.useLayoutEffect(() => {
       const observer = new window.ResizeObserver(entries => setComposerWidth(entries[0].contentRect.width));
@@ -182,8 +183,8 @@
     }, []);
     const send = async () => {
       if (!text.trim()) return;
-      // DESIGNSYS-050 4.9: the same To-list as the Workshop; a chosen agent is @mentioned exactly as the Workshop composer does.
-      const message = (!to || new RegExp('(^|\\s)@' + to + '\\b').test(text) ? '' : '@' + to + ' ') + text;
+      // DESIGNSYS-050 4.9: the same To-list as the Workshop; a joined agent is @mentioned, a start choice starts that chat agent.
+      const turn = window.UI.chatTurn(choices, to, text), {prompt: message, agent} = turn;
       // Each send leaves at once: the draft clears now (a second message 1 s later is its own send)
       // and comes back only if this send fails while the box is still empty.
       setDraft(current => ({text:'',revision:current.revision+1}));
@@ -192,12 +193,19 @@
       try {
         const t = await u.act(() => {
           if(u.route==='home'&&!taskId&&!onSent)return api.createTask(message);
-          if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(message, 'BABOOM');
+          if ((!taskId || agent !== 'BABOOM') && typeof api.apiRouterChat === 'function') return api.sendChatTurn(turn, undefined, taskId || undefined);
           return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id});
         });
         if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
         if (t) {
-          if(u.route==='home'&&!taskId&&!onSent){await u.openTaskFile(t.taskId);await u.act(()=>api.apiRouterChat(message,'BABOOM',undefined,t.taskId));await api.listTasks?.();return;}
+          if(u.route==='home'&&!taskId&&!onSent){
+            if(agent==='BABOOM'){await u.openTaskFile(t.taskId);await u.act(()=>api.sendChatTurn(turn,undefined,t.taskId));await api.listTasks?.();return;}
+            // a start opens its session only once the chat answered; a refused start leaves nothing behind (the server
+            // archives the empty session), Home stays, the typed text comes back and the refusal is the toast
+            const answered=await u.act(()=>api.sendChatTurn({...turn,fresh:true},undefined,t.taskId));   // fresh: this session was made for this start
+            await api.listTasks?.();
+            if(answered){await u.openTaskFile(t.taskId);return;}
+            setDraft(current => current.text ? current : {text,revision:current.revision+1});return;}
           if (typeof t.answer === 'string') {
             onSent?.(t);
             return;
@@ -253,7 +261,7 @@
           api,
           tool,
           u
-        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{u.route!=='home' && window.UI.AgentPicker && <window.UI.AgentPicker choices={window.UI.workshopPeople(s).choices} to={to} setTo={setTo} />}<span className="fill" />{u.route!=='home' && api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
+        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{window.UI.AgentPicker && <window.UI.AgentPicker choices={choices} to={to} setTo={setTo} />}<span className="fill" />{u.route!=='home' && api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
         }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn data-design="composer.send" p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} />{u.route==='home'?'Send':null}</Btn></div>

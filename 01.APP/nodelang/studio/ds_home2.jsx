@@ -62,6 +62,9 @@
   };
   const taskNotes = rows => (Array.isArray(rows) ? rows : []).filter(item => item && typeof item === 'object' && (!item.role || item.role === 'task'));
   const taskMessages = task => [...new Map([...taskNotes(task && task.fileMessages), ...taskNotes(task && task.agentLog), ...taskNotes(task && task.messages)].map((item, index) => [item.id || 'file-' + index, item])).values()];
+  // A Workshop card's Show asks for the cursor in that thread's composer. The ask outlives the screen's remount when the
+  // thread opens, and ends on the first composer render that shows that thread (focused) or another thread (dropped).
+  let focusAsk = null;
   const homeDestination = route => {
     if (route === 'workshop' || route === 'canvas') return {route: 'home', face: route, library: false};
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
@@ -311,12 +314,12 @@
     });
     const messages = taskMessages(task);
     const showCanvas = () => setFace('canvas');
-    const choices = [...(people.choices || [])];
+    const choices = window.UI.threadChoices(s, task, [...(people.choices || [])]);
     // An assigned agent that has not joined is listed but cannot receive yet (no handle), like the Workshop To-list.
     for (const name of agents) if (!choices.some(choice => [choice.name,choice.handle,choice.key].includes(name))) choices.push({key:name,handle:undefined,name});
     if (!choices.length) choices.push({key:'baboom',handle:'',name:'BABOOM'});
     const assigned = choices.find(choice => agents.some(name => [choice.name,choice.handle,choice.key].includes(name)));
-    const recipient = to ?? assigned?.handle ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
+    const recipient = to ?? window.UI.threadDefault(s, task) ?? assigned?.handle ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
     const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
     const footer = (running.length ? running.map(h => [h.name, h.file].filter(Boolean).join(' · ')).join(' · ') : 'No program selected.') + ' Model policy: Free first.';
     const persist = async (write, refusal) => {
@@ -340,7 +343,9 @@
     const showWork = async ({task: target, nodeId, approvalId}) => {
       if (!target) { if (approvalId) u.show('Approve', {id: approvalId}); return; }
       if (target.id !== task?.id) await u.openTaskFile(target.id);
-      if (nodeId) { u.setSelectedNodeId(nodeId); inspect({nodeId, wireId: null}); }
+      if (nodeId) { u.setSelectedNodeId(nodeId); inspect({nodeId, wireId: null}); return; }
+      // A Workshop card's Show of a thread: the one composer now has that task as its context; put the cursor in it.
+      focusAsk = {task: target.id, from: target.id === task?.id ? '' : task?.id || ''};   // settled by placeComposer below
     };
     const syncDock = (layout, room) => {
       const shown = window.UI.dockModel.visible(layout, 'library');
@@ -374,12 +379,14 @@
       sendingRef.current = true;
       setSending(true);
       const files = s.composerAttachments || [];
-      const prompt = (!recipient || new RegExp('(^|\\s)@' + recipient + '\\b').test(body) ? '' : '@' + recipient + ' ') + body +
-        (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(file=>({id:file.id,path:file.path}))) : '');
+      const turn = window.UI.chatTurn(choices, recipient, body);
+      const prompt = turn.prompt + (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(file=>({id:file.id,path:file.path}))) : '');
       const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');
       try {
-        const result = await u.act(() => api.apiRouterChat(prompt, 'BABOOM', undefined, task && !task.fileOnly ? task.id : undefined));
+        const result = await u.act(() => api.sendChatTurn({...turn, prompt}, undefined, task && !task.fileOnly ? task.id : undefined));
+        if (result != null && turn.agent !== 'BABOOM') setTo(null);   // the thread's chat is now the default (threadDefault)
+        if (result == null && turn.resume) setTo(null);               // ended: the default becomes Start again
         if (result == null) u.setComposerDraft(current => {
           const held = current[draftKey];
           return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
@@ -462,7 +469,12 @@
                       })}</ol></details>
                 </section>);
     const composerForm = <window.UI.TaskComposer docked thread={face === 'split'} choices={choices} to={recipient} setTo={setTo} draft={text} setDraft={setText} onSend={send} busy={sending} />;
-    const composer = <div className="v22g-composer-dock" style={{'--dock-l': dockRoom.left + 'px', '--dock-r': dockRoom.right + 'px'}}>{composerForm}</div>;
+    const placeComposer = element => {
+      if (!element || !focusAsk || (task?.id || '') === focusAsk.from) return;
+      if (task?.id === focusAsk.task) element.querySelector('textarea')?.focus();
+      focusAsk = null;
+    };
+    const composer = <div className="v22g-composer-dock" ref={placeComposer} data-composer-task={task?.id || ''} style={{'--dock-l': dockRoom.left + 'px', '--dock-r': dockRoom.right + 'px'}}>{composerForm}</div>;
     const tabs = u.canvasTabs?.tabs || [], tabCount = Math.max(1, Math.floor((tabsWidth - 100) / 150));
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));

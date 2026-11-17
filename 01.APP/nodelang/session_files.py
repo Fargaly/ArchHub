@@ -1546,7 +1546,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             _resume = {key: copy.deepcopy(nodes[key]['result']) for key in order
                        if key not in invalid and nodes[key].get('result')
                        # A failed, blocked or stopped step runs again from itself; upstream results are reused.
-                       and nodes[key]['result'].get('status') not in ('Idle', 'Running', 'Out of date', 'Error', 'Blocked', 'Stopped')
+                       and nodes[key]['result'].get('status') not in ('Idle', 'Running', 'Out of date', 'Error', 'Declined', 'Blocked', 'Stopped')
                        and not (nodes[key]['type'] == 'skill' and nodes[key]['params'].get('session_file'))}
         document.setdefault('properties', {})['canvasRun'] = run
         # Uncertain effects survive edits and Run all again until explicitly reconciled.

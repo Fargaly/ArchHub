@@ -77,16 +77,33 @@ def test_resume_reopen_incremental_and_run_all_again(running):
     assert counts == {'one': 2, 'two': 2, 'three': 3}
 
 
-def test_reject_is_terminal_and_does_not_repeat(running):
+def test_retry_after_reject_requires_fresh_approval_without_repeating_upstream(running):
+    from nodelang.hook_decision import ask_reviews
     from nodelang.session_files import read_document
+
     path, counts, run = running
-    approve(run(), 'deny')
+    paused = run()
+    approve(paused, 'deny')
     rejected = read_document(path)
     assert rejected['nodes'][1]['result']['status'] == 'Declined'  # legacy saved status
     assert rejected['nodes'][1]['result']['display'] == 'Rejected'
     assert rejected['nodes'][2]['result']['status'] == 'Blocked'
-    assert not run()['succeeded']
     assert counts == {'one': 1, 'two': 0, 'three': 0}
+
+    retry = run()
+    cards = {card['id']: card for card in ask_reviews()}
+    assert not retry['succeeded']
+    assert retry['run']['id'] == paused['run']['id']
+    assert retry['results']['two']['status'] == 'Waiting for approval'
+    assert retry['approvalId'] != paused['approvalId']
+    assert cards[paused['approvalId']]['status'] == 'declined'
+    assert cards[retry['approvalId']]['status'] == 'pending'
+    assert counts == {'one': 1, 'two': 0, 'three': 0}
+
+    approve(retry)
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    assert run()['succeeded']
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
 
 
 def test_cycle_refused_before_effect_and_input_change_detected(running):

@@ -28,12 +28,16 @@ from pathlib import Path
 from .model_router import ModelRouteRefused
 
 # The node of this client: how long an agent may take to start, and to finish one turn (an Approve card waits inside it).
-ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 60, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
+ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 180, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
                                           'quiet_seconds': 10,     # no word for this long: the thread says "not responding"
                                           'inventory_rows': 500,   # one page of an agent's own MCP servers; more is refused
                                           # One line from an agent. Codex answers its MCP inventory in one line: measured
                                           # 3.3 MB for four servers with 368 tools; a longer line ends the session.
-                                          'line_bytes': 8 * 1024 * 1024}}
+                                          'line_bytes': 8 * 1024 * 1024,
+                                          # The user's own PreToolUse guards that are asked before any card (by script
+                                          # name, from his Claude Code settings), and how long one may take.
+                                          'guards': ('agent_scope_gate.py', 'install_guard.py', 'ledger_guard.py', 'delete_guard.py'),
+                                          'guard_seconds': 60}}
 
 # The start-command table, keyed by the agent registry's ids. First installed command wins; never a download.
 # 'speaks' names the CLI's own stdio mode (a dialect below); a row without it speaks ACP itself.
@@ -103,7 +107,7 @@ class _ClaudeCode:
         detail = next((str(data[key]) for key in ('command', 'description', 'file_path', 'pattern', 'url', 'query')
                        if data.get(key)), '')
         title = detail if detail and kind in ('execute', 'think') else ('%s %s' % (name, detail)).strip()
-        return {'toolCallId': ident, 'title': title or 'Tool', 'kind': kind, 'rawInput': data}
+        return {'toolCallId': ident, 'title': title or 'Tool', 'kind': kind, 'rawInput': data, 'checks': [(name, data)]}
 
     def say(self, message):
         method = message.get('method')
@@ -120,7 +124,8 @@ class _ClaudeCode:
             data = self.asked.pop(message['id'])
             self.wire({'type': 'control_response', 'response': {'subtype': 'success', 'request_id': message['id'],
                        'response': {'behavior': 'allow', 'updatedInput': data} if _allowed(message) else
-                                   {'behavior': 'deny', 'message': 'User refused permission to run tool'}}})
+                                   {'behavior': 'deny', 'message': str(((message.get('result') or {}).get('outcome') or {})
+                                                                       .get('reason') or 'User refused permission to run tool')}}})
 
     def heard(self, line):
         kind, content = line.get('type'), (line.get('message') or {}).get('content')
@@ -201,7 +206,7 @@ class _Codex:
 
     def __init__(self, wire, hear):
         self.wire, self.hear, self.sent, self.prompt, self.asked = wire, hear, {}, None, set()
-        self.opening, self.thread = None, None
+        self.opening, self.thread, self.changes = None, None, {}
 
     def _servers(self, line):
         """The server names of one complete inventory answer; None (and the session is refused) when it is not one."""
@@ -243,6 +248,9 @@ class _Codex:
                  or ' '.join(['Edit'] + [str(change.get('path')) for change in item.get('changes') or ()
                                          if isinstance(change, dict)]))
         status = {'completed': 'completed', 'failed': 'failed', 'declined': 'failed'}.get(item.get('status'), 'in_progress')
+        if item.get('type') == 'fileChange':   # its approval request names no file: the files come from the item
+            self.changes[item.get('id')] = [str(change.get('path')) for change in item.get('changes') or ()
+                                            if isinstance(change, dict) and change.get('path')]
         self.hear(_update(thread, sessionUpdate=update, toolCallId=item.get('id'), title=str(title), kind=kind, status=status))
 
     def heard(self, line):
@@ -286,9 +294,12 @@ class _Codex:
         elif method in ('item/commandExecution/requestApproval', 'item/fileChange/requestApproval'):
             self.asked.add(ident)
             command = method == 'item/commandExecution/requestApproval'
+            # what the user's guards are asked about, in the shape they read: a shell command, or one write per file
+            checks = [('Bash', {'command': str(params.get('command') or '')})] if command else [
+                ('Write', {'file_path': path}) for path in self.changes.get(params.get('itemId'), ())]
             self.hear(_ask_permission(ident, thread, {
                 'toolCallId': params.get('itemId'), 'title': params.get('command') or params.get('reason'),
-                'kind': 'execute' if command else 'edit',
+                'kind': 'execute' if command else 'edit', 'checks': checks,
                 'rawInput': {key: params[key] for key in ('command', 'cwd', 'reason', 'grantRoot') if params.get(key)}}))
         elif method and 'id' in line:
             self.hear(line)             # any other request: the client answers "not admitted"
@@ -391,9 +402,17 @@ class AcpTransport:
             if message.get("method"):
                 if "id" in message:
                     if message["method"] == "session/request_permission":
-                        outcome = permission(message.get("params") or {}, params, tool_calls)
+                        asked = message.get("params") or {}
+                        outcome = permission(asked, params, tool_calls)
                         if stopped():
                             raise AcpRefused("Stopped by you")
+                        if outcome.get("reason"):   # a guard refused it: the thread's step says why
+                            call = asked.get("toolCall") or {}
+                            known = tool_calls.get((asked.get("sessionId"), call.get("toolCallId"))) or {}
+                            update({"sessionId": asked.get("sessionId"), "update": {
+                                "sessionUpdate": "tool_call_update", "toolCallId": call.get("toolCallId"), "status": "failed",
+                                "title": "%s · refused: %s" % (call.get("title") or known.get("title") or "Agent action",
+                                                               outcome["reason"])}})
                         self.send({"id": message["id"], "result": {"outcome": outcome}})
                     else:
                         self.send({"id": message["id"], "error": {"code": -32601, "message": "Capability not admitted"}})
@@ -559,8 +578,61 @@ def start_command(agent):
 _ACTIONS = {'edit': 'write', 'delete': 'delete', 'move': 'write', 'execute': 'shell', 'fetch': 'send'}
 
 
-def approve_card(agent_label, deadline, stopped=lambda: False):
-    """The agent's permission request becomes the one Approve card (hook_decision); the agent waits for the decision."""
+def _guard_commands(tool):
+    """The user's own PreToolUse guards for one tool, as his Claude Code settings list them (read only, never edited).
+    This is his composition, not a second policy: the same commands his own sessions run before a tool."""
+    try:
+        groups = json.loads((Path.home() / '.claude' / 'settings.json').read_text(encoding='utf-8'))['hooks']['PreToolUse']
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    commands = []
+    for group in groups if type(groups) is list else ():
+        matcher = str((group or {}).get('matcher') or '') if isinstance(group, dict) else None
+        try:
+            fits = matcher is not None and (matcher in ('', '*') or re.fullmatch(matcher, tool) is not None)
+        except re.error:
+            fits = False
+        for hook in (group.get('hooks') or ()) if fits else ():
+            command = str(hook.get('command') or '') if isinstance(hook, dict) and hook.get('type') == 'command' else ''
+            if command not in commands and any(name in command for name in ACP_NODE['params']['guards']):
+                commands.append(command)
+    return commands
+
+
+def _guards_refuse(checks, cwd, session, stopped=lambda: False):
+    """The reason the first of the user's guards refuses one of these (tool, input) pairs, else ''. Run BEFORE any card,
+    for every agent: a guarded action is never shown for approval, so no card can grant it. Each guard is his own
+    script, started as his settings start it (no shell), given the PreToolUse payload it reads, and read back the
+    way the CLI reads it: exit code 2, or a deny/block decision on stdout. A guard that cannot run does not refuse,
+    as in the CLI; ArchHub's own hook_decision and the register writer are not guards and are not run here."""
+    for tool, data in checks or ():
+        payload = json.dumps({'hook_event_name': 'PreToolUse', 'tool_name': tool, 'tool_input': data, 'cwd': str(cwd),
+                              'session_id': str(session or ''), 'transcript_path': ''}).encode()
+        for command in _guard_commands(str(tool)):
+            if stopped():
+                return 'Stopped by you'
+            try:
+                done = subprocess.run(command, input=payload, capture_output=True, cwd=str(cwd) if Path(str(cwd)).is_dir() else None,
+                                      timeout=ACP_NODE['params']['guard_seconds'], env=child_environment(),
+                                      creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if done.returncode == 2:
+                return (done.stderr.decode('utf-8', 'replace').strip() or 'refused by a guard')[:300]
+            try:
+                said = json.loads(done.stdout.decode('utf-8', 'replace') or '{}')
+            except ValueError:
+                said = {}
+            said = said if isinstance(said, dict) else {}
+            native = said.get('hookSpecificOutput') if isinstance(said.get('hookSpecificOutput'), dict) else {}
+            if native.get('permissionDecision') == 'deny' or said.get('decision') == 'block':
+                return str(native.get('permissionDecisionReason') or said.get('reason') or 'refused by a guard')[:300]
+    return ''
+
+
+def approve_card(agent_label, deadline, stopped=lambda: False, cwd='', refused=lambda _reason: None):
+    """The agent's permission request becomes the one Approve card (hook_decision); the agent waits for the decision.
+    Before any card, the user's own guards are asked (_guards_refuse): a refusal is the answer, with their reason."""
     from . import hook_decision
 
     def permission(request, _params, tool_calls):
@@ -568,6 +640,11 @@ def approve_card(agent_label, deadline, stopped=lambda: False):
         seen = tool_calls.get((request.get('sessionId'), call.get('toolCallId'))) or {}
         title = str(call.get('title') or seen.get('title') or 'Agent action')[:200]
         action = _ACTIONS.get(call.get('kind') or seen.get('kind'), 'write')
+        reason = _guards_refuse(call.get('checks'), cwd, request.get('sessionId'), stopped)
+        if reason:
+            refused(reason)
+            options = {row.get('kind'): row.get('optionId') for row in request.get('options') or ()}
+            return {'outcome': 'selected', 'optionId': options.get('reject_once'), 'reason': reason}
         # The owner's permit-only entry: what the agent calls its action is shown, never used to choose what Approve does.
         hold, digest = hook_decision.agent_permission(os.environ, agent_label, title, action, call.get('rawInput'),
                                                       request.get('sessionId'))
@@ -697,13 +774,13 @@ class AgentSession:
                 elif kind in ('tool_call', 'tool_call_update'):
                     row = steps.setdefault(item.get('toolCallId'), {'id': str(item.get('toolCallId') or ''),
                                                                     'tool': str(item.get('title') or 'Tool')[:4000]})
-                    if item.get('title'):
+                    if item.get('title') and ' · refused: ' not in row['tool']:   # a guard's reason stays on the step
                         row['tool'] = str(item['title'])[:4000]
                     row['status'] = {'completed': 'ok', 'failed': 'failed'}.get(item.get('status'), 'running')
                     on_step(dict(row))
             final = transport.request('session/prompt', {'sessionId': self.session_id,
                 'prompt': [{'type': 'text', 'text': prompt}]}, deadline=deadline, update=update, stopped=stopped,
-                permission=approve_card(self.label, deadline, lambda: stopped() or transport.closed))
+                permission=approve_card(self.label, deadline, lambda: stopped() or transport.closed, cwd=self.cwd))
             text = ''.join(chunks).strip()
             if final.get('stopReason') not in ('end_turn', 'max_tokens') or not text:
                 raise AcpResponseRefused('%s stopped before it answered. No action was approved.' % self.label)

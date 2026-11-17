@@ -961,6 +961,125 @@ def test_the_same_canaries_do_start_when_the_inventory_is_asked_before_they_are_
     assert marker.exists() and hits                                      # both were started by that one call
 
 
+_FAKE_GUARD = r"""
+import json, os, sys
+event = json.load(sys.stdin)
+with open(os.environ["FAKE_GUARD_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps([os.path.basename(sys.argv[0]), event.get("tool_name"), event.get("tool_input")]) + "\n")
+text = json.dumps(event.get("tool_input")).replace("\\\\", "/")
+name = os.path.basename(sys.argv[0])
+if name == "agent_scope_gate.py" and ("20.CLIENTS" in text or "60.PERSONAL" in text):
+    sys.stderr.write("SCOPE: this path is outside the lane")
+    sys.exit(2)
+if name == "install_guard.py" and "pip install" in text:
+    print(json.dumps({"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "INSTALL: installs are not admitted here"}}))
+if name == "delete_guard.py" and "Remove-Item" in text:
+    print(json.dumps({"decision": "block", "reason": "DELETE: this would delete the user's data"}))
+"""
+
+
+@pytest.fixture
+def guards(tmp_path, monkeypatch):
+    """The user's own PreToolUse guards, as his Claude settings list them: here four small real scripts under those names."""
+    folder, log = tmp_path / 'hooks', tmp_path / 'guards.log'
+    folder.mkdir()
+    groups = []
+    for name, matcher in (('ledger_guard.py', 'Bash|PowerShell|Write|Edit'), ('install_guard.py', 'Bash|PowerShell|Write|Edit'),
+                          ('agent_scope_gate.py', 'Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell'),
+                          ('delete_guard.py', 'Bash|PowerShell'), ('delete_guard.py', 'Bash|PowerShell'),
+                          ('hook_decision.py', ''), ('gen_register.py', 'Write')):
+        (folder / name).write_text(_FAKE_GUARD, encoding='utf-8')
+        groups.append({'matcher': matcher, 'hooks': [{'type': 'command', 'timeout': 30,
+                                                      'command': '"%s" "%s" --vendor claude' % (sys.executable, folder / name)}]})
+    (tmp_path / 'USERPROFILE' / '.claude').mkdir()
+    (tmp_path / 'USERPROFILE' / '.claude' / 'settings.json').write_text(json.dumps({'hooks': {'PreToolUse': groups}}), encoding='utf-8')
+    monkeypatch.setenv('FAKE_GUARD_LOG', str(log))
+    return log
+
+
+def _asks(agent, tool, data):
+    """The permission request each dialect hands the card for one native request, built by the dialect itself."""
+    from nodelang import acp_client
+    heard = []
+    if agent == 'claude':
+        dialect = acp_client._ClaudeCode(lambda value: None, heard.append)
+        dialect.checked = True
+        dialect.heard({'type': 'control_request', 'request_id': 'r1', 'request': {
+            'subtype': 'can_use_tool', 'tool_name': tool, 'input': data, 'tool_use_id': 't1'}})
+    else:
+        dialect = acp_client._Codex(lambda value: None, heard.append)
+        if tool == 'Bash':
+            dialect.heard({'id': 7, 'method': 'item/commandExecution/requestApproval', 'params': {
+                'threadId': 'th', 'turnId': 'tu', 'itemId': 'i1', 'command': data['command'], 'cwd': 'C:/work'}})
+        else:
+            dialect.heard({'method': 'item/started', 'params': {'threadId': 'th', 'turnId': 'tu', 'item': {
+                'type': 'fileChange', 'id': 'i1', 'status': 'inProgress', 'changes': [{'path': data['file_path'], 'kind': 'add'}]}}})
+            dialect.heard({'id': 7, 'method': 'item/fileChange/requestApproval', 'params': {
+                'threadId': 'th', 'turnId': 'tu', 'itemId': 'i1', 'startedAtMs': 1}})
+    return [message for message in heard if message.get('method') == 'session/request_permission'][0]['params']
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+@pytest.mark.parametrize('tool, data, reason', [
+    ('Write', {'file_path': 'C:\\Users\\x\\00.ARCHUB\\20.CLIENTS\\a\\notes.txt', 'content': 'hi'}, 'SCOPE: this path is outside the lane'),
+    ('Write', {'file_path': 'C:/Users/x/00.ARCHUB/60.PERSONAL/cv.txt', 'content': 'hi'}, 'SCOPE: this path is outside the lane'),
+    ('Bash', {'command': 'pip install requests'}, 'INSTALL: installs are not admitted here'),
+    ('Bash', {'command': 'Remove-Item -Recurse C:/Users/x/Documents'}, "DELETE: this would delete the user's data")])
+def test_a_guarded_action_is_refused_with_the_guards_reason_before_any_card(guards, agent, tool, data, reason):
+    from nodelang import acp_client, hook_decision
+    request = _asks(agent, tool, data)
+    request['options'] = [{'optionId': 'yes', 'kind': 'allow_once'}, {'optionId': 'no', 'kind': 'reject_once'}]
+    shown = []
+    outcome = acp_client.approve_card('Codex', time.monotonic() + 20, cwd='C:/work', refused=shown.append)(request, {}, {})
+    assert outcome == {'outcome': 'selected', 'optionId': 'no', 'reason': reason}
+    assert hook_decision.ask_reviews() == [] and shown == [reason]       # no card exists that could grant it
+    ran = [json.loads(line)[0] for line in guards.read_text(encoding='utf-8').splitlines()]
+    assert 'hook_decision.py' not in ran and 'gen_register.py' not in ran and ran.count('delete_guard.py') <= 1
+
+
+@pytest.mark.parametrize('agent, who', [('claude', 'Claude Code'), ('codex', 'Codex')])
+def test_a_normal_write_passes_the_guards_and_raises_exactly_one_card(installed, guards, agent, who):
+    from nodelang import hook_decision, nograph_server
+    install, _log = installed
+    install(agent)
+    done = {}
+    worker = threading.Thread(target=lambda: done.update(result=nograph_server._chat(
+        {'prompt': '@%s write the sheet list' % agent}, lambda text: None)), daemon=True)
+    worker.start()
+    card = _pending_card()
+    time.sleep(0.5)
+    assert len(hook_decision.ask_reviews()) == 1 and card['who'] == who   # one card, the agent's
+    hook_decision.ask_apply(card['id'], card['input_digest'], 'approve')
+    worker.join(20)
+    assert done['result']['text'] == 'File written.'
+    assert 'agent_scope_gate.py' in [json.loads(line)[0] for line in guards.read_text(encoding='utf-8').splitlines()]
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+def test_a_guard_refusal_reaches_the_agent_and_the_thread_and_no_card_is_shown(installed, guards, monkeypatch, agent):
+    from nodelang import hook_decision, nograph_server
+    install, _log = installed
+    install(agent)
+    source = (guards.parent / 'hooks' / 'agent_scope_gate.py')
+    source.write_text(source.read_text(encoding='utf-8').replace('"20.CLIENTS" in text', '"sheets" in text.lower()'), encoding='utf-8')
+    result = nograph_server._chat({'prompt': '@%s write the sheet list' % agent}, lambda text: None)
+    assert result['text'] == 'File not written.' and hook_decision.ask_reviews() == []
+    step = next(s for s in result['steps'] if 'sheets.txt' in s['tool'])
+    assert step['status'] == 'failed' and 'refused: SCOPE: this path is outside the lane' in step['tool']
+
+
+def test_no_guard_list_and_a_guard_that_cannot_run_do_not_refuse(tmp_path, guards):
+    from nodelang import acp_client
+    assert acp_client._guards_refuse([('Write', {'file_path': 'C:/work/a.txt'})], 'C:/work', 's1') == ''
+    settings = tmp_path / 'USERPROFILE' / '.claude' / 'settings.json'
+    settings.write_text(json.dumps({'hooks': {'PreToolUse': [{'matcher': '', 'hooks': [
+        {'type': 'command', 'command': '"%s" "%s"' % (tmp_path / 'missing.exe', tmp_path / 'hooks' / 'install_guard.py')}]}]}}),
+        encoding='utf-8')
+    assert acp_client._guards_refuse([('Bash', {'command': 'pip install x'})], 'C:/work', 's1') == ''   # as the CLI itself treats it
+    settings.unlink()
+    assert acp_client._guards_refuse([('Bash', {'command': 'pip install x'})], 'C:/work', 's1') == ''
+
+
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():
     from nodelang import acp_client
     for agent in ('claude', 'codex'):

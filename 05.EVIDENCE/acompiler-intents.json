@@ -11443,6 +11443,29 @@
         "06.CLOUD/cloud_backend/tests/test_the_cockpit_has_one_source.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ONEBABOOM": {
+      "source": "Founder F385 ONE-BABOOM (T0), 2026-11-17: 'Why is BABOOM still not merged with ArchHub, as if ArchHub is one thing and BABOOM another. BABOOM is the character that comes with ArchHub and helps the user run it, and it is the agent and the Brain', 'like a pet or companion: he is the one who runs everything with you', 'you will not invent new things'; and the same evening 'why is the design not applied in the application'. The existing native companion stays with the ArchHub window above the composer, follows it, stays on the desktop when the app is minimised (F277), and a click points the one composer at BABOOM; the Canvas composer, the Home agent menu, the left dock limit and the zoom rise rule follow the design prototype's measured rows. Nothing new invented: existing companion, existing atlas, existing panel. Hidden and isolated tests only; branch-only commits on lane/dock-followup, hooks on.",
+      "scope": [
+        "01.APP/nodelang/baboom_companion_placement.py",
+        "01.APP/nodelang/baboom_native_companion.py",
+        "01.APP/nodelang/window_commands.py",
+        "01.APP/nodelang/nograph_launcher.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "01.APP/nodelang/studio/companion.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/dock_model.test.cjs",
+        "02.TESTS/tests_js/onebaboom_click.test.cjs",
+        "02.TESTS/tests_replica/test_baboom_companion_placement.py",
+        "02.TESTS/tests_replica/test_baboom_stays_with_archhub.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -11358,6 +11358,25 @@
         "02.TESTS/tests_replica/test_session_model.py",
         "02.TESTS/tests/test_host_exec.py"
       ]
+    },
+    "DOCKLIVE": {
+      "source": "Founder 2026-11-17 on the design prototype: why is this not implemented in the live canvas; panels stack on top of each other in the dock (Map above, Inspector under it), not only icons and tabs; everything parametric and customisable; the Workshop belongs in the movable dock on the canvas, not its own page, not a chat. Coordinator 717 brief: docking on the real Canvas (tab, stack with a splitter, collapse to header, layout kept per project/session by the existing settings owner, Reset) and the Workshop as a dock panel (Waiting for you, Failed, Working now) on the existing approval path; frozen prototype archhub-directions is the spec. Sole builder on lane/dock-live; isolated tests only; hooks on; no push, install, release or live-profile access.",
+      "scope": [
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/studio.html",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_dock_live.py",
+        "02.TESTS/tests_js/dock_live.cjs",
+        "02.TESTS/tests_js/dock_model.test.cjs",
+        "03.TOOLS/packaging/compile_studio.cjs",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

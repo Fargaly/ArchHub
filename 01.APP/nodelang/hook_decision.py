@@ -2021,6 +2021,10 @@ def main(argv=None) -> int:
     try:
         raw = sys.stdin.buffer.read(4 * 1024 * 1024 + 1)
         payload = json.loads(raw or b"{}")
+        if isinstance(payload, dict) and "approval" in payload:
+            print("Answer approvals in the ArchHub app.", file=sys.stderr)
+            sys.stdout.write("{}\n")
+            return 0
         if (args.vendor == "cursor" and type(payload) is dict
                 and payload.get("hook_event_name") in ("stop", "beforeSubmitPrompt")):
             from .native_agent_hooks import emit_cursor_hook

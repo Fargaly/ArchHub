@@ -7,10 +7,12 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from builtins import ConnectionResetError
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -126,6 +128,32 @@ def test_fresh_settings_hold_host_code_and_replay_reviewed_inputs_once(tmp_path,
     assert "var width = 12;" in calls[-1][2]["code"]
     hook_decision.ask_apply(card["id"], card["input_digest"], "approve")
     assert len(calls) == 3
+
+
+def test_hook_stdin_cannot_answer_app_approval(tmp_path, monkeypatch):
+    from nodelang import hook_decision
+    from nodelang.nograph_server import r_workshop
+
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    approval_id, digest = hook_decision.agent_permission(
+        os.environ, 'Claude Code', 'Write fixture', 'write', {}, 'fixture')
+    payload = {'approval': 'ask', 'id': approval_id, 'digest': digest, 'decision': 'approve'}
+    result = subprocess.run(
+        [sys.executable, '-B', hook_decision.__file__, '--vendor', 'codex'],
+        cwd=tmp_path, input=json.dumps(payload), capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+    assert 'Answer approvals in the ArchHub app.' in result.stderr
+    card = next(card for card in hook_decision.ask_reviews() if card['id'] == approval_id)
+    assert card['status'] == 'pending'
+    assert not hook_decision._take_permit(digest, os.environ)
+
+    request = SimpleNamespace(method='POST', body={
+        'action': 'data-api', 'function': 'answerApproval',
+        'args': ['ask', approval_id, digest, 'approve']})
+    outcome = r_workshop(None, request)
+    assert outcome['result']['status'] == 'approved'
+    assert hook_decision._take_permit(digest, os.environ)
 
 
 @pytest.mark.parametrize('outcome', ['ok', 'timeout', 'reset', 'refused', 'pending', 'over_limit'])

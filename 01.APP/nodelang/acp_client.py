@@ -84,7 +84,9 @@ class _ClaudeCode:
               'NotebookEdit': 'edit', 'Glob': 'search', 'Grep': 'search', 'WebFetch': 'fetch', 'WebSearch': 'fetch',
               'Task': 'think', 'Agent': 'think'}
 
-    _CONNECTORS = "Claude Code still has its own connectors (%s), so nothing was sent to it."
+    # Measured on Claude Code 2.1.325: the init line comes only after the first message is written, and before any
+    # answer. So the message is already with it when this check runs; a connector ends the session at that point.
+    _CONNECTORS = "Claude Code still has its own connectors (%s), so its session was ended."
 
     def __init__(self, wire, hear):
         self.wire, self.hear, self.prompt, self.asked = wire, hear, None, {}
@@ -704,7 +706,13 @@ def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s
             if _SESSIONS.get(key) is current:
                 del _SESSIONS[key]
         raise
-    return {**current.ask(prompt, on_delta=on_delta, on_step=on_step, stopped=halted), 'label': current.label}
+    try:
+        return {**current.ask(prompt, on_delta=on_delta, on_step=on_step, stopped=halted), 'label': current.label}
+    finally:
+        if current.cancelled.is_set():   # a session that ended is not kept in the registry
+            with _SESSIONS_LOCK:
+                if _SESSIONS.get(key) is current:
+                    del _SESSIONS[key]
 
 
 def close_all():

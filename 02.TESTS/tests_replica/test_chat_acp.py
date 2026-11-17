@@ -336,7 +336,8 @@ def test_stop_ends_the_agent_process(installed, agent):
                        stopped=halted.is_set)
     assert seen == ['Thinking']                                          # it was mid-answer when Stop was pressed
     lines = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
-    pid, grandchild = lines[1]['pid'], lines[2]['grandchild']
+    pid = lines[1]['pid']
+    grandchild = next(line['grandchild'] for line in lines if isinstance(line, dict) and 'grandchild' in line)
     deadline = time.monotonic() + 10
     while (_alive(pid) or _alive(grandchild)) and time.monotonic() < deadline:
         time.sleep(0.05)

@@ -2,11 +2,13 @@
 ' Same file name as the previous launcher, so existing shortcuts keep
 ' working; it now starts the node-language application.
 Option Explicit
-Dim sh, fso, here, py, rc, args, arg, basePy
+Dim sh, fso, here, py, rc, args, arg, basePy, runError, launcherState
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 here = fso.GetParentFolderName(WScript.ScriptFullName)
 sh.CurrentDirectory = here
+launcherState = LauncherStateRoot()
+If launcherState = "" Then WScript.Quit 87
 
 ' Absolute interpreter only. A bare "pythonw" would be resolved from this
 ' folder first, and this folder is user-writable: a planted pythonw.exe would
@@ -85,11 +87,7 @@ If py <> "" Then
     rc = RunAndWait("""" & py & """ -E -s """ & here & "\colleague_setup.py"" --check-ready", 0)
 End If
 If rc <> 0 Then
-    ' /s /c removes the outer quote pair; preserve the quotes around both
-    ' paths inside it. Use the system command processor, never a local cmd.exe.
-    rc = RunAndWait(QuoteArgument(sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\cmd.exe") _
-        & " /d /s /c " & Chr(34) & QuoteArgument(here & "\ArchHub.bat") _
-        & " " & QuoteArgument(py) & Chr(34), 1)
+    rc = RunSetupHidden(py)
     If rc <> 0 Then
         If RecoverFailedUpdate() Then WScript.Quit 0
         WScript.Quit rc
@@ -111,11 +109,122 @@ Function RunAndWait(command, windowStyle)
     result = 1
     On Error Resume Next
     result = sh.Run(command, windowStyle, True)
-    If Err.Number <> 0 Then result = 1
+    runError = Err.Number
+    If runError <> 0 Then result = 1
     Err.Clear
     On Error GoTo 0
     RunAndWait = result
 End Function
+
+Function LauncherStateRoot()
+    Dim selected, entry, env, testSelected, absolute
+    Set env = sh.Environment("PROCESS")
+    For Each entry In env
+        If UCase(Left(entry, Len("ARCHHUB_TEST_STATE_DIR="))) = "ARCHHUB_TEST_STATE_DIR=" Then
+            testSelected = True
+            Exit For
+        End If
+    Next
+    If testSelected Then
+        selected = env("ARCHHUB_TEST_STATE_DIR")
+    Else
+        selected = env("ARCHHUB_STATE_DIR")
+        If selected = "~" Or Left(selected, 2) = "~\" Or Left(selected, 2) = "~/" Then
+            selected = env("USERPROFILE") & Mid(selected, 2)
+        End If
+        If selected = "" Then
+            selected = env("LOCALAPPDATA")
+            If selected = "" Then selected = env("USERPROFILE") & "\AppData\Local"
+            selected = selected & "\ArchHub"
+        End If
+    End If
+    Set absolute = New RegExp
+    absolute.Pattern = "^([A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)"
+    If absolute.Test(selected) Then
+        LauncherStateRoot = fso.GetAbsolutePathName(selected)
+    Else
+        LauncherStateRoot = ""
+    End If
+End Function
+
+Function RunSetupHidden(interpreter)
+    Dim command, logs, logPath, attempt, output, result, launchError, oldLog
+    logs = launcherState & "\logs"
+    attempt = logs & "\archhub-setup-" & fso.GetTempName
+    logPath = attempt & ".log"
+    oldLog = sh.Environment("PROCESS")("ARCHHUB_SETUP_LOG")
+    On Error Resume Next
+    If Not fso.FolderExists(launcherState) Then fso.CreateFolder launcherState
+    If Not fso.FolderExists(logs) Then fso.CreateFolder logs
+    Err.Clear
+    On Error GoTo 0
+
+    ' /s strips the outer quote pair. BAT handles its log redirection.
+    command = QuoteArgument(sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\cmd.exe") _
+        & " /d /s /c " & Chr(34) & QuoteArgument(here & "\ArchHub.bat") _
+        & " " & QuoteArgument(interpreter) & Chr(34)
+    sh.Environment("PROCESS")("ARCHHUB_SETUP_LOG") = attempt
+    result = RunAndWait(command, 0)
+    launchError = runError
+    If oldLog = "" Then
+        sh.Environment("PROCESS").Remove "ARCHHUB_SETUP_LOG"
+    Else
+        sh.Environment("PROCESS")("ARCHHUB_SETUP_LOG") = oldLog
+    End If
+    TrimSetupTranscript attempt
+    On Error Resume Next
+    Set output = Nothing
+    Set output = fso.OpenTextFile(attempt, 8, True)
+    If Not output Is Nothing Then
+        If launchError <> 0 Then output.WriteLine "ArchHub could not start setup (Windows error " & launchError & ")."
+        output.WriteLine "ArchHub setup exit code: " & result
+        output.Close
+        Err.Clear
+        fso.MoveFile attempt, logPath
+        If Err.Number = 0 Then KeepLatestSetupLog logs, logPath
+    End If
+    Err.Clear
+    On Error GoTo 0
+    RunSetupHidden = result
+End Function
+
+Sub KeepLatestSetupLog(folder, publishedPath)
+    Dim published, file, newer
+    On Error Resume Next
+    Set published = fso.GetFile(publishedPath)
+    For Each file In fso.GetFolder(folder).Files
+        If LCase(Left(file.Name, Len("archhub-setup-"))) = "archhub-setup-" _
+                And LCase(Right(file.Name, Len(".tmp.log"))) = ".tmp.log" Then
+            newer = (published.DateLastModified > file.DateLastModified) _
+                Or ((published.DateLastModified = file.DateLastModified) _
+                    And StrComp(published.Name, file.Name, 1) > 0)
+            If newer Then fso.DeleteFile file.Path
+        End If
+    Next
+    Err.Clear
+    On Error GoTo 0
+End Sub
+
+Sub TrimSetupTranscript(attempt)
+    Dim stream, startText, endText
+    On Error Resume Next
+    If Not fso.FileExists(attempt) Then Exit Sub
+    If fso.GetFile(attempt).Size <= 65536 Then Exit Sub
+    Set stream = fso.OpenTextFile(attempt)
+    startText = stream.Read(16384)
+    Do Until stream.AtEndOfStream Or Err.Number <> 0
+        endText = stream.Read(16384)
+    Loop
+    stream.Close
+    If Err.Number <> 0 Then Exit Sub
+    Set stream = fso.CreateTextFile(attempt, True)
+    stream.Write startText
+    stream.WriteLine "[Middle of setup output omitted.]"
+    stream.Write endText
+    stream.Close
+    Err.Clear
+    On Error GoTo 0
+End Sub
 
 Sub StartUpdateMaintainer()
     Dim maintainer, homePy, cfgPath, cfgFile, line, trimmed, eq, homeDir
@@ -161,8 +270,7 @@ Function RecoverFailedUpdate()
     Dim stateDir, result
     RecoverFailedUpdate = False
     If basePy = "" Then Exit Function
-    stateDir = sh.Environment("PROCESS")("ARCHHUB_TEST_STATE_DIR")
-    If stateDir = "" Then stateDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\ArchHub"
+    stateDir = launcherState
     If Not fso.FileExists(stateDir & "\updates\staged.json") Then Exit Function
     ' File entry, not -m: recovery imports no application package or failed setup dependency.
     result = RunAndWait(QuoteArgument(basePy) & " -E -s " & QuoteArgument(here & "\nodelang\quiet_update.py") _

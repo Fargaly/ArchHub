@@ -22,10 +22,11 @@ try {
   assert.equal(JSON.parse(exported.content).title, 'Facade study');
   await page.getByRole('button', {name: /Library entry/}).first().click();
   await page.getByRole('region', {name: 'Resumed session'}).getByRole('button', {name: 'Open its Canvas', exact: true}).click();
-  await page.getByRole('button',{name:'Library',exact:true}).click();
+  // The Library is a Canvas dock panel: its tab shows it, its header folds and opens it.
+  await page.getByRole('tab',{name:'Library',exact:true}).click();
   const shelf = page.getByRole('complementary', {name: 'Library shelf'});
-  await shelf.getByRole('button', {name: 'Close Library', exact: true}).click();
-  await page.getByRole('button',{name:'Library',exact:true}).click();
+  await page.getByRole('button', {name: 'Fold Library', exact: true}).click();
+  await page.getByRole('button',{name:'Open Library',exact:true}).click();
   await shelf.getByRole('button', {name: 'Sessions', exact: true}).click();
   await shelf.getByRole('group', {name: 'Saved document filter', exact: true}).waitFor();
   assert.equal(await shelf.getByRole('button', {name: 'Skills', exact: true}).count(), 0);

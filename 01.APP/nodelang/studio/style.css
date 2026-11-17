@@ -1247,3 +1247,85 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .app-header.settings-header .header-error>button{flex:none}
 .pet-bubble .composer-tools{grid-template-columns:repeat(5,28px) minmax(0,1fr) 30px max-content}
 .pet-bubble .composer-tools>button[type=submit]:last-child{width:auto!important;min-width:30px!important;padding:0 8px!important;gap:5px;white-space:nowrap}
+/* Canvas dock (DOCKLIVE): panels tab together, stack with a splitter and fold to their header. Sizes and look are the approved prototype's. */
+.dx-workspace>.dockws{flex:1;border-top:1px solid var(--color-line)}
+.dockws{position:relative;display:grid;grid-template-columns:var(--lw,268px) var(--ls,6px) minmax(0,1fr) var(--rs,6px) var(--rw,320px);min-height:0;min-width:0;background:var(--color-bg);transition:grid-template-columns 240ms cubic-bezier(.2,0,0,1)}
+.dockws.sizing,.dockws.sizing *{transition:none!important;user-select:none}
+.dockws .dock{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);background:var(--color-bg-panel);overflow:hidden}
+.dockws .dock.empty{visibility:hidden}
+.dockws .dtabs{display:flex;align-items:center;gap:2px;height:38px;padding:0 6px;border-bottom:1px solid var(--color-line-hair);overflow:hidden;flex:none}
+.dockws .dtab{display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border:0;border-radius:5px;background:transparent;color:var(--color-ink-soft);font:500 calc(12px * var(--text-scale,1))/1 var(--type-family-ui),Inter,sans-serif;white-space:nowrap;cursor:grab;touch-action:none;min-width:0}
+.dockws .dtab span{overflow:hidden;text-overflow:ellipsis}
+.dockws .dtab svg{flex:none}
+.dockws .dtab:hover{background:var(--color-bg-hover);color:var(--color-ink)}
+.dockws .dtab.on{background:var(--color-bg-soft);color:var(--color-ink);box-shadow:inset 0 -2px 0 var(--color-accent)}
+.dockws .dtab:focus-visible,.dockws .icon-btn:focus-visible,.dockws .ssash:focus-visible,.dockws .wsl:focus-visible{outline:2px solid var(--color-accent);outline-offset:-2px}
+.dockws .dtabs .fill{flex:1}
+.dockws .icon-btn{width:30px;height:30px;padding:0;border:0;border-radius:6px;display:grid;place-items:center;background:transparent;color:var(--color-ink-soft);flex:none}
+.dockws .icon-btn:hover{background:var(--color-bg-hover);color:var(--color-ink)}
+.dockws .dtabs .dcol{width:26px;height:26px}
+.dockws .dbody{min-height:0;min-width:0;display:grid;overflow:hidden}
+.dockws .dbody>.pnl{min-height:0;min-width:0;overflow:auto;border:0}
+.dockws .pnl[hidden]{display:none}
+.dockws .dock.col{grid-template-rows:minmax(0,1fr)}
+.dockws .dock.col .dtabs{flex-direction:column;height:auto;padding:8px 4px;border:0;gap:4px}
+.dockws .dock.col .dtab{width:28px;padding:0;justify-content:center}
+.dockws .dock.col .dtab span{display:none}
+.dockws .dock.right .dcol svg{transform:rotate(180deg)}
+.dockws .sash{position:relative;z-index:3;min-width:0;min-height:0;background:var(--color-bg);cursor:col-resize;touch-action:none;outline:0}
+.dockws .sash::after{content:"";position:absolute;inset:0 2px;border-radius:999px;background:var(--color-accent);opacity:0;transition:opacity 120ms cubic-bezier(.2,0,0,1)}
+.dockws .sash:hover::after,.dockws .sash:focus-visible::after,.dockws .sash:active::after{opacity:.65}
+.dockws .dcenter{display:flex;min-width:0;min-height:0}
+.dockws .dcenter>.dx-task-column{flex:1}
+.dockws .dcenter .dx-surface-body{border-top:0}
+.dockws .dock.stacked{display:block}
+.dockws .dstack{display:flex;flex-direction:column;height:100%;min-height:0}
+.dockws .dslot{display:flex;flex-direction:column;min-height:34px;overflow:hidden;transition:flex-grow 240ms cubic-bezier(.16,1,.3,1)}
+/* Each stacked slot scrolls with a thin bar and fades at its bottom edge, so a card running under the next panel reads as more below (prototype 17 Nov). */
+.dockws .dslot>.dbody{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 22px),transparent)}
+.dockws .dslot>.dbody>.pnl{scrollbar-width:thin}
+.dockws .dslot.c>.dbody{display:none}
+.dockws .dslot .dtabs.st{height:34px}
+.dockws .ssash{flex:none;height:5px;margin:-2px 0;position:relative;z-index:2;cursor:row-resize;background:transparent;border-top:1px solid var(--color-line-hair);touch-action:none;transition:background 120ms}
+.dockws .ssash:hover,.dockws .ssash:active{background:color-mix(in srgb,var(--color-accent) 40%,transparent)}
+.dockws.dragging{cursor:grabbing}
+.dockws .dzp{position:absolute;z-index:30;pointer-events:none;border-radius:8px;background:color-mix(in srgb,var(--color-accent) 12%,transparent);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--color-accent) 70%,transparent);transition:left 120ms cubic-bezier(.2,0,0,1),top 120ms cubic-bezier(.2,0,0,1),width 120ms cubic-bezier(.2,0,0,1),height 120ms cubic-bezier(.2,0,0,1)}
+.dockws .dzp[hidden]{display:none}
+.dockws .dzp[data-lab]::after{content:attr(data-lab);position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:600 12px var(--type-family-ui),Inter,sans-serif;color:var(--color-ink);background:var(--color-bg-raised);padding:3px 8px;border-radius:6px;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 24px rgba(0,0,0,.45)}
+.dghost{position:fixed;left:0;top:0;z-index:1200;display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:6px;background:var(--color-bg-raised);border:1px solid var(--color-accent);color:var(--color-ink);font:500 12px/1 var(--type-family-ui),Inter,sans-serif;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 24px rgba(0,0,0,.45)}
+@media (prefers-reduced-motion:reduce){.dockws,.dockws .dslot,.dockws .dzp,.dockws .sash::after{transition:none}}
+/* The Thread peek opens beside the right dock, never over it. */
+.dockws .v22g-thread[data-thread-peek]{right:calc(var(--rw,0px) + var(--rs,0px))}
+/* The composer floats over the canvas, between the docks, and starts after the zoom control (16px inset + its box + a 12px gap); 900px is the shell floor. */
+.dx-home-root[data-screen="task-file"]>.v22g-composer-dock{--zoom-room:124px;--c-l:calc(var(--layout-rail-width) + var(--dock-l,0px) + var(--zoom-room));--c-w:calc(max(100vw,900px) - var(--c-l) - var(--dock-r,0px) - 24px);left:calc(var(--c-l) + var(--c-w) / 2)!important;width:min(620px,var(--c-w))!important;min-width:min(320px,var(--c-w))!important}
+/* Dock panels: the Library and the Inspector keep their content; the dock header replaces their own title bars. */
+.dockws .pnl .library-shelf{height:100%;min-height:0;padding:12px;background:transparent;border:0}
+.dockws .pnl .library-shelf>header{display:none}
+.dockws .pnl .shared-properties{background:transparent}
+.dockws .wsb{display:grid;gap:14px;padding:10px 10px 16px}
+.dockws .wssec{display:grid;gap:6px}
+.dockws .wssec .eyebrow{display:flex;align-items:center;gap:6px;margin:14px 0 6px;font:600 11px var(--type-family-ui),Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--color-ink-muted)}
+.dockws .wsc{border:1px solid var(--color-line-soft);border-radius:8px;padding:8px 9px;background:var(--color-bg);display:grid;gap:6px}
+.dockws .wsc.warn{border-color:color-mix(in srgb,var(--color-warn) 55%,var(--color-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--color-warn) 10%,transparent)}
+.dockws .wsc.bad{border-color:color-mix(in srgb,var(--color-err) 55%,var(--color-line))}
+.dockws .wsch{display:flex;align-items:center;gap:7px;min-width:0}
+.dockws .wsch b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.dockws .wsch em{font-style:normal;color:var(--color-ink-muted);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
+.dockws .wsc p{margin:0;color:var(--color-ink-soft);font-size:12.5px;overflow-wrap:anywhere}
+.dockws .wsc p .soft{color:var(--color-ink-muted)}
+.dockws .wsc p .bad{color:var(--color-err)}
+.dockws .wsca{display:flex;flex-wrap:wrap;gap:6px}
+.dockws .wsl{display:flex;align-items:center;gap:8px;padding:6px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;text-align:left;width:100%;min-width:0;transition:background 120ms cubic-bezier(.2,0,0,1)}
+.dockws .wsl:hover{background:var(--color-bg-soft)}
+.dockws .wsl>span:nth-child(2){flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis}
+.dockws .wsl em{display:block;font-style:normal;color:var(--color-ink-muted);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dockws .wsd{width:7px;height:7px;border-radius:50%;background:var(--color-accent);flex:none}
+.dockws .wsb .hint{margin:0;font-size:12px;color:var(--color-ink-muted)}
+.dockws .mmap{padding:12px}
+.dockws .mmap .mms{display:block;width:100%;height:auto;aspect-ratio:168/104;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg-canvas);cursor:grab;touch-action:none}
+.dockws .mmap .mmh{margin:8px 0 0;font-size:12px;color:var(--color-ink-muted)}
+.dockws .mms .mn{fill:var(--color-ink-muted);opacity:.45}
+.dockws .mms .mn.k-session{fill:var(--color-accent);opacity:.6}
+.dockws .mms .mn.s-approval{fill:var(--color-warn);opacity:.9}
+.dockws .mms .mn.s-failed{fill:var(--color-err);opacity:.9}
+.dockws .mms .mv{fill:color-mix(in srgb,var(--color-accent) 10%,transparent);stroke:var(--color-accent);stroke-width:1.2}

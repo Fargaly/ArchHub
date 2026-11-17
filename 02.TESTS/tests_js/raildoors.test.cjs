@@ -9,7 +9,7 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.

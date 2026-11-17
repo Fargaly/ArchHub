@@ -1510,6 +1510,7 @@ api.saveResearchDecision=async values=>{
 
 // Canvas state is the portable file document; gestures never round-trip a graph.
 let systemProjection=null;
+let shownLayout=null;  // {id, positions}: the on-screen first arrangement of the open file, not in the document until his first edit
 let sessionDocument=null, sessionPath='', fileDirectory='', fileHistory=[], fileFuture=[], autosaveTimer=null, fileWrites=Promise.resolve(), runEpoch=0, fileNavigation=0;
 let sessionBreadcrumbs=[];
 api.enterSession=async id=>{
@@ -1630,7 +1631,8 @@ function projectGroups(nodes,wires){
 }
 function projectFile(){
  if(!sessionDocument)return;
- const properties=sessionDocument.properties||{}, nodes=sessionDocument.nodes.map(node=>fileNode(node)), graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
+ const properties=sessionDocument.properties||{}, shown=shownLayout?.id===sessionDocument.id&&properties.canvasLayout!=='v48'?shownLayout.positions:null;
+ const nodes=sessionDocument.nodes.map(node=>fileNode(shown?.[node.id]?{...node,position:shown[node.id]}:node)), graph={...properties,...(shown?{canvasLayout:'v48'}:{}),id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   ...projectGroups(nodes,sessionDocument.wires.map(w=>projectSessionWire(w,nodes))),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
 }
@@ -1644,6 +1646,9 @@ api.readTaskPreview=async id=>{
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
 function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false){
  if(!sessionDocument)throw Error('Open a session first.');
+ // His first edit keeps what he sees: the on-screen arrangement becomes the document with it.
+ if(shownLayout?.id===sessionDocument.id&&sessionDocument.properties?.canvasLayout!=='v48'){for(const n of sessionDocument.nodes)if(shownLayout.positions[n.id])n.position=shownLayout.positions[n.id];sessionDocument.properties={...sessionDocument.properties,canvasLayout:'v48'};}
+ shownLayout=null;
  const before=copy(sessionDocument);
  if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
  try{edit(sessionDocument);}catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
@@ -1946,7 +1951,8 @@ api.runSelection=ids=>api.runNode(ids);
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
 // Arrangement changes presentation only; keep in-flight pure-node results.
-api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
+// Tidy up arranges the document; the first view of a never-arranged file is arranged on screen only (opening never writes).
+const arrangeDocument=d=>{
  const session=d.nodes.find(n=>n.fixed&&n.type==='thing.session'),nodes=d.nodes.filter(n=>(!n.fixed&&(!session||(n.agentWork?.role!=='session'||n.params?.workshop_step&&!d.nodes.some(row=>row.agentWork?.owner===n.id)))||n===session)&&!n.parent),ids=new Set(nodes.map(n=>n.id));
  const incoming=new Map(nodes.map(n=>[n.id,[]])),rank=new Map(),order=new Map(nodes.map((n,i)=>[n.id,i]));
  for(const w of d.wires)if(ids.has(w.from.node)&&ids.has(w.to.node))incoming.get(w.to.node).push(w.from.node);
@@ -1962,7 +1968,13 @@ api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
  if(left.length){let y=y0;const width=Math.max(...left.map(n=>size(n).w));for(const n of left){n.position={x:grid(x-width-96),y:grid(y)};y+=size(n).h+32;}}
  for(const column of columns){if(!column)continue;column.sort((a,b)=>{const source=n=>incoming.get(n.id).reduce((sum,id)=>sum+nodes.find(n=>n.id===id).position.y,0)/Math.max(1,incoming.get(n.id).length);return source(a)-source(b)||order.get(a.id)-order.get(b.id);});let y=y0;for(const n of column){n.position={x:grid(x),y:grid(y)};y+=size(n).h+32;}x+=Math.max(...column.map(n=>size(n).w))+96;}
  d.properties={...d.properties,canvasLayout:'v48'};
-},null,null,!initial,true);
+};
+api.arrangeGraph=async(initial=false)=>{
+ if(!initial)return fileEdit(arrangeDocument,null,null,true,true);
+ if(!sessionDocument)throw Error('Open a session first.');
+ const d=copy(sessionDocument);arrangeDocument(d);
+ shownLayout={id:d.id,positions:Object.fromEntries(d.nodes.map(n=>[n.id,n.position]))};projectFile();return {ok:true};
+};
 api.groupNodes=async ids=>{
  if(!Array.isArray(ids))throw Error('Choose nodes to group.');
  const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));

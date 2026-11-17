@@ -85,7 +85,8 @@ const {chromium} = require('playwright');
       await open();
       const before=await transform();
       const position=()=>page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.find(n=>n.id==='slice').position);
-      const original=await position();
+      // Where he sees it: a never-arranged file opens tidied on screen only, and his drag starts from there.
+      const original=await page.evaluate(()=>{const n=window.ArchHubAPI.getSnapshot().graph.nodes.find(n=>n.id==='slice');return {x:n.x,y:n.y};});
       const header=await canvas.locator('.react-flow__node[data-id="slice"] .node-header').boundingBox();
       const x=header.x+header.width/2,y=header.y+header.height/2;
       await pointer('mouseMoved',x,y);
@@ -173,11 +174,11 @@ const {chromium} = require('playwright');
       const thread=await page.locator('.v22g-thread').boundingBox();
       assert.ok(session.x>=100&&session.x+session.width<thread.x&&session.y>=89,JSON.stringify({session,thread}));
       await page.getByRole('button',{name:'Close thread',exact:true}).click();
-      await page.getByRole('button',{name:'Fold Inspector',exact:true}).waitFor();await page.getByRole('button',{name:'Fold Inspector',exact:true}).click();
-      await page.getByRole('button',{name:'Open Inspector',exact:true}).click();await page.waitForTimeout(250);
+      // Below 1280 px the Inspector starts folded to its dock icon; opening it keeps the session node readable beside it.
+      await page.getByRole('button',{name:'Open Inspector',exact:true}).click();await page.waitForTimeout(450);
       session=await page.locator('.react-flow__node[data-id="start"]').boundingBox();
       const inspector=await page.locator('[data-properties-pane]').boundingBox();
-      assert.ok(session.x>=100&&session.x+session.width<inspector.x&&session.y>=89,JSON.stringify({session,inspector}));
+      assert.ok(session.x>=100&&session.x+session.width<=inspector.x+2&&session.y>=89,JSON.stringify({session,inspector}));  // the node edge may meet the dock border, never pass under it
       await page.getByRole('button',{name:'Fold Inspector',exact:true}).click();
       console.log(`PASS ${input.board}: Thread and Inspector peek keep the session node readable`);
       await nav.getByRole('button',{name:'Home',exact:true}).click();
@@ -464,9 +465,9 @@ const {chromium} = require('playwright');
       await page.locator('[data-graph-node="pdf"] [data-parameter="folder"] input').fill('issued');
       await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id==='pdf').status==='Out of date');
       for(const [theme,color] of [['Light','rgb(251, 249, 244)'],['Dark','rgb(21, 21, 26)']]){await page.evaluate(theme=>window.ArchHubAPI.setSetting('Appearance.Theme',theme),theme);await page.waitForFunction(color=>window.getComputedStyle(document.querySelector('[data-graph-node="count"] [data-ds-node]')).backgroundColor===color,color);}
-      await page.getByRole('button',{name:'Library',exact:true}).click();
+      await page.getByRole('tab',{name:'Library',exact:true}).click();
       await page.getByRole('complementary',{name:'Library shelf'}).waitFor();
-      await page.getByRole('button',{name:'Close Library',exact:true}).click();
+      await page.getByRole('button',{name:'Fold Library',exact:true}).click();
       await page.getByRole('complementary',{name:'Library shelf'}).waitFor({state:'hidden'});
       await key('Escape',27);await page.getByRole('tab',{name:'Properties',exact:true}).click();
     }

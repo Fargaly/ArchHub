@@ -7,10 +7,11 @@
   const LEFT = {min: 200, max: 360, base: 268}, RIGHT = {min: 280, max: 480, base: 320};
   const clone = layout => JSON.parse(JSON.stringify(layout));
   const slot = id => ({p: [id], a: id, h: 1, c: false});
-  // Workshop over Library|Map on the left, Inspector on the right; under 1500 px the right dock starts folded to icons.
+  const NARROW = 1280;  // below this window width the right dock starts folded to icons, so the canvas keeps its room
+  // Workshop over Library|Map on the left; the Inspector on the right, open as before the dock.
   const defaultLayout = width => ({
     left: {w: LEFT.base, c: false, st: [{p: ['workshop'], a: 'workshop', h: 1.15, c: false}, {p: ['library', 'map'], a: 'library', h: 1, c: false}]},
-    right: {c: width < 1500, st: [slot('insp')]}});
+    right: {c: width < NARROW, st: [slot('insp')]}});
   // A held record becomes a layout where every known panel sits in exactly one place.
   const normalize = (held, width) => {
     if (!held || !held.left || !held.right) return defaultLayout(width);
@@ -91,6 +92,7 @@
   if (typeof React === 'undefined') return;  // the layout rules above also load alone, without a page
 
   const api = window.ArchHubAPI, {executeAction} = api, Icon = window.AHIcon, portal = window.ReactDOM.createPortal;
+  const onResize = notify => { window.addEventListener('resize', notify); return () => window.removeEventListener('resize', notify); };  // the window width as a React store
   const projectKey = value => String(value || '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 128);
 
   // onSave(session, project, layout | null) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
@@ -100,8 +102,9 @@
     const record = (s.dockLayout?.sessions || {})[sessionId] || (s.dockLayout?.projects || {})[projectId] || null;
     // The user's edits show at once; the owner's record is adopted for a session until the first edit there.
     const [local, setLocal] = React.useState(null);
-    const narrow = window.innerWidth < 1500;
-    const layout = React.useMemo(() => local && local.session === sessionId ? local.layout : normalize(record, narrow ? 1499 : 1500),
+    // The default follows the window: crossing 1280 px folds or opens a right dock he has not arranged.
+    const narrow = React.useSyncExternalStore(onResize, () => window.innerWidth < NARROW, () => false);
+    const layout = React.useMemo(() => local && local.session === sessionId ? local.layout || defaultLayout(window.innerWidth) : normalize(record, window.innerWidth),
       [local, sessionId, JSON.stringify(record), narrow]);
     const current = React.useRef(layout);
     current.current = layout;
@@ -112,7 +115,7 @@
       setLocal({session: sessionId, layout: next});
       if (keep) save(next);
     };
-    const reset = () => { setLocal({session: sessionId, layout: defaultLayout(window.innerWidth)}); save(null); };
+    const reset = () => { setLocal({session: sessionId, layout: null}); save(null); };  // no layout of its own: the default for this window width
     React.useImperativeHandle(controls, () => ({
       show: id => change(show(current.current, id)),
       hide: id => change(hide(current.current, id)),
@@ -154,12 +157,13 @@
       }));
     });
     React.useLayoutEffect(() => { onMapHost?.(hosts.current.map); return () => onMapHost?.(null); }, []);
-    React.useLayoutEffect(() => { onLayout?.(layout); }, [layout]);
 
     const drag = React.useRef(null);
     const [dragging, setDragging] = React.useState('');
     const width = side => !layout[side].st.length ? 0 : layout[side].c ? 36 : side === 'left' ? layout.left.w : rightWidth;
     const sash = side => !layout[side].st.length ? 0 : layout[side].c ? 1 : 6;
+    // The screen learns the layout and the room each dock takes, so what floats over the canvas stays over the canvas.
+    React.useLayoutEffect(() => { onLayout?.(layout, {left: width('left') + sash('left'), right: width('right') + sash('right')}); }, [layout, rightWidth]);
     const showPreview = (box, label) => {
       const element = preview.current;
       if (!element) return;
@@ -228,7 +232,7 @@
       if (side === 'left') change(setLeftWidth(current.current, current.current.left.w + step));
       else onRightWidth(Math.max(RIGHT.min, Math.min(RIGHT.max, rightWidth + step)));
     };
-    const tab = (id, side, on, stacked) => <button key={id} type="button" className={'dtab' + (on ? ' on' : '')} role="tab" aria-selected={on} aria-label={stacked ? undefined : PANELS[id][0]} data-tab={id}
+    const tab = (id, side, on, stacked) => <button key={id} type="button" className={'dtab' + (on ? ' on' : '')} role={stacked ? 'tab' : undefined} aria-selected={stacked ? on : undefined} aria-label={stacked ? undefined : 'Open ' + PANELS[id][0]} data-tab={id}
       title={PANELS[id][0] + (stacked ? ': drag onto a panel to tab with it, or onto its upper or lower half to stack' : '')}
       onPointerDown={event => grab(event, {kind: 'tab', id, element: event.currentTarget, x: event.clientX, y: event.clientY, moved: false})}
       onClick={event => executeAction('ui.select', () => { if (!event.currentTarget.dataset.dragged) change(show(current.current, id)); }, event)}>
@@ -236,17 +240,18 @@
     const dock = side => {
       const d = layout[side];
       if (!d.st.length) return <div className={'dock ' + side + ' empty'} data-dock={side} />;
-      if (d.c) return <div className={'dock ' + side + ' col'} data-dock={side}>
-        <div className="dtabs" role="tablist" aria-label={side + ' panels'}>{d.st.flatMap(sl => sl.p).map(id => tab(id, side, false, false))}
+      const id = side === 'right' ? 'params' : undefined;  // the Properties column keeps its id
+      if (d.c) return <div id={id} className={'dock ' + side + ' col'} data-dock={side}>
+        <div className="dtabs" role="toolbar" aria-label={side + ' panels'}>{d.st.flatMap(sl => sl.p).map(id => tab(id, side, false, false))}
           <button type="button" className="icon-btn dcol" aria-label={'Open the ' + side + ' dock'} title="Open" onClick={event => executeAction('ui.select', () => change(toggleDock(current.current, side)), event)}><Icon name="arrow" size={14} /></button></div>
       </div>;
-      return <div className={'dock ' + side + ' stacked'} data-dock={side}><div className="dstack">{d.st.map((sl, index) => <React.Fragment key={index}>
+      return <div id={id} className={'dock ' + side + ' stacked'} data-dock={side}><div className="dstack">{d.st.map((sl, index) => <React.Fragment key={index}>
         {index > 0 && <div className="ssash" role="separator" aria-orientation="horizontal" aria-label={'Resize ' + PANELS[d.st[index - 1].a][0] + ' and ' + PANELS[sl.a][0]}
           onPointerDown={event => { event.preventDefault(); const a = event.currentTarget.previousElementSibling, b = event.currentTarget.nextElementSibling; grab(event, {kind: 'stack', side, index: index - 1, a, b, y: event.clientY, from: a.offsetHeight, total: a.offsetHeight + b.offsetHeight, sum: d.st[index - 1].h + sl.h}); }} />}
         <section className={'dslot' + (sl.c ? ' c' : '')} data-slot={side + ':' + index} aria-label={PANELS[sl.a][0]} style={{flex: sl.c ? '0 0 auto' : sl.h + ' 1 0'}}>
           <div className="dtabs st" role="tablist" aria-label={side + ' panel ' + (index + 1)}>{sl.p.map(id => tab(id, side, id === sl.a, true))}<span className="fill" />
-            <button type="button" className="icon-btn scol" aria-label={(sl.c ? 'Open ' : 'Collapse ') + PANELS[sl.a][0]} title={sl.c ? 'Open' : 'Collapse to its header'} onClick={event => executeAction('ui.select', () => change(toggleSlot(current.current, side, index)), event)}><Icon name={sl.c ? 'arrow' : 'minus'} size={13} /></button>
-            {index === 0 && <button type="button" className="icon-btn dcol" aria-label={'Collapse the ' + side + ' dock to icons'} title="Collapse the dock to icons" onClick={event => executeAction('ui.select', () => change(toggleDock(current.current, side)), event)}><Icon name="arrange" size={13} /></button>}
+            <button type="button" className="icon-btn scol" aria-label={(sl.c ? 'Open ' : 'Fold ') + PANELS[sl.a][0]} title={sl.c ? 'Open' : 'Fold to its header'} onClick={event => executeAction('ui.select', () => change(toggleSlot(current.current, side, index)), event)}><Icon name={sl.c ? 'arrow' : 'minus'} size={13} /></button>
+            {index === 0 && <button type="button" className="icon-btn dcol" aria-label={'Fold the ' + side + ' dock to icons'} title="Fold the dock to icons" onClick={event => executeAction('ui.select', () => change(toggleDock(current.current, side)), event)}><Icon name="arrange" size={13} /></button>}
           </div>
           <div className="dbody" ref={element => { bodies.current[side + ':' + index] = element; }} />
         </section></React.Fragment>)}</div></div>;
@@ -256,7 +261,7 @@
       onPointerDown={event => { if (sash(side) !== 6) return; event.preventDefault(); grab(event, {kind: 'sash', side}); }}
       onDoubleClick={() => executeAction('ui.select', () => side === 'left' ? change(setLeftWidth(current.current, LEFT.base)) : onRightWidth(RIGHT.base))}
       onKeyDown={event => nudge(event, side)} />;
-    return <div ref={root} className={'dockws' + (dragging ? ' dragging' : '')} data-dock-workspace="" onPointerMove={move} onPointerUp={end} onPointerCancel={end}
+    return <div ref={root} id="home-context" className={'dockws' + (dragging ? ' dragging' : '')} data-dock-workspace="" onPointerMove={move} onPointerUp={end} onPointerCancel={end}
       style={{'--lw': width('left') + 'px', '--ls': sash('left') + 'px', '--rs': sash('right') + 'px', '--rw': width('right') + 'px'}}>
       {dock('left')}{edge('left', 'Resize the left panel', LEFT, layout.left.w)}
       <div className="dcenter">{children}</div>
@@ -271,7 +276,7 @@
   // What needs the user, what failed and who is working, from the Workshop, approval and task owners already in Studio state.
   function WorkshopPanel({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
-    const [busy, setBusy] = React.useState('');
+    const [busy, setBusy] = React.useState(''), acting = React.useRef('');  // the ref holds a second click in the same frame
     const tasks = (s.tasks || []).filter(task => task.status !== 'ARCHIVED');
     const taskOf = card => tasks.find(task => [card.taskId, card.task_id, card.work, ...(card.taskIds || [])].includes(task.id));
     const waiting = (s.approvals || []).filter(card => card.status === 'pending')
@@ -282,9 +287,10 @@
     const working = [...live.map(agent => ({key: 'live:' + agent.id, name: agent.name, task: tasks.find(task => task.id === agent.task)})),
       ...tasks.filter(task => task.status === 'WIP' && !live.some(agent => agent.task === task.id)).map(task => ({key: task.id, name: task.owner || (task.agents || [])[0] || 'Agent', task}))];
     const run = async (key, action) => {
-      if (busy) return;
+      if (acting.current) return;
+      acting.current = key;
       setBusy(key);
-      try { await action(); } catch (error) { u.setToast(error.message || 'Could not complete that action. Retry.'); } finally { setBusy(''); }
+      try { await action(); } catch (error) { u.setToast(error.message || 'Could not complete that action. Retry.'); } finally { acting.current = ''; setBusy(''); }
     };
     // The one approval path: api.approve / api.decline answer through hook_decision.decide.
     const decide = (card, word) => run(card.id, async () => {

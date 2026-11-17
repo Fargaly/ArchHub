@@ -18,6 +18,7 @@ test('default layout: Workshop over Library|Map on the left, Inspector on the ri
   assert.deepEqual(tabs(wide, 'left'), ['workshop', 'library|map']);
   assert.deepEqual(tabs(wide, 'right'), ['insp']);
   assert.equal(wide.right.c, false);
+  assert.equal(dock.defaultLayout(1366).right.c, false, 'the Inspector stays open where it is open today');
   assert.equal(dock.defaultLayout(1009).right.c, true, 'the right dock starts folded to icons on a narrow window');
   assert.equal(dock.defaultLayout(1009).left.c, false);
 });

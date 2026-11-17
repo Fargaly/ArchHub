@@ -728,7 +728,10 @@
     controlsRef,
     steps,
     planned,
-    occludedWidth = 0
+    occludedWidth = 0,
+    docked = false,  // the Library, Map and Inspector live in the Canvas dock around this stage
+    mapHost = null,
+    onResetDock
   }) {
     const live = useData(), s = preview ? {...live, graph: preview, sessionBreadcrumbs: []} : live,
       u = useApp();
@@ -1256,7 +1259,7 @@
             ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
             ...(embedded ? [['Thread', () => u.setTaskFace(u.taskFace==='split'?'canvas':'split')]] : []),
             ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
-            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
+            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ...(onResetDock ? [['Reset panel layout', onResetDock]] : []), ['Group · Ctrl G', group, selected.length < 2],
             ['Run all again', () => executeAction('projects.ds_screens.Run.15', {api,u,again:true})],
             ...(selected.length===1&&s.graph.nodes.find(n=>n.id===selected[0])?.status==='Unconfirmed' ? [
               ['Check result',()=>u.act(()=>api.recoverRun(selected[0],'check')),s.graph.nodes.find(n=>n.id===selected[0])?.type!=='thing.file.write'],
@@ -1298,7 +1301,7 @@
 </div></div>}
   {actionsMenu}
   <CanvasGroup className="canvas-panes" orientation="horizontal">
-    {u.libraryOpen && <><CanvasPanel id="canvas-library" panelRef={libraryPanel} collapsible collapsedSize={48} minSize={200} maxSize={360} defaultSize={248} groupResizeBehavior="preserve-pixel-size" onResize={size=>setLibraryRail(size.inPixels<=49)}>
+    {u.libraryOpen && !docked && <><CanvasPanel id="canvas-library" panelRef={libraryPanel} collapsible collapsedSize={48} minSize={200} maxSize={360} defaultSize={248} groupResizeBehavior="preserve-pixel-size" onResize={size=>setLibraryRail(size.inPixels<=49)}>
       {libraryRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Library" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='library'?'':'library')},event)}>Library</button> : <window.UI.LibraryShelf onClose={()=>u.setLibraryOpen(false)} />}
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <CanvasPanel id="canvas-work" minSize={240}>
@@ -1357,7 +1360,8 @@
      {inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
    </CanvasPanel></>}
   </CanvasGroup>
-  {peek==='library'&&u.libraryOpen&&<div className="canvas-pane-peek" data-side="library"><window.UI.LibraryShelf onClose={()=>setPeek('')} /></div>}
+  {mapHost && window.ReactDOM.createPortal(<window.UI.CanvasMap nodes={visible} area={area} view={viewport} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}
+  {peek==='library'&&u.libraryOpen&&!docked&&<div className="canvas-pane-peek" data-side="library"><window.UI.LibraryShelf onClose={()=>setPeek('')} /></div>}
   {peek==='inspector'&&!externalInspector&&(inspected||wire)&&<div className="canvas-pane-peek" data-side="inspector"><button type="button" className="dx-quiet" aria-label="Close Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek('')},event)}>×</button>{inspected?<NodeInspector n={inspected} s={s} u={u}/>:<WireInspector wire={wire} s={s} u={u} onClose={()=>setPeek('')} />}</div>}
 
  </div>;

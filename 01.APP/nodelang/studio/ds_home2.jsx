@@ -158,7 +158,8 @@
     const [failure, setFailure] = React.useState('');
     const [layoutReady, setLayoutReady] = React.useState(false);
     const retrySave = React.useRef(() => {});
-    const inspectorRef = React.useRef(null), canvasRef = React.useRef(null);
+    const canvasRef = React.useRef(null);
+    const dockRef = React.useRef(null), dockWrites = React.useRef(Promise.resolve()), [mapHost, setMapHost] = React.useState(null), [dockRoom, setDockRoom] = React.useState({left: 0, right: 0});
     const shellRef = React.useRef(null), tabsRef = React.useRef(null), viewsRef = React.useRef(null);
     const [viewsWidth,setViewsWidth]=React.useState(0),[threadWidth,setThreadWidth]=React.useState(0),[besideShown,setBesideShown]=React.useState(false);
     const singleCanvas=Boolean(beside)&&viewsWidth-(face==='split'?Math.max(300,threadWidth)+6:0)<646;
@@ -171,7 +172,6 @@
       });
       return()=>window.cancelAnimationFrame(frame);
     },[fileWorkspace,homeLayout.collapsed,homeLayout.width,window.innerWidth<1100]);
-    const [inspectorRail, setInspectorRail] = React.useState(false);
     const threadRef = React.useRef(null), [threadRail, setThreadRail] = React.useState(false), [threadPeek, setThreadPeek] = React.useState(false);
     React.useLayoutEffect(() => {
       const frame = window.requestAnimationFrame(() => {
@@ -196,17 +196,23 @@
     }, [fileWorkspace,layoutReady]);
     const inspectorSetting = s.settings.find(row => row.id === 'Appearance.Inspector width');
     const inspectorWidth = inspectorSetting?.value ?? 320;
-    // Changing defaultSize re-registers the panel; owner updates use resize().
-    const initialInspectorWidth = React.useRef(inspectorWidth);
+    // Show / Hide Library and Add node keep working: they show or fold the Library panel of the dock.
+    // Only his own Show / Hide moves the dock; the dock's state flowing back into libraryOpen moves nothing (opening never writes the layout).
+    const libraryOpenWas = React.useRef(u.libraryOpen);
+    React.useLayoutEffect(() => {
+      const changed = libraryOpenWas.current !== u.libraryOpen;
+      libraryOpenWas.current = u.libraryOpen;
+      if (!fileWorkspace || !changed || !dockRef.current || dockRef.current.visible('library') === u.libraryOpen) return;
+      if (u.libraryOpen) dockRef.current.show('library'); else dockRef.current.hide('library');
+    }, [u.libraryOpen, fileWorkspace]);
     const [inspection, setInspection] = React.useState({nodeId: null, wireId: null});
     const [propertyTab, setPropertyTab] = React.useState('Task');
-    const [splitInspector, setSplitInspector] = React.useState(true);
     const inspectedNode = s.graph.nodes.find(node => node.id === inspection.nodeId);
     const inspectedWire = s.graph.wires.find(wire => wire.id === inspection.wireId);
     const inspect = value => {
       if(!value.nodeId&&!value.wireId&&!inspection.nodeId&&!inspection.wireId)return;
       setInspection(value);
-      if(value.nodeId || value.wireId){setSplitInspector(true);inspectorRef.current?.expand();}
+      if(value.nodeId || value.wireId)dockRef.current?.show('insp');  // the Inspector is a dock panel
       setPropertyTab(value.nodeId || value.wireId ? 'Selection' : 'Task');
     };
     React.useEffect(() => {setPropertyTab('Task');}, [fileWorkspace]);
@@ -230,19 +236,6 @@
       };
       migrate();
     }, [inspectorSetting, s.homeLayout, layoutReady]);
-    React.useLayoutEffect(() => {
-      if (layoutReady) {
-        let frame = window.requestAnimationFrame(() => {
-          frame = window.requestAnimationFrame(() => {
-            if(fileWorkspace && !splitInspector)inspectorRef.current?.collapse();
-            else inspectorRef.current?.resize(inspectorWidth);
-          });
-        });
-        return () => window.cancelAnimationFrame(frame);
-      }
-      return undefined;
-    }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector]);
-    React.useEffect(()=>{setSplitInspector(face!=='split');},[face]);
     React.useEffect(() => {
       if (!fileWorkspace) {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
     }, [fileWorkspace]);
@@ -326,20 +319,33 @@
     const recipient = to ?? assigned?.handle ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
     const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
     const footer = (running.length ? running.map(h => [h.name, h.file].filter(Boolean).join(' · ')).join(' · ') : 'No program selected.') + ' Model policy: Free first.';
-    const persistWidth = async value => {
+    const persist = async (write, refusal) => {
       setRequest('waiting');
       let result;
-      try { result = await writeInspectorWidth(value); }
+      try { result = await write(); }
       catch (error) { result = {ok: false, error: error instanceof Error ? error.message : String(error)}; }
       if (result == null || result.ok === false) {
-        setFailure(result?.error || 'Could not save the Properties width.');
+        setFailure(result?.error || refusal);
         setRequest('error');
-        retrySave.current = () => persistWidth(value);
+        retrySave.current = () => persist(write, refusal);
         return result;
       }
       setFailure('');
       setRequest(tasks.length ? 'loaded' : 'empty');
       return result;
+    };
+    const persistWidth = value => persist(() => writeInspectorWidth(value), 'Could not save the Properties width.');
+    // Dock layout edits are written in the order they were made; a refused write shows here with Retry.
+    const saveDock = (session, project, layout) => { dockWrites.current = dockWrites.current.then(() => persist(() => api.setDockLayout(session, project, layout), 'Could not save the panel layout.')); };
+    const showWork = async ({task: target, nodeId, approvalId}) => {
+      if (!target) { if (approvalId) u.show('Approve', {id: approvalId}); return; }
+      if (target.id !== task?.id) await u.openTaskFile(target.id);
+      if (nodeId) { u.setSelectedNodeId(nodeId); inspect({nodeId, wireId: null}); }
+    };
+    const syncDock = (layout, room) => {
+      const shown = window.UI.dockModel.visible(layout, 'library');
+      if (shown !== u.libraryOpen) u.setLibraryOpen(shown);
+      setDockRoom(held => held.left === room.left && held.right === room.right ? held : room);
     };
     const saveSession = patch => {
       if (!task) return Promise.resolve(false);
@@ -456,7 +462,7 @@
                       })}</ol></details>
                 </section>);
     const composerForm = <window.UI.TaskComposer docked thread={face === 'split'} choices={choices} to={recipient} setTo={setTo} draft={text} setDraft={setText} onSend={send} busy={sending} />;
-    const composer = <div className="v22g-composer-dock">{composerForm}</div>;
+    const composer = <div className="v22g-composer-dock" style={{'--dock-l': dockRoom.left + 'px', '--dock-r': dockRoom.right + 'px'}}>{composerForm}</div>;
     const tabs = u.canvasTabs?.tabs || [], tabCount = Math.max(1, Math.floor((tabsWidth - 100) / 150));
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));
@@ -478,7 +484,6 @@
     const currentStep=heldIndex>=0?heldIndex:Math.max(0,resumeSteps.findIndex(step=>step.state.kind!=='done'));
     const stepLine=resumeSteps.length?resumeSteps.every(step=>step.state.kind==='done')?'All '+resumeSteps.length+' steps done':'Step '+(currentStep+1)+' of '+resumeSteps.length+': '+resumeSteps[currentStep].title+(heldIndex>=0?', waits for you':approvalSteps.length?', session waits for you':''):statusText(task?.status);
     const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
-      <div className="v48-inspector-bar"><Icon name="settings" size={13}/><span>Inspector</span><button type="button" className="button-reset" aria-label="Fold Inspector" onClick={event=>executeAction('ui.select',()=>{inspectorRef.current?.collapse();setSplitInspector(false);},event)}>−</button></div>
       <header className="shared-properties-head">
         <span className="properties-eyebrow">{propertyTab === 'Selection' ? 'PROPERTIES' : propertyTab === 'Automate' ? 'AUTOMATE' : 'THIS TASK'}</span>
         <h2>{propertyTab === 'Selection' ? inspectedNode?.title || task?.title || s.graph.name : task?.title || s.graph.name || 'Task'}</h2>
@@ -522,11 +527,12 @@
                 <span className="v22g-tab-state" aria-hidden="true" style={{background:tab.id===task?.id && s.graph.nodes.some(node=>node.status==='Running') ? 'var(--color-accent)' : s.approvals.some(card=>card.work===tab.id && card.status==='pending') ? 'var(--color-warn)' : tasks.find(row=>row.id===tab.id)?.status==='DONE' ? 'var(--color-ok)' : 'var(--v22g-ink3)'}}/><button type="button" role="tab" aria-selected={tab.id === task?.id} data-preview={!tab.kept} onClick={event=>executeAction('ui.select',() => {if(tab.id!==task?.id)u.openTaskFile(tab.id);},event)} onDoubleClick={() => u.act(() => u.keepTaskTab(tab.id))}>{tasks.find(t=>t.id===tab.id)?.title || 'Task unavailable'}</button>
                 <button type="button" data-design={tab.id === task?.id ? 'tab.close' : undefined} aria-label={'Close ' + (tasks.find(t=>t.id===tab.id)?.title || 'task')} onClick={event=>executeAction('ui.select',() => u.act(() => u.closeTaskTab(tab.id)),event)}><Icon name="close" size={12} /></button>
               </div>)}{hiddenTabs.length>0&&<details className="v22g-tab-overflow"><summary>{hiddenTabs.length} more</summary><div role="menu" aria-label="More open tasks">{hiddenTabs.map(tab=><button key={tab.id} type="button" role="menuitem" onClick={event=>executeAction("ui.select",()=>{event.currentTarget.closest("details").open=false;return u.openTaskFile(tab.id);})}>{tasks.find(t=>t.id===tab.id)?.title || "Task unavailable"}</button>)}</div></details>}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open tasks" onClick={() => u.show('Open tasks')}>+</button></div>
-              <div className="v22g-toolbar v48-toolbar"><div className="v48-toolbar-agents">{agents.slice(0,3).map(name=><button type="button" className="button-reset" key={name} title={name} aria-label={'Open agent '+name} onClick={event=>executeAction('ui.select',()=>openOwner(task,name),event)}><window.UI.Av id={name} size={28}/></button>)}{agents.length>3 && <button type="button" className="dx-quiet" aria-label="All session agents" onClick={event=>executeAction('ui.select',()=>u.show('Task details',{id:task.id}),event)}>+{agents.length-3}</button>}</div><div className="v48-save"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>saveFile(false),event)}><Icon name="export" size={13}/>Save</button><details><summary aria-label="Save menu">↓</summary><div className="v48-save-menu">{[['Save as…',()=>saveFile(true)],['Save as skill…',()=>u.show('Save skill')]].map(([label,run])=><button type="button" key={label} onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return run();},event)}>{label}</button>)}</div></details></div><button type="button" className="dx-quiet v48-secondary" onClick={event=>executeAction('ui.select',()=>{setPropertyTab('Automate');setSplitInspector(true);inspectorRef.current?.expand();},event)}><Icon name="clock" size={13}/>Automate</button><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" disabled={singleCanvas&&besideShown} onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run all</button>{[['Undo','undo',()=>u.act(api.undo)],['Redo','redo',()=>u.act(api.redo)],['Tidy up','arrange',()=>canvasRef.current?.arrange()]].map(([label,icon,run])=><button key={label} type="button" className="dx-quiet v48-secondary" aria-label={label} title={label} onClick={event=>executeAction('ui.select',run,event)}><Icon name={icon} size={14}/></button>)}<button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
+              <div className="v22g-toolbar v48-toolbar"><div className="v48-toolbar-agents">{agents.slice(0,3).map(name=><button type="button" className="button-reset" key={name} title={name} aria-label={'Open agent '+name} onClick={event=>executeAction('ui.select',()=>openOwner(task,name),event)}><window.UI.Av id={name} size={28}/></button>)}{agents.length>3 && <button type="button" className="dx-quiet" aria-label="All session agents" onClick={event=>executeAction('ui.select',()=>u.show('Task details',{id:task.id}),event)}>+{agents.length-3}</button>}</div><div className="v48-save"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>saveFile(false),event)}><Icon name="export" size={13}/>Save</button><details><summary aria-label="Save menu">↓</summary><div className="v48-save-menu">{[['Save as…',()=>saveFile(true)],['Save as skill…',()=>u.show('Save skill')]].map(([label,run])=><button type="button" key={label} onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return run();},event)}>{label}</button>)}</div></details></div><button type="button" className="dx-quiet v48-secondary" onClick={event=>executeAction('ui.select',()=>{setPropertyTab('Automate');dockRef.current?.show('insp');},event)}><Icon name="clock" size={13}/>Automate</button><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" disabled={singleCanvas&&besideShown} onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run all</button>{[['Undo','undo',()=>u.act(api.undo)],['Redo','redo',()=>u.act(api.redo)],['Tidy up','arrange',()=>canvasRef.current?.arrange()]].map(([label,icon,run])=><button key={label} type="button" className="dx-quiet v48-secondary" aria-label={label} title={label} onClick={event=>executeAction('ui.select',run,event)}><Icon name={icon} size={14}/></button>)}<button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
             </div>
-            <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => { if (meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels)); }}>
-              <Column id="main" className="dx-col dx-task-column" minSize={320}>
-                <div className="dx-surface-body">{!u.libraryOpen && <div className="v22g-library-rail"><button type="button" aria-label="Library" onClick={event=>executeAction('ui.select',()=>u.setLibraryOpen(true),event)}><Icon name="library" size={14}/><span>Library</span></button></div>}<div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={{done:resumeSteps.filter(step=>step.state.kind==='done').length,total:resumeSteps.length}} planned={work.length?null:resumeSteps.map(step=>({title:step.title,kind:step.state.kind,label:step.state.label}))} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
+            <window.UI.Dock session={task?.id} project={task?.workspace || task?.project} face={face} rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
+              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane}}>
+              <div className="dx-col dx-task-column">
+                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={{done:resumeSteps.filter(step=>step.state.kind==='done').length,total:resumeSteps.length}} planned={work.length?null:resumeSteps.map(step=>({title:step.title,kind:step.state.kind,label:step.state.label}))} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={() => dockRef.current?.reset()} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
                   <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
@@ -561,12 +567,8 @@
                     <section className="dx-panel" data-dx="activity" aria-label="Activity"><h2>Activity</h2>{activity.length ? activity.map(row => <p key={row.id}>{[statusText(row.status),describe(row.output)].filter(Boolean).join(' · ')}</p>) : <div className="dx-empty-activity"><p>Nothing has run yet.</p><button type="button" className="dx-link" onClick={() => executeAction('projects.ds_screens.Run.15', {api,u})}>Run workflow</button></div>}</section></div>
                   <p className="dx-foot" data-dx="footer">{footer}</p>
                 </div></Column></>}</Group></div></div>
-              </Column>
-              <Separator className="pane-splitter" data-collapsed={inspectorRail || undefined} aria-label="Resize the Properties pane" />
-              <Column id="params" className="dx-col dx-properties-column" collapsible collapsedSize={48} onResize={size=>setInspectorRail(size.inPixels<=49)} panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
-                {!inspectorRail&&propertiesPane}{inspectorRail && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>{inspectorRef.current?.expand();setSplitInspector(true);},event)}><Icon name="settings" size={14}/></button>}
-              </Column>
-            </Group>
+              </div>
+            </window.UI.Dock>
           </div>
         }
       </div>

@@ -1,5 +1,8 @@
 """The Canvas dock: its layout owner over the real route, and the compiled Studio on a seeded temporary Workshop."""
 import json
+import os
+from pathlib import Path
+import subprocess
 
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
@@ -55,6 +58,81 @@ def test_dock_layout_owner_over_the_settings_route(tmp_path, monkeypatch):
         # Reset: the session and its project go back to the default (no stored record).
         status, body = setting('setDockLayout', 'task-a', 'studio', None)
         assert status == 200 and body['result']['dockLayout'] == {'sessions': {'task-b': other}, 'projects': {}}
+    finally:
+        client.close()
+        server.close()
+
+
+def test_dock_live_rendered(tmp_path, monkeypatch):
+    """Compiled Studio on a seeded temporary Workshop: default dock, stack by drag, tab move, collapse, reload, Approve."""
+    browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+    if not browser_cache:
+        browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+    _isolate(monkeypatch, tmp_path / 'desk')
+    import copy
+    from nodelang import workshop_tasks
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import catalogue, new_document, write_document
+    from nodelang.workshop_mailbox import application_history
+
+    monkeypatch.setattr(NoGraphServer, '_probe_hosts', staticmethod(lambda: []))
+    state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+    state.mkdir()
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(state))
+    server = NoGraphServer(state).start()
+    client = _Studio(server)
+    try:
+        opened_task = client.workshop('createTask', 'Drawing set review')['taskId']
+        waiting_task = client.workshop('createTask', 'Export issue package')['taskId']
+        failed_task = client.workshop('createTask', 'Sheet index check')['taskId']
+        working_task = client.workshop('createTask', 'Model view audit')['taskId']
+        # Waiting for you: a real held run of an approval gate, on another session than the open one.
+        view = client.workshop('openTaskGraph', waiting_task)
+        original = client.files('read', path=view['path'])['document']
+        document = new_document('Export issue package')
+        document.update(id=original['id'], properties=original['properties'])
+        document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}},
+                             {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}]
+        client.files('save', path=view['path'], document=document)
+        held = client.files('run', path=view['path'], document=document)
+        assert held['approvalId']
+        # Failed: a step of a third session whose stored run result is an error.
+        view = client.workshop('openTaskGraph', failed_task)
+        document = client.files('read', path=view['path'])['document']
+        document['nodes'].append({'id': 'index', 'type': 'param.value', 'title': 'Read sheet index', 'params': {'type': 'number', 'value': 1},
+                                  'position': {'x': 0, 'y': 300}, 'result': {'status': 'Error', 'error': 'The sheet index file was not found.'}})
+        write_document(view['path'], document)
+        # Working now: a fourth session claimed by an agent.
+        with application_history() as history:
+            workshop_tasks.claim(history, working_task, 'dock-test-agent', 'Drawing coordinator', lease_seconds=3600)
+        # The open canvas: three wired steps.
+        items = {row['id']: row for row in catalogue()}
+        nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                  'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                 for key, item, x in [('list', 'n_list', 800), ('slice', 's_slice', 1140), ('count', 's_count', 1480)]]
+        nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+        nodes[1]['params']['count'] = '3'
+        view = client.workshop('openTaskGraph', opened_task)
+        opened = client.files('read', path=view['path'], id=view['id'])
+        opened['document']['nodes'] = [*opened['document']['nodes'], *nodes]
+        opened['document']['wires'] = [
+            {'id': 'first', 'from': {'node': 'list', 'socket': 'value'}, 'to': {'node': 'slice', 'socket': 'items'}},
+            {'id': 'second', 'from': {'node': 'slice', 'socket': 'items_out'}, 'to': {'node': 'count', 'socket': 'items'}}]
+        client.files('save', path=view['path'], document=opened['document'])
+        client.workshop('openTaskGraph', opened_task)
+        result = subprocess.run(
+            ['node', '02.TESTS/tests_js/dock_live.cjs'],
+            input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token, 'browserCache': browser_cache,
+                              'shots': os.environ.get('ARCHHUB_DOCK_SHOTS', '')}),
+            cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, encoding='utf-8', timeout=240,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        print(result.stdout)
+        assert result.returncode == 0, result.stdout + result.stderr
+        # The decision reached the approval owner, and the last layout change (Reset) reached the Settings owner file.
+        card = next(row for row in client.workshop('listApprovals') if row['id'] == held['approvalId'])
+        assert card['status'] == 'approved'
+        saved = json.loads((state / 'settings' / 'settings.json').read_text(encoding='utf8'))
+        assert opened_task not in saved['dockLayout']['sessions']
     finally:
         client.close()
         server.close()

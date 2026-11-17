@@ -1575,22 +1575,39 @@ function projectSessionWire(w,nodes){
  return row;
 }
 function projectGroups(nodes,wires){
+ const groups=new Set(nodes.filter(n=>!n.fixed&&n.children.length));
+ if(!groups.size)return {nodes,wires};
  const byId=new Map(nodes.map(n=>[n.id,n]));
- const owner=id=>{let node=byId.get(id),group=null;const seen=new Set();while(node?.parent&&!seen.has(node.parent)){seen.add(node.parent);node=byId.get(node.parent);if(node?.children.length&&!node.fixed&&node.collapsed)group=node;}return group;};
- for(const group of nodes.filter(n=>!n.fixed&&n.children.length)){
+ const collapsedOwner=new Map();
+ for(const group of groups){
   group.inputs=[];group.outputs=[];group.output={};
   const members=group.children.map(id=>byId.get(id)).filter(Boolean);
   group.status=members.some(n=>/error|fail/i.test(n.status))?'Error':members.some(n=>/approval/i.test(n.status))?'Waiting for approval':members.some(n=>n.status==='Running')?'Running':members.every(n=>['Done','Solved','Skipped'].includes(n.status))?'Done':'Idle';
  }
- for(const wire of wires){
-  const from=owner(wire.from),to=owner(wire.to);if(from?.id===to?.id)continue;
-  for(const [side,group] of [['from',from],['to',to]])if(group){
-   const member=byId.get(wire[side]),port=member?.[side==='from'?'outputs':'inputs'].find(p=>p.id===wire[side+'Port']);if(!port)continue;
-   const id=(side==='from'?'out:':'in:')+member.id+':'+port.id,ports=side==='from'?group.outputs:group.inputs;
-   if(!ports.some(p=>p.id===id))ports.push({...port,id,name:member.title+' · '+port.name,member:{node:member.id,port:port.id}});
-   if(side==='from')group.output[id]=member.output?.[port.id];
-   wire[side]=group.id;wire[side+'Port']=id;
+ for(const member of nodes){
+  if(!member.parent||groups.has(member))continue;
+  const seen=new Set([member.id]);
+  let owner=byId.get(member.parent);
+  while(owner&&!seen.has(owner.id)){
+   seen.add(owner.id);
+   if(groups.has(owner)){
+    if(owner.collapsed)collapsedOwner.set(member.id,owner);
+    for(const [key,prefix] of [['inputs','in:'],['outputs','out:']]){
+     for(const port of member[key]){
+      const id=prefix+member.id+':'+port.id;
+      owner[key].push({...port,id,member:{node:member.id,port:port.id}});
+      if(key==='outputs')owner.output[id]=member.output?.[port.id];
+     }
+    }
+   }
+   owner=byId.get(owner.parent);
   }
+ }
+ for(const wire of wires){
+  const from=collapsedOwner.get(wire.from),to=collapsedOwner.get(wire.to);
+  if(from?.id===to?.id)continue;
+  if(from&&byId.get(wire.from)?.outputs.some(port=>port.id===wire.fromPort)){wire.memberFrom={node:wire.from,port:wire.fromPort};wire.fromPort='out:'+wire.from+':'+wire.fromPort;wire.from=from.id;}
+  if(to&&byId.get(wire.to)?.inputs.some(port=>port.id===wire.toPort)){wire.memberTo={node:wire.to,port:wire.toPort};wire.toPort='in:'+wire.to+':'+wire.toPort;wire.to=to.id;}
  }
  return {nodes,wires};
 }
@@ -1888,20 +1905,34 @@ api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
  for(const column of columns){if(!column)continue;column.sort((a,b)=>{const source=n=>incoming.get(n.id).reduce((sum,id)=>sum+nodes.find(n=>n.id===id).position.y,0)/Math.max(1,incoming.get(n.id).length);return source(a)-source(b)||order.get(a.id)-order.get(b.id);});let y=y0;for(const n of column){n.position={x:grid(x),y:grid(y)};y+=size(n).h+32;}x+=Math.max(...column.map(n=>size(n).w))+96;}
  d.properties={...d.properties,canvasLayout:'v48'};
 },null,null,!initial,true);
-api.groupNodes=async(ids,frame=false)=>{
+api.groupNodes=async ids=>{
  if(!Array.isArray(ids))throw Error('Choose nodes to group.');
  const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));
  if(new Set(ids).size!==ids.length||members.length!==ids.length||ids.length<1||members.some(n=>n.fixed)||new Set(members.map(n=>n.parent||'')).size!==1)throw Error('Choose editable nodes in the same group.');
- const node={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},position:{x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-44},...(members[0].parent?{parent:members[0].parent}:{}),...(frame?{frameMembers:[...ids]}:{children:[...ids],collapsed:false})};
- fileEdit(d=>{d.nodes.push(node);if(!frame){const parent=d.nodes.find(n=>n.id===node.parent);if(parent?.children)parent.children=[...parent.children.filter(id=>!ids.includes(id)),node.id];const listing=d.groups.find(g=>g.id===node.parent);if(listing)listing.nodes=[...listing.nodes.filter(id=>!ids.includes(id)),node.id];for(const n of members)n.parent=node.id;d.groups.push({id:node.id,nodes:[...ids]});}});
+ const node={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},position:{x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-44},...(members[0].parent?{parent:members[0].parent}:{}),children:[...ids],collapsed:false};
+ fileEdit(d=>{d.nodes.push(node);const parent=d.nodes.find(n=>n.id===node.parent);if(parent?.children)parent.children=[...parent.children.filter(id=>!ids.includes(id)),node.id];const listing=d.groups.find(g=>g.id===node.parent);if(listing)listing.nodes=[...listing.nodes.filter(id=>!ids.includes(id)),node.id];for(const n of members)n.parent=node.id;d.groups.push({id:node.id,nodes:[...ids]});});
  return state.graph.nodes.find(n=>n.id===node.id);
 };
 api.ungroupNode=async id=>{
  const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
  const group=sessionDocument.nodes.find(n=>n.id===id);
  if(!group||group.fixed||!group.children?.length&&!group.frameMembers)throw Error('Choose an editable group.');
- if(sessionDocument.wires.some(w=>w.from.node===id||w.to.node===id))throw Error('Disconnect this group’s own wires before ungrouping. Member wires stay connected.');
- return fileEdit(d=>{for(const n of d.nodes)if(n.parent===id){if(group.parent)n.parent=group.parent;else delete n.parent;}d.nodes=d.nodes.filter(n=>n.id!==id);d.groups=d.groups.filter(g=>g.id!==id);for(const n of d.nodes)if(n.children?.includes(id))n.children=n.children.flatMap(child=>child===id?group.children||[]:[child]);for(const g of d.groups)g.nodes=g.nodes.flatMap(child=>child===id?group.children||[]:[child]);});
+ const projected=state.graph.nodes.find(n=>n.id===id);
+ const incoming=new Set();
+ const wires=sessionDocument.wires.map(wire=>{
+  const updated={...wire};
+  for(const [end,ports] of [['from','outputs'],['to','inputs']]){
+   if(wire[end].node!==id)continue;
+   const member=projected?.[ports].find(port=>port.id===wire[end].socket)?.member;
+   if(!member)throw Error('A group wire has no matching member socket: '+wire[end].socket);
+   updated[end]={node:member.node,socket:member.port};
+  }
+  const target=JSON.stringify([updated.to.node,updated.to.socket]);
+  if(incoming.has(target))throw Error('Two wires point to the same member input.');
+  incoming.add(target);
+  return updated;
+ });
+ return fileEdit(d=>{d.wires=wires;for(const n of d.nodes)if(n.parent===id){if(group.parent)n.parent=group.parent;else delete n.parent;}d.nodes=d.nodes.filter(n=>n.id!==id);d.groups=d.groups.filter(g=>g.id!==id);for(const n of d.nodes)if(n.children?.includes(id))n.children=n.children.flatMap(child=>child===id?group.children||[]:[child]);for(const g of d.groups)g.nodes=g.nodes.flatMap(child=>child===id?group.children||[]:[child]);});
 };
 api.setGroupCollapsed=async(id,collapsed)=>fileEdit(d=>{const node=d.nodes.find(n=>n.id===id);if(!node?.children?.length||node.fixed)throw Error('Choose an editable group.');node.collapsed=!!collapsed;});
 api.setScriptPorts=async(id,ports,rename)=>{

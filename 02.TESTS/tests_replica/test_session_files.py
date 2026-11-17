@@ -441,3 +441,75 @@ def test_wire_connection_parameters_round_trip_and_old_file(tmp_path):
     crossed = run_document(cross)
     assert crossed['succeeded'], crossed
     assert crossed['results']['2']['output']['items_out'] == [1, 1, 2, 2, 3, 3, 4, 4]
+
+
+def test_canvas_legacy_frame_opens_as_structural_group_without_rewriting_file(tmp_path):
+    import json
+
+    document = new_document('Legacy frame')
+    parent = {'id': 'parent', 'children': ['legacy', 'member'], 'collapsed': False}
+    frame = {'id': 'legacy', 'title': 'Frame', 'parent': 'parent', 'frameMembers': ['member']}
+    member = {'id': 'member', 'parent': 'parent'}
+    document['nodes'] = [
+        {'type': 'note', 'params': {}, 'position': {'x': 0, 'y': 0}, **node}
+        for node in (parent, frame, member)
+    ]
+    document['groups'] = [{'id': 'parent', 'nodes': ['legacy', 'member']}]
+    file = tmp_path / 'legacy.archhub'
+    original = json.dumps(document).encode('utf-8')
+    file.write_bytes(original)
+
+    loaded = read_document(file)
+    nodes = {node['id']: node for node in loaded['nodes']}
+    assert nodes['legacy']['title'] == 'Group'
+    assert nodes['legacy']['children'] == ['member'] and nodes['legacy']['collapsed'] is False
+    assert 'frameMembers' not in nodes['legacy']
+    assert nodes['member']['parent'] == 'legacy' and nodes['parent']['children'] == ['legacy']
+    assert loaded['groups'] == [{'id': 'parent', 'nodes': ['legacy']}, {'id': 'legacy', 'nodes': ['member']}]
+    assert file.read_bytes() == original
+    write_document(file, loaded)
+    assert read_document(file) == loaded
+
+
+def test_overlapping_legacy_frames_keep_original_memberships_on_read(tmp_path):
+    import json
+
+    document = new_document('Overlapping legacy frames')
+    document['nodes'] = [
+        {'type': 'note', 'params': {}, 'position': {'x': 0, 'y': 0}, **node}
+        for node in (
+            {'id': 'first', 'frameMembers': ['shared', 'unique']},
+            {'id': 'second', 'frameMembers': ['shared']},
+            {'id': 'shared'}, {'id': 'unique'}
+        )
+    ]
+    file = tmp_path / 'overlap.archhub'
+    original = json.dumps(document).encode('utf-8')
+    file.write_bytes(original)
+    assert read_document(file) == document
+    assert file.read_bytes() == original
+
+
+def test_nested_legacy_frames_convert_from_the_inside_out(tmp_path):
+    import json
+
+    document = new_document('Nested legacy frames')
+    document['nodes'] = [
+        {'type': 'note', 'params': {}, 'position': {'x': 0, 'y': 0}, **node}
+        for node in (
+            {'id': 'outer', 'frameMembers': ['inner']},
+            {'id': 'inner', 'frameMembers': ['member']},
+            {'id': 'member'}
+        )
+    ]
+    file = tmp_path / 'nested-legacy.archhub'
+    file.write_text(json.dumps(document), encoding='utf-8')
+
+    projected = read_document(file)
+    nodes = {node['id']: node for node in projected['nodes']}
+    assert nodes['outer']['children'] == ['inner']
+    assert nodes['inner']['children'] == ['member'] and nodes['inner']['parent'] == 'outer'
+    assert nodes['member']['parent'] == 'inner'
+    assert {group['id']: group['nodes'] for group in projected['groups']} == {
+        'outer': ['inner'], 'inner': ['member']
+    }

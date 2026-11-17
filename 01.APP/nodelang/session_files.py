@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .user_paths import state_directory, test_writer, stamp_test_write, strip_test_write
 
+from collections import Counter
 import copy
 import hashlib
 import json
@@ -268,6 +269,62 @@ def wire_rule(document, identity, rule):
     return rule
 
 
+def _open_legacy_groups(document):
+    if not any(node.get('frameMembers') for node in document['nodes']):
+        return document
+    document = copy.deepcopy(document)
+    nodes = {node['id']: node for node in document['nodes']}
+    frames = [node for node in nodes.values() if node.get('frameMembers')]
+    memberships = Counter(identity for frame in frames for identity in frame['frameMembers'])
+    eligible = {}
+    for frame in frames:
+        members = [nodes[key] for key in frame['frameMembers']]
+        # An overlap cannot become a single-owner tree without silently choosing an owner.
+        if frame.get('fixed') or frame.get('children') or any(
+            member.get('fixed') or memberships[member['id']] != 1
+            or (member.get('parent') or '') != (frame.get('parent') or '')
+            for member in members
+        ):
+            continue
+        eligible[frame['id']] = frame['frameMembers']
+
+    # Convert inner frames first. A cyclic legacy membership never becomes parent links.
+    containing = {member: identity for identity, members in eligible.items() for member in members}
+    pending = {identity: sum(member in eligible for member in members) for identity, members in eligible.items()}
+    ordered = [identity for identity, count in pending.items() if not count]
+    for identity in ordered:
+        outer = containing.get(identity)
+        if outer:
+            pending[outer] -= 1
+            if not pending[outer]:
+                ordered.append(outer)
+
+    groups = {group['id']: group for group in document['groups']}
+    for identity in ordered:
+        frame = nodes[identity]
+        parent = nodes.get(frame.get('parent'))
+        member_ids = eligible[identity]
+        frame['children'] = frame.pop('frameMembers')
+        frame['collapsed'] = False
+        if frame.get('title') == 'Frame':
+            frame['title'] = 'Group'
+        if identity not in groups:
+            groups[identity] = {'id': identity, 'nodes': []}
+            document['groups'].append(groups[identity])
+        groups[identity]['nodes'] = list(member_ids)
+        for member in member_ids:
+            nodes[member]['parent'] = identity
+        if parent and 'children' in parent:
+            replaced = set(member_ids)
+            siblings = [key for key in parent['children'] if key not in replaced]
+            if identity not in siblings:
+                siblings.append(identity)
+            parent['children'] = siblings
+            if parent['id'] in groups:
+                groups[parent['id']]['nodes'] = list(siblings)
+    return document
+
+
 def validate(document):
     """Reject corrupt/secret-bearing files before changing the open document."""
     if not isinstance(document, dict) or document.get('format') != 'archhub' or (type(document.get('version')) is not int or document.get('version') != 1):
@@ -370,6 +427,9 @@ def validate(document):
     raw = json.dumps(document, ensure_ascii=False, allow_nan=False).encode('utf-8')
     if len(raw) > MAX_BYTES:
         raise ValueError('Session exceeds 8 MiB')
+    migrated = _open_legacy_groups(document)
+    if migrated is not document and len(json.dumps(migrated, ensure_ascii=False, allow_nan=False).encode('utf-8')) <= MAX_BYTES:
+        return migrated
     return document
 
 

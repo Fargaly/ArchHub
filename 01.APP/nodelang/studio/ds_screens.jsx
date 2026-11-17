@@ -834,6 +834,8 @@
       return owner===parent;
     };
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
+    const groupMenuTimer=React.useRef(null);
+    React.useEffect(()=>()=>clearTimeout(groupMenuTimer.current),[active,scope,u.modal?.kind]);
     React.useLayoutEffect(() => {
       if (!active || preview || parent || requestState !== 'loaded' || s.graph.canvasLayout === 'v48' || canvasTouched.current) return;
       const frame = window.requestAnimationFrame(() => u.act(() => api.arrangeGraph(true)));
@@ -950,14 +952,21 @@
           e.preventDefault();
           remove();
         }
-        if (e.key === 'Enter' && node && isGroup(node)) openNode(node);
-        if (e.key === 'Escape') {
+        const plainKey=!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.shiftKey;
+        const key=e.key.toLowerCase();
+        if(!u.modal&&plainKey&&(key==='enter'||key==='i')&&node&&isGroup(node)&&(key==='i'||!e.target.closest?.('button'))){
+          e.preventDefault();
+          openNode(node);
+        }
+        const canLeave=parent||(s.sessionBreadcrumbs||[]).length;
+        if (!u.modal&&(key==='escape'||plainKey&&key==='u'&&canLeave)) {
+          clearTimeout(groupMenuTimer.current);
           setRejected(null);
           setSelected([]);
           setSelectedWires([]);
           setWireId(null);
-          if (parent) setParent(null);
-          else if ((s.sessionBreadcrumbs||[]).length) u.act(()=>api.leaveSession());
+          if(parent)executeAction('projects.ds_screens.Parent.6',{parent,s,setParent,setSelected},e);
+          else if(canLeave)u.act(()=>api.leaveSession());
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'a') {
           e.preventDefault();
@@ -1066,21 +1075,27 @@
       return {x: (point.clientX - r.left - view.current.pan.x) / view.current.zoom, y: (point.clientY - r.top - view.current.pan.y) / view.current.zoom};
     };
     const canvasActions = point=>({point:{...point,...(parent?{parent}:{})},group,fit,select:ids=>setSelected(ids),selectAll:()=>setSelected(visible.map(n=>n.id)),inspectWire:id=>{setWireId(id);setSelected([]);}});
-    const showGroupMenu = (event,n) => {
+    const showGroupMenu = (event,n,defer=false) => {
+      clearTimeout(groupMenuTimer.current);
       event.stopPropagation();
       const target=event.currentTarget;
       const trigger=target.matches('[data-group-menu]')?target:target.querySelector('[data-group-menu]');
       const box=target.getBoundingClientRect();
       const anchor=event.type==='contextmenu'?{x:event.clientX,y:event.clientY}:{x:box.left,y:box.bottom};
-      trigger?.focus({preventScroll:true});
       setSelected([n.id]);
-      u.show('Group menu',{id:n.id,selected:[n.id],open:()=>openNode(n),canvas:canvasActions({x:n.x,y:n.y}),anchor});
+      const open=()=>{
+        trigger?.focus({preventScroll:true});
+        u.show('Group menu',{id:n.id,selected:[n.id],open:()=>openNode(n),canvas:canvasActions({x:n.x,y:n.y}),anchor});
+      };
+      // Let the native double-click reach the header before the menu backdrop takes input.
+      if(defer)groupMenuTimer.current=setTimeout(open,window.ARCHHUB_BOOT?.mouse_double_click_ms);
+      else open();
     };
     const renderFrame = (n,isSelected)=>{
       const members=(n.frameMembers||n.children).map(id=>visible.find(row=>row.id===id)||s.graph.nodes.find(row=>row.id===id)).filter(Boolean);
       const width=Math.max(241,...members.map(child=>child.x+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetWidth||241)-n.x))+24;
       const height=Math.max(100,...members.map(child=>child.y+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetHeight||160)-n.y))+24;
-      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header" onClick={event=>{if(!event.target.closest('button'))showGroupMenu(event,n);}}><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button>}<button type="button" className="dx-quiet nodrag" data-group-menu="" aria-label={n.title+' menu'} aria-haspopup="menu" aria-expanded={u.modal?.kind==='Group menu'&&u.modal?.id===n.id} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();}} onClick={event=>executeAction('projects.controls.activate',{handler:()=>showGroupMenu(event,n)},event)}>⋯</button></header></div>;
+      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header" onClick={event=>{if(!event.target.closest('button'))showGroupMenu(event,n,!n.frameMembers);}}><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button>}<button type="button" className="dx-quiet nodrag" data-group-menu="" aria-label={n.title+' menu'} aria-haspopup="menu" aria-expanded={u.modal?.kind==='Group menu'&&u.modal?.id===n.id} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();}} onClick={event=>executeAction('projects.controls.activate',{handler:()=>showGroupMenu(event,n)},event)}>⋯</button></header></div>;
     };
     const socket = (n, p, side) => {
       const locked = !!preview || p.connectable === false || p.read_only;
@@ -1116,7 +1131,27 @@
     const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
     const shownIds = new Set(visible.map(n => n.id));
     const sessionNode = visible.find(n => n.fixed && n.type === 'thing.session');
-    const edges = (rejected ? [...s.graph.wires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : s.graph.wires)
+    const scopeNodes = parent ? new Map(s.graph.nodes.map(n=>[n.id,n])) : null;
+    const scopeEnd = (id,port,ports) => {
+      if(shownIds.has(id))return {node:id,port};
+      const seen=new Set([id]);
+      let owner=scopeNodes.get(scopeNodes.get(id)?.parent);
+      while(owner&&!seen.has(owner.id)){
+        if(shownIds.has(owner.id)&&owner.collapsed){
+          const exposed=owner[ports].find(p=>p.member?.node===id&&p.member.port===port);
+          if(exposed)return {node:owner.id,port:exposed.id};
+        }
+        seen.add(owner.id);
+        owner=scopeNodes.get(owner.parent);
+      }
+      return {node:id,port};
+    };
+    const scopedWires = scopeNodes ? s.graph.wires.map(wire=>{
+      const from=scopeEnd(wire.memberFrom?.node??wire.from,wire.memberFrom?.port??wire.fromPort,'outputs');
+      const to=scopeEnd(wire.memberTo?.node??wire.to,wire.memberTo?.port??wire.toPort,'inputs');
+      return {...wire,from:from.node,fromPort:from.port,to:to.node,toPort:to.port};
+    }).filter(wire=>wire.from!==wire.to) : s.graph.wires;
+    const edges = (rejected ? [...scopedWires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : scopedWires)
       .filter(w => !(foldedOwner(s.graph.nodes.find(n=>n.id===w.from)) && foldedOwner(s.graph.nodes.find(n=>n.id===w.to))))
       .map(w => { const projected={...w}; if(sessionNode)for(const side of ['from','to']){const owner=s.graph.nodes.find(n=>n.id===w[side]);if(foldedOwner(owner)&&owner.id!==sessionNode.id){projected[side]=sessionNode.id;projected[side+'Port']=owner.id+':'+w[side+'Port'];}} return projected; })
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
@@ -1296,7 +1331,7 @@
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
        viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
-       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => preview ? onActivate?.() : openNode(f.data.n)}
+       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
        onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}

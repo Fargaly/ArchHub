@@ -474,7 +474,15 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Control+g');
     await page.locator('[data-design="group.frame"]').waitFor();
     await page.locator('[data-design="group.collapse"]').click();
-    await page.locator('[data-design="group.node"]').waitFor();
+    const collapsed = page.locator('[data-design="group.node"]');
+    await collapsed.waitFor();
+    const expectedSockets=await page.evaluate(ids=>window.ArchHubAPI.getSnapshot().graph.nodes.filter(n=>ids.includes(n.id))
+      .flatMap(n=>[['in',n.inputs],['out',n.outputs]].flatMap(([side,ports])=>ports.map(p=>[side+':'+n.id+':'+p.id,p.type])))
+      .sort(),editable);
+    assert.ok(expectedSockets.length>2);
+    const visibleSockets=await collapsed.locator('[data-port-key]').evaluateAll(ports=>ports
+      .map(p=>[p.dataset.portKey.split(':').slice(2).join(':'),p.dataset.portType]).sort());
+    assert.deepEqual(visibleSockets,expectedSockets);
     assert.equal(await page.locator('[data-graph-node="'+editable[0]+'"]').count(),0);
     await page.locator('[data-design="group.open"]').click();
     await page.locator('[data-design="group.back"]').waitFor();
@@ -487,20 +495,20 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().groups.length===0);
     assert.equal(await page.evaluate(ids=>ids.every(id=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.id===id)),editable),true);
   });
-  await t.test('A frame surrounds one node; Remove frame keeps its contents and undo restores it',async()=>{
+  await t.test('One Group action surrounds a single node; Ungroup keeps its contents and undo restores it',async()=>{
     await page.getByRole('button',{name:'Fit',exact:true}).click();
     await page.locator('[data-graph-node="'+editable[0]+'"] .node-header').click();
-    await page.evaluate(()=>{window.__frameKeys=[];window.addEventListener('keydown',e=>window.__frameKeys.push({key:e.key,ctrl:e.ctrlKey,alt:e.altKey,default:e.defaultPrevented}));});
     await page.locator('body').press('Control+Alt+g');
-    await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.frameMembers),null,{timeout:2000}).catch(async()=>{throw Error('Frame state '+JSON.stringify(await page.evaluate(()=>({keys:window.__frameKeys,nodes:window.ArchHubAPI.getSessionDocument().nodes.map(n=>({id:n.id,title:n.title,parent:n.parent,children:n.children,frameMembers:n.frameMembers})),selected:[...document.querySelectorAll('.react-flow__node.selected')].map(n=>n.dataset.id),alerts:[...document.querySelectorAll('[role=alert],[role=status]')].map(n=>n.textContent)}))));});
-    await page.locator('[data-design="frame.box"]').waitFor();
-    await page.locator('[data-design="frame.box"] .node-header').click({button:'right'});
-    await page.getByRole('button',{name:'Remove frame, keep nodes',exact:true}).click();
+    await page.waitForFunction(id=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.children?.length===1&&n.children[0]===id),editable[0]);
+    const header=page.locator('[data-design="group.frame"] .node-header');
+    await header.waitFor();
+    await header.click({button:'right'});
+    await page.getByRole('button',{name:'Ungroup',exact:true}).click();
     assert.equal(await page.evaluate(id=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.id===id),editable[0]),true);
     await page.locator('body').press('Control+z');
-    await page.locator('[data-design="frame.box"]').waitFor();
+    await header.waitFor();
     await page.locator('body').press('Control+Shift+z');
-    await page.locator('[data-design="frame.box"]').waitFor({state:'detached'});
+    await header.waitFor({state:'detached'});
   });
   const wireMenu=async()=>{const point=await page.locator('.react-flow__edge[data-id="'+wireId+'"] path.react-flow__edge-interaction').evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()/2),m=el.getScreenCTM();return {x:p.x*m.a+m.e,y:p.y*m.d+m.f};});await page.locator('body').click({position:point,button:'right'});await page.getByRole('menu',{name:'Wire menu',exact:true}).waitFor();};
   await t.test('Wire rule and Enable/Disable change actual Run; Insert Convert is one undo step',async()=>{

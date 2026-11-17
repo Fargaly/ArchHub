@@ -392,7 +392,9 @@
           })), duration);
         }
         if (e.key === 'Escape') {
-          if (modal) close();else if (companion) setCompanion(false);else if (route !== 'home' && route !== 'task-file') go('home');
+          if (modal) close();
+          else if (companion) setCompanion(false);
+          else if (!['home','task-file','canvas'].includes(route)) go('home');
         }
         if (e.key === '/' && !e.target.matches('input,textarea,select')) {
           e.preventDefault();

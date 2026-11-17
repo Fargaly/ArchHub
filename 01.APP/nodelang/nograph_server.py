@@ -15,6 +15,7 @@ plain ``not_available`` refusal the Studio already shows as a notice.
 """
 from __future__ import annotations
 
+import ctypes
 import hmac
 import json
 import mimetypes
@@ -29,6 +30,13 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 from .http_server import QuietThreadingHTTPServer, local_browser_admission_error
+
+def _mouse_double_click_ms():
+    # Match the user's Windows accessibility setting. Browser-only hosts use the platform default.
+    if os.name == 'nt':
+        return int(ctypes.windll.user32.GetDoubleClickTime())
+    return 500
+
 
 STUDIO_DIR = Path(__file__).resolve().parent / 'studio'
 MAX_BODY = 1024 * 1024
@@ -518,6 +526,7 @@ class NoGraphServer:
             raw = raw.replace(b'/*__ARCHHUB_BOOT__*/ null', json.dumps({
                 'token': self.browser_session_token, 'csrf': self.browser_csrf_token,
                 'first_run': self.studio_first_run is True,
+                'mouse_double_click_ms': _mouse_double_click_ms(),
                 'home_load_ms': LIBRARY_ITEM_ENGINES['tool_workshop']['params'].get('home_load_ms', 3000),
                 'workshop': {'root': 'app:workshop', 'scope': 'app:workshop'}, 'nograph': True}).encode('utf-8'))
             headers += [('Content-Security-Policy', "default-src 'none'; connect-src 'self'; img-src 'self' data:; "

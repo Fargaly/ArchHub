@@ -316,20 +316,28 @@ def test_invalid_reexecuted_interpreter_cannot_loop(tmp_path, monkeypatch):
         colleague_setup.prepare_environment(tmp_path, check_only=True)
 
 
-def test_assistant_integration_cannot_block_a_ready_build():
-    """The registration offer follows the ready marker and swallows its own failure."""
-    import ast
-    tree = ast.parse((ROOT / "01.APP/colleague_setup.py").read_text(encoding="utf-8"))
-    main = next(node for node in tree.body
-                if isinstance(node, ast.FunctionDef) and node.name == "main")
-    source = ast.unparse(main)
-    assert source.index("_write_ready(root, identity)") < source.index(
-        "_assistant_integration(Path(os.path.abspath(__file__)).parent, identity)")
-    guard = next(node for node in ast.walk(main) if isinstance(node, ast.Try)
-                 and any("_assistant_integration" in ast.unparse(stmt) for stmt in node.body))
-    assert [ast.unparse(handler.type) for handler in guard.handlers] == ["Exception"]
-    assert not any(isinstance(inner, ast.Return)
-                   for handler in guard.handlers for inner in ast.walk(handler))
+def test_launcher_opens_when_optional_assistant_setup_times_out(
+        tmp_path, monkeypatch, isolated_user_state, capsys):
+    _private_environment(tmp_path, monkeypatch)
+    (tmp_path / "nodelang").mkdir()
+    (tmp_path / "nodelang/launcher.py").touch()
+    monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
+    colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
+    monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
+    monkeypatch.setattr(sys, "argv", ["colleague_setup.py", "--launcher-setup"])
+
+    def timeout(args, **kwargs):
+        assert args[-1] == "--finish-assistants"
+        assert kwargs["stdin"] is colleague_setup.subprocess.DEVNULL
+        assert 0 < kwargs["timeout"] <= 10
+        assert colleague_setup.ready_for_build(tmp_path)
+        raise colleague_setup.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    monkeypatch.setattr(colleague_setup.subprocess, "run", timeout)
+    assert colleague_setup.main() == 0
+    assert "Check Settings > Assistants" in capsys.readouterr().out
+    assert colleague_setup.ready_for_build(tmp_path)
 
 
 def test_assistant_receipt_uses_the_launcher_state_root(tmp_path, monkeypatch):
@@ -368,7 +376,7 @@ def test_reexecuted_setup_keeps_the_path_the_shortcut_opened(tmp_path, monkeypat
     (owned / "pyvenv.cfg").write_text("include-system-site-packages = false\n")
     opened = tmp_path / "ArchHub-link" / "colleague_setup.py"
     monkeypatch.setattr(colleague_setup, "__file__", str(opened))
-    monkeypatch.setattr(sys, "argv", ["colleague_setup.py"])
+    monkeypatch.setattr(sys, "argv", ["colleague_setup.py", "--interactive"])
     calls = []
     def run(args, **kwargs):
         calls.append(args)
@@ -376,7 +384,7 @@ def test_reexecuted_setup_keeps_the_path_the_shortcut_opened(tmp_path, monkeypat
     monkeypatch.setattr(colleague_setup.subprocess, "run", run)
     assert colleague_setup.prepare_environment(tmp_path) == 0
     assert calls == [[str(owned / "Scripts/python.exe"), "-E", "-s",
-                      os.path.abspath(str(opened)), "--owned-environment"]]
+                      os.path.abspath(str(opened)), "--owned-environment", "--interactive"]]
     assert calls[0][3] != str(tmp_path / "colleague_setup.py")
 
 
@@ -596,3 +604,23 @@ def test_unimportable_package_refuses_in_plain_words(
     assert "ArchHub is finishing setup" in out
     assert "cannot be imported" not in out
     assert "REFUSED: ArchHub could not finish setup. Missing: mcp" in out
+
+@pytest.mark.parametrize("flag, expected", [(None, "not_asked"), ("--interactive", "declined")])
+def test_assistant_offer_requires_explicit_interaction(tmp_path, monkeypatch, flag, expected):
+    import json
+    from types import SimpleNamespace
+    from nodelang import client_mcp_installation
+
+    monkeypatch.setattr(colleague_setup, "_launcher_state_root", lambda: tmp_path)
+    monkeypatch.setattr(client_mcp_installation, "readiness", lambda *args: {
+        "claude_code": "ready_to_register", "server_name": "archhub",
+        "claude_desktop": "not installed",
+    })
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(sys, "argv", ["colleague_setup.py", *([flag] if flag else [])])
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda question: prompts.append(question) or "n")
+    colleague_setup._assistant_integration(tmp_path, "sample-build")
+    receipt = json.loads((tmp_path / "assistant-integration.json").read_text())
+    assert receipt["choice"] == expected
+    assert len(prompts) == int(flag is not None)

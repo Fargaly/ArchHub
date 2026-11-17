@@ -289,7 +289,11 @@ def prepare_environment(root: Path, check_only=False):
     # A private flag prevents recursion if the interpreter does not identify as ours.
     if "--owned-environment" in sys.argv:
         raise ValueError("ArchHub environment identity mismatch")
-    args = ["--owned-environment"] + (["--check-ready"] if check_only else [])
+    args = ["--owned-environment"]
+    if check_only:
+        args.append("--check-ready")
+    else:
+        args.extend(sys.argv[1:])
     # The child gets this file as it was opened, not root / "colleague_setup.py":
     # root is resolved, and resolving collapses a junction at or above the
     # install, so the child could never see the redirect that registration
@@ -746,7 +750,7 @@ def _assistant_integration(root: Path, identity: str) -> None:
             choice = "accepted" if requested[-1] == "claude-code" else "declined"
         elif type(previous) is dict and previous.get("choice") == "declined":
             choice = "declined"
-        elif sys.stdin is not None and sys.stdin.isatty():
+        elif "--interactive" in sys.argv[1:] and sys.stdin is not None and sys.stdin.isatty():
             try:
                 answer = input(question)
             except (EOFError, KeyboardInterrupt):
@@ -840,10 +844,51 @@ def _assistant_hooks(root: Path) -> list:
             "stale": "an old check points at a missing file; left unchanged (review in Settings > Assistants)"}
     for row in results:
         print("  %-10s : %s" % (row["client"], said.get(row["state"], row["state"])))
-    if any(row["client"] == "codex" and row["state"] == "configured" for row in results):
-        print("  codex      : approve the new hook in Codex; ArchHub never approves it for you")
+    if any(row["client"] == "codex" and row["state"] == "configured" and row["changed"]
+           for row in results):
+        print("  codex      : review the end-of-turn (Stop) hook in Codex")
     marker.unlink(missing_ok=True)
     return results
+
+
+def _finish_launcher_assistants():
+    """Limit optional assistant setup after the boot dependencies are verified."""
+    from nodelang.settings_owner import _application_setting_default
+
+    env = clean_environment()
+    executable = sys.executable
+    if os.name == "nt":
+        # Run the base interpreter in the owned venv without its redirector process.
+        env["__PYVENV_LAUNCHER__"] = executable
+        executable = sys._base_executable
+    try:
+        result = subprocess.run(
+            [executable, "-E", "-s", os.path.abspath(__file__), "--finish-assistants"],
+            env=env, stdin=subprocess.DEVNULL,
+            timeout=_application_setting_default("assistant_setup_ms") / 1000,
+        )
+    except subprocess.TimeoutExpired:
+        reason = "setup timed out"
+    except OSError:
+        reason = "setup could not start"
+    else:
+        if result.returncode == 0:
+            return
+        reason = "setup exited with code %d" % result.returncode
+    print("  assistants : %s. Check Settings > Assistants after ArchHub opens." % reason)
+
+
+def _finish_assistants(identity):
+    # Use the path as opened so registration can reject a redirected install.
+    root = Path(os.path.abspath(__file__)).parent
+    try:
+        _assistant_integration(root, identity)
+    except Exception as exc:  # optional registration must never stop launch
+        print("  assistant  : not connected (%s)" % type(exc).__name__)
+    try:
+        _assistant_hooks(root)
+    except Exception as exc:
+        print("  assistants : not connected (%s)" % type(exc).__name__)
 
 
 def verify_imports(root: Path) -> list[str]:
@@ -1013,19 +1058,10 @@ def main():
     except (OSError, UnicodeError, ValueError):
         print("  REFUSED: setup could not record this build as ready. Run setup again.")
         return 6
-    # Offered once the build is ready. A failure here is one line on this
-    # screen, never an application that does not open.
-    try:
-        # As opened, not `root`: root is resolved, and resolving collapses a
-        # junction or symlink at or above the install, so registration could
-        # never see the reparse point it refuses. abspath does not follow links.
-        _assistant_integration(Path(os.path.abspath(__file__)).parent, identity)
-    except Exception as exc:  # noqa: BLE001 - the application must still open
-        print("  assistant  : not connected (%s)" % type(exc).__name__)
-    try:
-        _assistant_hooks(Path(os.path.abspath(__file__)).parent)
-    except Exception as exc:  # noqa: BLE001 - the application must still open
-        print("  assistants : not connected (%s)" % type(exc).__name__)
+    if "--launcher-setup" in sys.argv[1:]:
+        _finish_launcher_assistants()
+    else:
+        _finish_assistants(identity)
     # The installer owns the shortcuts (Start menu + Desktop, both opening
     # ArchHub.vbs). Writing a second one here put two different ArchHub
     # entries on the Desktop.
@@ -1040,6 +1076,12 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--finish-assistants"]:
+        root = Path(__file__).resolve().parent
+        if not ready_for_build(root):
+            raise SystemExit(1)
+        _finish_assistants(readiness_identity(root))
+        raise SystemExit(0)
     if "--check-ready" in sys.argv[1:]:
         # Checking may use an existing environment, but never creates/repairs one.
         root = Path(__file__).resolve().parent

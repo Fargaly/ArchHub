@@ -71,7 +71,8 @@ _CODEX_ACTING = ('shell_tool', 'code_mode_host', 'code_mode', 'multi_agent', 'mu
 # Codex is here too (independent review 2026-11-17): the start words and proofs above cannot yet show that it is
 # given no tool that acts. Its hosted web search needs no local tool and asks nobody; its helper-agent and exec
 # tools are still declared to the model; its memories feature sends a past session to its provider when a process
-# starts. Picking Codex in chat says so in one line and starts no process; a joined Codex session is still reached. Its dialect and gates are kept and tested.
+# starts. Picking Codex in chat says so in one line, starts no process and messages no session; a joined Codex
+# session is messaged only by its typed @handle. Its dialect and gates are kept and tested.
 _NOT_YET = {
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
@@ -520,28 +521,22 @@ def label(agent):
     return {'claude': 'Claude Code', 'goose': 'Goose'}.get(agent) or RUNTIMES.get(agent, {}).get('label', agent)
 
 
-def known_agent(handle):
-    """The table row an @handle or a picker choice names (its id or its label, e.g. @claude, @claude-code), offered
-    in chat or not; else None. Whether chat may START it is _offered's question, asked only when none is joined."""
+def agent_for(handle):
+    """The table row an @handle or a picker choice names (its id or its label, e.g. @claude, @claude-code), else None;
+    refuses one that chat does not start."""
     handle = str(handle or '').casefold()
     for agent in (*AGENTS, *_NOT_YET):
         if handle in (agent, re.sub(r'[^a-z0-9]+', '-', label(agent).casefold()).strip('-')):
-            return agent
+            return _offered(agent)
     return None
-
-
-def agent_for(handle):
-    """The agent chat may start for this name; None when the table has no such row; refuses one that is not offered."""
-    agent = known_agent(handle)
-    return _offered(agent) if agent else None
 
 
 def _offered(agent):
     """The agent, when the table offers it; a plain refusal for one that is known but not offered in chat yet."""
     if agent not in AGENTS:
-        # scoped to STARTING one: a joined session of this agent is still reached by @name (nograph_server._route_to_agents)
-        raise ValueError('%s cannot be started from chat yet. Open a %s session and @%s will reach it.'
-                         % (label(agent), label(agent), agent))
+        # scoped to STARTING one, and it names no handle: a joined session is messaged by the @handle the user types
+        raise ValueError('%s cannot be started from chat yet. To message a %s session you have open, type @ and pick it.'
+                         % (label(agent), label(agent)))
     return agent
 
 

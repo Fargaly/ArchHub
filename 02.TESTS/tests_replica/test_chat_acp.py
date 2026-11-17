@@ -868,6 +868,8 @@ def test_only_claude_is_offered_in_chat_and_the_others_start_nothing(installed, 
         nograph_server._chat(body, lambda text: None)
     if 'codex' in json.dumps(body).lower():
         assert str(refused.value) == _CODEX_NOT_STARTED                  # one plain line, and nothing was started
+    assert str(refused.value) in [_CODEX_NOT_STARTED.replace('Codex', acp_client.label(name))   # the same sentence for each,
+                                  for name in acp_client._NOT_YET]                              # and it names no handle
     for name in acp_client._NOT_YET:
         with pytest.raises(ValueError, match='cannot be started from chat yet'):
             acp_client.ask(name, 'how many sheets?')
@@ -876,14 +878,16 @@ def test_only_claude_is_offered_in_chat_and_the_others_start_nothing(installed, 
     assert not started and not log.exists() and not acp_client._SESSIONS
 
 
-_CODEX_NOT_STARTED = 'Codex cannot be started from chat yet. Open a Codex session and @codex will reach it.'
+_CODEX_NOT_STARTED = 'Codex cannot be started from chat yet. To message a Codex session you have open, type @ and pick it.'
 
 
-def _joined(monkeypatch, *handles):
-    """The Workshop as chat sees it: these handles are joined sessions. Returns (messages sent to them, processes started)."""
+def _joined(monkeypatch, *rows):
+    """The Workshop as chat sees it: these joined sessions (a handle, or a whole live row). Returns (messages sent to
+    them, processes started)."""
     from nodelang import acp_client, workshop_live
     sent, started = [], []
-    monkeypatch.setattr(workshop_live, 'live_agents', lambda with_status=False: [{'handle': handle} for handle in handles])
+    monkeypatch.setattr(workshop_live, 'live_agents',
+                        lambda with_status=False: [row if isinstance(row, dict) else {'handle': row} for row in rows])
 
     def send_as_founder(text, to, reply_to=None, task=None):
         sent.append((text, list(to)))
@@ -895,11 +899,44 @@ def _joined(monkeypatch, *handles):
     return sent, started
 
 
-@pytest.mark.parametrize('body', [{'prompt': '@codex how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'codex'},
-                                  {'prompt': 'how many sheets?', 'agent': 'Codex'}])
+@pytest.mark.parametrize('choice', ['codex', 'Codex'])
+@pytest.mark.parametrize('rows', [
+    [{'handle': 'codex', 'name': 'Codex', 'agent': 'Codex', 'app': 'codex'}],          # a joined Codex session
+    [{'handle': 'codex', 'name': 'Codex', 'agent': 'Claude Code', 'app': 'claude'}],   # another program's session, named "Codex"
+    [{'handle': 'codex-2', 'name': 'Codex', 'agent': 'Codex', 'app': 'codex'}],        # a Codex whose handle got a suffix
+    []])
+def test_the_picker_never_messages_a_joined_session_and_never_starts_codex(installed, monkeypatch, choice, rows):
+    """Review hold c771, 2026-11-17: a live handle is made from a session's display name, so it does not say which
+    program the session is. The picker therefore only starts a chat agent: picking Codex is the refusal whatever is
+    joined, with no Workshop message and no process. A joined session is messaged by its typed @handle alone."""
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('codex')
+    monkeypatch.delitem(acp_client.AGENTS, 'codex')                      # the table as it ships
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    sent, started = _joined(monkeypatch, *rows)
+    with pytest.raises(ValueError) as refused:
+        nograph_server._chat({'prompt': 'how many sheets?', 'agent': choice}, lambda text: None)
+    assert str(refused.value) == _CODEX_NOT_STARTED
+    assert sent == [] and started == [] and not log.exists() and not acp_client._SESSIONS
+
+
+@pytest.mark.parametrize('rows', [[{'handle': 'claude', 'name': 'Claude', 'agent': 'Claude Code', 'app': 'claude'}], []])
+def test_the_picker_starts_claude_with_its_reading_tools_only_even_when_a_claude_session_is_joined(installed, monkeypatch, rows):
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('claude')
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    sent, started = _joined(monkeypatch, *rows)
+    assert nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'claude'}, lambda text: None)['text'] == 'There are 12 sheets.'
+    words = json.loads(log.read_text(encoding='utf-8').splitlines()[0])
+    assert sent == [] and len(started) == 1 and words[words.index('--tools') + 1] == 'Read,Glob,Grep'   # started once, nothing injected
+
+
+@pytest.mark.parametrize('body', [{'prompt': '@codex how many sheets?'}])
 def test_codex_named_in_chat_reaches_a_joined_codex_session_and_is_never_started(installed, monkeypatch, body):
-    """Chat never STARTS Codex. A Codex session the user opened himself and joined is still reached, by @codex or by
-    the picker: exactly one Workshop message to it, under that session's own permissions, and no process from chat."""
+    """Chat never STARTS Codex. A Codex session the user opened himself and joined is still reached by its typed
+    @handle: exactly one Workshop message to it, under that session's own permissions, and no process from chat."""
     from nodelang import acp_client, nograph_server
     install, log = installed
     install('codex')
@@ -917,7 +954,7 @@ def test_codex_named_in_chat_reaches_a_joined_codex_session_and_is_never_started
     assert not log.exists() and not acp_client._SESSIONS
 
 
-@pytest.mark.parametrize('body', [{'prompt': '@claude how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'claude'}])
+@pytest.mark.parametrize('body', [{'prompt': '@claude how many sheets?'}])
 def test_claude_named_in_chat_reaches_a_joined_session_or_is_started_with_its_reading_tools_only(installed, monkeypatch, body):
     from nodelang import acp_client, nograph_server
     install, log = installed

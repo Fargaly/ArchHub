@@ -566,12 +566,12 @@ def test_nothing_is_written_to_an_agent_after_its_session_is_stopped_whatever_qu
         transport.process.stdin = real
 
 
-def _waiter():
+def _waiter(title='Write sheets.txt', kind='edit', session='s1', raw=None):
     """The agent's side of one Approve card, as approve_card runs it; returns (thread, outcome list)."""
     from nodelang import acp_client
     ask = acp_client.approve_card('Codex', time.monotonic() + 30)
-    request = {'sessionId': 's1', 'toolCall': {'toolCallId': 't', 'title': 'Write sheets.txt', 'kind': 'edit',
-                                               'rawInput': {'n': time.monotonic_ns()}},
+    request = {'sessionId': session, 'toolCall': {'toolCallId': 't', 'title': title, 'kind': kind,
+                                                  'rawInput': {'n': time.monotonic_ns(), **(raw or {})}},
                'options': [{'optionId': 'yes', 'kind': 'allow_once'}, {'optionId': 'no', 'kind': 'reject_once'}]}
     outcome = []
     worker = threading.Thread(target=lambda: outcome.append(ask(request, {}, {})), daemon=True)
@@ -644,6 +644,31 @@ def test_claude_and_codex_start_without_their_own_connectors():
     from nodelang import acp_client
     assert '--strict-mcp-config' in acp_client.AGENTS['claude']['args'] and '--mcp-config' not in acp_client.AGENTS['claude']['args']
     assert acp_client._codex_connectors_off.__doc__                       # Codex: its start words are built there, see CODEX_ARGS
+
+
+@pytest.mark.parametrize('title, kind, session, raw', [
+    ('canvas.run', 'execute', 's1', {'command': 'canvas.run'}),                       # a Bash command spelled like the Canvas replay
+    ('write', 'edit', 's1', {'code': 'doc.Delete()', 'host': 'revit', 'path': 'a.rvt'}),   # the host-write replay's shape
+    ('Write sheets.txt', 'edit', 'archhub-remote-relay', {}),                         # the reserved relay session id
+    ('revit.delete', 'execute', 's1', {'connector': 'revit', 'arguments': {'ids': [1]}, 'node': {'params': {}}, 'feeds': {}}),
+    ('canvas.run', 'edit', 'archhub-remote-relay', {'arguments': {}, 'code': 'x', 'host': 'acad'})])
+def test_what_an_agent_calls_its_action_never_chooses_what_approve_does(monkeypatch, title, kind, session, raw):
+    """An agent's title, command, input and session id are shown and digested. Approve only ever permits that one request."""
+    from nodelang import acp_client, hook_decision
+    assert acp_client._ClaudeCode(None, None)._call('t', 'Bash', {'command': 'canvas.run'})['title'] == 'canvas.run'
+    replayed, written, real = [], [], hook_decision._write_holds
+    monkeypatch.setattr(hook_decision, '_release_ask', lambda replay: replayed.append(replay))
+    monkeypatch.setattr(hook_decision, '_write_holds', lambda path, data: (
+        written.extend(row['status'] for row in data['holds'].values()), real(path, data))[1])
+    worker, outcome = _waiter(title, kind, session, raw)
+    card = _pending_card()
+    row = json.loads(hook_decision._ask_path(os.environ).read_text(encoding='utf-8'))['holds'][card['id']]
+    assert row['replay']['kind'] == 'permit' and card['who'] == 'Codex' and title in card['summary']
+    assert hook_decision.ask_apply(card['id'], card['input_digest'], 'approve')['status'] == 'approved'
+    worker.join(10)
+    assert outcome == [{'outcome': 'selected', 'optionId': 'yes'}]
+    assert replayed == [] and 'releasing' not in written                 # nothing was run here; no half-way state
+    assert hook_decision._take_permit(card['input_digest'], os.environ) is False   # the one grant went to the waiter
 
 
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():

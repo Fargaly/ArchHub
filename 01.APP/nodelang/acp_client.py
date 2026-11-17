@@ -468,11 +468,9 @@ def approve_card(agent_label, deadline, stopped=lambda: False):
         seen = tool_calls.get((request.get('sessionId'), call.get('toolCallId'))) or {}
         title = str(call.get('title') or seen.get('title') or 'Agent action')[:200]
         action = _ACTIONS.get(call.get('kind') or seen.get('kind'), 'write')
-        # 'connector' names the asking agent on the card (hook_decision._ask_who); no 'arguments' key, so Approve only permits.
-        event = {'tool': title, 'input': {'connector': agent_label, 'input': call.get('rawInput')},
-                 'vendor': agent_label, 'session': str(request.get('sessionId') or '')}
-        digest = hook_decision._call_digest(event, action, 'agent')
-        hold = hook_decision._remember(event, action, 'agent', digest, agent_label + ': ' + title, os.environ)
+        # The owner's permit-only entry: what the agent calls its action is shown, never used to choose what Approve does.
+        hold, digest = hook_decision.agent_permission(os.environ, agent_label, title, action, call.get('rawInput'),
+                                                      request.get('sessionId'))
         options = {row.get('kind'): row.get('optionId') for row in request.get('options') or ()}
         if not hold:
             return {'outcome': 'cancelled'}

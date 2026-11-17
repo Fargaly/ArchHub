@@ -1757,7 +1757,19 @@ def _close_approval(environment, hold_id, outcome, who):
     return saved["record"]
 
 
-def _remember(event, action, rule, digest, summary, environment) -> str:
+def agent_permission(environment, agent_label, title, action, raw_input, session):
+    """An installed agent's own permission request (the chat). Returns (approval id, digest); id is "" when not saved.
+    It is ALWAYS a plain permit, set here by our code. The agent's title, command, input and session id are shown
+    and digested only: none of them is read to choose a replay, a relay or who is asking."""
+    event = {"tool": str(title), "input": {"connector": agent_label, "input": raw_input},
+             "vendor": agent_label, "session": str(session or "")}
+    digest = _call_digest(event, action, "agent")
+    hold = _remember(event, action, "agent", digest, agent_label + ": " + str(title), environment,
+                     replay={"kind": "permit", "tool": str(title), "arguments": event["input"]}, who=agent_label)
+    return hold, digest
+
+
+def _remember(event, action, rule, digest, summary, environment, replay=None, who=None) -> str:
     data = event["input"] if isinstance(event["input"], dict) else {}
     text, label = _ask_text(action, data)
     saved = {"id": ""}
@@ -1775,13 +1787,13 @@ def _remember(event, action, rule, digest, summary, environment) -> str:
             while base + ":" + str(number) in held["holds"]:
                 number += 1
             identity = base + ":" + str(number)
-        who = _ask_who(event, data)
+        asker = who or _ask_who(event, data)
         held["holds"][identity] = {
             "id": identity, "input_digest": digest, "status": "pending", "at": time.time(),
-            "title": _ASK_TITLES.get(action, "Run"), "who": who,
+            "title": _ASK_TITLES.get(action, "Run"), "who": asker,
             "text": text, "textLabel": label, "summary": summary, "permit_open": False,
-            "replay": _ask_replay(event, action),
-            "record": {"asked": {"who": who, "when": _approval_now(), "what": summary or text or ""},
+            "replay": replay if replay is not None else _ask_replay(event, action),
+            "record": {"asked": {"who": asker, "when": _approval_now(), "what": summary or text or ""},
                        "decided": None}}
         _write_holds(path, held)
         saved["id"] = identity

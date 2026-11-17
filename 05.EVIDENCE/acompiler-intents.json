@@ -11291,6 +11291,7 @@
         "01.APP/nodelang/studio/community-tools.jsx",
         "01.APP/nodelang/studio/access.jsx",
         "02.TESTS/tests_replica/test_nothing_given_up.py",
+        "02.TESTS/tests_replica/test_approval_store.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

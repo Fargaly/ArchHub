@@ -11371,8 +11371,13 @@
         "01.APP/nodelang/studio/studio.html",
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests/test_dock_live.py",
+        "02.TESTS/tests/test_open_never_writes.py",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs",
+        "02.TESTS/tests_js/designbuild.cjs",
         "02.TESTS/tests_js/dock_live.cjs",
         "02.TESTS/tests_js/dock_model.test.cjs",
+        "02.TESTS/tests_js/open_never_writes.cjs",
+        "02.TESTS/tests_js/raildoors.test.cjs",
         "03.TOOLS/packaging/compile_studio.cjs",
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"

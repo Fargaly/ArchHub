@@ -11311,6 +11311,9 @@
       "source": "Founder app outage, coordinator Workshop 6ba2070ccfd541e9814854887e57ecb7: shortcut setup cannot request hidden console input; bound optional assistant setup and prove startup.",
       "scope": [
         "01.APP/colleague_setup.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/pipeline_engines.py",
+        "01.APP/nodelang/settings_owner.py",
         "02.TESTS/tests_replica/test_colleague_install.py",
         "03.TOOLS/installer/ArchHub.bat"
       ]

@@ -11315,7 +11315,8 @@
         "01.APP/nodelang/pipeline_engines.py",
         "01.APP/nodelang/settings_owner.py",
         "02.TESTS/tests_replica/test_colleague_install.py",
-        "03.TOOLS/installer/ArchHub.bat"
+        "03.TOOLS/installer/ArchHub.bat",
+        "03.TOOLS/installer/ArchHub.vbs"
       ]
     },
     "DESIGNV51": {

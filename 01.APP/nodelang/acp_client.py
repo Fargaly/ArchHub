@@ -29,7 +29,8 @@ from .model_router import ModelRouteRefused
 
 # The node of this client: how long an agent may take to start, and to finish one turn (an Approve card waits inside it).
 ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
-                                          'quiet_seconds': 10}}   # no word for this long: the thread says "not responding"
+                                          'quiet_seconds': 10,     # no word for this long: the thread says "not responding"
+                                          'inventory_rows': 500}}  # one page of an agent's own MCP servers; more is refused
 
 # The start-command table, keyed by the agent registry's ids. First installed command wins; never a download.
 # 'speaks' names the CLI's own stdio mode (a dialect below); a row without it speaks ACP itself.
@@ -39,7 +40,7 @@ AGENTS = {
     'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
         '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
-        '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers; see _codex_connectors_off
+        '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
     'opencode': {'commands': ('opencode',), 'args': ('acp',)},
@@ -149,8 +150,25 @@ class _Codex:
     _WRITES = ('Shell commands in this session run in a read-only sandbox and cannot write files. To create, change or '
                'delete a file, use the apply_patch file tool; the user is asked to approve each change.')
 
+    # Measured on Codex 0.163: plugins and apps go off at start (start_command). Its own MCP servers cannot be removed
+    # by a start flag, but thread/start config {mcp_servers: {name: {enabled: false}}} switches them off for the
+    # thread, and mcpServerStatus/list with the threadId then reports each one 'disabled' with no tools.
+    _INVENTORY = {'detail': 'toolsAndAuthOnly', 'limit': ACP_NODE['params']['inventory_rows']}
+    _CONNECTORS = "Codex still has its own connectors in this thread (%s), so nothing was sent to it."
+
     def __init__(self, wire, hear):
         self.wire, self.hear, self.sent, self.prompt, self.asked = wire, hear, {}, None, set()
+        self.opening, self.thread = None, None
+
+    def _servers(self, line):
+        """The server names of one complete inventory answer; None (and the session is refused) when it is not one."""
+        result = line.get('result') or {}
+        rows = result.get('data')
+        if type(rows) is not list or result.get('nextCursor') or not all(
+                isinstance(row, dict) and type(row.get('name')) is str for row in rows):
+            self.hear({'refuse': self._CONNECTORS % 'the list was not complete'})
+            return None
+        return [row['name'] for row in rows]
 
     def say(self, message):
         method, ident, params = message.get('method'), message.get('id'), message.get('params') or {}
@@ -158,11 +176,10 @@ class _Codex:
             self.sent[ident] = method
             self.wire({'id': ident, 'method': 'initialize',
                        'params': {'clientInfo': {'name': 'archhub', 'title': 'ArchHub', 'version': '1'}}})
-        elif method == 'session/new':   # never the user's ambient Codex config: it asks, it may only read, a person decides
-            self.sent[ident] = method
-            self.wire({'id': ident, 'method': 'thread/start', 'params': {
-                'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only', 'approvalsReviewer': 'user',
-                'developerInstructions': self._WRITES}})
+        elif method == 'session/new':   # first: which of its own MCP servers does this process have (same config, same cwd)
+            self.opening = (ident, params)
+            self.sent['servers'] = 'servers'
+            self.wire({'id': 'servers', 'method': 'mcpServerStatus/list', 'params': dict(self._INVENTORY)})
         elif method == 'session/prompt':
             self.sent[ident], self.prompt = method, ident
             self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [
@@ -188,14 +205,36 @@ class _Codex:
         thread = params.get('threadId')
         if method is None:
             asked = self.sent.pop(ident, None)
-            if 'error' in line:
+            if 'error' in line and asked in ('servers', 'verify'):
+                self.hear({'refuse': self._CONNECTORS % 'they could not be listed'})
+            elif 'error' in line:
                 self.prompt = None if asked == 'session/prompt' else self.prompt
                 self.hear(line)
+            elif asked == 'servers':   # never the user's ambient Codex config: it asks, it may only read, a person
+                names = self._servers(line)   # decides; and every MCP server it has is off for this thread
+                if names is not None:
+                    ident, params = self.opening
+                    self.sent[ident] = 'session/new'
+                    self.wire({'id': ident, 'method': 'thread/start', 'params': {
+                        'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only',
+                        'approvalsReviewer': 'user', 'developerInstructions': self._WRITES,
+                        'config': {'mcp_servers': {name: {'enabled': False} for name in names}}}})
+            elif asked == 'verify':    # the thread's effective inventory, read back before any message is sent
+                if self._servers(line) is not None:
+                    live = [row['name'] for row in line['result']['data']
+                            if row.get('runtimeStatus') != 'disabled' or row.get('tools')]
+                    if live:
+                        self.hear({'refuse': self._CONNECTORS % ', '.join(live)[:200]})
+                    else:
+                        self.hear({'id': self.opening[0], 'result': {'sessionId': self.thread}})
             elif asked == 'initialize':
                 self.wire({'method': 'initialized'})
                 self.hear({'id': ident, 'result': {'protocolVersion': 1}})
             elif asked == 'session/new':
-                self.hear({'id': ident, 'result': {'sessionId': ((line.get('result') or {}).get('thread') or {}).get('id')}})
+                self.thread = ((line.get('result') or {}).get('thread') or {}).get('id')
+                self.sent['verify'] = 'verify'
+                self.wire({'id': 'verify', 'method': 'mcpServerStatus/list',
+                           'params': {**self._INVENTORY, 'threadId': self.thread}})
             # the answer to turn/start only says the turn began; turn/completed settles the prompt
         elif method == 'item/agentMessage/delta':
             self.hear(_update(thread, sessionUpdate='agent_message_chunk', content={'type': 'text', 'text': params.get('delta')}))
@@ -310,6 +349,8 @@ class AcpTransport:
                 continue
             if not isinstance(message, dict):
                 raise AcpRefused("The %s connection closed; the request was not replayed." % self.label)
+            if "refuse" in message:   # the dialect found the agent in a state it must not be asked in; the session ends
+                raise AcpRefused(str(message["refuse"]))
             if message.get("method"):
                 if "id" in message:
                     if message["method"] == "session/request_permission":
@@ -381,6 +422,7 @@ def child_environment():
             if not name.upper().startswith('ARCHHUB_') and name.upper() not in ('QTWEBENGINE_CHROMIUM_FLAGS', 'QT_OPENGL')}
 
 
+_CODEX_NO_PLUGINS = ['--disable', 'plugins', '--disable', 'apps']
 _INTERPRETERS = {'.js': 'node'}        # what runs the script an npm shim points to
 _UNSAFE_PATH = re.compile(r'[%^&|"\']')
 
@@ -430,29 +472,8 @@ def start_command(agent):
     fallback = row.get('fallback_args')
     args = list(row['args'])
     if row.get('speaks') == 'codex':
-        args[-1:-1] = _codex_connectors_off(head)
+        args[-1:-1] = _CODEX_NO_PLUGINS   # its own MCP servers are switched off per thread and checked: _Codex
     return head + args, (head + list(fallback)) if fallback else None, row.get('speaks')
-
-
-def _codex_connectors_off(head):
-    """The words that start Codex without its own connectors: plugins and apps off, and
-    `-c mcp_servers.<name>.enabled=false` for every MCP server it lists. An agent's own connectors are tools outside the file and command cards: whether their calls ask
-    first was not proven, so a chat agent starts without them (Claude: --strict-mcp-config) or is not started."""
-    refused = ValueError("Codex's own connectors could not be switched off, so it was not started. "
-                         "Check `codex mcp list`, then send again.")
-    try:
-        listed = subprocess.run(head + ['--disable', 'plugins', '--disable', 'apps', 'mcp', 'list', '--json'],
-                                stdin=subprocess.DEVNULL, capture_output=True, timeout=ACP_NODE['params']['start_seconds'],
-                                env=child_environment(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        servers = json.loads(listed.stdout)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        raise refused from None
-    names = [row.get('name') for row in servers if isinstance(row, dict)] if isinstance(servers, list) else None
-    if listed.returncode or names is None or len(names) != len(servers) or not all(
-            type(name) is str and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', name) for name in names):
-        raise refused
-    return ['--disable', 'plugins', '--disable', 'apps'] + [
-        word for name in names for word in ('-c', 'mcp_servers.%s.enabled=false' % name)]
 
 
 # -- an Approve card for a permission request -------------------------------------------------------------

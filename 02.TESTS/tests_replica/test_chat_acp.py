@@ -61,8 +61,7 @@ CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--input-format', 'stream
                '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
                '--strict-mcp-config']
 # Codex is started with its plugins, apps and every MCP server it lists switched off (the fake lists two).
-CODEX_ARGS = ['--disable', 'plugins', '--disable', 'apps', '-c', 'mcp_servers.archhub_agent_coordination.enabled=false',
-              '-c', 'mcp_servers.rea.enabled=false', 'app-server']
+CODEX_ARGS = ['--disable', 'plugins', '--disable', 'apps', 'app-server']
 
 FAKE_CLAUDE = r"""
 import json, os, sys
@@ -122,12 +121,18 @@ if stubborn:
 
 FAKE_CODEX = r"""
 import json, os, sys
-if "mcp" in sys.argv:   # `codex --disable plugins --disable apps mcp list --json`: what the client asks before it starts
-    if os.environ.get("FAKE_MCP_LIST") == "fails" or sys.argv[1:5] != ["--disable", "plugins", "--disable", "apps"]:
-        sys.exit(3)
-    print(os.environ.get("FAKE_MCP_LIST") or json.dumps([{"name": "archhub_agent_coordination", "enabled": True},
-                                                          {"name": "rea", "enabled": True}]))
-    sys.exit(0)
+SERVERS, LEAK = ["archhub_agent_coordination", "rea"], os.environ.get("FAKE_CODEX_LEAK", "")
+def server_list(params, off):
+    # the user's own MCP servers: live with tools until a thread switches them off
+    if LEAK == "list fails":
+        return {"error": {"code": -32603, "message": "inventory unavailable"}}
+    quiet = off and "threadId" in params
+    rows = [{"name": name, "runtimeStatus": "disabled" if quiet else None, "tools": {} if quiet else {"t": {}}} for name in SERVERS]
+    if quiet and LEAK == "one stays on":
+        rows[1] = {"name": "rea", "runtimeStatus": "ready", "tools": {"delete": {}}}
+    if quiet and LEAK == "a new one appears":
+        rows.append({"name": "project_local", "runtimeStatus": "ready", "tools": {"x": {}}})
+    return {"result": {"data": rows, "nextCursor": "more" if LEAK == "more pages" else None}}
 log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
 log.write(json.dumps(sys.argv[1:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
     "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
@@ -142,7 +147,7 @@ def note(method, **params):
     send({"method": method, "params": {"threadId": "thread-1", "turnId": "turn-1", **params}})
 def command(ident, text, status):
     return {"type": "commandExecution", "id": ident, "command": text, "status": status}
-ready = stubborn = False
+ready = stubborn = off = False
 for line in sys.stdin:
     message = json.loads(line)
     method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
@@ -153,9 +158,14 @@ for line in sys.stdin:
     elif method == "thread/start":
         asks = (params.get("approvalPolicy"), params.get("sandbox"), params.get("approvalsReviewer")) == ("untrusted", "read-only", "user")
         asks = asks and "apply_patch" in str(params.get("developerInstructions"))   # told how an approved write can happen
+        switched = (params.get("config") or {}).get("mcp_servers") or {}
+        off = all((switched.get(name) or {}).get("enabled") is False for name in SERVERS)
         send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") and asks else
              {"id": ident, "error": {"code": -32600, "message": "Not initialized"}})
+    elif method == "mcpServerStatus/list":
+        send({"id": ident, **server_list(params, off)})
     elif method == "turn/start":
+        log.write(json.dumps({"turn": True}) + "\n"); log.flush()
         text = params["input"][0]["text"]
         send({"id": ident, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
         if "hang" in text:
@@ -628,22 +638,41 @@ def test_approve_and_deny_under_a_polling_agent_give_exactly_one_decision_each_t
     assert len(rows) == 30 and not [row for row in rows if row['status'] in ('releasing', 'pending')]
 
 
-@pytest.mark.parametrize('listing', ['fails', 'not json', json.dumps([{'name': 'rea & calc'}]), json.dumps({'servers': []})])
-def test_codex_is_not_started_when_its_connectors_cannot_be_switched_off(installed, monkeypatch, listing):
-    """Codex's own MCP servers, plugins and apps are outside the file and command cards: it starts without them or not at all."""
+@pytest.mark.parametrize('leak', ['one stays on', 'a new one appears', 'more pages', 'list fails'])
+def test_codex_gets_no_turn_while_one_of_its_own_connectors_is_live_in_the_thread(installed, monkeypatch, leak):
+    """Codex's own MCP servers are outside the file and command cards. They are switched off for the thread and the
+    thread's effective inventory is read back from the same process before any message is sent."""
     from nodelang import acp_client
     install, log = installed
     install('codex')
-    monkeypatch.setenv('FAKE_MCP_LIST', listing)
-    with pytest.raises(ValueError, match='connectors could not be switched off'):
+    monkeypatch.setenv('FAKE_CODEX_LEAK', leak)
+    with pytest.raises(acp_client.AcpRefused, match='own connectors'):
         acp_client.ask('codex', 'how many sheets?')
-    assert not log.exists() and not acp_client._SESSIONS
+    lines = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    assert {'turn': True} not in lines and not acp_client._SESSIONS      # nothing was sent to it
+    pid = lines[1]['pid']
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)
+
+
+def test_codex_connectors_are_found_and_switched_off_inside_its_own_process(installed, monkeypatch):
+    from nodelang import acp_client
+    install, log = installed
+    install('codex')
+    started = []
+    real = acp_client.subprocess.Popen
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda argv, **kw: (started.append(list(argv)), real(argv, **kw))[1])
+    assert acp_client.ask('codex', 'how many sheets?')['text'] == 'There are 12 sheets.'
+    assert len(started) == 1 and started[0][2:] == CODEX_ARGS            # one process: no separate listing run
+    assert {'turn': True} in [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
 
 
 def test_claude_and_codex_start_without_their_own_connectors():
     from nodelang import acp_client
     assert '--strict-mcp-config' in acp_client.AGENTS['claude']['args'] and '--mcp-config' not in acp_client.AGENTS['claude']['args']
-    assert acp_client._codex_connectors_off.__doc__                       # Codex: its start words are built there, see CODEX_ARGS
+    assert acp_client.start_command.__doc__                               # Codex: see CODEX_ARGS and the thread check
 
 
 @pytest.mark.parametrize('title, kind, session, raw', [
@@ -705,7 +734,7 @@ def test_an_agent_starts_as_the_program_its_shim_points_to_and_cmd_never_runs(in
     monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda argv, **kw: (started.append(list(argv)), real(argv, **kw))[1])
     argv = acp_client.start_command(agent)[0]
     assert argv[0] == sys.executable and argv[1].endswith('.py')
-    assert argv[2:] == (CODEX_ARGS if agent == 'codex' else list(acp_client.AGENTS[agent]['args']))
+    assert argv[2:] == (CODEX_ARGS if agent == 'codex' else list(acp_client.AGENTS[agent]['args']))   # no listing run
     if agent != 'gemini':   # the mute fake never answers
         acp_client.ask(agent, 'how many sheets?')
         assert started and all(line[0] == sys.executable and 'cmd' not in os.path.basename(line[0]).lower() and '/C' not in line

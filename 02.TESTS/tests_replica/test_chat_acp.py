@@ -864,16 +864,73 @@ def test_only_claude_is_offered_in_chat_and_the_others_start_nothing(installed, 
     assert sorted(acp_client.AGENTS) == ['claude'] and 'codex' in acp_client._NOT_YET
     started = []
     monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda *a, **kw: started.append(a))
-    with pytest.raises(ValueError, match='is not available in chat yet') as refused:
+    with pytest.raises(ValueError, match='cannot be started from chat yet') as refused:
         nograph_server._chat(body, lambda text: None)
     if 'codex' in json.dumps(body).lower():
-        assert str(refused.value) == 'Codex is not available in chat yet.'   # one plain line, and nothing was started
+        assert str(refused.value) == _CODEX_NOT_STARTED                  # one plain line, and nothing was started
     for name in acp_client._NOT_YET:
-        with pytest.raises(ValueError, match='is not available in chat yet'):
+        with pytest.raises(ValueError, match='cannot be started from chat yet'):
             acp_client.ask(name, 'how many sheets?')
-        with pytest.raises(ValueError, match='is not available in chat yet'):
+        with pytest.raises(ValueError, match='cannot be started from chat yet'):
             acp_client.start_command(name)
     assert not started and not log.exists() and not acp_client._SESSIONS
+
+
+_CODEX_NOT_STARTED = 'Codex cannot be started from chat yet. Open a Codex session and @codex will reach it.'
+
+
+def _joined(monkeypatch, *handles):
+    """The Workshop as chat sees it: these handles are joined sessions. Returns (messages sent to them, processes started)."""
+    from nodelang import acp_client, workshop_live
+    sent, started = [], []
+    monkeypatch.setattr(workshop_live, 'live_agents', lambda with_status=False: [{'handle': handle} for handle in handles])
+
+    def send_as_founder(text, to, reply_to=None, task=None):
+        sent.append((text, list(to)))
+        return {'message_id': 'm%d' % len(sent), 'unknown': [],
+                'deliveries': [{'agent': handle, 'channel': 'inject', 'state': 'delivered', 'ms': 1} for handle in to]}
+    monkeypatch.setattr(workshop_live, 'send_as_founder', send_as_founder)
+    real = acp_client.subprocess.Popen
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda argv, **kw: (started.append(list(argv)), real(argv, **kw))[1])
+    return sent, started
+
+
+@pytest.mark.parametrize('body', [{'prompt': '@codex how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'codex'},
+                                  {'prompt': 'how many sheets?', 'agent': 'Codex'}])
+def test_codex_named_in_chat_reaches_a_joined_codex_session_and_is_never_started(installed, monkeypatch, body):
+    """Chat never STARTS Codex. A Codex session the user opened himself and joined is still reached, by @codex or by
+    the picker: exactly one Workshop message to it, under that session's own permissions, and no process from chat."""
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('codex')
+    monkeypatch.delitem(acp_client.AGENTS, 'codex')                      # the table as it ships
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    sent, started = _joined(monkeypatch, 'codex')
+    result = nograph_server._chat(body, lambda text: None)
+    assert sent == [(body['prompt'], ['codex'])] and len(result['deliveries']) == 1   # exactly one message, to that session
+    assert started == [] and not log.exists() and not acp_client._SESSIONS            # no ACP start, no process
+    sent, started_now = _joined(monkeypatch)                             # the same words with no Codex session joined
+    with pytest.raises(ValueError) as refused:
+        nograph_server._chat(body, lambda text: None)
+    assert str(refused.value) == _CODEX_NOT_STARTED
+    assert sent == [] and started == [] and started_now == []            # nothing delivered, nothing started
+    assert not log.exists() and not acp_client._SESSIONS
+
+
+@pytest.mark.parametrize('body', [{'prompt': '@claude how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'claude'}])
+def test_claude_named_in_chat_reaches_a_joined_session_or_is_started_with_its_reading_tools_only(installed, monkeypatch, body):
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('claude')
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    sent, started = _joined(monkeypatch, 'claude')
+    result = nograph_server._chat(body, lambda text: None)
+    assert sent == [(body['prompt'], ['claude'])] and len(result['deliveries']) == 1   # joined: one Workshop message
+    assert started == [] and not log.exists() and not acp_client._SESSIONS
+    sent, started = _joined(monkeypatch)                                 # not joined: chat starts it, reading tools only
+    assert nograph_server._chat(body, lambda text: None)['text'] == 'There are 12 sheets.'
+    words = json.loads(log.read_text(encoding='utf-8').splitlines()[0])
+    assert sent == [] and len(started) == 1 and words[words.index('--tools') + 1] == 'Read,Glob,Grep'
 
 
 @pytest.mark.parametrize('answer', [{'mcpServers': [{'name': 'plugin:data:hex', 'status': 'connected'}]},

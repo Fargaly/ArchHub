@@ -679,9 +679,9 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
             if type(task) is not str or get(history, task) is None:
                 raise ValueError('This session is no longer in the Workshop. Reopen it from Home.')
     handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
-    from .acp_client import agent_for
-    if not handles and agent_for(body.get('agent')):   # the composer's agent picker named an installed agent
-        handles = [agent_for(body['agent'])]
+    from .acp_client import known_agent
+    if not handles and known_agent(body.get('agent')):   # the composer's agent picker named an agent of the table:
+        handles = [known_agent(body['agent'])]            # a joined session gets it; only a start can be refused
     if handles:
         return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step,
                                 cancelled=cancelled)

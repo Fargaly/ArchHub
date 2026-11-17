@@ -227,6 +227,8 @@ def installed(tmp_path, monkeypatch):
             '@ECHO off\r\nSETLOCAL\r\n"%%_prog%%"  "%%dp0%%\\%s" %%*\r\n' % script, encoding='utf-8')
     from nodelang import acp_client
     monkeypatch.setitem(acp_client._INTERPRETERS, '.py', sys.executable)
+    for name, row in acp_client._NOT_YET.items():   # their ACP path is kept and tested here; the shipped table has no row for them
+        monkeypatch.setitem(acp_client.AGENTS, name, row)
     monkeypatch.setenv('FAKE_AGENT_LOG', str(log))
     monkeypatch.setenv('PATH', str(bin_dir))
     return install, log
@@ -725,6 +727,29 @@ def test_claude_with_only_its_built_in_tools_is_asked(installed, monkeypatch):
     install('claude')
     monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': ['Read', 'Write', 'Bash']}))
     assert acp_client.ask('claude', 'how many sheets?')['text'] == 'There are 12 sheets.'
+
+
+@pytest.mark.parametrize('body', [{'prompt': '@gemini how many sheets?'}, {'prompt': '@opencode how many sheets?'},
+                                  {'prompt': '@goose how many sheets?'}, {'prompt': 'how many sheets?', 'agent': 'gemini'},
+                                  {'prompt': 'how many sheets?', 'agent': 'OpenCode'}, {'prompt': '@claude and @gemini: sheets?'}])
+def test_only_claude_and_codex_are_offered_in_chat_and_the_others_start_nothing(installed, monkeypatch, body):
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    for name in ('claude', 'codex', 'gemini', 'opencode', 'goose'):
+        install(name)
+    for name in acp_client._NOT_YET:
+        monkeypatch.delitem(acp_client.AGENTS, name)                     # the table as it ships
+    assert sorted(acp_client.AGENTS) == ['claude', 'codex']
+    started = []
+    monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda *a, **kw: started.append(a))
+    with pytest.raises(ValueError, match='is not available in chat yet'):
+        nograph_server._chat(body, lambda text: None)
+    for name in acp_client._NOT_YET:
+        with pytest.raises(ValueError, match='is not available in chat yet'):
+            acp_client.ask(name, 'how many sheets?')
+        with pytest.raises(ValueError, match='is not available in chat yet'):
+            acp_client.start_command(name)
+    assert not started and not log.exists() and not acp_client._SESSIONS
 
 
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():

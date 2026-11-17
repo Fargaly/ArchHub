@@ -42,6 +42,10 @@ AGENTS = {
         '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
         '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
+}
+# Not offered in chat yet: these speak ACP themselves, and nothing here can switch off or check their own connectors
+# (session/new mcpServers=[] only adds none). Their rows are kept for the day that is proven; no route reaches them.
+_NOT_YET = {
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
     'opencode': {'commands': ('opencode',), 'args': ('acp',)},
     'goose': {'commands': ('goose',), 'args': ('acp',)},
@@ -426,10 +430,17 @@ def label(agent):
 def agent_for(handle):
     """The table row an @handle names (its id or its label, e.g. @claude, @claude-code), else None."""
     handle = str(handle or '').casefold()
-    for agent in AGENTS:
+    for agent in (*AGENTS, *_NOT_YET):
         if handle in (agent, re.sub(r'[^a-z0-9]+', '-', label(agent).casefold()).strip('-')):
-            return agent
+            return _offered(agent)
     return None
+
+
+def _offered(agent):
+    """The agent, when the table offers it; a plain refusal for one that is known but not offered in chat yet."""
+    if agent not in AGENTS:
+        raise ValueError('%s is not available in chat yet. Claude Code and Codex are.' % label(agent))
+    return agent
 
 
 def child_environment():
@@ -481,7 +492,7 @@ def _launcher(agent, found):
 
 def start_command(agent):
     """(argv, fallback argv or None, the dialect it speaks or None) for an installed agent; refuses (names it) when it is not installed."""
-    row = AGENTS[agent]
+    row = AGENTS[_offered(agent)]
     found = next((path for path in map(shutil.which, row['commands']) if path), None)
     if found is None:
         raise ValueError('%s is not installed on this PC (looked for %s). Install it, then send again.'
@@ -675,7 +686,7 @@ def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s
     `cancelled` is the caller's irreversible stop for this one request (the server: Stop or app close since the
     request was admitted). When true, no session is registered, launched or resumed, and nothing is sent."""
     from .user_paths import state_directory
-    key = (agent, task or '')
+    key = (_offered(agent), task or '')
     halted = lambda: cancelled() or stopped()
     with _SESSIONS_LOCK:   # registration: one session object per key; a stopped one is never used again
         if cancelled():

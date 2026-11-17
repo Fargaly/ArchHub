@@ -11346,6 +11346,18 @@
         "02.TESTS/tests_js/studio_shell_v51.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "F344-HOST-SAFETY": {
+      "source": "F344 installed completion and host execution safety follow-up, 2026-11-17. Workshop coordinator 717 assigned scope against main 40c16f74. Evaluate only pure nodes in Done checks, bind raw host approvals to actual inputs, and preserve uncertain host outcomes for explicit reconciliation. Isolated tests, regular gate, branch commits for coordinator integration.",
+      "scope": [
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/host_exec.py",
+        "01.APP/nodelang/agent_work.py",
+        "02.TESTS/tests_replica/test_session_model.py",
+        "02.TESTS/tests/test_host_exec.py"
+      ]
     }
   }
 }

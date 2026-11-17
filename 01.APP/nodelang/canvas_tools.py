@@ -240,10 +240,13 @@ def register_canvas_tools(server):
     @server.tool(name='canvas.save')
     def canvas_save(path: str, ctx: Context, save_as: str = '') -> dict:
         """Save (the file is already current) or save a copy to another absolute .archhub path."""
-        from .session_files import write_document
+        from .session_files import dormant_copy, write_document
         document = docs.read(_path(path))
         if save_as:
-            write_document(_path(save_as), document)
+            target = Path(_path(save_as))
+            if target.resolve() == Path(_path(path)).resolve():
+                raise ValueError('Choose a different file for the copy.')
+            write_document(target, dormant_copy(document, _path(path), target))
         return {'saved': _path(save_as or path), 'revision': document.get('properties', {}).get('revision', 0)}
 
     @server.tool(name='canvas.undo')

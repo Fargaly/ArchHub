@@ -243,6 +243,20 @@ def new_document(title='Untitled'):
             'viewport': {'x': 0, 'y': 0, 'zoom': 1}, 'properties': {'viewportSaved': False}}
 
 
+def dormant_copy(document, source_path=None, target_path=None):
+    """Copy workflow data without transferring permission to run its automations."""
+    nodes = [
+        {**node, 'params': {**node['params'], 'armed': False}}
+        if node['type'] in ('trigger.schedule', 'trigger.file') else node
+        for node in document['nodes']
+    ]
+    if source_path and target_path and Path(source_path).parent != Path(target_path).parent:
+        for node in nodes:
+            if node['type'] == 'trigger.file' and node['params'].get('folder'):
+                node['params']['folder'] = resolve_file_parameter(node['params']['folder'], source_path)
+    return {**document, 'nodes': nodes}
+
+
 _WARNED_DOCUMENT_KINDS = set()
 
 
@@ -1868,7 +1882,7 @@ class SessionFiles:
         if action == 'starter':
             # A built-in starter becomes the founder's own new session file (the starter itself never changes).
             from .starters import document as starter_document
-            document = starter_document(str(body.get('id') or ''))
+            document = dormant_copy(starter_document(str(body.get('id') or '')))
             path = write_document(document_path(self.directory, document), document)
             canvas_documents.remember(path, document)
             self.remember(path, document)
@@ -1928,9 +1942,12 @@ class SessionFiles:
                 path = str(document_path(self.directory, document))
             if not path:
                 return {'ok':True,'cancelled':True}
-            if body.get('save_as'):
-                document = {**document, 'title': Path(path).stem}
             path = str(local_path(path))
+            copy_source = conflict_copy or body.get('copy_source')
+            if body.get('save_as') and copy_source and local_path(copy_source) == Path(path):
+                raise ValueError('Choose a different file for the copy.')
+            if body.get('save_as'):
+                document = dormant_copy({**document, 'title': Path(path).stem}, copy_source, path)
             if conflict_copy:
                 document = canvas_documents.commit_ui(path, document, 0, record_creation=False)
             elif body.get('save_as'):
@@ -1945,7 +1962,7 @@ class SessionFiles:
             self._current(document['id'], path)
             return {'ok':True,'path':path,'document':document,'revision':canvas_documents.revision(document)}
         if action == 'save-skill':
-            document = validate(body.get('document'))
+            document = dormant_copy(validate(body.get('document')))
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):
                 raise ValueError('Skill id must be a portable filename identifier')
             return self.dispatch({'action':'save', 'document':document, **({'path': body['path']} if body.get('path') else {})})

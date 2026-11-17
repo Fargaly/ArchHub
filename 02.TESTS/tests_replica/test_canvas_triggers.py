@@ -413,6 +413,38 @@ def test_stale_autosave_does_not_recreate_removed_armed_workflow(profile):
         service.close()
 
 
+@pytest.mark.parametrize('copy_kind', ['save-as', 'recover'])
+def test_workflow_copies_keep_both_automations_dormant(profile, copy_kind):
+    from nodelang import canvas_triggers, session_files
+
+    original = profile / 'original-workflow.archhub'
+    document = workflow(original, 'tr_schedule', {'every_seconds': 600, 'armed': True})
+    watched = profile / 'watched'
+    watched.mkdir()
+    params = {'folder': watched.name, 'pattern': '*.txt', 'debounce_seconds': 600, 'ask_before_running': False}
+    document['nodes'].append({'id': 'watch', 'type': 'trigger.file', 'item': 'tr_file', 'params': params,
+                              'position': {'x': 0, 'y': 200}})
+    session_files.write_document(original, document)
+    files = session_files.SessionFiles()
+    opened = files.dispatch({'action': 'open', 'path': str(original)})['document']
+    service = canvas_triggers.TriggerService(files)
+    try:
+        before = original.read_bytes()
+        destination = {'conflict_copy_of': str(original)} if copy_kind == 'recover' else {
+            'path': str(profile / 'saved-copy.archhub'), 'copy_source': str(original)}
+        saved = files.dispatch({'action': 'save', 'save_as': True, 'document': opened, **destination})
+        copied = session_files.read_document(saved['path'])
+        for key in ('t', 'watch'):
+            source = next(node['params'] for node in opened['nodes'] if node['id'] == key)
+            assert next(node['params'] for node in copied['nodes'] if node['id'] == key) == {**source, 'armed': False}
+        assert original.read_bytes() == before
+        service.refresh()
+        assert {(row['path'], row['node']) for row in service.armed} == {(str(original), 't'), (str(original), 'watch')}
+        assert session_files.read_runs(saved['path']) == []
+    finally:
+        service.close()
+
+
 def test_timed_approval_uses_the_same_saved_parameters_as_admission(profile, monkeypatch):
     from nodelang.canvas_triggers import TriggerService
     from nodelang.session_files import read_runs

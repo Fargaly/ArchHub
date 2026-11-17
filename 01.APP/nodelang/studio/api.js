@@ -1677,7 +1677,7 @@ function acknowledgeSave(sent,saved){
  localDirty=!same(sessionDocument,saved.document);projectFile();
 }
 let saveConflict=null, resolvingSaveConflict=false, savedConflictDraft=null;
-const saveConflictMessage='This workflow changed elsewhere. Keep your changes in a copy, or discard them and reload.';
+const saveConflictMessage='This workflow changed elsewhere. Keep your changes in a copy with automations paused, or discard them and reload.';
 function rememberSaveConflict(error,path){
  if(error.response?.code!=='canvas_save_conflict'||!path||path!==sessionPath)return;
  saveConflict=path;savedConflictDraft=null;clearTimeout(autosaveTimer);
@@ -1784,7 +1784,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
  if(navigation!==fileNavigation)return {cancelled:true};
- const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath}).catch(error=>{rememberSaveConflict(error,path);throw error;});
+ const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,copy_source:saveAs?sessionPath:undefined,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath}).catch(error=>{rememberSaveConflict(error,path);throw error;});
  if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };
@@ -2008,6 +2008,7 @@ api.copyNodes=async ids=>{
 api.pasteNodes=async point=>{
  if(!copiedNodes)throw Error('Copy nodes from a canvas first.');
  const source=copy(copiedNodes),ids=new Map(source.nodes.map(n=>[n.id,window.crypto.randomUUID()])),dx=(point?.x??Math.min(...source.nodes.map(n=>n.position.x))+32)-Math.min(...source.nodes.map(n=>n.position.x)),dy=(point?.y??Math.min(...source.nodes.map(n=>n.position.y))+32)-Math.min(...source.nodes.map(n=>n.position.y));
+ for(const node of source.nodes)if(node.type==='trigger.schedule'||node.type==='trigger.file')node.params.armed=false;
  for(const n of source.nodes){n.id=ids.get(n.id);n.position={x:n.position.x+dx,y:n.position.y+dy};delete n.result;if(n.parent&&ids.has(n.parent))n.parent=ids.get(n.parent);else delete n.parent;if(n.children)n.children=n.children.map(id=>ids.get(id));if(n.frameMembers)n.frameMembers=n.frameMembers.filter(id=>ids.has(id)).map(id=>ids.get(id));if(n.bind&&ids.has(n.bind.node))n.bind.node=ids.get(n.bind.node);for(const p of n.paramDefs||[])if(p.promoted)p.promoted=ids.get(p.promoted)||null;}
  for(const w of source.wires){w.id=window.crypto.randomUUID();w.from.node=ids.get(w.from.node);w.to.node=ids.get(w.to.node);}
  fileEdit(d=>{d.nodes.push(...source.nodes);d.wires.push(...source.wires);d.groups.push(...source.groups.map(g=>({...g,id:ids.get(g.id),nodes:g.nodes.map(id=>ids.get(id))})));},source.nodes.map(n=>n.id));

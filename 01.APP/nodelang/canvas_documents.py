@@ -665,6 +665,8 @@ class CanvasSaveConflict(ValueError):
 
 def merge(base, ours, theirs):
     """Apply fields changed by this editor to the current nodes and wires."""
+    from .session_files import execution_wires
+
     def apply_changes(before, edited, current):
         merged = copy.deepcopy(current)
         for key in before.keys() - edited.keys():
@@ -699,6 +701,10 @@ def merge(base, ours, theirs):
     result['wires'] = [w for w in result['wires'] if w['from']['node'] in node_ids and w['to']['node'] in node_ids]
     targets = {(wire['to']['node'], wire['to']['socket']) for wire in result['wires']}
     if len(targets) != len(result['wires']):
+        raise CanvasSaveConflict('An input was connected elsewhere.')
+    resolved = [wire['to'] for wire in execution_wires(result)
+                if not wire.get('inferred') and wire.get('enabled') is not False]
+    if len({(endpoint['node'], endpoint['socket']) for endpoint in resolved}) != len(resolved):
         raise CanvasSaveConflict('An input was connected elsewhere.')
     for key in ('title', 'groups', 'notes'):
         if (base or {}).get(key) != ours.get(key):

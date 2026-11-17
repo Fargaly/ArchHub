@@ -292,6 +292,37 @@ def test_autosave_rejects_conflicting_wire_targets(profile):
     assert opened['wires'][0]['to'] == incoming['to']
 
 
+def test_autosave_rejects_conflicting_group_alias_and_member_wire(profile):
+    from nodelang import canvas_documents as docs
+    from nodelang.session_files import SessionFiles, write_document
+
+    path = profile / 'alias-conflict.archhub'
+    original = workflow()
+    original['wires'].pop(0)
+    original['nodes'][1]['parent'] = 'group'
+    original['nodes'].extend([
+        {'id': 'group', 'type': 'group', 'children': ['slice'], 'params': {}, 'position': {'x': 260, 'y': 0}},
+        {**original['nodes'][0], 'id': 'other'},
+    ])
+    write_document(path, original)
+    owner = SessionFiles()
+    opened = owner.dispatch({'action': 'open', 'path': str(path)})['document']
+    alias = {'id': 'alias', 'from': {'node': 'list', 'socket': 'value'},
+             'to': {'node': 'group', 'socket': 'in:slice:items'}}
+    docs.edit(path, 'agent:claude', 'wire group',
+              lambda document: document['wires'].append(alias), solve_changed=False)
+    committed = path.read_bytes()
+    draft = {'id': 'direct', 'from': {'node': 'other', 'socket': 'value'},
+             'to': {'node': 'slice', 'socket': 'items'}}
+    opened['wires'].append(draft)
+
+    with pytest.raises(docs.CanvasSaveConflict, match='input was connected elsewhere'):
+        owner.dispatch({'action': 'autosave', 'path': str(path), 'document': opened,
+                        'base_revision': docs.revision(opened)})
+    assert path.read_bytes() == committed
+    assert draft in opened['wires']
+
+
 def test_model_node_param_writes_router_json(profile):
     from nodelang.settings_owner import read_router_settings
     from nodelang.session_files import SessionFiles, catalogue

@@ -1344,6 +1344,11 @@ Object.assign(api,{
   if(fileNavigation!==navigation)throw Error('The open workflow changed.');
   return changeSchedule('add_schedule',[roots,time],true);
  },
+ automationPause:async(...args)=>{
+   const {result}=await request('/api/universal/canvas-op',{op:'automation_pause',args});
+   if(Array.isArray(result.schedules))publish({schedules:result.schedules,desktop:{...state.desktop,automationsPaused:result.paused}});
+   return result;
+ },
  setScheduleEnabled:(id,enabled)=>changeSchedule('set_schedule_enabled',[id,enabled]),
  setScheduleTime:(id,time)=>changeSchedule('set_schedule_time',[id,time]),
  removeSchedule:id=>changeSchedule('remove_schedule',[id]),

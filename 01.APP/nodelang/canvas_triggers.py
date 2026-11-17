@@ -33,10 +33,15 @@ TRIGGER_NODE = {'id': 'canvas.triggers', 'params': {'min_every_seconds': 10, 'fi
 
 
 class TriggerService:
-    def __init__(self, files=None):
+    def __init__(self, files=None, *, pause_settings=None):
         from .session_files import SessionFiles
         self.files = files or SessionFiles()
+        self.pause_settings = pause_settings
+        self.paused = pause_settings is not None and pause_settings.read().get('automationsPaused') is True
         self.lock = threading.Lock()
+        self.pause_epoch = object()
+        self.pause_skips = {}
+        self.file_snapshots = {}
         self.timers = {}
         self.generations = {}
         self.refresh_revision = 0
@@ -47,6 +52,59 @@ class TriggerService:
         self.queued = {}
         self.stopped = threading.Event()
 
+    def set_paused(self, paused):
+        if type(paused) is not bool or self.pause_settings is None:
+            raise ValueError('Choose Pause all or Resume all in the app.')
+        with self.lock:
+            if paused == self.paused:
+                return paused
+            if paused:
+                self.pause_settings.update({'automationsPaused': True})
+                self.paused = True
+                self.pause_epoch = object()
+                self.startup_refresh = False
+                return True
+            epoch = self.pause_epoch
+            watchers = {(row['path'], row['node']): row['params'] for row in self.armed
+                        if row['kind'] == 'trigger.file'}
+        # Take a fresh baseline before resuming so a change between ticks cannot start a run.
+        snapshots = {}
+        for key, params in watchers.items():
+            try:
+                snapshots[key] = folder_snapshot(params)
+            except OSError:
+                snapshots[key] = None
+        with self.lock:
+            if not self.paused or epoch is not self.pause_epoch or self.stopped.is_set():
+                return self.paused
+            self.pause_settings.update({'automationsPaused': False})
+            for row in self.armed:
+                key = (row['path'], row['node'])
+                if row['kind'] != 'trigger.file' or key not in self.timers:
+                    continue
+                snapshot = snapshots.get(key) if watchers.get(key) == row['params'] else None
+                previous = self.file_snapshots.get(key)
+                if snapshot is not None and previous is not None and snapshot != previous:
+                    self._skip_paused(key, row['kind'])
+                self.timers[key].cancel()
+                self._arm(key, row['kind'], row['params'], state=snapshot)
+            self.paused = False
+            skips, self.pause_skips = self.pause_skips, {}
+        self._save_pause_history(skips)
+        return paused
+
+    def _skip_paused(self, key, kind):
+        if self.paused:
+            event = (key, kind)
+            self.pause_skips[event] = self.pause_skips.get(event, 0) + 1
+        return self.paused
+
+    def _save_pause_history(self, skips):
+        for (key, kind), count in skips.items():
+            self._history(key, {'id': uuid.uuid4().hex, 'trigger': key[1], 'kind': kind,
+                                'state': 'skipped', 'reason': 'skipped while paused: %d' % count,
+                                'count': count, 'end': time.time()})
+
     def close(self):
         self.stopped.set()
         with self.lock:
@@ -54,6 +112,9 @@ class TriggerService:
                 timer.cancel()
             self.timers.clear()
             self.generations.clear()
+            self.file_snapshots.clear()
+            skips, self.pause_skips = self.pause_skips, {}
+        self._save_pause_history(skips)
 
     def workflows(self):
         paths = []
@@ -92,16 +153,17 @@ class TriggerService:
                 if key not in wanted or previous.get(key) != wanted[key][:2]:
                     timer.cancel()
                     self.generations.pop(key, None)
+                    self.file_snapshots.pop(key, None)
                     del self.timers[key]
             self.armed = [{'path': p, 'node': n, 'kind': kind, 'title': title, 'params': params}
                           for (p, n), (kind, params, title, _last) in wanted.items()]
             for key, (kind, params, _title, last) in wanted.items():
                 if key not in self.timers:
                     self._arm(key, kind, params, state=None)
-                    if startup and kind == 'trigger.schedule' and missed_while_closed(params, last):
-                        missed.append((key, kind, params, self.timers[key]))
-        for key, kind, params, timer in missed:
-            threading.Thread(target=self.dispatch, args=(key, kind, params, 'catch-up'), kwargs={'timer': timer},
+                    if startup and not self.paused and kind == 'trigger.schedule' and missed_while_closed(params, last):
+                        missed.append((key, kind, params, self.timers[key], self.pause_epoch))
+        for key, kind, params, timer, epoch in missed:
+            threading.Thread(target=self.dispatch, args=(key, kind, params, 'catch-up'), kwargs={'timer': timer, 'epoch': epoch},
                              name='archhub-trigger-catchup', daemon=True).start()
         return self.armed
 
@@ -209,6 +271,7 @@ class TriggerService:
             delay = next_delay(params)
         else:
             delay = max(TRIGGER_NODE['params']['file_poll_floor_seconds'], float(params.get('debounce_seconds') or 5))
+            self.file_snapshots[key] = state
         timer = threading.Timer(delay, lambda: self._tick(key, kind, params, state, timer), args=())
         timer.daemon = True
         self.generations.setdefault(key, object())
@@ -227,18 +290,30 @@ class TriggerService:
                 return
             self._arm(key, kind, params, state)
             next_timer = self.timers[key]
-        if changed:
-            self.dispatch(key, kind, params, timer=next_timer)
+            if not changed or self._skip_paused(key, kind):
+                return
+            epoch = self.pause_epoch
+        self.dispatch(key, kind, params, timer=next_timer, epoch=epoch)
 
-    def dispatch(self, key, kind, params, reason='scheduled', *, timer=None):
+    def dispatch(self, key, kind, params, reason='scheduled', *, timer=None, epoch=None):
         """Concurrency policy: a fire while this node's last run is going is skipped, or queued (capped).
 
         Ask before running (the trigger's switch, default on) keeps the fire as an "asking" run in the
         session's run history; nothing runs until approve()."""
         from .canvas_documents import locked
         from .session_files import read_document
-        asking = reason != 'approved' and timer is None and self._asks(key)
+        automatic = reason not in ('approved', 'manual')
+        with self.lock:
+            if self.stopped.is_set():
+                return 'superseded'
+            if automatic and self._skip_paused(key, kind):
+                return 'paused'
+            if epoch is None:
+                epoch = self.pause_epoch
+        asking = automatic and timer is None and self._asks(key)
         with locked(key[0]) if timer is not None else nullcontext(), self.lock:
+            if self.stopped.is_set() or (automatic and epoch is not self.pause_epoch):
+                return 'superseded'
             if timer is not None:
                 try:
                     if not _schedule_matches(read_document(key[0]), key, kind, params):
@@ -253,14 +328,15 @@ class TriggerService:
                                     'state': 'asking', 'start': time.time()})
                 self._record(key, kind, time.time(), 'asking')
                 return 'asking'
-            expected = ({'params': dict(params), 'generation': self.generations[key]}
-                        if timer is not None else None)
+            expected = {'epoch': epoch} if automatic else None
+            if timer is not None and expected is not None:
+                expected.update(params=dict(params), generation=self.generations[key])
             if key in self.running:
                 queue = str(params.get('concurrency') or 'skip') == 'queue'
                 pending = self.queued.get(key)
                 if queue and (pending is None or len(pending) < TRIGGER_NODE['params']['queue_cap']):
                     self.queued.setdefault(key, deque()).append((kind, expected,
-                                                                 'approved' if reason == 'approved' else 'queued'))
+                                                                 'queued' if automatic else reason))
                     outcome = 'queued'
                 else:
                     outcome = 'skipped'
@@ -290,26 +366,49 @@ class TriggerService:
 
     def fire(self, key, kind, reason='scheduled', *, expected=None):
         """Run the trigger's downstream nodes once, save their outputs into the workflow, post it to the Workshop."""
-        if expected is None and reason != 'approved' and self._asks(key):
-            return self.dispatch(key, kind, {}, reason)
+        if expected is None and reason not in ('approved', 'manual'):
+            with self.lock:
+                if self.stopped.is_set():
+                    return {'outcome': 'superseded'}
+                if self._skip_paused(key, kind):
+                    return {'outcome': 'paused'}
+                expected = {'epoch': self.pause_epoch}
+            if self._asks(key):
+                return self.dispatch(key, kind, {}, reason, epoch=expected['epoch'])
         from . import canvas_documents as docs
         from .enforce import guard_effect
-        from .session_files import run_document
-        from .session_files import run_outcome
+        from .session_files import TriggerWaitingForApproval, run_document, run_outcome
         path, node_id = key
         started = time.time()
         trigger = {}
         run = {'id': uuid.uuid4().hex, 'trigger': node_id, 'kind': kind, 'reason': reason, 'state': 'running', 'start': started}
+        started_node = False
+
+        def is_superseded():
+            return (self.stopped.is_set() or expected['epoch'] is not self.pause_epoch
+                    or ('generation' in expected and self.generations.get(key) is not expected['generation']))
+
+        def admit_trigger():
+            with self.lock:
+                if expected is not None and is_superseded():
+                    raise _Superseded()
+
+        def stopped():
+            nonlocal started_node
+            with self.lock:
+                superseded = is_superseded()
+                if superseded and not started_node:
+                    raise _Superseded()
+                started_node = True
+                return superseded
 
         def change(document):
-            if expected is not None:
-                with self.lock:
-                    if self.stopped.is_set() or self.generations.get(key) is not expected['generation']:
-                        raise _Superseded()
+            if expected is not None and 'params' in expected:
                 if not _schedule_matches(document, key, kind, expected['params']):
                     raise _Superseded()
             downstream = sorted(docs.downstream(document, [node_id]))
-            ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True)
+            ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True,
+                               stopped=stopped if expected is not None else None, trigger_admission=admit_trigger)
             run['id'] = ran['run']['id']
             run.update(run_outcome(ran))
             for node in document['nodes']:
@@ -325,11 +424,18 @@ class TriggerService:
             outcome = 'ran'
         except _Superseded:
             return {'outcome': 'superseded'}
+        except TriggerWaitingForApproval as held:
+            self._history(key, {**run, 'state': 'skipped', 'reason': str(held), 'end': time.time()})
+            return {'outcome': 'skipped', 'reason': str(held)}
         except Exception as refused:  # noqa: BLE001 - a failed run is recorded, the timer stays armed
             outcome = 'failed: %s' % refused
             run.update(state='failed', failedNode='', error=str(refused)[:500])
         self._history(key, {**run, 'end': time.time()})
         entry = self._record(key, kind, started, outcome)
+        entry['status'] = {'succeeded': 'Completed', 'waiting-for-approval': 'Waiting for approval',
+                           'failed': 'Failed'}[run['state']]
+        if run.get('error'):
+            entry['error'] = run['error']
         entry.update(self._post(key, trigger, reason, outcome, started))
         return entry
 

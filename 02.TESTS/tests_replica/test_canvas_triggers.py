@@ -112,7 +112,7 @@ def test_routine_concurrency_policy(profile, policy, runs, outcomes):
     service = TriggerService(files=type('F', (), {'open_files': lambda self: []})())
     calls, gate = [], threading.Event()
 
-    def slow_fire(key, kind, reason='scheduled'):
+    def slow_fire(key, kind, reason='scheduled', *, expected=None):
         calls.append(reason)
         gate.wait(5)
     service.fire = slow_fire
@@ -514,3 +514,168 @@ def test_approved_run_does_not_drain_a_superseded_timed_occurrence(profile, monk
         release.set()
         first.join(5)
         service.close()
+
+def test_pause_all_persists_and_drops_automatic_starts(profile, monkeypatch):
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.nograph_server import JsonFile
+    from nodelang.session_files import read_runs
+
+    chosen = profile / 'armed.archhub'
+    other = profile / 'also-armed.archhub'
+    held = profile / 'held.archhub'
+    watch = profile / 'watch.archhub'
+    host = profile / 'host.archhub'
+    folder = profile / 'drop'
+    folder.mkdir()
+    workflow(chosen, 'tr_schedule', {'every_seconds': '600', 'armed': True, 'catch_up': 'run_once'})
+    workflow(other, 'tr_schedule', {'every_seconds': '600', 'armed': True})
+    workflow(held, 'tr_schedule', {'every_seconds': '600', 'armed': False})
+    workflow(watch, 'tr_file', {'folder': str(folder), 'pattern': '*.txt', 'debounce_seconds': '600'})
+    workflow(host, 'tr_host', {})
+    before = {path: path.read_bytes() for path in (chosen, other, held, watch, host)}
+    settings = JsonFile(profile / 'settings.json', {'settingsScope': 'User'})
+    service = TriggerService(pause_settings=settings)
+    monkeypatch.setattr(service, '_post', lambda *args: pytest.fail('Paused work must not post'))
+
+    def tick(owner, path):
+        timer = owner.timers[(str(path), 't')]
+        timer.cancel()
+        timer.function()
+
+    try:
+        assert {row['path'] for row in service.refresh()} == {str(chosen), str(other), str(watch)}
+        tick(service, watch)
+        assert service.set_paused(True) is True
+        tick(service, chosen)
+        tick(service, chosen)
+        (folder / 'new.txt').write_text('changed during the pause')
+        tick(service, watch)
+        assert service.dispatch((str(host), 't'), 'trigger.host', {}, reason='host-event') == 'paused'
+        assert settings.read() == {'settingsScope': 'User', 'automationsPaused': True}
+    finally:
+        service.close()
+    for path, count in ((chosen, 2), (watch, 1), (host, 1)):
+        [row] = read_runs(path)
+        assert row['state'] == 'skipped' and row['reason'] == f'skipped while paused: {count}'
+    restored = TriggerService(pause_settings=settings)
+    try:
+        assert restored.paused is True
+        assert {row['path'] for row in restored.refresh()} == {str(chosen), str(other), str(watch)}
+        tick(restored, watch)
+        (folder / 'more.txt').write_text('changed between the last tick and Resume all')
+        assert restored.set_paused(False) is False
+        tick(restored, watch)
+        assert restored.fired == []
+        assert [row['count'] for row in read_runs(watch)] == [1, 1]
+        assert settings.read() == {'settingsScope': 'User', 'automationsPaused': False}
+        assert {path: path.read_bytes() for path in before} == before
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize('resume_before_release', [False, True])
+def test_pause_serializes_run_admission_and_leaves_approved_runs_available(profile, monkeypatch, resume_before_release):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from nodelang import session_files
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    from nodelang.nograph_server import JsonFile
+
+    path = profile / 'automatic.archhub'
+    approved = profile / 'approved.archhub'
+    target = profile / 'approved-output.txt'
+    document = workflow(path, 'tr_schedule', {'every_seconds': '600'})
+    document['nodes'].append({'id': 'write', 'type': 'thing.file.write', 'title': 'Manual output',
+                              'params': {'path': str(target), 'content': 'approved only'},
+                              'position': {'x': 300, 'y': 240}})
+    session_files.write_document(path, document)
+    result = session_files.SessionFiles().dispatch({'action': 'run', 'path': str(path),
+                                                   'document': document, 'roots': ['write']})
+    card = next(card for card in ask_reviews() if card['id'] == result['approvalId'])
+    workflow(approved, 'tr_schedule', {'every_seconds': '600', 'ask_before_running': True})
+    original = path.read_bytes()
+    history_before = session_files.read_runs(path)
+    reached, release = Event(), Event()
+    owner = TriggerService(pause_settings=JsonFile(profile / 'settings.json', {}))
+    run_document = session_files.run_document
+    posted = []
+
+    def delay_automatic(document, **kwargs):
+        if kwargs['path'] == str(path):
+            reached.set()
+            assert release.wait(5)
+        return run_document(document, **kwargs)
+
+    monkeypatch.setattr(session_files, 'run_document', delay_automatic)
+    monkeypatch.setattr(owner, '_post', lambda *args: posted.append(args[0]) or {})
+    try:
+        owner.refresh()
+        key = (str(path), 't')
+        params = next(row['params'] for row in owner.armed if row['path'] == str(path))
+        assert owner.dispatch((str(approved), 't'), 'trigger.schedule', {}) == 'asking'
+        [asking] = session_files.read_runs(approved)
+        with ThreadPoolExecutor() as pool:
+            automatic = pool.submit(owner.dispatch, key, 'trigger.schedule', params, timer=owner.timers[key])
+            try:
+                assert reached.wait(5)
+                assert owner.set_paused(True) is True
+                assert owner.approve(approved, asking['id']) == 'ran'
+                assert session_files.read_document(approved)['nodes'][1]['result']['status'] == 'Done'
+                if resume_before_release:
+                    assert owner.set_paused(False) is False
+            finally:
+                release.set()
+            automatic.result(timeout=5)
+        assert path.read_bytes() == original
+        assert session_files.read_runs(path) == history_before
+        assert owner.set_paused(False) is False
+        assert owner.fire(key, 'trigger.schedule')['outcome'] == 'skipped'
+        [skipped] = [row for row in session_files.read_runs(path) if row['state'] == 'skipped']
+        assert skipped['state'] == 'skipped' and 'waiting for approval' in skipped['reason']
+        assert posted == [(str(approved), 't')]
+        assert path.read_bytes() == original and not target.exists()
+        assert next(row for row in ask_reviews() if row['id'] == card['id'])['status'] == 'pending'
+        assert owner.set_paused(True) is True
+        ask_apply(card['id'], card['input_digest'], 'approve')
+        assert target.read_text(encoding='utf-8') == 'approved only'
+    finally:
+        owner.close()
+
+
+def test_pause_leaves_an_admitted_node_running_and_holds_the_next_node(profile, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from nodelang import session_files
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.nograph_server import JsonFile
+
+    path = profile / 'admitted.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600'})
+    reached, release = Event(), Event()
+    owner = TriggerService(pause_settings=JsonFile(profile / 'settings.json', {}))
+    dispatch_node = session_files._dispatch_node
+
+    def delay_admitted(document, node, *args, **kwargs):
+        assert node['id'] == 't'
+        reached.set()
+        assert release.wait(5)
+        return dispatch_node(document, node, *args, **kwargs)
+
+    monkeypatch.setattr(session_files, '_dispatch_node', delay_admitted)
+    monkeypatch.setattr(owner, '_post', lambda *args: {})
+    try:
+        [row] = owner.refresh()
+        key = (str(path), 't')
+        with ThreadPoolExecutor() as pool:
+            automatic = pool.submit(owner.dispatch, key, 'trigger.schedule', row['params'], timer=owner.timers[key])
+            try:
+                assert reached.wait(5)
+                assert owner.set_paused(True) is True
+            finally:
+                release.set()
+            automatic.result(timeout=5)
+        results = {node['id']: node['result']['status'] for node in session_files.read_document(path)['nodes']}
+        assert results == {'t': 'Done', 'c': 'Stopped'}
+    finally:
+        owner.close()

@@ -206,7 +206,7 @@ class NoGraphServer:
         self._local.get()
         self.ensure_cloud_relay()
         from .canvas_triggers import TriggerService
-        self.triggers = TriggerService()
+        self.triggers = TriggerService(pause_settings=self.files['settings'])
         threading.Thread(target=self.triggers.refresh, name='archhub-triggers', daemon=True).start()
         return self
 
@@ -784,6 +784,18 @@ def r_canvas_op(s, req):
     op, args = body.get('op'), body.get('args') or []
     if op == 'project_schedules':
         return {'ok': True, 'result': _schedules()}
+    if op == 'automation_pause':
+        service = getattr(s, 'triggers', None)
+        if service is None:
+            raise Refused('Schedules are available while the app is open.')
+        if args:
+            if s.is_halted():
+                raise Refused('Stopped by you. Press Resume to continue.', 403)
+            if type(args) is not list or len(args) != 1:
+                raise Refused('Choose Pause all or Resume all.')
+            paused = service.set_paused(args[0])
+            return {'ok': True, 'result': {'paused': paused, 'schedules': _schedules()}}
+        return {'ok': True, 'result': {'paused': service.paused}}
     if op in ('add_schedule', 'set_schedule_enabled', 'set_schedule_time', 'remove_schedule'):
         if s.is_halted():
             raise Refused('Stopped by you. Press Resume to continue.', 403)
@@ -1061,13 +1073,15 @@ def _list_messages(before=None):
 
 
 def _schedules():
+    from datetime import datetime
     from .canvas_triggers import next_delay, _off
     from .session_files import read_document
     service = getattr(_SERVER, 'triggers', None)
     if service is None:
         return []
-    armed = {(row['path'], row['node']) for row in service.armed}
-    fired = {(row['path'], row['node']): row for row in service.fired}
+    armed = _live_triggers(_SERVER)
+    fired = {(row['path'], row['node']): {**row, 'status': row['status'] + ' · ' + datetime.fromtimestamp(row['at']).strftime('%H:%M')}
+             for row in service.fired if row.get('status')}
     rows = []
     for path in service.workflows():
         try:
@@ -1080,18 +1094,25 @@ def _schedules():
                 continue
             enabled = not _off(params.get('armed', True))
             live = (path, node_id) in armed
-            every = params.get('every_seconds') if kind == 'trigger.schedule' else None
-            display_time = ('every %ss' % every) if every not in (None, '', '0', 0) else (
-                params.get('daily_at') or ('on change in ' + str(params.get('folder'))))
+            daily = kind == 'trigger.schedule' and params.get('every_seconds') in (None, '', '0', 0)
+            delay = next_delay(params) if kind == 'trigger.schedule' else None
+            if daily:
+                display_time = params.get('daily_at') or '08:00'
+            elif delay is not None:
+                display_time = f'Every {delay / 60:g} min' if delay % 60 == 0 else f'Every {delay:g} sec'
+            else:
+                display_time = 'On change in ' + str(params.get('folder'))
             rows.append({'id': path + '#' + node_id, 'title': (node.get('title') or kind) + ' · ' + Path(path).stem,
-                         'time': display_time, 'enabled': enabled, 'kind': kind, 'path': path,
-                         'nextInSeconds': round(next_delay(params)) if live and kind == 'trigger.schedule' else None,
+                         'time': display_time, 'daily': daily, 'enabled': enabled, 'kind': kind, 'path': path,
+                         'nextInSeconds': round(delay) if live and delay is not None else None,
                          'lastResult': fired.get((path, node_id))})
     return rows
 
 
 def _read_desktop():
-    return {'owner': 'app:desktop', 'program': '', 'stage': 'Watching', 'taskId': None, 'offers': [], 'schedules': _schedules()}
+    service = getattr(_SERVER, 'triggers', None)
+    return {'owner': 'app:desktop', 'program': '', 'stage': 'Watching', 'taskId': None, 'offers': [],
+            'schedules': _schedules(), 'automationsPaused': service.paused if service is not None else None}
 
 
 def _send_to_baboom(description, options=None):
@@ -1809,9 +1830,12 @@ BRAIN = ('Brain', r_brain)
 # path -> (owner, handler). Every route the Studio calls (studio/api.js + screens).
 # ------------------------------------------------ session model (ONE BUILD 1) --
 def _live_triggers(s):
-    """Trigger nodes the service is timing now (only while the app is open), as (path, node) pairs."""
+    """Trigger nodes allowed to run automatically, as (path, node) pairs."""
     service = getattr(s, 'triggers', None)
-    return {(row['path'], row['node']) for row in (service.armed if service is not None else [])}
+    if service is None:
+        return set()
+    with service.lock:
+        return set() if service.paused else {(row['path'], row['node']) for row in service.armed}
 
 
 def _mark_live(fields, live):

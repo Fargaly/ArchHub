@@ -183,7 +183,8 @@ def _params_and_feeds(node, engine, feeds):
     return {**params, **extra}, feeds
 
 
-def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, depth, continuation=None):
+def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, depth, continuation=None,
+                   trigger_admission=None):
     """One engine call. Effect engines receive the application invoke boundary."""
     from .canvas_documents import THING_ENGINES, run_thing
     from .library_engines import STEM_RUN_ENGINES
@@ -220,7 +221,8 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         return run_thing(engine, params, feeds)
     if engine == 'skill':
         return run_skill({**params, 'called_by': document['title']}, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds,
-                         parent={**continuation, 'node': node} if continuation else None)
+                         parent={**continuation, 'node': node} if continuation else None,
+                         trigger_admission=trigger_admission)
     if engine == 'note':
         return {}, node.get('title', 'Note')
     if engine == 'script.python':
@@ -1078,7 +1080,7 @@ def node_type_document(document, ids, name, category='Scripts', public=(), kind=
     return saved
 
 
-def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
+def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigger_admission=None):
     path = params.get('session_file')
     if path:
         path, _skill = linked_session(params)
@@ -1088,10 +1090,11 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
     if not path:
         raise ValueError('Saved session is unavailable')
     with canvas_documents.locked(path):
-        return _run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds, parent=parent)
+        return _run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds, parent=parent,
+                          trigger_admission=trigger_admission)
 
 
-def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
+def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None, trigger_admission=None):
     if depth > 8:
         raise ValueError('Skills nest at most 8 deep')
     name = str(params.get('skill',''))
@@ -1136,7 +1139,7 @@ def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
     # A pure call computes outputs without recording a run in its definition file.
     only = {node['id'] for node in skill['nodes']} if pure else None
     inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1, path=path,
-                         only=only, _source=source, _parent=parent)
+                         only=only, _source=source, _parent=parent, trigger_admission=trigger_admission)
     if path and not pure:
         def record(document):
             for node in document['nodes']:
@@ -1447,7 +1450,11 @@ def begin_attempt(continuation, node, params, feeds):
     persist_run(document, continuation['path'], continuation.get('source'))
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None):
+class TriggerWaitingForApproval(ValueError):
+    pass
+
+
+def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None, trigger_admission=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
     from .library_engines import STEM_RUN_ENGINES
@@ -1523,6 +1530,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 sockets = {p['id'] for p in node_ports(node, base or entry['ports'])[side]}
                 if any(wire[end]['socket'] not in sockets for wire in wires):
                     raise ValueError('Unknown socket on '+node.get('title',key))
+    if trigger_admission is not None:
+        trigger_admission()
     run = None
     if only is None:
         signatures = {key: input_signature(nodes[key], incoming[key], path) for key in nodes}
@@ -1536,6 +1545,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             for key in waiting_nodes:
                 identity = nodes[key]['result'].get('output', {}).get('approvalId')
                 if identity in pending:
+                    if trigger_admission is not None:
+                        raise TriggerWaitingForApproval('This workflow has a run waiting for approval.')
                     withdraw_approval(os.environ, identity, 'canvas input changed' if not again else 'Run all again')
         run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures, 'budget_s': budget_s,
                'start': time.time() if again else previous.get('start', time.time()),
@@ -1650,7 +1661,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                         bound[port['id']] = resolve_file_parameter(bound[port['id']], path)
                 produced, display = _dispatch_node(
                     document, node, engine, params, bound,
-                    invoke=invoke, stopped=stopped, depth=depth,
+                    invoke=invoke, stopped=stopped, depth=depth, trigger_admission=trigger_admission,
                     continuation={'document': document, 'source': _source or document, 'roots': roots, 'completed': results,
                                   'path': str(path), 'each': each_state, 'parent': _parent, 'depth': depth} if path else None)
                 if run is not None and key in run['attempts'] and 'outcome' not in run['attempts'][key]:

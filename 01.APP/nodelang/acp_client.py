@@ -80,8 +80,11 @@ class _ClaudeCode:
               'NotebookEdit': 'edit', 'Glob': 'search', 'Grep': 'search', 'WebFetch': 'fetch', 'WebSearch': 'fetch',
               'Task': 'think', 'Agent': 'think'}
 
+    _CONNECTORS = "Claude Code still has its own connectors (%s), so nothing was sent to it."
+
     def __init__(self, wire, hear):
         self.wire, self.hear, self.prompt, self.asked = wire, hear, None, {}
+        self.checked = False   # its init line was read and names no MCP server and no mcp__ tool
 
     def _call(self, ident, name, data):
         data = data if isinstance(data, dict) else {}
@@ -107,7 +110,22 @@ class _ClaudeCode:
 
     def heard(self, line):
         kind, content = line.get('type'), (line.get('message') or {}).get('content')
-        if kind == 'stream_event':
+        if kind == 'system' and line.get('subtype') == 'init':
+            # Its own account of what it can use, plugin and managed connectors included (--strict-mcp-config is the
+            # request; this is the proof). A key that is present must be a list; a connector ends the session.
+            servers, tools = line.get('mcp_servers', []), line.get('tools', [])
+            if type(servers) is not list or type(tools) is not list:
+                self.hear({'refuse': self._CONNECTORS % 'its tool list could not be read'})
+            else:
+                named = [str(row.get('name') if isinstance(row, dict) else row) for row in servers] + [
+                    str(tool) for tool in tools if str(tool).startswith('mcp__')]
+                if named:
+                    self.hear({'refuse': self._CONNECTORS % ', '.join(named)[:200]})
+                else:
+                    self.checked = True
+        elif not self.checked and kind in ('stream_event', 'assistant', 'user', 'control_request', 'result'):
+            self.hear({'refuse': self._CONNECTORS % 'it answered before saying what it can use'})
+        elif kind == 'stream_event':
             delta = (line.get('event') or {}).get('delta') or {}
             if delta.get('type') == 'text_delta' and line.get('parent_tool_use_id') is None:
                 self.hear(_update('claude', sessionUpdate='agent_message_chunk',

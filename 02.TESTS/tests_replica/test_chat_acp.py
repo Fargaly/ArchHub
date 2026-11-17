@@ -83,7 +83,7 @@ def assistant(*content):
 def tool_result(ident, failed):
     send({"type": "user", "parent_tool_use_id": None, "message": {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": ident, "is_error": failed, "content": "done"}]}})
-send({"type": "system", "subtype": "init", "session_id": "s1"})
+send({"type": "system", "subtype": "init", "session_id": "s1", **json.loads(os.environ.get("FAKE_CLAUDE_INIT") or "{}")})
 stubborn = False
 for line in sys.stdin:
     message = json.loads(line)
@@ -698,6 +698,33 @@ def test_what_an_agent_calls_its_action_never_chooses_what_approve_does(monkeypa
     assert outcome == [{'outcome': 'selected', 'optionId': 'yes'}]
     assert replayed == [] and 'releasing' not in written                 # nothing was run here; no half-way state
     assert hook_decision._take_permit(card['input_digest'], os.environ) is False   # the one grant went to the waiter
+
+
+@pytest.mark.parametrize('init', [{'mcp_servers': [{'name': 'plugin:data:hex', 'status': 'connected'}], 'tools': ['Read', 'Write']},
+                                  {'mcp_servers': [], 'tools': ['Read', 'mcp__claude_ai_Slack__send']},
+                                  {'mcp_servers': 'unknown', 'tools': ['Read']}, {'tools': None, 'mcp_servers': []}])
+def test_claude_gets_no_turn_when_its_start_line_names_a_connector(installed, monkeypatch, init):
+    """Claude's own first line lists its tools and MCP servers: plugin and managed ones too. Any connector ends the session."""
+    from nodelang import acp_client
+    install, log = installed
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps(init))
+    with pytest.raises(acp_client.AcpRefused, match='own connectors'):
+        acp_client.ask('claude', 'how many sheets?')
+    assert not acp_client._SESSIONS
+    pid = json.loads(log.read_text(encoding='utf-8').splitlines()[1])['pid']
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)
+
+
+def test_claude_with_only_its_built_in_tools_is_asked(installed, monkeypatch):
+    from nodelang import acp_client
+    install, _log = installed
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': ['Read', 'Write', 'Bash']}))
+    assert acp_client.ask('claude', 'how many sheets?')['text'] == 'There are 12 sheets.'
 
 
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():

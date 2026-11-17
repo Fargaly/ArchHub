@@ -30,7 +30,10 @@ from .model_router import ModelRouteRefused
 # The node of this client: how long an agent may take to start, and to finish one turn (an Approve card waits inside it).
 ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
                                           'quiet_seconds': 10,     # no word for this long: the thread says "not responding"
-                                          'inventory_rows': 500}}  # one page of an agent's own MCP servers; more is refused
+                                          'inventory_rows': 500,   # one page of an agent's own MCP servers; more is refused
+                                          # One line from an agent. Codex answers its MCP inventory in one line: measured
+                                          # 3.3 MB for four servers with 368 tools; a longer line ends the session.
+                                          'line_bytes': 8 * 1024 * 1024}}
 
 # The start-command table, keyed by the agent registry's ids. First installed command wins; never a download.
 # 'speaks' names the CLI's own stdio mode (a dialect below); a row without it speaks ACP itself.
@@ -321,8 +324,9 @@ class AcpTransport:
     def _read(self):
         try:
             while not self.closed:
-                line = self.process.stdout.readline(1_048_577)
-                if not line or len(line) > 1_048_576:
+                limit = ACP_NODE['params']['line_bytes']
+                line = self.process.stdout.readline(limit + 1)
+                if not line or len(line) > limit:
                     break
                 value = json.loads(line)
                 if self.dialect is None:

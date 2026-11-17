@@ -127,7 +127,9 @@ def server_list(params, off):
     if LEAK == "list fails":
         return {"error": {"code": -32603, "message": "inventory unavailable"}}
     quiet = off and "threadId" in params
-    rows = [{"name": name, "runtimeStatus": "disabled" if quiet else None, "tools": {} if quiet else {"t": {}}} for name in SERVERS]
+    # a real inventory is one long line (measured: 3.3 MB for 368 tools), longer than the old 1 MB bound
+    rows = [{"name": name, "runtimeStatus": "disabled" if quiet else None,
+             "tools": {} if quiet else {"t": {"description": "x" * 1200000}}} for name in SERVERS]
     if quiet and LEAK == "one stays on":
         rows[1] = {"name": "rea", "runtimeStatus": "ready", "tools": {"delete": {}}}
     if quiet and LEAK == "a new one appears":

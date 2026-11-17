@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 from builtins import ConnectionResetError
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -142,8 +143,10 @@ def test_canvas_host_approval_resumes_the_same_saved_run(tmp_path, monkeypatch, 
     doc['wires'] = [{'id': 'out', 'from': {'node': 'write', 'socket': 'result'},
                      'to': {'node': 'after', 'socket': 'in'}}]
     write_document(path, doc)
-    waiting = SessionFiles().dispatch({'action': 'run', 'path': path, 'document': doc}, invoke=guard_effect)
-    assert waiting['results']['write']['status'] == 'Waiting for approval'
+    request = {'action': 'run', 'path': path, 'document': doc}
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        waiting = worker.submit(SessionFiles().dispatch, request, invoke=guard_effect).result()
+    assert waiting['results']['write']['status'] == 'Waiting for approval', waiting['results']['write']
     assert not calls
     before = read_document(path)['properties']['canvasRun']
     assert not before['attempts']

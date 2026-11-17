@@ -1390,7 +1390,7 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
     if mode and mode[0] == "ask":
         # A release in progress, or a one-shot permit from Approve, runs this call.
         # Every other ask is one pending card in the approval file.
-        if _RELEASING.get():
+        if _RELEASING.get(False):
             mode = None
         elif environment.get("ARCHHUB_CHAT_OWNED") == "1":
             # An agent ArchHub started for chat (acp_client.child_environment) runs this hook as the user's own.
@@ -1495,7 +1495,6 @@ _ASK_FILE = "ask-approvals.json"
 APPROVAL_OUTCOMES = ("approved", "denied", "expired", "withdrawn")
 APPROVAL_NODE = {"id": "workshop.approvals", "params": {"expire_seconds": 86400}}
 _RELEASING = contextvars.ContextVar("archhub_ask_release")
-_RELEASING.set(False)
 _ASK_TITLES = {"send": "Send", "publish": "Post", "delete": "Delete", "write": "Edit",
                "shell": "Run a command", "screen": "Use the screen"}
 _ASK_VENDORS = {"claude-code": "Claude", "codex": "Codex", "gemini-cli": "Gemini",

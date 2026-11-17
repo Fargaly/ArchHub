@@ -59,9 +59,9 @@ for line in sys.stdin:
 # these fakes speak those two modes (claude -p stream-json; codex app-server), not ACP.
 CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
                '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
-               '--strict-mcp-config', '--settings', '{"disableAllHooks": true}']
+               '--strict-mcp-config']
 # Codex is started with its plugins, apps and every MCP server it lists switched off (the fake lists two).
-CODEX_ARGS = ['--disable', 'plugins', '--disable', 'apps', '--disable', 'hooks',
+CODEX_ARGS = ['--disable', 'plugins', '--disable', 'apps',
               '-c', 'mcp_servers.archhub_agent_coordination.enabled=false', '-c', 'mcp_servers.rea.enabled=false', 'app-server']
 # The user's Codex config as the tests' profile has it: two MCP servers, one of them remote.
 CODEX_CONFIG = '''model = "gpt"
@@ -249,6 +249,7 @@ def installed(tmp_path, monkeypatch):
             '@ECHO off\r\nSETLOCAL\r\n"%%_prog%%"  "%%dp0%%\\%s" %%*\r\n' % script, encoding='utf-8')
     from nodelang import acp_client
     monkeypatch.setitem(acp_client._INTERPRETERS, '.py', sys.executable)
+    monkeypatch.setattr(acp_client, '_CODEX_CONFIG_TOP', tmp_path)   # the walk upward ends at the test's own folder
     for name, row in acp_client._NOT_YET.items():   # their ACP path is kept and tested here; the shipped table has no row for them
         monkeypatch.setitem(acp_client.AGENTS, name, row)
     monkeypatch.setenv('FAKE_AGENT_LOG', str(log))
@@ -405,7 +406,8 @@ def test_the_agent_gets_the_users_environment_without_archhubs_own_variables(ins
     assert acp_client.ask(agent, 'how many sheets?')['text'] == 'There are 12 sheets.'
     seen = json.loads(log.read_text(encoding='utf-8').splitlines()[1])
     # the test Python's own start-up stamps ARCHHUB_TEST_* markers into every Python it starts, the fake included
-    assert [name for name in seen['archhub'] if not name.startswith('ARCHHUB_TEST_')] == [] and seen['user'] is True
+    assert [name for name in seen['archhub'] if not name.startswith('ARCHHUB_TEST_')] == ['ARCHHUB_CHAT_OWNED']
+    assert seen['user'] is True                                          # the one name added says: started by ArchHub for chat
 
 
 @pytest.mark.parametrize('quiet, states', [(10, ['starting…', 'answering']), (0, ['starting…', 'not responding', 'answering'])])
@@ -685,14 +687,17 @@ def test_codex_is_not_started_when_its_config_cannot_be_read_for_server_names(in
 
 def test_codex_reads_server_names_from_codex_home_and_from_the_launch_folder(installed, tmp_path, monkeypatch):
     from nodelang import acp_client
-    home, cwd = tmp_path / 'codex-home', tmp_path / 'work'
+    home, cwd = tmp_path / 'codex-home', tmp_path / 'work' / 'deep'
     (cwd / '.codex').mkdir(parents=True)
+    (tmp_path / 'work' / '.codex').mkdir()
+    (tmp_path / 'work' / '.codex' / 'config.toml').write_text('[mcp_servers.from_above]\ncommand = "y"\n', encoding='utf-8')
     home.mkdir()
     (home / 'config.toml').write_text('[mcp_servers.from_home]\ncommand = "x"\n', encoding='utf-8')
     (cwd / '.codex' / 'config.toml').write_text('[mcp_servers.from_project]\nurl = "http://127.0.0.1:1/mcp"\n', encoding='utf-8')
     monkeypatch.setenv('CODEX_HOME', str(home))
     words = acp_client._codex_servers_off(cwd)
-    assert words == ['-c', 'mcp_servers.from_home.enabled=false', '-c', 'mcp_servers.from_project.enabled=false']
+    assert words == ['-c', 'mcp_servers.from_home.enabled=false', '-c', 'mcp_servers.from_project.enabled=false',
+                     '-c', 'mcp_servers.from_above.enabled=false']        # every folder above the launch folder too
 
 
 @pytest.mark.parametrize('leak', ['one stays on', 'a new one appears', 'more pages', 'list fails'])
@@ -832,12 +837,47 @@ def test_claude_gets_the_message_only_after_its_connector_answer(installed):
     assert lines.index({'asked': 'mcp_status'}) < lines.index({'user': True})
 
 
-def test_a_chat_agent_does_not_run_the_users_hooks():
-    """The user's SessionStart and Stop hooks join an agent to the Workshop; an agent the app starts for chat is not one of those."""
+def test_a_chat_agent_keeps_the_users_guard_hooks_and_is_marked_as_started_for_chat():
+    """The user's PreToolUse guards (scope, install, delete, ledger) must run for a chat agent as for any other session:
+    hooks are never switched off. Only the session-lifecycle hook skips, on the one name set on the child."""
     from nodelang import acp_client
-    args = acp_client.AGENTS['claude']['args']
-    assert json.loads(args[args.index('--settings') + 1]) == {'disableAllHooks': True}
-    assert acp_client._CODEX_NO_PLUGINS[-2:] == ['--disable', 'hooks']
+    words = list(acp_client.AGENTS['claude']['args']) + list(acp_client._CODEX_NO_PLUGINS)
+    assert '--settings' not in words and 'disableAllHooks' not in ' '.join(words) and 'hooks' not in words and '--bare' not in words
+    assert acp_client.child_environment()['ARCHHUB_CHAT_OWNED'] == '1'
+
+
+@pytest.mark.parametrize('argv, stdin', [(['--session-start', '--vendor', 'claude'], b'{"session_id": "s1", "cwd": "C:/x"}'),
+                                         (['--vendor', 'claude'], b'{"session_id": "s1", "hook_event_name": "Stop"}'),
+                                         (['--vendor', 'codex'], b'{"session_id": "s1", "hook_event_name": "Stop"}')])
+def test_the_session_hook_does_nothing_for_an_agent_started_for_chat(monkeypatch, capsys, argv, stdin):
+    """SessionStart would declare the agent in the Workshop; Stop would ask the Workshop what it still owes. Neither for chat."""
+    import io
+    import types
+    from nodelang import native_agent_hooks, native_stop_hook
+    called = []
+    monkeypatch.setattr(native_agent_hooks, 'declare_session', lambda *a, **kw: called.append('declare'))
+    monkeypatch.setattr(native_stop_hook, 'query_stop', lambda *a, **kw: called.append('stop') or {})
+    monkeypatch.setattr(sys, 'argv', ['native_stop_hook.py', *argv])
+    monkeypatch.setattr(sys, 'stdin', types.SimpleNamespace(buffer=io.BytesIO(stdin)))
+    monkeypatch.setenv('ARCHHUB_CHAT_OWNED', '1')
+    assert native_stop_hook.main() == 0
+    assert called == [] and capsys.readouterr().out.strip() == '{}'
+
+
+def test_codex_gets_no_turn_when_its_config_names_other_servers_after_it_started(installed, monkeypatch):
+    from nodelang import acp_client
+    install, log = installed
+    install('codex')
+    real, calls = acp_client._codex_servers_off, []
+
+    def changing(cwd):
+        calls.append(cwd)
+        return real(cwd) + (['-c', 'mcp_servers.added_meanwhile.enabled=false'] if len(calls) > 1 else [])
+    monkeypatch.setattr(acp_client, '_codex_servers_off', changing)
+    with pytest.raises(acp_client.AcpRefused, match='config changed while it started'):
+        acp_client.ask('codex', 'how many sheets?')
+    lines = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    assert len(calls) == 2 and {'turn': True} not in lines and not acp_client._SESSIONS
 
 
 _REAL_PATH = os.environ.get('PATH', '')   # as it was when this file was loaded, before any test replaced it
@@ -875,6 +915,8 @@ def canaries(tmp_path, monkeypatch):
         % (json.dumps(sys.executable), json.dumps(str(script)), json.dumps(str(marker)), listener.getsockname()[1]), encoding='utf-8')
     monkeypatch.setenv('CODEX_HOME', str(home))
     monkeypatch.setenv('PATH', _REAL_PATH)
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, '_CODEX_CONFIG_TOP', tmp_path)   # not the real folders above the test's own
     yield marker, hits
     done.set()
     listener.close()

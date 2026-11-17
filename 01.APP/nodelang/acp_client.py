@@ -43,10 +43,7 @@ AGENTS = {
     'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
         '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
-        '--strict-mcp-config',     # with no --mcp-config: none of its own MCP servers
-        # A chat agent does not run the user's hooks: they join it to the Workshop as a working agent and can hand
-        # it Workshop messages mid-answer (measured: 89 s to its first control answer with them, 12 s without).
-        '--settings', '{"disableAllHooks": true}')},
+        '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers. The user's hooks stay ON.
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
 }
 # Not offered in chat yet: these speak ACP themselves, and nothing here can switch off or check their own connectors
@@ -464,13 +461,18 @@ def _offered(agent):
 def child_environment():
     """The boundary: the agent is the user's own CLI, so it gets the user's environment (its login, PATH, proxy),
     minus what ArchHub put there for itself: every ARCHHUB_* name (state folders, the cloud token, test markers)
-    and the launcher's two Qt switches. Nothing is added."""
-    return {name: value for name, value in os.environ.items()
-            if not name.upper().startswith('ARCHHUB_') and name.upper() not in ('QTWEBENGINE_CHROMIUM_FLAGS', 'QT_OPENGL')}
+    and the launcher's two Qt switches. One name is added: ARCHHUB_CHAT_OWNED=1.
+    The user's hooks are never switched off for this child: his PreToolUse guards (scope, install, delete, ledger)
+    are his protections and run here as in any session of his, before and beside the Approve card. The added name
+    is read only by ArchHub's own session-lifecycle hook (native_stop_hook: SessionStart and Stop), which then does
+    nothing, so an agent started for chat is not declared in the Workshop as a working agent."""
+    return {**{name: value for name, value in os.environ.items() if not name.upper().startswith('ARCHHUB_')
+               and name.upper() not in ('QTWEBENGINE_CHROMIUM_FLAGS', 'QT_OPENGL')}, 'ARCHHUB_CHAT_OWNED': '1'}
 
 
-# Codex starts with its plugins, apps and hooks off (a chat agent does not join the Workshop through the user's hooks).
-_CODEX_NO_PLUGINS = ['--disable', 'plugins', '--disable', 'apps', '--disable', 'hooks']
+# Codex starts with its plugins and apps off. Its hooks stay on: they are the user's guards (child_environment).
+_CODEX_NO_PLUGINS = ['--disable', 'plugins', '--disable', 'apps']
+_CODEX_CONFIG_TOP = None   # where the walk upward for .codex/config.toml ends; None is the drive root
 
 
 def _codex_servers_off(cwd):
@@ -484,9 +486,12 @@ def _codex_servers_off(cwd):
     import tomllib
     refused = ValueError("Codex's own connectors could not be switched off (its config could not be read for their "
                          "names), so it was not started. Check config.toml in the Codex folder, then send again.")
-    names = []
-    for path in (Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'config.toml',
-                 Path(cwd) / '.codex' / 'config.toml'):
+    folder, names, above = Path(cwd).resolve(), [], []
+    for parent in (folder, *folder.parents):   # the launch folder and every folder above it, to the drive root
+        above.append(parent / '.codex' / 'config.toml')
+        if _CODEX_CONFIG_TOP is not None and parent == Path(_CODEX_CONFIG_TOP).resolve():
+            break
+    for path in (Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'config.toml', *above):
         try:
             servers = tomllib.loads(path.read_text(encoding='utf-8')).get('mcp_servers', {})
         except FileNotFoundError:
@@ -609,14 +614,18 @@ class AgentSession:
     def start(self, stopped=lambda: False):
         stopped = self._stopped(stopped)
         argv, fallback, self.speaks = start_command(self.agent)
-        if self.speaks == 'codex':   # the same folder for reading its config and for the process
-            argv[-1:-1] = _codex_servers_off(self.cwd)
+        switched = _codex_servers_off(self.cwd) if self.speaks == 'codex' else None   # the folder the process runs in
+        argv[-1:-1] = switched or []
         try:
             self._open(argv, stopped)
         except AcpRefused:
             if fallback is None or stopped():
                 raise
             self._open(fallback, stopped)   # Gemini: --acp on newer builds, --experimental-acp on older ones
+        if switched is not None and _codex_servers_off(self.cwd) != switched:
+            # read again now that the process and its thread exist: the same names, or it is not asked anything
+            self._release()
+            raise AcpRefused("Codex's config changed while it started, so nothing was sent to it. Send again.")
         self.ready = True
         return self
 

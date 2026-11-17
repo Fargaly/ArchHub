@@ -742,6 +742,12 @@ def main():
     parser.add_argument('--vendor',default='claude-code')
     parser.add_argument('--session-start', action='store_true')
     args=parser.parse_args()
+    if os.environ.get('ARCHHUB_CHAT_OWNED') == '1':
+        # An agent ArchHub itself started to answer in chat (acp_client.child_environment): it is not a working agent
+        # of the Workshop. It is not declared at SessionStart and owes the Workshop nothing at Stop.
+        sys.stdin.buffer.read(65537)
+        sys.stdout.write('{}\n')
+        return 0
     if args.session_start:
         try:
             from nodelang.native_agent_hooks import declare_session

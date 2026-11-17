@@ -418,6 +418,8 @@ class TriggerService:
                 if node['id'] == node_id:
                     node['result'] = {**(node.get('result') or {}), 'fired_at': started}
                     trigger.update(node)
+            # Commit the trigger identity before an approval can resume the same run.
+            self._history(key, {**run, 'end': time.time()})
             return []
         try:
             docs.edit(path, 'trigger:' + kind.split('.')[1], 'fired %s' % node_id, change, solve_changed=False)
@@ -430,12 +432,8 @@ class TriggerService:
         except Exception as refused:  # noqa: BLE001 - a failed run is recorded, the timer stays armed
             outcome = 'failed: %s' % refused
             run.update(state='failed', failedNode='', error=str(refused)[:500])
-        self._history(key, {**run, 'end': time.time()})
+            self._history(key, {**run, 'end': time.time()})
         entry = self._record(key, kind, started, outcome)
-        entry['status'] = {'succeeded': 'Completed', 'waiting-for-approval': 'Waiting for approval',
-                           'failed': 'Failed'}[run['state']]
-        if run.get('error'):
-            entry['error'] = run['error']
         entry.update(self._post(key, trigger, reason, outcome, started))
         return entry
 

@@ -5,6 +5,7 @@ from .user_paths import state_directory, test_writer, stamp_test_write, strip_te
 
 from collections import Counter
 import copy
+from functools import lru_cache
 import hashlib
 import json
 import logging
@@ -1373,6 +1374,7 @@ def approval_current(document, continuation, identity):
         value = copy.deepcopy(value)
         for row in value['nodes']:
             row.pop('result', None)
+            row.pop('position', None)
             for key in file_parameters(row):
                 if key in row['params']:
                     row['params'][key] = resolve_file_parameter(row['params'][key], continuation['path'])
@@ -1411,7 +1413,8 @@ def persist_run(document, path, source=None):
                 node['result'] = copy.deepcopy(results[node['id']])
         saved.setdefault('properties', {})['canvasRun'] = copy.deepcopy(document['properties']['canvasRun'])
     write_document(path, saved)
-    results = {node['id']: node.get('result') or {} for node in document['nodes']}
+    order = set(run.get('order', (node['id'] for node in document['nodes'])))
+    results = {node['id']: node.get('result') or {} for node in document['nodes'] if node['id'] in order}
     state = run.get('state')
     if state in ('Waiting', 'Ended'):
         approval = next((result['output'].get('approvalId') for result in results.values()
@@ -1548,7 +1551,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     if trigger_admission is not None:
                         raise TriggerWaitingForApproval('This workflow has a run waiting for approval.')
                     withdraw_approval(os.environ, identity, 'canvas input changed' if not again else 'Run all again')
-        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures, 'budget_s': budget_s,
+        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures, 'budget_s': budget_s, 'order': order,
                'start': time.time() if again else previous.get('start', time.time()),
                'attempts': copy.deepcopy(previous.get('attempts', {}))}
         if again:
@@ -2453,6 +2456,13 @@ def read_runs(path, limit=200, identity=None):
     """Runs oldest first, each at its newest state. A missing file is no runs yet."""
     try:
         target = runs_path(path, identity)
+    except (OSError, ValueError):
+        return []
+    return _run_rows(target)[-limit:]
+
+
+def _run_rows(target):
+    try:
         lines = target.read_text(encoding='utf-8').splitlines()
     except (OSError, ValueError):
         return []
@@ -2463,8 +2473,29 @@ def read_runs(path, limit=200, identity=None):
         except ValueError:
             continue
         if isinstance(entry, dict) and isinstance(entry.get('id'), str):
-            merged[entry['id']] = {**merged.get(entry['id'], {}), **entry}
-    return list(merged.values())[-limit:]
+            previous = merged.get(entry['id'], {})
+            # Approval continuations write through the ordinary Canvas runner. The run's origin stays fixed.
+            if entry.get('kind') == 'manual' and previous.get('trigger') and str(previous.get('kind', '')).startswith('trigger.'):
+                entry.update(kind=previous['kind'], trigger=previous['trigger'])
+            merged[entry['id']] = {**previous, **entry}
+    return list(merged.values())
+
+
+def last_automation_runs(path, identity):
+    target = runs_path(path, identity)
+    try:
+        info = target.stat()
+    except OSError:
+        return {}
+    return _last_automation_runs(target, info.st_mtime_ns, info.st_size)
+
+
+@lru_cache(maxsize=64)
+def _last_automation_runs(target, modified_ns, size):
+    # Read journal changes only; visible Studio surfaces refresh the same schedule rows often.
+    return {row['trigger']: row for row in _run_rows(target)
+            if str(row.get('kind', '')).startswith('trigger.') and row.get('trigger')
+            and row.get('state') in ('succeeded', 'waiting-for-approval', 'unconfirmed', 'failed', 'declined')}
 
 
 def run_outcome(result):
@@ -2476,6 +2507,9 @@ def run_outcome(result):
     if result.get('succeeded'):
         return {'state': 'succeeded'}
     results = result.get('results') or {}
+    declined = next((key for key, row in results.items() if row.get('status') == 'Declined'), None)
+    if declined is not None:
+        return {'state': 'declined', 'failedNode': declined, 'error': results[declined].get('error', '')}
     failed = next((key for key in list(result.get('order') or []) + list(results)
                    if (results.get(key) or {}).get('status') == 'Error'), '')
     return {'state': 'failed', 'failedNode': failed, 'error': str((results.get(failed) or {}).get('error', ''))[:500]}

@@ -554,3 +554,80 @@ def test_canvas_run_history_keeps_one_id_through_approval_and_reopen(running):
     assert runs_path(path).read_bytes() == lines
     for line in lines.decode('utf-8').splitlines():
         assert not {'results', 'outputs', 'attempts', 'document'} & json.loads(line).keys()
+
+
+@pytest.mark.parametrize('decision, terminal, move', [
+    ('approve', 'succeeded', False), ('deny', 'declined', False), ('approve', 'succeeded', True),
+])
+def test_automation_history_follows_effect_approval_on_the_same_run(tmp_path, monkeypatch, decision, terminal, move):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from nodelang import canvas_documents, session_files
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.hook_decision import ask_apply, ask_reviews
+
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    path, output = tmp_path / 'scheduled-write.archhub', tmp_path / 'output.txt'
+    document = session_files.new_document('Scheduled approval')
+    document['nodes'] = [
+        {'id': 't', 'type': 'trigger.schedule', 'item': 'tr_schedule',
+         'params': {'every_seconds': '600', 'ask_before_running': False}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'c', 'type': 'data.convert', 'item': 'data.convert',
+         'params': {'target_type': 'text'}, 'position': {'x': 300, 'y': 0}},
+    ]
+    document['wires'] = [{'id': 'convert', 'from': {'node': 't', 'socket': 'payload'},
+                          'to': {'node': 'c', 'socket': 'in'}}]
+    document['nodes'] += [
+        {'id': 'write', 'type': 'thing.file.write', 'params': {'path': str(output), 'content': 'approved'},
+         'ports': {'source': [{'id': 'path', 'type': 'file'}], 'target': [{'id': 'content', 'type': 'string'}]},
+         'position': {'x': 600, 'y': 0}},
+        {'id': 'unused', 'type': 'trigger.schedule', 'params': {'armed': False}, 'position': {'x': 0, 'y': 200}},
+    ]
+    document['wires'].append({'id': 'writer', 'from': {'node': 'c', 'socket': 'out'},
+                              'to': {'node': 'write', 'socket': 'content'}})
+    session_files.write_document(path, document)
+    service = TriggerService()
+    monkeypatch.setattr(service, '_post', lambda *args: {})
+    ready, release = Event(), Event()
+    history = service._history
+    pending = {}
+
+    def hold_history(key, entry):
+        if entry['state'] == 'waiting-for-approval':
+            pending.update(entry)
+            ready.set()
+            assert release.wait(5)
+        history(key, entry)
+
+    monkeypatch.setattr(service, '_history', hold_history)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as jobs:
+            scheduled = jobs.submit(service.fire, (str(path), 't'), 'trigger.schedule')
+            try:
+                assert ready.wait(5) and not output.exists()
+                key = str(canvas_documents._lock_path(path))
+                assert canvas_documents._THREAD_LOCKS[key].locked()
+                card = next(row for row in ask_reviews() if row['id'] == pending['approvalId'])
+                if not move:
+                    effect = jobs.submit(ask_apply, card['id'], card['input_digest'], decision)
+            finally:
+                release.set()
+            assert scheduled.result(timeout=5)['outcome'] == 'ran'
+            if move:
+                def rearrange(document):
+                    document['nodes'][0]['position'] = {'x': 96, 'y': 24}
+                    return []
+                canvas_documents.edit(path, 'Canvas', 'arrange', rearrange, solve_changed=False)
+                ask_apply(card['id'], card['input_digest'], decision)
+            else:
+                effect.result(timeout=5)
+        saved = session_files.read_document(path)
+        if move:
+            assert saved['nodes'][0]['position'] == {'x': 96, 'y': 24}
+        finished = session_files.last_automation_runs(path, saved['id'])['t']
+        assert finished['id'] == pending['id'] and finished['kind'] == 'trigger.schedule'
+        assert finished['state'] == terminal and finished['end'] >= pending['start']
+        assert output.is_file() == (decision == 'approve')
+        assert session_files.read_runs(path)[-1] == finished
+    finally:
+        service.close()

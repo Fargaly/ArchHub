@@ -226,7 +226,7 @@ def decline_canvas(payload):
         return
     def change(document):
         node = next((row for row in document['nodes'] if row['id']==payload['node']['id']), None)
-        from .session_files import approval_current
+        from .session_files import approval_current, persist_run
         if not node or not approval_current(document, continuation, node['id']):
             return []
         # Keep the saved status understood by existing approval readers.
@@ -235,6 +235,7 @@ def decline_canvas(payload):
             if row['id'] != node['id'] and row.get('result', {}).get('status') == 'Waiting':
                 row['result'] = {'status': 'Blocked', 'output': {}, 'error': 'Canvas approval was rejected.'}
         document['properties']['canvasRun']['state'] = 'Ended'
+        persist_run(document, continuation['path'])
         return []
     canvas_documents.edit(continuation['path'], 'You', 'reject Canvas Run', change, solve_changed=False)
     if continuation.get('parent'):
@@ -252,7 +253,9 @@ def release(payload):
         from .session_files import read_document, run_document, skill_result, approval_current, persist_run
         from .hook_decision import _RELEASING
         def inputs(document):
-            return {'id': document['id'], 'title': document['title'], 'nodes': [{key:value for key,value in row.items() if key != 'result'} for row in document['nodes']],
+            return {'id': document['id'], 'title': document['title'],
+                    'nodes': [{key: value for key, value in row.items() if key not in ('result', 'position')}
+                              for row in document['nodes']],
                     'wires': document['wires'], 'groups': document['groups'], 'notes': document['notes'],
                     'taskContext': document.get('properties', {}).get('taskContext')}
         outcome = {}
@@ -266,7 +269,7 @@ def release(payload):
                 try:
                     output, display = _dispatch_node(execution, node, node['type'], node['params'], feeds,
                                                      invoke=guard_effect, stopped=None, depth=continuation.get('depth', 0),
-                                                     continuation={**continuation, 'document': execution})
+                                                     continuation={**continuation, 'document': execution, 'source': document})
                 except Exception as failure:
                     output, display, error = {}, str(failure), str(failure)
             else:
@@ -283,12 +286,12 @@ def release(payload):
             if attempt:
                 attempt['outcome'] = {'status': 'Error' if error else 'Done', 'output': output, 'display': display}
                 next(row for row in execution['nodes'] if row['id'] == node['id'])['result'] = copy.deepcopy(attempt['outcome'])
-                persist_run(execution, continuation['path'], continuation.get('source'))
+                persist_run(execution, continuation['path'], document)
             token = _RELEASING.set(False)
             try:
                 result = run_document(execution, invoke=guard_effect, roots=continuation['roots'], path=continuation['path'],
                                       depth=continuation.get('depth', 0), _resume=completed, _each=each,
-                                      _source=continuation.get('source'), _parent=continuation.get('parent'))
+                                      _source=document, _parent=continuation.get('parent'))
             finally:
                 _RELEASING.reset(token)
             for row in document['nodes']:

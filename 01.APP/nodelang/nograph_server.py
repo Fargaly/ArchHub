@@ -1075,19 +1075,20 @@ def _list_messages(before=None):
 def _schedules():
     from datetime import datetime
     from .canvas_triggers import next_delay, _off
-    from .session_files import read_document
+    from .session_files import last_automation_runs, read_document
     service = getattr(_SERVER, 'triggers', None)
     if service is None:
         return []
     armed = _live_triggers(_SERVER)
-    fired = {(row['path'], row['node']): {**row, 'status': row['status'] + ' · ' + datetime.fromtimestamp(row['at']).strftime('%H:%M')}
-             for row in service.fired if row.get('status')}
+    labels = {'succeeded': 'Completed', 'waiting-for-approval': 'Waiting for approval',
+              'unconfirmed': 'Unconfirmed', 'failed': 'Failed', 'declined': 'Declined'}
     rows = []
     for path in service.workflows():
         try:
             document = read_document(path)
         except (OSError, ValueError):
             continue
+        runs = last_automation_runs(path, document['id'])
         for node in document['nodes']:
             kind, node_id, params = node['type'], node['id'], node['params']
             if kind not in ('trigger.schedule', 'trigger.file'):
@@ -1102,10 +1103,18 @@ def _schedules():
                 display_time = f'Every {delay / 60:g} min' if delay % 60 == 0 else f'Every {delay:g} sec'
             else:
                 display_time = 'On change in ' + str(params.get('folder'))
+            last = runs.get(node_id)
+            if last:
+                status = labels[last['state']]
+                try:
+                    status += ' · ' + datetime.fromtimestamp(last.get('end') or last.get('at')).strftime('%H:%M')
+                except Exception:  # Only the saved timestamp can be malformed here.
+                    status += ' · time unavailable'
+                last = {**last, 'status': status}
             rows.append({'id': path + '#' + node_id, 'title': (node.get('title') or kind) + ' · ' + Path(path).stem,
                          'time': display_time, 'daily': daily, 'enabled': enabled, 'kind': kind, 'path': path,
                          'nextInSeconds': round(delay) if live and delay is not None else None,
-                         'lastResult': fired.get((path, node_id))})
+                         'lastResult': last})
     return rows
 
 

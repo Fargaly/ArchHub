@@ -1604,6 +1604,16 @@ function projectGroups(nodes,wires){
   }
  }
  for(const wire of wires){
+  // A saved group boundary can itself be inside a collapsed group. Project from the real member first.
+  for(const [side,ports] of [['from','outputs'],['to','inputs']]){
+   const owner=byId.get(wire[side]);
+   if(!groups.has(owner))continue;
+   const alias=owner[ports].find(port=>port.id===wire[side+'Port']);
+   if(!alias?.member)continue;
+   wire[side]=alias.member.node;
+   wire[side+'Port']=alias.member.port;
+   if(side==='from')wire.type=alias.type;
+  }
   const from=collapsedOwner.get(wire.from),to=collapsedOwner.get(wire.to);
   if(from?.id===to?.id)continue;
   if(from&&byId.get(wire.from)?.outputs.some(port=>port.id===wire.fromPort)){wire.memberFrom={node:wire.from,port:wire.fromPort};wire.fromPort='out:'+wire.from+':'+wire.fromPort;wire.from=from.id;}

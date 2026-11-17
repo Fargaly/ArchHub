@@ -58,7 +58,11 @@ for line in sys.stdin:
 # Claude Code and Codex are started as the CLIs already installed, in the structured mode each one already has;
 # these fakes speak those two modes (claude -p stream-json; codex app-server), not ACP.
 CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
-               '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual']
+               '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
+               '--strict-mcp-config']
+# Codex is started with its plugins, apps and every MCP server it lists switched off (the fake lists two).
+CODEX_ARGS = ['--disable', 'plugins', '--disable', 'apps', '-c', 'mcp_servers.archhub_agent_coordination.enabled=false',
+              '-c', 'mcp_servers.rea.enabled=false', 'app-server']
 
 FAKE_CLAUDE = r"""
 import json, os, sys
@@ -118,6 +122,12 @@ if stubborn:
 
 FAKE_CODEX = r"""
 import json, os, sys
+if "mcp" in sys.argv:   # `codex --disable plugins --disable apps mcp list --json`: what the client asks before it starts
+    if os.environ.get("FAKE_MCP_LIST") == "fails" or sys.argv[1:5] != ["--disable", "plugins", "--disable", "apps"]:
+        sys.exit(3)
+    print(os.environ.get("FAKE_MCP_LIST") or json.dumps([{"name": "archhub_agent_coordination", "enabled": True},
+                                                          {"name": "rea", "enabled": True}]))
+    sys.exit(0)
 log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
 log.write(json.dumps(sys.argv[1:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
     "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
@@ -227,7 +237,7 @@ def _thread(task):
     return [m['text'] for m in row['agentLog'] + row['fileMessages']]
 
 
-@pytest.mark.parametrize('handle, command, argv', [('claude', 'claude', CLAUDE_ARGS), ('codex', 'codex', ['app-server']),
+@pytest.mark.parametrize('handle, command, argv', [('claude', 'claude', CLAUDE_ARGS), ('codex', 'codex', CODEX_ARGS),
                                                    ('opencode', 'opencode', ['acp'])])
 def test_an_agent_that_is_not_running_is_started_and_its_reply_streams_into_the_thread(installed, handle, command, argv):
     from nodelang import nograph_server
@@ -416,7 +426,7 @@ def test_two_sends_on_one_thread_while_its_agent_starts_start_exactly_one_agent(
     for worker in workers:
         worker.join(20)
     starts = [line for line in map(json.loads, log.read_text(encoding='utf-8').splitlines()) if isinstance(line, list)]
-    assert starts == [['app-server']]                                    # one child, not two
+    assert starts == [CODEX_ARGS]                                        # one child, not two
     assert 'There are 12 sheets.' in results and len(results) == 2
     assert len(acp_client._SESSIONS) == 1
 
@@ -618,6 +628,24 @@ def test_approve_and_deny_under_a_polling_agent_give_exactly_one_decision_each_t
     assert len(rows) == 30 and not [row for row in rows if row['status'] in ('releasing', 'pending')]
 
 
+@pytest.mark.parametrize('listing', ['fails', 'not json', json.dumps([{'name': 'rea & calc'}]), json.dumps({'servers': []})])
+def test_codex_is_not_started_when_its_connectors_cannot_be_switched_off(installed, monkeypatch, listing):
+    """Codex's own MCP servers, plugins and apps are outside the file and command cards: it starts without them or not at all."""
+    from nodelang import acp_client
+    install, log = installed
+    install('codex')
+    monkeypatch.setenv('FAKE_MCP_LIST', listing)
+    with pytest.raises(ValueError, match='connectors could not be switched off'):
+        acp_client.ask('codex', 'how many sheets?')
+    assert not log.exists() and not acp_client._SESSIONS
+
+
+def test_claude_and_codex_start_without_their_own_connectors():
+    from nodelang import acp_client
+    assert '--strict-mcp-config' in acp_client.AGENTS['claude']['args'] and '--mcp-config' not in acp_client.AGENTS['claude']['args']
+    assert acp_client._codex_connectors_off.__doc__                       # Codex: its start words are built there, see CODEX_ARGS
+
+
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():
     from nodelang import acp_client
     for agent in ('claude', 'codex'):
@@ -651,7 +679,8 @@ def test_an_agent_starts_as_the_program_its_shim_points_to_and_cmd_never_runs(in
     real = acp_client.subprocess.Popen
     monkeypatch.setattr(acp_client.subprocess, 'Popen', lambda argv, **kw: (started.append(list(argv)), real(argv, **kw))[1])
     argv = acp_client.start_command(agent)[0]
-    assert argv[0] == sys.executable and argv[1].endswith('.py') and argv[2:] == list(acp_client.AGENTS[agent]['args'])
+    assert argv[0] == sys.executable and argv[1].endswith('.py')
+    assert argv[2:] == (CODEX_ARGS if agent == 'codex' else list(acp_client.AGENTS[agent]['args']))
     if agent != 'gemini':   # the mute fake never answers
         acp_client.ask(agent, 'how many sheets?')
         assert started and all(line[0] == sys.executable and 'cmd' not in os.path.basename(line[0]).lower() and '/C' not in line

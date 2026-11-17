@@ -38,7 +38,8 @@ ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 
 AGENTS = {
     'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
-        '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual')},
+        '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
+        '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers; see _codex_connectors_off
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
     'opencode': {'commands': ('opencode',), 'args': ('acp',)},
@@ -427,7 +428,31 @@ def start_command(agent):
                          % (label(agent), ' or '.join(row['commands'])))
     head = _launcher(agent, found)
     fallback = row.get('fallback_args')
-    return head + list(row['args']), (head + list(fallback)) if fallback else None, row.get('speaks')
+    args = list(row['args'])
+    if row.get('speaks') == 'codex':
+        args[-1:-1] = _codex_connectors_off(head)
+    return head + args, (head + list(fallback)) if fallback else None, row.get('speaks')
+
+
+def _codex_connectors_off(head):
+    """The words that start Codex without its own connectors: plugins and apps off, and
+    `-c mcp_servers.<name>.enabled=false` for every MCP server it lists. An agent's own connectors are tools outside the file and command cards: whether their calls ask
+    first was not proven, so a chat agent starts without them (Claude: --strict-mcp-config) or is not started."""
+    refused = ValueError("Codex's own connectors could not be switched off, so it was not started. "
+                         "Check `codex mcp list`, then send again.")
+    try:
+        listed = subprocess.run(head + ['--disable', 'plugins', '--disable', 'apps', 'mcp', 'list', '--json'],
+                                stdin=subprocess.DEVNULL, capture_output=True, timeout=ACP_NODE['params']['start_seconds'],
+                                env=child_environment(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        servers = json.loads(listed.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        raise refused from None
+    names = [row.get('name') for row in servers if isinstance(row, dict)] if isinstance(servers, list) else None
+    if listed.returncode or names is None or len(names) != len(servers) or not all(
+            type(name) is str and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', name) for name in names):
+        raise refused
+    return ['--disable', 'plugins', '--disable', 'apps'] + [
+        word for name in names for word in ('-c', 'mcp_servers.%s.enabled=false' % name)]
 
 
 # -- an Approve card for a permission request -------------------------------------------------------------

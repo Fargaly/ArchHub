@@ -38,6 +38,8 @@ def is_withdrawal(fragment) -> bool:
 
 
 def submit_versions(user_id, delta, merge_result, community_keys) -> None:
+    if db.is_community_banned(user_id):
+        return      # the founder stopped this member's community shares; none reach review
     rejected = {str(item.get("id")) for item in (merge_result.get("rejected") or [])
                 if isinstance(item, dict)}
     members_of = set(community_keys)

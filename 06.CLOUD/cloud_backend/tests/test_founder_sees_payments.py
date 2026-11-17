@@ -37,6 +37,14 @@ class _Stripe:
                               "status": "paid", "created": 1790000000,
                               "hosted_invoice_url": "https://pay.example/in_1"}]}
 
+    class PaymentIntent:
+        @staticmethod
+        def list(**_kwargs):
+            return {"data": [{"id": "pi_1", "amount_received": 1900, "currency": "usd",
+                              "status": "succeeded", "created": 1790000000, "receipt_email": None,
+                              "customer": {"id": "cus_1", "email": "payer@studio.example"},
+                              "latest_charge": {"id": "ch_1", "amount_refunded": 500}}]}
+
     class Webhook:
         @staticmethod
         def construct_event(payload, _signature, _secret):
@@ -75,6 +83,10 @@ def test_live_subscriptions_mrr_and_invoices(client):
     assert live["mrr_minor"] == {"usd": 1900 + 6500}        # 2 x 390.00/yr = 65.00/mo
     assert [invoice["id"] for invoice in live["invoices"]] == ["in_1"]
     assert "hosted_invoice_url" not in live["invoices"][0]
+    # The Payments list: who paid, how much is already refunded, and the id a refund needs.
+    assert live["payments"] == [{"payment_intent": "pi_1", "email": "payer@studio.example",
+                                 "amount_received": 1900, "amount_refunded": 500,
+                                 "currency": "usd", "status": "succeeded", "created": 1790000000}]
     assert KEY not in answer.text
 
 

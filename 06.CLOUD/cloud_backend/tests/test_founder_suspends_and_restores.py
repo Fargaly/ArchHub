@@ -46,7 +46,7 @@ def test_a_suspended_account_is_refused_and_restore_brings_the_same_session_back
     session = _auth(USER)
     assert _reach(client, session) == {"me": 200, "brain_sync": 200, "mcp_tool": 200}
     r = client.post("/founder/api/users/%s/suspend" % USER, headers=_auth(FOUNDER),
-                    json={"reason": "court: unpaid"})
+                    json={"reason": "court: unpaid", "typed": "SUSPEND"})
     assert r.status_code == 200, r.text
     assert r.json()["user"]["suspended_reason"] == "court: unpaid"
     assert _reach(client, session) == {"me": 401, "brain_sync": 401, "mcp_tool": 401}

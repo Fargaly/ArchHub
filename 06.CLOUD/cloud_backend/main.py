@@ -123,6 +123,15 @@ except Exception as _cockpit_exc:  # pragma: no cover
     print(f"[main] private graph cockpit not mounted: {_cockpit_exc}")
 
 app.include_router(founder_cockpit.router)
+import feedback  # noqa: E402  (the feedback owner)
+
+
+@app.post("/v1/feedback")
+async def v1_feedback(request: Request, authorization: str | None = Header(None)):
+    """A signed-in person sends feedback from the app or the website (owner: feedback.py)."""
+    return await feedback.send_feedback(request, authorization)
+
+
 import oauth_mcp  # noqa: E402  (the public MCP door's OAuth; module-local import style)
 app.include_router(oauth_mcp.router)
 import social_oauth  # noqa: E402  (cloud-owned LinkedIn/Meta publisher app broker)

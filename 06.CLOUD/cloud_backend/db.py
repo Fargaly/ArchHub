@@ -691,6 +691,49 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     result      TEXT NOT NULL DEFAULT ''
 );
 
+-- What people tell ArchHub from the app and the website (owner: feedback.py).
+CREATE TABLE IF NOT EXISTS feedback (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    type        TEXT NOT NULL DEFAULT 'idea',   -- bug | idea | praise
+    text        TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'app',    -- app | site
+    status      TEXT NOT NULL DEFAULT 'new',    -- new | planned | doing | shipped | declined
+    plan_row    TEXT NOT NULL DEFAULT '',
+    merged_into TEXT,
+    replies     TEXT NOT NULL DEFAULT '[]',     -- JSON [{at, by, subject, text}]
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
+
+-- One row per confirmed Cockpit action (founder_cockpit._guarded): claimed before
+-- the effect, finished with its result; a repeat of the key returns the row.
+CREATE TABLE IF NOT EXISTS founder_action_keys (
+    key         TEXT PRIMARY KEY,
+    founder     TEXT NOT NULL,
+    route       TEXT NOT NULL,
+    target      TEXT NOT NULL,
+    body_hash   TEXT NOT NULL,
+    state       TEXT NOT NULL,          -- claimed | done | uncertain | resolved_sent | resolved_not_sent
+    hold        TEXT,                   -- "refund:<payment>": never released for an unresolved refund (unique, see init_schema)
+    correlation TEXT,                   -- non-secret id sent to Stripe as refund metadata (archhub_action)
+    context     TEXT,                   -- JSON {payment, amount, currency, customer}: server-derived, written once
+    status      INTEGER,
+    result      TEXT,
+    claimed_at  INTEGER NOT NULL,
+    finished_at INTEGER
+);
+
+-- Members the founder stopped from sharing to communities (reversible).
+CREATE TABLE IF NOT EXISTS community_bans (
+    user_id   TEXT PRIMARY KEY,
+    reason    TEXT NOT NULL,
+    banned_at INTEGER NOT NULL,
+    banned_by TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_founder_action_ts ON founder_action_log(ts);
 CREATE INDEX IF NOT EXISTS idx_packs_status ON marketplace_packs(status);
@@ -754,6 +797,9 @@ def init_schema() -> None:
             # working session anywhere (user_for_token refuses it).
             "ALTER TABLE users ADD COLUMN suspended_at INTEGER",
             "ALTER TABLE users ADD COLUMN suspended_reason TEXT",
+            # Founder cockpit "Delete account": the account is closed (sessions
+            # stop, sign-in refused through the suspension check); the rows stay.
+            "ALTER TABLE users ADD COLUMN deleted_at INTEGER",
             # v1.3.3: per-company quota tracking. Studio plan seeds 2000,
             # Firm plan seeds 1_000_000 (fair-use, throttled by per-min
             # rate limit). Webhook + create_company set the right value.
@@ -828,12 +874,19 @@ def init_schema() -> None:
             "ALTER TABLE baboom_enrollment_challenges ADD COLUMN recipient_thumbprint TEXT",
             "ALTER TABLE baboom_enrollment_challenges ADD COLUMN universal_device_public_jwk_json TEXT",
             "ALTER TABLE baboom_enrollment_challenges ADD COLUMN universal_device_thumbprint TEXT",
+            "ALTER TABLE founder_action_keys ADD COLUMN hold TEXT",
+            "ALTER TABLE founder_action_keys ADD COLUMN correlation TEXT",
+            "ALTER TABLE founder_action_keys ADD COLUMN context TEXT",
         ):
             try:
                 con.execute(ddl)
             except sqlite3.OperationalError:
                 # Column already exists — idempotent re-run.
                 pass
+        # One unresolved refund per payment, enforced by the database itself:
+        # a second claim on the same hold fails in the one INSERT that makes it.
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_founder_action_hold "
+                    "ON founder_action_keys(hold) WHERE hold IS NOT NULL")
         # Backfill: any existing token row with a NULL expires_at (rows
         # issued before this migration, when tokens were immortal) gets
         # a real expiry of created_at + the 90-day TTL. After this runs
@@ -1638,6 +1691,83 @@ def set_user_suspended(user_id: str, reason: Optional[str]) -> Optional[dict]:
             con.execute("UPDATE users SET suspended_at = ?, suspended_reason = ? WHERE id = ?",
                         (int(time.time()), str(reason)[:500], user_id))
     return get_user(user_id)
+
+
+def set_user_deleted(user_id: str, reason: Optional[str]) -> Optional[dict]:
+    """Close an account (reason given) or reopen it (reason None). A closed
+    account is also suspended, so every session check already refuses it.
+    Nothing is removed: the user's rows stay. Only the founder cockpit calls this."""
+    with connect() as con:
+        if reason is None:
+            # a suspension the founder set before the delete stays
+            con.execute("UPDATE users SET deleted_at = NULL WHERE id = ?", (user_id,))
+            con.execute("UPDATE users SET suspended_at = NULL, suspended_reason = NULL "
+                        "WHERE id = ? AND suspended_reason LIKE 'account deleted: %'", (user_id,))
+        else:
+            now = int(time.time())
+            con.execute("UPDATE users SET deleted_at = ?, suspended_at = COALESCE(suspended_at, ?), "
+                        "suspended_reason = COALESCE(suspended_reason, ?) "
+                        "WHERE id = ?", (now, now, "account deleted: " + str(reason)[:480], user_id))
+    return get_user(user_id)
+
+
+def community_ban(user_id: str, reason: Optional[str], by: str = "") -> bool:
+    """Stop (reason given) or allow again (reason None) one member's community
+    shares. Returns whether the stored state changed."""
+    with connect() as con:
+        if reason is None:
+            return con.execute("DELETE FROM community_bans WHERE user_id = ?",
+                               (user_id,)).rowcount > 0
+        return con.execute("INSERT OR IGNORE INTO community_bans (user_id, reason, banned_at, banned_by) "
+                           "VALUES (?, ?, ?, ?)", (user_id, str(reason)[:500], int(time.time()), by)
+                           ).rowcount > 0
+
+
+def is_community_banned(user_id: str) -> bool:
+    with connect() as con:
+        return con.execute("SELECT 1 FROM community_bans WHERE user_id = ?",
+                           (str(user_id or ""),)).fetchone() is not None
+
+
+def community_bans() -> list[dict]:
+    with connect() as con:
+        rows = con.execute("SELECT b.user_id, u.email, u.full_name, b.reason, b.banned_at, b.banned_by "
+                           "FROM community_bans b LEFT JOIN users u ON u.id = b.user_id "
+                           "ORDER BY b.banned_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def usage_by_day(days: int = 30, *, exclude_test: bool = True) -> list[dict]:
+    """Messages a day for the last `days` days, split by model family
+    (claude / gpt / other), from usage_log. Read-only."""
+    since = int(time.time()) - int(days) * 86400
+    frag, params = _test_account_sql("u.email")
+    where = ("AND NOT " + frag) if exclude_test else ""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT (l.ts / 86400) * 86400 AS day, "
+            "SUM(CASE WHEN LOWER(l.model) LIKE '%%claude%%' THEN 1 ELSE 0 END) AS claude, "
+            "SUM(CASE WHEN LOWER(l.model) LIKE '%%gpt%%' OR LOWER(l.model) LIKE 'o1%%' "
+            "OR LOWER(l.model) LIKE 'o3%%' THEN 1 ELSE 0 END) AS gpt, COUNT(*) AS total "
+            "FROM usage_log l JOIN users u ON u.id = l.user_id WHERE l.ts >= ? %s "
+            "GROUP BY day ORDER BY day" % where,
+            [since] + (list(params) if exclude_test else [])).fetchall()
+    return [{"day": r["day"], "claude": r["claude"], "gpt": r["gpt"],
+             "other": r["total"] - r["claude"] - r["gpt"]} for r in rows]
+
+
+def top_spenders(days: int = 30, limit: int = 6, *, exclude_test: bool = True) -> list[dict]:
+    """The accounts with the most model spend over the last `days` days."""
+    since = int(time.time()) - int(days) * 86400
+    frag, params = _test_account_sql("u.email")
+    where = ("AND NOT " + frag) if exclude_test else ""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT u.id, u.email, u.full_name, COUNT(*) AS calls, SUM(l.cost_micros) AS cost_micros "
+            "FROM usage_log l JOIN users u ON u.id = l.user_id WHERE l.ts >= ? %s "
+            "GROUP BY u.id ORDER BY cost_micros DESC LIMIT ?" % where,
+            [since] + (list(params) if exclude_test else []) + [int(limit)]).fetchall()
+    return [dict(r) for r in rows]
 
 
 def delete_token(token: str) -> bool:
@@ -2646,14 +2776,15 @@ def community_membership_view() -> list[dict]:
     """Every community: its live members (email, role, joined) and how many left."""
     with connect() as con:
         members = con.execute(
-            "SELECT m.community_id, u.email, m.role, m.joined_at FROM community_members m "
+            "SELECT m.community_id, u.email, u.full_name, m.role, m.joined_at FROM community_members m "
             "JOIN users u ON u.id = m.user_id ORDER BY m.community_id, m.joined_at").fetchall()
         left = {row[0]: int(row[1]) for row in con.execute(
             "SELECT community_id, COUNT(*) FROM community_optouts GROUP BY community_id")}
     view: dict = {}
     for row in members:
         view.setdefault(row["community_id"], []).append(
-            {"email": row["email"], "role": row["role"], "joined_at": row["joined_at"]})
+            {"email": row["email"], "name": row["full_name"], "role": row["role"],
+             "joined_at": row["joined_at"]})
     return [{"community_id": cid, "members": view.get(cid, []), "left": left.get(cid, 0)}
             for cid in sorted(set(view) | set(left))]
 
@@ -2665,7 +2796,8 @@ def admitted_community_facts(community_id: Optional[str] = None, *,
     where, args = ("AND r.community_id = ?", (community_id,)) if community_id else ("", ())
     with connect() as con:
         rows = con.execute(
-            "SELECT r.community_id, r.fragment_id, r.hlc, c.email AS contributor, r.text, "
+            "SELECT r.community_id, r.fragment_id, r.hlc, c.email AS contributor, "
+            "c.full_name AS contributor_name, r.text, "
             "r.decided_at, d.email AS decided_by FROM community_reviews r "
             "LEFT JOIN users c ON c.id = r.contributor LEFT JOIN users d ON d.id = r.decided_by "
             "WHERE r.status = 'admitted' %s ORDER BY r.decided_at DESC LIMIT ?" % where,
@@ -3016,11 +3148,16 @@ def delete_test_users() -> int:
 
 def list_companies_billing() -> list[dict]:
     """Every company row with its plan + seat_limit — the basis for
-    company-tier MRR. Read-only."""
+    company-tier MRR — and, for the founder's Companies list, its owner,
+    seats in use, AI mode and credits. Read-only."""
     with connect() as con:
         rows = con.execute(
-            "SELECT id, name, plan, seat_limit, stripe_subscription_id, "
-            "period_end, created_at FROM companies ORDER BY created_at DESC"
+            "SELECT id, name, slug, plan, seat_limit, stripe_subscription_id, "
+            "period_end, created_at, ai_mode, credit_balance, "
+            "(SELECT email FROM users u WHERE u.id = companies.owner_user_id) AS owner_email, "
+            "(SELECT full_name FROM users u WHERE u.id = companies.owner_user_id) AS owner_name, "
+            "(SELECT COUNT(*) FROM company_members m WHERE m.company_id = companies.id) AS seats_used "
+            "FROM companies ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -3275,7 +3412,8 @@ def release_refund_confirmation(token: str) -> None:
 def recent_payment_events(kind: str, limit: int = 50) -> list[dict]:
     with connect() as con:
         rows = con.execute(
-            "SELECT e.ts, e.kind, u.email, e.stripe_object, e.amount, e.currency, e.detail "
+            "SELECT e.ts, e.kind, u.email, u.full_name AS name, e.stripe_object, e.amount, "
+            "e.currency, e.detail "
             "FROM payment_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.kind = ? "
             "ORDER BY e.id DESC LIMIT ?", (kind, int(limit))).fetchall()
     return [dict(row) for row in rows]
@@ -3302,6 +3440,14 @@ def clear_cockpit_errors() -> None:
         con.execute("DELETE FROM cockpit_error_log")
 
 
+def resolve_cockpit_errors(*, at: str, kind: str) -> int:
+    """The founder marked one failure fixed: every recorded repeat of it
+    leaves the log. Returns how many rows went."""
+    with connect() as con:
+        return int(con.execute("DELETE FROM cockpit_error_log WHERE at = ? AND kind = ?",
+                               (at, kind)).rowcount or 0)
+
+
 def database_health() -> dict:
     """The cloud database, measured: a round trip and its size on disk."""
     started = time.perf_counter()
@@ -3316,6 +3462,88 @@ def database_health() -> dict:
         "bytes": int(pages) * int(page_size),
         "file_bytes": os.path.getsize(path) if os.path.isfile(path) else None,
     }
+
+
+HELD = {"held": True}
+
+
+def claim_action_key(*, key: str, founder: str, route: str, target: str,
+                     body_hash: str, hold: Optional[str] = None) -> Optional[dict]:
+    """Claim one confirmed action in ONE insert. Returns None when this call
+    claimed it (go ahead), the row already holding the key (do nothing), or
+    HELD when another unresolved action holds the same `hold` (refused)."""
+    with connect() as con:
+        try:
+            con.execute(
+                "INSERT INTO founder_action_keys (key, founder, route, target, body_hash, state, claimed_at, hold) "
+                "VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?)",
+                (key, founder, route, target, body_hash, int(time.time()), hold))
+            return None
+        except sqlite3.IntegrityError:
+            row = con.execute("SELECT * FROM founder_action_keys WHERE key = ?", (key,)).fetchone()
+    return dict(row) if row else HELD
+
+
+def finish_action_key(key: str, *, status: int, result: str, state: str = "done") -> None:
+    """Record the effect's answer; an uncertain action keeps its hold."""
+    with connect() as con:
+        con.execute("UPDATE founder_action_keys SET state = ?, status = ?, result = ?, finished_at = ?, "
+                    "hold = CASE WHEN ? = 'uncertain' THEN hold ELSE NULL END "
+                    "WHERE key = ? AND state = 'claimed'",
+                    (state, int(status), result, int(time.time()), state, key))
+
+
+def get_action_key(key: str) -> Optional[dict]:
+    with connect() as con:
+        row = con.execute("SELECT * FROM founder_action_keys WHERE key = ?", (key,)).fetchone()
+    return dict(row) if row else None
+
+
+# An action nobody can vouch for: recorded uncertain, or claimed and never
+# finished past its window (refunds, which hold a payment, get the longer one).
+_UNRESOLVED = ("(state = 'uncertain' OR (state = 'claimed' AND claimed_at < "
+               "CASE WHEN hold IS NULL THEN ? ELSE ? END))")
+
+
+def unresolved_action_keys(founder: str, *, stale_before: int, money_stale_before: int,
+                           route: Optional[str] = None, body_hash: Optional[str] = None) -> list[dict]:
+    sql = "SELECT * FROM founder_action_keys WHERE founder = ? AND " + _UNRESOLVED
+    args: list = [founder, int(stale_before), int(money_stale_before)]
+    if route is not None:
+        sql += " AND route = ? AND body_hash = ?"
+        args += [route, body_hash]
+    with connect() as con:
+        return [dict(r) for r in con.execute(sql + " ORDER BY claimed_at DESC", args).fetchall()]
+
+
+def resolve_action_key(key: str, *, arrived: bool, stale_before: int, money_stale_before: int) -> bool:
+    """The founder closes an unresolved EMAIL action as sent or not sent: one
+    conditional update. An action that holds a payment (a refund) can never be
+    closed here: its hold stays."""
+    with connect() as con:
+        return con.execute(
+            "UPDATE founder_action_keys SET state = ?, finished_at = ? WHERE key = ? AND hold IS NULL AND "
+            "(state = 'uncertain' OR (state = 'claimed' AND claimed_at < CASE WHEN hold IS NULL THEN ? ELSE ? END))",
+            ("resolved_sent" if arrived else "resolved_not_sent", int(time.time()), key,
+             int(stale_before), int(money_stale_before))).rowcount == 1
+
+
+def set_action_context(key: str, *, correlation: str, context: dict) -> None:
+    """Written once, before the provider call, in one update: the id Stripe
+    will carry and what the panel shows about the action. Never changed after."""
+    with connect() as con:
+        con.execute("UPDATE founder_action_keys SET correlation = ?, context = ? "
+                    "WHERE key = ? AND correlation IS NULL AND context IS NULL",
+                    (correlation, _json.dumps(context), key))
+
+
+def refund_confirmation_payment(token: str, *, founder_id: str) -> Optional[str]:
+    """The payment a confirmation was issued for (read-only), so the server, not
+    the page, names what a refund confirm is about."""
+    with connect() as con:
+        row = con.execute("SELECT payment_intent FROM refund_confirmations WHERE token_digest = ? "
+                          "AND founder_id = ?", (token_digest(token), founder_id)).fetchone()
+    return row["payment_intent"] if row else None
 
 
 def recent_founder_actions(limit: int = 30) -> list[dict]:
@@ -3410,33 +3638,78 @@ def user_activity(user_id: str, *, now: Optional[int] = None) -> dict:
                   "calls_last_30d": int(recent or 0)},
     }
 
-def find_users(query: str, *, limit: int = 20,
-               exclude_test: bool = False) -> list[dict]:
-    """Read-only user search by email substring OR exact id, newest first.
+# The founder Users filters. {test} is the synthetic-account test.
+_USER_FILTERS = {
+    "paying":    "plan != 'trial' AND suspended_at IS NULL AND NOT {test}",
+    "trial":     "plan = 'trial' AND NOT {test}",
+    "test":      "{test}",
+    "suspended": "suspended_at IS NOT NULL",
+}
 
-    Powers the founder cockpit `users.find` agent tool. Pure SELECT — never
-    writes, never returns secrets (tokens / codes live in other tables and
-    are not selected here). An empty/blank query returns the most-recent
-    users (a useful default the agent can page through)."""
+
+def _user_filter_sql(only: str) -> tuple[str, list]:
+    frag, params = _test_account_sql()
+    sql = _USER_FILTERS[only]
+    return sql.format(test=frag), list(params) * sql.count("{test}")
+
+
+def find_users(query: str, *, limit: int = 20, exclude_test: bool = False,
+               only: Optional[str] = None) -> list[dict]:
+    """Read-only user search by email or name substring OR exact id, newest first.
+
+    Powers the founder cockpit `users.find` agent tool and the Users list.
+    Pure SELECT — never writes, never returns secrets (tokens / codes live in
+    other tables and are not selected here). An empty/blank query returns the
+    most-recent users. `only` narrows to one of _USER_FILTERS."""
     q = (query or "").strip().lower()
     clauses: list[str] = []
     params: list = []
     if q:
-        clauses.append("(LOWER(email) LIKE ? OR id = ?)")
-        params.extend([f"%{q}%", query.strip()])
+        clauses.append("(LOWER(email) LIKE ? OR LOWER(COALESCE(full_name, '')) LIKE ? OR id = ?)")
+        params.extend([f"%{q}%", f"%{q}%", query.strip()])
     if exclude_test:
         frag, p = _test_account_sql()
         clauses.append(f"NOT {frag}")
+        params.extend(p)
+    if only in _USER_FILTERS:
+        frag, p = _user_filter_sql(only)
+        clauses.append(f"({frag})")
         params.extend(p)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with connect() as con:
         rows = con.execute(
             "SELECT id, email, plan, created_at, msg_used, msg_limit, "
-            "current_company_id FROM users"
+            "current_company_id, full_name, period_end, suspended_at, suspended_reason, deleted_at "
+            "FROM users"
             f"{where} ORDER BY created_at DESC LIMIT ?",
             [*params, int(max(1, min(limit, 200)))],
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def user_presence(user_ids: list) -> dict:
+    """Per account: last seen (the newest token use) and live devices. Kept out
+    of find_users because every signed-in request moves the token clock."""
+    if not user_ids:
+        return {}
+    marks = ",".join("?" * len(user_ids))
+    with connect() as con:
+        rows = con.execute(
+            "SELECT u.id, (SELECT MAX(last_used_at) FROM tokens t WHERE t.user_id = u.id) AS last_seen, "
+            "(SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id AND d.disconnected_at IS NULL) AS devices "
+            "FROM users u WHERE u.id IN (%s)" % marks, list(user_ids)).fetchall()
+    return {r["id"]: {"last_seen": r["last_seen"], "devices": int(r["devices"] or 0)} for r in rows}
+
+
+def user_filter_counts() -> dict:
+    """How many accounts each founder Users filter holds."""
+    with connect() as con:
+        counts = {"all": int(con.execute("SELECT COUNT(*) FROM users").fetchone()[0])}
+        for only in _USER_FILTERS:
+            frag, params = _user_filter_sql(only)
+            counts[only] = int(con.execute(
+                f"SELECT COUNT(*) FROM users WHERE {frag}", params).fetchone()[0])
+    return counts
 
 
 def claim_agent_task(task_id: str, claimed_by: str):

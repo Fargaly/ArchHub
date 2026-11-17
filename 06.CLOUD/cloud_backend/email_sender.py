@@ -20,8 +20,20 @@ import config
 RESEND_URL = "https://api.resend.com/emails"
 
 
+ACCEPTED, REFUSED, UNKNOWN = "accepted", "refused", "unknown"
+
+
 async def _send(*, to: str, subject: str, text: str, html: str) -> bool:
-    """POST one email to Resend. Returns True on accepted (2xx).
+    """POST one email to Resend. Returns True on accepted (2xx); exactly what
+    it always returned (send_outcome() == ACCEPTED)."""
+    return await send_outcome(to=to, subject=subject, text=text, html=html) == ACCEPTED
+
+
+async def send_outcome(*, to: str, subject: str, text: str, html: str) -> str:
+    """POST one email to Resend and say what is known about it:
+    ACCEPTED (2xx), REFUSED (a definite answer: a 4xx whose body parses, or
+    production without a provider key), or UNKNOWN (a transport error, a
+    timeout, a 5xx, a body that does not parse: the provider may have taken it).
 
     Delivery-key handling (gap 5, 2026-05-31):
       - PRODUCTION (ENV=production) with no RESEND_API_KEY → return FALSE.
@@ -41,13 +53,13 @@ async def _send(*, to: str, subject: str, text: str, html: str) -> bool:
                 f"NOT delivered to {to}: {subject}",
                 flush=True,
             )
-            return False
+            return REFUSED
         print(
             f"[email] DEV stub — NOT actually sent (RESEND_API_KEY unset). "
             f"Would deliver to {to}: {subject}",
             flush=True,
         )
-        return True
+        return ACCEPTED
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(
@@ -64,11 +76,19 @@ async def _send(*, to: str, subject: str, text: str, html: str) -> bool:
                     "html": html,
                 },
             )
-        return 200 <= r.status_code < 300
     except Exception as ex:
         print(f"[email] send failed to {to}: {type(ex).__name__}: {ex}",
               flush=True)
-        return False
+        return UNKNOWN
+    if 200 <= r.status_code < 300:
+        return ACCEPTED
+    if 400 <= r.status_code < 500:
+        try:
+            r.json()
+            return REFUSED
+        except Exception:
+            return UNKNOWN
+    return UNKNOWN
 
 
 def _wrap(body_html: str) -> str:
@@ -93,6 +113,11 @@ def _wrap(body_html: str) -> str:
 
 async def send_company_invite(*, to: str, link: str) -> bool:
     """Send a company invite link. Returns True on accepted."""
+    return await send_company_invite_outcome(to=to, link=link) == ACCEPTED
+
+
+async def send_company_invite_outcome(*, to: str, link: str) -> str:
+    """Send a company invite link; ACCEPTED, REFUSED or UNKNOWN (see send_outcome)."""
     subject = "You're invited to a team on ArchHub"
     text = (
         f"You've been invited to a company workspace on ArchHub.\n\n"
@@ -111,4 +136,4 @@ async def send_company_invite(*, to: str, link: str) -> bool:
         "on this email address to accept. If you weren't expecting this, "
         "ignore the email.</p>"
     )
-    return await _send(to=to, subject=subject, text=text, html=html)
+    return await send_outcome(to=to, subject=subject, text=text, html=html)

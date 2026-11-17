@@ -175,7 +175,7 @@ class TestPurgeRealEffectAndConfirm:
         assert db.count_users() == before
         # confirmed
         r2 = client.post("/founder/api/purge-test-users", headers=_auth(ftoken),
-                         json={"confirm": True})
+                         json={"confirm": True, "typed": "DELETE"})
         assert r2.json()["deleted"] >= 1
         assert db.get_user_by_email("throwaway3@example.com") is None
 

@@ -257,7 +257,14 @@ async def invite_member(company_id: str, req: InviteReq,
                          authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
     _require_membership(company_id, user["id"], roles=("owner", "admin"))
-    if req.role not in ("admin", "member"):
+    return await send_company_invite(company_id, str(req.email), req.role, user["id"])
+
+
+async def send_company_invite(company_id: str, email: str, role: str,
+                              invited_by_user_id: str, *, with_outcome: bool = False) -> dict:
+    """The one company invite, for the owner's route above and the founder's
+    Cockpit route: seat check, invite row, best-effort email."""
+    if role not in ("admin", "member"):
         raise HTTPException(status_code=400, detail="invalid_role")
     # Seat-limit check — count existing members + outstanding invites.
     # Outstanding (un-accepted, un-expired) invites each reserve a seat;
@@ -270,17 +277,20 @@ async def invite_member(company_id: str, req: InviteReq,
         raise HTTPException(status_code=400, detail="seat_limit_reached")
     invite = db.create_company_invite(
         company_id=company_id,
-        email=str(req.email),
-        role=req.role,
-        invited_by_user_id=user["id"],
+        email=email,
+        role=role,
+        invited_by_user_id=invited_by_user_id,
     )
     # Best-effort email. We still return the token in the response so
     # the dashboard can show a copy-able link if email is unconfigured.
     link = (
         f"{config.PUBLIC_URL.rstrip('/')}/invite?token={invite['token']}"
     )
+    if with_outcome:            # the founder Cockpit only; the owner route's answer is unchanged
+        return {"email": invite["email"], "role": invite["role"], "expires_at": invite["expires_at"],
+                "email_outcome": await _invite_outcome(email, link)}
     try:
-        await email_sender.send_company_invite(to=str(req.email), link=link)
+        await email_sender.send_company_invite(to=email, link=link)
     except Exception as ex:  # noqa: BLE001
         print(f"[companies] invite email failed: {ex}", flush=True)
     return {
@@ -290,6 +300,29 @@ async def invite_member(company_id: str, req: InviteReq,
         "expires_at": invite["expires_at"],
         "invite_url": link,
     }
+
+
+async def _invite_outcome(email: str, link: str) -> str:
+    try:
+        return await email_sender.send_company_invite_outcome(to=email, link=link)
+    except Exception as ex:  # noqa: BLE001
+        print(f"[companies] invite email failed: {ex}", flush=True)
+        return email_sender.UNKNOWN
+
+
+async def resend_company_invite(company_id: str, email: str) -> Optional[dict]:
+    """Email the existing outstanding invite again: same token, same seat.
+    None when there is no outstanding invite for that address."""
+    now = int(time.time())
+    with db.connect() as con:
+        row = con.execute("SELECT token, email, role, expires_at FROM company_invites WHERE company_id = ? "
+                          "AND LOWER(email) = ? AND accepted_at IS NULL AND expires_at > ? "
+                          "ORDER BY expires_at DESC LIMIT 1", (company_id, email.lower(), now)).fetchone()
+    if row is None:
+        return None
+    link = f"{config.PUBLIC_URL.rstrip('/')}/invite?token={row['token']}"
+    return {"email": row["email"], "role": row["role"], "expires_at": row["expires_at"],
+            "email_outcome": await _invite_outcome(row["email"], link)}
 
 
 @router.post("/v1/companies/invites/accept")

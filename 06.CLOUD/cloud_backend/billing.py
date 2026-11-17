@@ -307,7 +307,7 @@ def _monthly_minor(item) -> int:
     return round(int(price.get("unit_amount") or 0) * int(item.get("quantity") or 1) * per)
 
 
-def founder_stripe_view() -> dict:
+def founder_stripe_view(payments_limit: int = 20) -> dict:
     """Live Stripe for the founder cockpit: active subscriptions, MRR from their
     real prices, recent invoices. Cached 60 s; the key never leaves here."""
     if not _ensure_stripe():
@@ -319,6 +319,8 @@ def founder_stripe_view() -> dict:
         subscriptions = stripe.Subscription.list(status="active", limit=100,
                                                  expand=["data.items.data.price"])
         invoices = stripe.Invoice.list(limit=20)
+        payments = stripe.PaymentIntent.list(
+            limit=payments_limit, expand=["data.customer", "data.latest_charge"])
     except Exception as exc:
         return {"available": False, "reason": "Stripe did not answer: %s" % type(exc).__name__}
     mrr: dict = {}
@@ -334,9 +336,26 @@ def founder_stripe_view() -> dict:
         "invoices": [{key: inv.get(key) for key in
                       ("id", "customer_email", "amount_paid", "amount_due", "currency",
                        "status", "created")} for inv in invoices["data"]],
+        "payments": [_payment_row(intent) for intent in payments["data"]],
     }
     _STRIPE_VIEW["view"] = (time.time(), view)
     return view
+
+
+def _payment_row(intent) -> dict:
+    """One payment for the founder's Payments list: who paid, how much, how
+    much of it was refunded, and the id a refund needs."""
+    customer, charge = intent.get("customer"), intent.get("latest_charge")
+    return {
+        "payment_intent": intent["id"],
+        "email": (customer.get("email") if hasattr(customer, "get") else None)
+                 or intent.get("receipt_email"),
+        "amount_received": int(intent.get("amount_received") or 0),
+        "amount_refunded": int(charge.get("amount_refunded") or 0) if hasattr(charge, "get") else 0,
+        "currency": str(intent.get("currency") or ""),
+        "status": intent.get("status"),
+        "created": intent.get("created"),
+    }
 
 
 def refund_preview(payment_intent: str) -> dict:
@@ -348,16 +367,54 @@ def refund_preview(payment_intent: str) -> dict:
             "currency": str(intent.get("currency") or ""), "status": intent.get("status")}
 
 
-def refund_payment(*, payment_intent: str, amount: int, idempotency_key: str, founder: str) -> dict:
+def payment_customer(payment_intent: str) -> dict:
+    """Read-only: the email Stripe holds for a payment's customer (or its
+    receipt address), as {"email", "error"}: the error says why it is missing."""
+    if not _ensure_stripe():
+        return {"email": None, "error": "Stripe is not configured on this server"}
+    try:
+        intent = stripe.PaymentIntent.retrieve(payment_intent, expand=["customer"])
+        customer = intent.get("customer")
+        email = (customer.get("email") if hasattr(customer, "get") else None) or intent.get("receipt_email")
+    except Exception as exc:
+        return {"email": None, "error": "Stripe did not answer: %s" % type(exc).__name__}
+    return {"email": email, "error": None if email else "Stripe holds no email for this payment"}
+
+
+def refund_payment(*, payment_intent: str, amount: int, idempotency_key: str, founder: str,
+                   correlation: Optional[str] = None) -> dict:
     """Issue one refund. Only the founder cockpit's confirmed route calls this;
     the cockpit agent never can (cockpit_agent withholds refunds)."""
     if not _ensure_stripe():
         raise RuntimeError("Stripe is not configured on this server")
     refund = stripe.Refund.create(payment_intent=payment_intent, amount=int(amount),
-                                  metadata={"issued_by": founder},
+                                  metadata={"issued_by": founder,
+                                            **({"archhub_action": correlation} if correlation else {})},
                                   idempotency_key=idempotency_key)
+    _STRIPE_VIEW.clear()   # the Payments list shows this refund on its next read
     return {"id": refund["id"], "status": refund.get("status"), "amount": refund.get("amount"),
             "currency": refund.get("currency")}
+
+
+ACCEPTED, REFUSED, UNKNOWN = "accepted", "refused", "unknown"
+_DEFINITE = ("card_error", "invalid_request_error")
+
+
+def refund_outcome(exc: Exception) -> str:
+    """What an exception from a refund request says. REFUSED only for a
+    definite card or request error: a parsed 4xx error body of those types
+    that is not a 409, not a 429 and not an idempotency error (Stripe answers
+    those while the original may still be executing). Everything else
+    (connection, timeout, 5xx, conflict, nothing parsed) is UNKNOWN: it may
+    have happened, and only a read of Stripe can say."""
+    status = getattr(exc, "http_status", None)
+    body = getattr(exc, "json_body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    kind = error.get("type") if isinstance(error, dict) else None
+    if ("idempotency" in type(exc).__name__.lower() or kind == "idempotency_error"
+            or not isinstance(status, int) or status in (409, 429) or not 400 <= status < 500):
+        return UNKNOWN
+    return REFUSED if kind in _DEFINITE else UNKNOWN
 
 
 def handle_webhook(*, payload: bytes, signature: str) -> dict:

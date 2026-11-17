@@ -5,8 +5,10 @@ NOT a user feature and it does NOT live in the desktop app (app/). It lives
 ONLY here in the cloud backend, reachable only by the founder.
 
 Surfaces (all behind ONE founder-only gate — `require_founder`):
-  GET /founder                  → a single self-contained HTML dashboard
-  GET /founder/api/overview     → headline JSON the page renders
+  GET /founder                  → the admin panel (cockpit_assets/admin.html)
+  GET /founder/map              → the system graph the founder's app publishes
+  GET /founder/api/inbox        → everything waiting on the founder, one list
+  GET /founder/api/overview     → headline JSON the status strip renders
   GET /founder/api/users        → user count + recent signups + by-plan
   GET /founder/api/subscriptions→ active subs by tier + estimated MRR
   GET /founder/api/system       → brain replica status, /healthz, version/build
@@ -744,8 +746,10 @@ router = APIRouter(prefix="/founder", tags=["founder-cockpit"])
 
 
 @router.get("/api/overview")
-def api_overview(_founder: dict = Depends(require_founder)) -> JSONResponse:
-    return JSONResponse(build_overview())
+def api_overview(founder: dict = Depends(require_founder)) -> JSONResponse:
+    me = db.get_user(founder["id"]) or founder
+    return JSONResponse(dict(build_overview(), me={"email": me.get("email"),
+                                                   "name": me.get("full_name") or ""}))
 
 
 @router.get("/api/users")
@@ -759,13 +763,21 @@ _PROFILE_FIELDS = ("full_name", "firm_name", "aec_role", "aec_discipline", "firm
 
 
 @router.get("/api/users/find")
-def api_users_find(q: str = "", limit: int = 50,
+def api_users_find(q: str = "", limit: int = 50, only: str = "",
                    _founder: dict = Depends(require_founder)) -> JSONResponse:
-    """Search accounts by email substring or exact id, newest first (read-only).
+    """The Users list: accounts by email or name substring or exact id, newest
+    first, narrowed by `only` (paying, trial, test, suspended), with how many
+    accounts each filter holds (read-only).
 
-    The same search the cockpit agent's users_find tool runs."""
-    import cockpit_agent
-    return JSONResponse(cockpit_agent._t_users_find({"query": q, "limit": max(1, min(limit, 200))}))
+    The same db.find_users the cockpit agent's users_find tool runs."""
+    rows = db.find_users(q, limit=max(1, min(limit, 200)), only=only or None)
+    presence = db.user_presence([row["id"] for row in rows])
+    for row in rows:
+        row.update(presence.get(row["id"], {"last_seen": None, "devices": 0}))
+        row["company_id"] = row.pop("current_company_id")
+        row["test"] = db.is_test_account_email(row["email"])
+        row["founder"] = row["email"] in config.founder_emails()
+    return JSONResponse({"count": len(rows), "users": rows, "counts": db.user_filter_counts()})
 
 
 @router.get("/api/users/{key}")
@@ -785,6 +797,8 @@ def api_user_detail(key: str, _founder: dict = Depends(require_founder)) -> JSON
     user["devices"] = db.list_devices(user["id"])
     user["suspended_at"] = row.get("suspended_at")
     user["suspended_reason"] = row.get("suspended_reason")
+    user["deleted_at"] = row.get("deleted_at")
+    user["founder"] = user["email"] in config.founder_emails()   # cannot be suspended
     user.update(db.user_activity(user["id"]))
     return JSONResponse({"ok": True, "user": user})
 
@@ -793,10 +807,17 @@ def _account(key: str) -> Optional[dict]:
     return db.get_user_by_email(key.strip().lower()) if "@" in key else db.get_user(key)
 
 
+def _typed(value, word: str) -> bool:
+    """The server's half of a typed confirmation: the founder typed the
+    action's word. Without it a destructive route changes nothing."""
+    return str(value or "").strip().upper() == word
+
+
 @router.post("/api/users/{key}/suspend")
 def api_user_suspend(key: str, payload: dict = Body(default={}),
                      founder: dict = Depends(require_founder)) -> JSONResponse:
-    """Suspend an account: every session it holds stops working, everywhere."""
+    """Suspend an account: every session it holds stops working, everywhere.
+    Needs {"typed": "SUSPEND"}."""
     account = _account(key)
     if account is None:
         return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
@@ -804,6 +825,8 @@ def api_user_suspend(key: str, payload: dict = Body(default={}),
         # Suspending a founder would lock the cockpit itself.
         return JSONResponse({"ok": False, "error": "a founder account cannot be suspended"},
                             status_code=409)
+    if not _typed(payload.get("typed"), "SUSPEND"):
+        return JSONResponse({"ok": False, "error": "type SUSPEND to confirm"}, status_code=400)
     reason = str(payload.get("reason") or "").strip() or "suspended by the founder"
     row = db.set_user_suspended(account["id"], reason)
     _audit(founder, "POST /founder/api/users/{key}/suspend", "user.suspend",
@@ -836,10 +859,14 @@ def api_user_restore(key: str, founder: dict = Depends(require_founder)) -> JSON
     account = _account(key)
     if account is None:
         return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
-    row = db.set_user_suspended(account["id"], None)
+    deleted = bool(account.get("deleted_at"))
+    row = (db.set_user_deleted if deleted else db.set_user_suspended)(account["id"], None)
     _audit(founder, "POST /founder/api/users/{key}/restore", "user.restore",
-           target=account["email"])
-    return JSONResponse({"ok": True, "user": {"email": row["email"], "suspended_at": None}})
+           target=account["email"], result={"reopened": deleted} if deleted else None)
+    # a suspension set before a delete survives the reopen; say so
+    return JSONResponse({"ok": True, "user": {"email": row["email"], "deleted_at": row.get("deleted_at"),
+                                              "suspended_at": row.get("suspended_at"),
+                                              "suspended_reason": row.get("suspended_reason")}})
 @router.get("/api/subscriptions")
 def api_subscriptions(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse(_subscriptions_panel())
@@ -858,6 +885,715 @@ def api_usage(_founder: dict = Depends(require_founder)) -> JSONResponse:
 @router.get("/api/errors")
 def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse({"errors": recent_errors(50)})
+
+
+@router.get("/api/companies")
+def api_companies(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Every company: plan, seats in use and bought, owner, AI mode, credits (read-only)."""
+    return JSONResponse({"companies": db.list_companies_billing()})
+
+
+def _company_or_404(company_id: str):
+    company = db.get_company(company_id)
+    if company is None:
+        return None, JSONResponse({"ok": False, "error": "no such company"}, status_code=404)
+    return company, None
+
+
+@router.get("/api/companies/{company_id}")
+def api_company_detail(company_id: str, _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """One company and its people, for the company panel (read-only)."""
+    company, missing = _company_or_404(company_id)
+    if missing:
+        return missing
+    row = next((c for c in db.list_companies_billing() if c["id"] == company_id), company)
+    return JSONResponse({"ok": True, "company": row,
+                         "members": [{"user_id": m["user_id"], "email": m["email"],
+                                      "full_name": m.get("full_name"), "role": m["role"]}
+                                     for m in db.list_company_members(company_id)]})
+
+
+@router.post("/api/companies/{company_id}/ai-mode")
+def api_company_ai_mode(company_id: str, payload: dict = Body(default={}),
+                        founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Switch a company between its own keys and ArchHub models."""
+    company, missing = _company_or_404(company_id)
+    if missing:
+        return missing
+    wanted = str(payload.get("ai_mode") or "").strip().lower()
+    if wanted not in config.AI_MODES:
+        return JSONResponse({"ok": False, "error": "ai_mode must be one of %s" % ", ".join(config.AI_MODES)},
+                            status_code=400)
+    mode = db.set_company_ai_mode(company_id, wanted)
+    _audit(founder, "POST /founder/api/companies/{id}/ai-mode", "company.ai_mode",
+           target=company["name"], result={"from": company.get("ai_mode"), "to": mode})
+    return JSONResponse({"ok": True, "company_id": company_id, "ai_mode": mode})
+
+
+@router.post("/api/companies/{company_id}/owner")
+def api_company_owner(company_id: str, payload: dict = Body(default={}),
+                      founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Hand a company to another of its members; the old owner stays as admin."""
+    company, missing = _company_or_404(company_id)
+    if missing:
+        return missing
+    new_owner = str(payload.get("user_id") or "").strip()
+    if new_owner == company.get("owner_user_id"):
+        return JSONResponse({"ok": False, "error": "already the owner"}, status_code=400)
+    member = db.get_membership(company_id, new_owner) if new_owner else None
+    if member is None:
+        return JSONResponse({"ok": False, "error": "not a member of this company"}, status_code=404)
+    db.transfer_company_ownership(company_id, company.get("owner_user_id"), new_owner)
+    email = (db.get_user(new_owner) or {}).get("email")
+    _audit(founder, "POST /founder/api/companies/{id}/owner", "company.owner",
+           target=company["name"], result={"owner": email})
+    return JSONResponse({"ok": True, "company_id": company_id, "owner_email": email})
+
+
+async def _api_company_invite_effect(company_id: str, payload: dict = Body(default={}),
+                             founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Invite someone into a company: the owner's own invite (companies.py),
+    seat check and emailed link included. The audit row never keeps the token."""
+    import companies
+    company, missing = _company_or_404(company_id)
+    if missing:
+        return missing
+    email = str(payload.get("email") or "").strip().lower()
+    role = str(payload.get("role") or "member").strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return JSONResponse({"ok": False, "error": "a valid email is required"}, status_code=400)
+    try:
+        invite = await companies.send_company_invite(company_id, email, role, founder["id"], with_outcome=True)
+    except HTTPException as refused:
+        code = refused.detail if isinstance(refused.detail, str) else ""
+        if code == "seat_limit_reached":
+            detail = "every seat is taken; add a seat first"
+        elif code == "invalid_role":
+            detail = "the role is admin or member"
+        else:
+            detail = code
+        _audit(founder, "POST /founder/api/companies/{id}/invite", "company.invite",
+               target=company["name"], result={"email": email, "refused": detail}, ok=False)
+        return JSONResponse({"ok": False, "error": detail}, status_code=refused.status_code)
+    import email_sender
+    outcome = invite["email_outcome"]
+    _audit(founder, "POST /founder/api/companies/{id}/invite", "company.invite",
+           target=company["name"], result={"email": email, "role": role, "outcome": outcome},
+           ok=outcome == email_sender.ACCEPTED)
+    return _mail_answer(outcome, {"role": role, "expires_at": invite["expires_at"]},
+                        "the invite was created but the email was refused; send it again for the same invite",
+                        created=True, email=email)
+
+
+async def _api_company_invite_resend_effect(company_id: str, payload: dict, founder: dict) -> JSONResponse:
+    """Email an existing outstanding invite again: the same token and the same
+    seat; never a second invite."""
+    import companies
+    import email_sender
+    company, missing = _company_or_404(company_id)
+    if missing:
+        return missing
+    email = str(payload.get("email") or "").strip().lower()
+    again = await companies.resend_company_invite(company_id, email) if email else None
+    if again is None:
+        return JSONResponse({"ok": False, "error": "no outstanding invite for that address"}, status_code=404)
+    outcome = again["email_outcome"]
+    _audit(founder, "POST /founder/api/companies/{id}/invite/resend", "company.invite.resend",
+           target=company["name"], result={"email": email, "outcome": outcome}, ok=outcome == email_sender.ACCEPTED)
+    return _mail_answer(outcome, {"expires_at": again["expires_at"]},
+                        "the email was refused again; the invite still holds its seat",
+                        created=True, resent=True, email=email)
+
+
+UNCERTAIN_TEXT = "may have been sent; check before sending again"
+
+
+async def _outcome_of(send) -> str:
+    """The mailer's three-valued outcome; anything raised on the way is UNKNOWN."""
+    import email_sender
+    try:
+        outcome = await send
+    except Exception:
+        return email_sender.UNKNOWN
+    return outcome if outcome in (email_sender.ACCEPTED, email_sender.REFUSED) else email_sender.UNKNOWN
+
+
+def _mail_answer(outcome: str, accepted: dict, refused_text: str, **known) -> JSONResponse:
+    """ACCEPTED -> sent. REFUSED -> definitely not sent, a new send may follow.
+    UNKNOWN -> uncertain: held until the founder checks, never retried by itself."""
+    import email_sender
+    if outcome == email_sender.ACCEPTED:
+        return JSONResponse({"ok": True, "emailed": True, **known, **accepted})
+    if outcome == email_sender.REFUSED:
+        return JSONResponse({"ok": False, "emailed": False, "refused": True, "retryable": True,
+                             "error": refused_text, **known}, status_code=502)
+    return JSONResponse({"ok": False, "emailed": None, "state": "uncertain", "error": UNCERTAIN_TEXT, **known},
+                        status_code=202)
+
+
+async def _api_user_email_effect(key: str, payload: dict = Body(default={}),
+                         founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Email one account from the founder, through the one sender
+    (email_sender). The audit row keeps the subject and the length, not the body."""
+    import email_sender
+    account = _account(key)
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    subject = str(payload.get("subject") or "").strip()[:200]
+    text = str(payload.get("text") or "").strip()[:20000]
+    if not subject or not text:
+        return JSONResponse({"ok": False, "error": "a subject and a message are required"},
+                            status_code=400)
+    body_html = "<p>" + "</p><p>".join(_html.escape(p) for p in text.split("\n\n")).replace("\n", "<br>") + "</p>"
+    outcome = await _outcome_of(email_sender.send_outcome(to=account["email"], subject=subject, text=text,
+                                                          html=email_sender._wrap(body_html)))
+    _audit(founder, "POST /founder/api/users/{key}/email", "user.email", target=account["email"],
+           result={"subject": subject, "chars": len(text), "outcome": outcome},
+           ok=outcome == email_sender.ACCEPTED)
+    return _mail_answer(outcome, {"email": account["email"], "subject": subject},
+                        "the mail provider refused it; nothing was delivered")
+
+
+# --- Feedback (F48.4; the store is feedback.py) -----------------------------
+def _feedback_or_404(feedback_id: str):
+    import feedback
+    row = feedback.get(feedback_id)
+    if row is None:
+        return None, JSONResponse({"ok": False, "error": "no such feedback"}, status_code=404)
+    return row, None
+
+
+@router.get("/api/feedback")
+def api_feedback(status: str = "", _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Feedback rows newest first, narrowed by status, with each status's count."""
+    import feedback
+    return JSONResponse({"ok": True, **feedback.listing(status.strip().lower())})
+
+
+@router.get("/api/feedback/{feedback_id}")
+def api_feedback_one(feedback_id: str, _founder: dict = Depends(require_founder)) -> JSONResponse:
+    row, missing = _feedback_or_404(feedback_id)
+    return missing or JSONResponse({"ok": True, "feedback": row})
+
+
+@router.post("/api/feedback/{feedback_id}/status")
+def api_feedback_status(feedback_id: str, payload: dict = Body(default={}),
+                        founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Move one row: new, planned, doing, shipped (handled) or declined."""
+    import feedback
+    row, missing = _feedback_or_404(feedback_id)
+    if missing:
+        return missing
+    status = str(payload.get("status") or "").strip().lower()
+    if status not in feedback.STATUSES:
+        return JSONResponse({"ok": False, "error": "status is one of %s" % ", ".join(feedback.STATUSES)},
+                            status_code=400)
+    done = feedback.set_status(feedback_id, status)
+    _audit(founder, "POST /founder/api/feedback/{id}/status", "feedback.status",
+           target=feedback_id, result={"from": row["status"], "to": status, "who": row.get("email")})
+    return JSONResponse({"ok": True, "feedback": done})
+
+
+@router.post("/api/feedback/{feedback_id}/plan")
+def api_feedback_plan(feedback_id: str, payload: dict = Body(default={}),
+                      founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Link one row to a plan row (a REQUESTS row id such as R238); empty unlinks."""
+    import feedback
+    row, missing = _feedback_or_404(feedback_id)
+    if missing:
+        return missing
+    plan_row = str(payload.get("plan_row") or "").strip()
+    if plan_row and not re.fullmatch(r"[A-Za-z]{1,4}\d{1,6}(\.\d{1,3})?", plan_row):
+        return JSONResponse({"ok": False, "error": "a plan row looks like R238 or F48.4"}, status_code=400)
+    done = feedback.set_plan(feedback_id, plan_row)
+    _audit(founder, "POST /founder/api/feedback/{id}/plan", "feedback.plan",
+           target=feedback_id, result={"from": row["plan_row"], "to": plan_row})
+    return JSONResponse({"ok": True, "feedback": done})
+
+
+@router.post("/api/feedback/{feedback_id}/merge")
+def api_feedback_merge(feedback_id: str, payload: dict = Body(default={}),
+                       founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Fold a duplicate into another row."""
+    import feedback
+    _, missing = _feedback_or_404(feedback_id)
+    if missing:
+        return missing
+    into = str(payload.get("into") or "").strip()
+    try:
+        feedback.merge(feedback_id, into)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "merge into another open row"}, status_code=400)
+    _audit(founder, "POST /founder/api/feedback/{id}/merge", "feedback.merge",
+           target=feedback_id, result={"into": into})
+    return JSONResponse({"ok": True, "feedback": feedback.get(into)})
+
+
+async def _api_feedback_reply_effect(feedback_id: str, payload: dict = Body(default={}),
+                             founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Answer the person by email (the one sender); the answer is kept on the row."""
+    import email_sender
+    import feedback
+    row, missing = _feedback_or_404(feedback_id)
+    if missing:
+        return missing
+    text = str(payload.get("text") or "").strip()[:20000]
+    subject = str(payload.get("subject") or "").strip()[:200] or "About your ArchHub feedback"
+    if not text:
+        return JSONResponse({"ok": False, "error": "write the answer first"}, status_code=400)
+    if not row.get("email"):
+        return JSONResponse({"ok": False, "error": "the account behind this feedback is gone"},
+                            status_code=409)
+    body_html = "<p>" + "</p><p>".join(_html.escape(p) for p in text.split("\n\n")).replace("\n", "<br>") + "</p>"
+    outcome = await _outcome_of(email_sender.send_outcome(to=row["email"], subject=subject, text=text,
+                                                          html=email_sender._wrap(body_html)))
+    _audit(founder, "POST /founder/api/feedback/{id}/reply", "feedback.reply", target=feedback_id,
+           result={"to": row["email"], "subject": subject, "chars": len(text), "outcome": outcome},
+           ok=outcome == email_sender.ACCEPTED)
+    if outcome != email_sender.ACCEPTED:          # the row keeps only answers known to have gone out
+        return _mail_answer(outcome, {}, "the mail provider refused it; nothing was delivered",
+                            replay={"kind": "reply", "feedback_id": feedback_id, "subject": subject, "text": text})
+    done = feedback.add_reply(feedback_id, by=(founder.get("email") or "").lower(),
+                              subject=subject, text=text)
+    return _mail_answer(outcome, {"feedback": done}, "")
+
+
+# --- Community: bans and marketplace packs (F48.3) ---------------------------
+@router.get("/api/community/bans")
+def api_community_bans(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    return JSONResponse({"ok": True, "bans": db.community_bans()})
+
+
+@router.post("/api/community/ban")
+def api_community_ban(payload: dict = Body(default={}),
+                      founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Stop one member's community shares: nothing they share reaches review
+    until they are allowed again. Needs {"typed": "BAN"} and a reason."""
+    account = _account(str(payload.get("user") or ""))
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    if account["email"].strip().lower() in config.founder_emails():
+        return JSONResponse({"ok": False, "error": "a founder account cannot be banned"}, status_code=409)
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return JSONResponse({"ok": False, "error": "a reason is required"}, status_code=400)
+    if not _typed(payload.get("typed"), "BAN"):
+        return JSONResponse({"ok": False, "error": "type BAN to confirm"}, status_code=400)
+    changed = db.community_ban(account["id"], reason, (founder.get("email") or "").lower())
+    _audit(founder, "POST /founder/api/community/ban", "community.ban", target=account["email"],
+           result={"reason": reason, "changed": changed})
+    return JSONResponse({"ok": True, "email": account["email"], "banned": True})
+
+
+@router.post("/api/community/unban")
+def api_community_unban(payload: dict = Body(default={}),
+                        founder: dict = Depends(require_founder)) -> JSONResponse:
+    account = _account(str(payload.get("user") or ""))
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    changed = db.community_ban(account["id"], None)
+    _audit(founder, "POST /founder/api/community/unban", "community.unban", target=account["email"],
+           result={"changed": changed})
+    return JSONResponse({"ok": True, "email": account["email"], "banned": False})
+
+
+_TAKEN_DOWN = "taken_down"
+
+
+@router.get("/api/packs")
+def api_packs(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Every marketplace pack with its author, numbers, state and reports."""
+    with db.connect() as con:
+        rows = con.execute(
+            "SELECT p.id, p.slug, p.title, p.version, p.status, p.source, p.download_count, "
+            "p.up_votes, p.down_votes, p.created_at, p.rejected_reason, u.email AS author_email, "
+            "u.full_name AS author_name FROM marketplace_packs p "
+            "LEFT JOIN users u ON u.id = p.author_user_id ORDER BY p.created_at DESC").fetchall()
+        reports = {}
+        for r in con.execute("SELECT pack_id, reason, created_at FROM marketplace_reports "
+                             "ORDER BY created_at DESC"):
+            reports.setdefault(r["pack_id"], []).append({"reason": r["reason"], "at": r["created_at"]})
+    packs = [dict(r, reports=reports.get(r["id"], [])) for r in rows]
+    return JSONResponse({"ok": True, "packs": packs})
+
+
+def _pack_status(pack_id: str) -> Optional[str]:
+    with db.connect() as con:
+        row = con.execute("SELECT status FROM marketplace_packs WHERE id = ?", (pack_id,)).fetchone()
+    return row["status"] if row else None
+
+
+@router.post("/api/packs/{pack_id}/takedown")
+def api_pack_takedown(pack_id: str, payload: dict = Body(default={}),
+                      founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Take an approved pack off the marketplace: listings, the pack page and
+    downloads stop serving it to members (they serve approved packs only).
+    Reversible with /restore. Needs {"typed": "TAKEDOWN"} and a reason."""
+    import marketplace
+    status = _pack_status(pack_id)
+    if status is None:
+        return JSONResponse({"ok": False, "error": "no such pack"}, status_code=404)
+    if status != marketplace.STATUS_APPROVED:
+        return JSONResponse({"ok": False, "error": "only a pack on the marketplace can be taken down"},
+                            status_code=409)
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return JSONResponse({"ok": False, "error": "a reason is required"}, status_code=400)
+    if not _typed(payload.get("typed"), "TAKEDOWN"):
+        return JSONResponse({"ok": False, "error": "type TAKEDOWN to confirm"}, status_code=400)
+    with db.connect() as con:
+        con.execute("UPDATE marketplace_packs SET status = ?, rejected_reason = ?, updated_at = ? "
+                    "WHERE id = ?", (_TAKEN_DOWN, reason[:500], int(time.time()), pack_id))
+    _audit(founder, "POST /founder/api/packs/{id}/takedown", "pack.takedown", target=pack_id,
+           result={"reason": reason})
+    return JSONResponse({"ok": True, "pack_id": pack_id, "status": _TAKEN_DOWN})
+
+
+@router.post("/api/packs/{pack_id}/restore")
+def api_pack_restore(pack_id: str, founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Put a taken-down pack back on the marketplace."""
+    import marketplace
+    status = _pack_status(pack_id)
+    if status is None:
+        return JSONResponse({"ok": False, "error": "no such pack"}, status_code=404)
+    if status != _TAKEN_DOWN:
+        return JSONResponse({"ok": False, "error": "this pack was not taken down"}, status_code=409)
+    with db.connect() as con:
+        con.execute("UPDATE marketplace_packs SET status = ?, rejected_reason = NULL, updated_at = ? "
+                    "WHERE id = ?", (marketplace.STATUS_APPROVED, int(time.time()), pack_id))
+    _audit(founder, "POST /founder/api/packs/{id}/restore", "pack.restore", target=pack_id)
+    return JSONResponse({"ok": True, "pack_id": pack_id, "status": marketplace.STATUS_APPROVED})
+
+
+
+# --- One confirmed action, once (every Cockpit route with an outside effect) ---
+# The page makes one key when the founder confirms (Send, the typed word) and
+# reuses it on every retry of that submission; a new deliberate submission gets
+# a fresh key. The key is claimed durably BEFORE the effect, the result is kept
+# after it, and a repeat returns that truth instead of acting again.
+ACTION_IN_FLIGHT_S = 120
+
+
+def _body_hash(route: str, target: str, payload: dict) -> str:
+    import hashlib
+    body = {k: v for k, v in payload.items() if k != "action_key"}
+    return hashlib.sha256(json.dumps([route, target, body], sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+async def _guarded(founder: dict, route: str, target, payload: dict, effect,
+                   hold: Optional[str] = None) -> JSONResponse:
+    import inspect
+    key = payload.get("action_key")
+    if not isinstance(key, str) or not 8 <= len(key) <= 100:
+        return JSONResponse({"ok": False, "error": "action_key (one per confirmed action) is required"},
+                            status_code=400)
+    who = (founder.get("email") or "").strip().lower()
+    digest = _body_hash(route, str(target), payload)
+    now = int(time.time())
+    if hold is None and db.get_action_key(key) is None and db.unresolved_action_keys(
+            who, stale_before=now - ACTION_IN_FLIGHT_S, money_stale_before=now - REFUND_IN_FLIGHT_S,
+            route=route, body_hash=digest):
+        return JSONResponse({"ok": False, "state": "held",
+                             "error": "an earlier send of this is unresolved; check it or resolve it first"},
+                            status_code=409)
+    held = db.claim_action_key(key=key, founder=who, route=route, target=str(target)[:200], body_hash=digest,
+                               hold=hold)
+    if held is db.HELD:          # the database refused a second unresolved action on this payment
+        return JSONResponse({"ok": False, "state": "held",
+                             "error": "This payment has a refund whose result is unknown or still running. "
+                     "Look at it in Stripe; the panel will not refund this payment again."},
+                            status_code=409)
+    if held is not None:
+        if held["founder"] != who or held["body_hash"] != digest:
+            return JSONResponse({"ok": False, "state": "refused",
+                                 "error": "this key belongs to a different request"}, status_code=409)
+        if held["state"] == "done":
+            recorded = json.loads(held["result"] or "{}")
+            recorded["repeat"] = True        # the recorded truth; nothing was done again
+            return JSONResponse(recorded, status_code=int(held["status"] or 200))
+        if held["state"].startswith("resolved_"):
+            arrived = held["state"] == "resolved_sent"
+            return JSONResponse({"ok": arrived, "state": held["state"], "repeat": True,
+                                 "error": None if arrived else "you confirmed it did not arrive"}, status_code=200)
+        if held["state"] == "uncertain":
+            return JSONResponse({"ok": False, "state": "uncertain", "repeat": True, "error": UNCERTAIN_TEXT},
+                                status_code=202)
+        if int(time.time()) - int(held["claimed_at"]) < (REFUND_IN_FLIGHT_S if held.get("hold") else ACTION_IN_FLIGHT_S):
+            return JSONResponse({"ok": False, "state": "in_flight",
+                                 "error": "this action is still running; ask again in a moment"}, status_code=409)
+        return JSONResponse({"ok": False, "state": "uncertain",
+                             "error": "may have been sent; check before sending again"}, status_code=409)
+    answer = effect(dict(payload))
+    if inspect.isawaitable(answer):
+        answer = await answer
+    text = answer.body.decode("utf-8")
+    db.finish_action_key(key, status=answer.status_code, result=text,
+                         state="uncertain" if '"state":"uncertain"' in text.replace(" ", "") else "done")
+    return answer
+
+
+_ROUTE_WORDS = {
+    "POST /founder/api/users/{key}/email": "Email",
+    "POST /founder/api/feedback/{feedback_id}/reply": "Feedback answer",
+    "POST /founder/api/companies/{company_id}/invite": "Company invite",
+    "POST /founder/api/companies/{company_id}/invite/resend": "Invite email again",
+    "POST /founder/api/stripe/refund": "Refund",
+}
+
+
+def _action_view(row: dict) -> dict:
+    """One journal row as the page shows it (never the request body)."""
+    window = REFUND_IN_FLIGHT_S if row.get("hold") else ACTION_IN_FLIGHT_S
+    state = row["state"]
+    if state == "claimed":
+        state = "uncertain" if row["claimed_at"] < int(time.time()) - window else "in_flight"
+    target = row["target"]
+    if "/users/" in row["route"] and "@" not in target:          # a person by id: show who
+        target = (db.get_user(target) or {}).get("email") or target
+    return {"key": row["key"], "what": _ROUTE_WORDS.get(row["route"], row["route"]), "route": row["route"],
+            "target": target, "state": state, "claimed_at": row["claimed_at"],
+            "finished_at": row["finished_at"], "detail": _replay_of(row).get("detail", ""),
+            "money": bool(row.get("hold")), **_refund_view(row)}
+
+
+def _refund_view(row: dict) -> dict:
+    """For a refund: amount, customer, payment and the Stripe link; nothing that acts."""
+    if not row.get("hold"):
+        return {}
+    try:      # the server-derived context written before the Stripe call; missing stays missing
+        context = json.loads(row.get("context") or "{}") or {}
+    except ValueError:
+        context = {}
+    payment = context.get("payment") or row["target"]
+    return {"payment_intent": payment, "amount": context.get("amount"), "currency": context.get("currency"),
+            "customer": context.get("customer"), "stripe_url": stripe_payment_url(payment),
+            "message": REFUND_UNKNOWN_TEXT}
+
+
+def _customer_of(read: dict) -> dict:
+    """The customer part of a refund's stored context: the email, or why it is missing."""
+    return {"customer": read.get("email"), "customer_error": read.get("error")}
+
+
+def _refund_route() -> str:
+    """The refund route's journal name, read from the registered route (one source)."""
+    return "POST " + next(r.path for r in router.routes if getattr(r, "name", "") == "api_stripe_refund")
+
+
+REFUND_IN_FLIGHT_S = 600       # a refund holds its payment this long before it can count as lost
+
+
+def _stale() -> dict:
+    now = int(time.time())
+    return {"stale_before": now - ACTION_IN_FLIGHT_S, "money_stale_before": now - REFUND_IN_FLIGHT_S}
+
+
+def _money_uncertain(replay: dict) -> JSONResponse:
+    """Stripe may have refunded. Held; Check reads Stripe to find out."""
+    return JSONResponse({"ok": False, "state": "uncertain", "error": UNCERTAIN_TEXT, "replay": replay},
+                        status_code=202)
+
+
+def _replay_of(row: dict) -> dict:
+    try:
+        return (json.loads(row.get("result") or "{}") or {}).get("replay") or {}
+    except ValueError:
+        return {}
+
+
+def stripe_payment_url(payment_intent: str) -> str:
+    """A plain link to one payment in the Stripe dashboard. The mode comes from
+    the configured secret key; when it cannot be told, the dashboard search."""
+    from urllib.parse import quote
+    key = config.STRIPE_SECRET_KEY or ""
+    if key.startswith(("sk_test_", "rk_test_")):
+        return "https://dashboard.stripe.com/test/payments/" + quote(payment_intent, safe="")
+    if key.startswith(("sk_live_", "rk_live_")):
+        return "https://dashboard.stripe.com/payments/" + quote(payment_intent, safe="")
+    return "https://dashboard.stripe.com/search?query=" + quote(payment_intent, safe="")
+
+
+REFUND_UNKNOWN_TEXT = ("The refund's result is unknown. Look at this payment in Stripe. "
+                       "The panel will not refund this payment again.")
+
+
+@router.post("/api/actions/key/{key}/check")
+def api_action_check_record(key: str, founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Check an unresolved email action: a read of our own record, nothing is
+    sent. A refund has no Check here; its result is looked at in Stripe."""
+    who = (founder.get("email") or "").strip().lower()
+    row = db.get_action_key(key)
+    if row is None or row["founder"] != who:
+        return JSONResponse({"ok": False, "error": "no such action"}, status_code=404)
+    if row.get("hold"):
+        return JSONResponse({"ok": False, "error": REFUND_UNKNOWN_TEXT, "action": _action_view(row)},
+                            status_code=409)
+    _audit(founder, "POST /founder/api/actions/key/{key}/check", "action.check", target=row["target"],
+           result={"what": _ROUTE_WORDS.get(row["route"], row["route"]), "state": _action_view(row)["state"]})
+    return JSONResponse({"ok": True, "settled": False, "action": _action_view(row)})
+
+
+@router.get("/api/actions/unresolved")
+def api_actions_unresolved(founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Actions nobody can vouch for yet, read from the journal itself."""
+    who = (founder.get("email") or "").strip().lower()
+    rows = db.unresolved_action_keys(who, **_stale())
+    return JSONResponse({"ok": True, "actions": [_action_view(r) for r in rows]})
+
+
+@router.post("/api/actions/key/{key}/resolve")
+def api_action_resolve(key: str, payload: dict = Body(default={}),
+                       founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The founder checked an unresolved action: {"arrived": true} closes it as
+    sent, {"arrived": false} as not sent (only then can it be sent anew)."""
+    arrived = payload.get("arrived")
+    if not isinstance(arrived, bool):
+        return JSONResponse({"ok": False, "error": "say whether it arrived (true or false)"}, status_code=400)
+    row = db.get_action_key(key)
+    if row is None or row["founder"] != (founder.get("email") or "").strip().lower():
+        return JSONResponse({"ok": False, "error": "no such action"}, status_code=404)
+    if row.get("hold"):              # a refund: never closed by the panel, its payment stays held
+        return JSONResponse({"ok": False, "error": REFUND_UNKNOWN_TEXT}, status_code=409)
+    if not db.resolve_action_key(key, arrived=arrived, **_stale()):
+        return JSONResponse({"ok": False, "error": "this action is not unresolved"}, status_code=409)
+    replay = _replay_of(row)
+    if arrived and replay.get("kind") == "reply":    # it did reach the person: the answer belongs on the row
+        import feedback
+        feedback.add_reply(replay["feedback_id"], by=row["founder"], subject=replay.get("subject") or "",
+                           text=replay.get("text") or "")
+    _audit(founder, "POST /founder/api/actions/key/{key}/resolve", "action.resolve", target=row["target"],
+           result={"what": _ROUTE_WORDS.get(row["route"], row["route"]), "arrived": arrived, "key": key[:12]})
+    return JSONResponse({"ok": True, "action": _action_view(db.get_action_key(key))})
+
+
+@router.post("/api/companies/{company_id}/invite/resend")
+async def api_company_invite_resend(company_id: str, payload: dict = Body(default={}),
+                                    founder: dict = Depends(require_founder)) -> JSONResponse:
+    return await _guarded(founder, "POST /founder/api/companies/{company_id}/invite/resend", company_id, payload,
+                          lambda body: _api_company_invite_resend_effect(company_id, body, founder))
+
+
+@router.post("/api/users/{key}/email")
+async def api_user_email(key: str, payload: dict = Body(default={}), founder: dict = Depends(require_founder)) -> JSONResponse:
+    return await _guarded(founder, "POST /founder/api/users/{key}/email", key, payload,
+                          lambda body: _api_user_email_effect(key, body, founder))
+
+@router.post("/api/feedback/{feedback_id}/reply")
+async def api_feedback_reply(feedback_id: str, payload: dict = Body(default={}), founder: dict = Depends(require_founder)) -> JSONResponse:
+    return await _guarded(founder, "POST /founder/api/feedback/{feedback_id}/reply", feedback_id, payload,
+                          lambda body: _api_feedback_reply_effect(feedback_id, body, founder))
+
+@router.post("/api/companies/{company_id}/invite")
+async def api_company_invite(company_id: str, payload: dict = Body(default={}), founder: dict = Depends(require_founder)) -> JSONResponse:
+    return await _guarded(founder, "POST /founder/api/companies/{company_id}/invite", company_id, payload,
+                          lambda body: _api_company_invite_effect(company_id, body, founder))
+
+@router.post("/api/stripe/refund")
+async def api_stripe_refund(payload: dict = Body(default={}), founder: dict = Depends(require_founder)) -> JSONResponse:
+    token = str(payload.get("confirm_token") or "").strip()
+    if token:   # the confirm step: the payment comes from the held confirmation, never from the page
+        payment = db.refund_confirmation_payment(token, founder_id=founder["id"])
+        return await _guarded(founder, _refund_route(), payment or "unknown-confirmation", payload,
+                              lambda body: _api_stripe_refund_effect(body, founder),
+                              hold=("refund:" + payment) if payment else None)
+    return await _guarded(founder, _refund_route(), str(payload.get("payment_intent") or "")[:80], payload,
+                          lambda body: _api_stripe_refund_effect(body, founder))
+
+
+# --- Leftovers: delete account, errors, usage ------------------
+@router.post("/api/users/{key}/delete")
+def api_user_delete(key: str, payload: dict = Body(default={}),
+                    founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Delete an account the way spec 35.08 app-002 section 9 defines it: a typed
+    confirm, and it never touches Stripe. The account is closed (every session
+    stops, sign-in is refused); no row of the person's data is removed, and
+    Restore reopens it. Needs {"typed": "DELETE"}."""
+    account = _account(key)
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    if account["email"].strip().lower() in config.founder_emails():
+        return JSONResponse({"ok": False, "error": "a founder account cannot be deleted"},
+                            status_code=409)
+    if not _typed(payload.get("typed"), "DELETE"):
+        return JSONResponse({"ok": False, "error": "type DELETE to confirm"}, status_code=400)
+    reason = str(payload.get("reason") or "").strip() or "deleted by the founder"
+    row = db.set_user_deleted(account["id"], reason)
+    _audit(founder, "POST /founder/api/users/{key}/delete", "user.delete", target=account["email"],
+           result={"reason": reason, "data_removed": False})
+    return JSONResponse({"ok": True, "user": {"email": row["email"], "deleted_at": row["deleted_at"]}})
+
+
+@router.post("/api/errors/resolve")
+def api_errors_resolve(payload: dict = Body(default={}),
+                       founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Mark one failure fixed: every recorded repeat of it (same place, same kind) leaves the log."""
+    where, kind = str(payload.get("where") or ""), str(payload.get("kind") or "")
+    if not where or not kind:
+        return JSONResponse({"ok": False, "error": "where and kind are required"}, status_code=400)
+    gone = db.resolve_cockpit_errors(at=where, kind=kind)
+    for item in [e for e in _ERROR_RING if e["where"] == where and e["kind"] == kind]:
+        _ERROR_RING.remove(item)
+    _audit(founder, "POST /founder/api/errors/resolve", "errors.resolve", target=where,
+           result={"kind": kind, "removed": gone})
+    return JSONResponse({"ok": True, "removed": gone})
+
+
+@router.get("/api/usage/daily")
+def api_usage_daily(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Messages a day by model family and the top spenders, last 30 days (test accounts excluded)."""
+    return JSONResponse({"ok": True, "days": db.usage_by_day(30), "top": db.top_spenders(30, 6)})
+
+
+@router.get("/api/inbox")
+def api_inbox(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Everything waiting on the founder, newest first: one read over the
+    queues that already exist. Each item carries the keys its action route
+    needs; nothing is stored here."""
+    now = int(time.time())
+    emails: dict = {}
+
+    def email_of(user_id) -> Optional[str]:
+        if user_id not in emails:
+            emails[user_id] = (db.get_user(str(user_id or "")) or {}).get("email")
+        return emails[user_id]
+
+    items = [{"kind": "community", "at": row["submitted_at"], "who": email_of(row["contributor"]),
+              "text": row["text"], "community_id": row["community_id"],
+              "id": row["fragment_id"], "hlc": row["hlc"]}
+             for row in db.pending_community_versions()]
+    items += [{"kind": "payment_failed", "at": event["ts"], "who": event["email"],
+               "amount": event["amount"], "currency": event["currency"],
+               "text": event["detail"], "id": event["stripe_object"]}
+              for event in db.recent_payment_events("payment_failed", 20)
+              if now - int(event["ts"]) <= 14 * 86400]
+    items += [{"kind": "relay_failed", "at": task.get("finished_at") or task["created_at"],
+               "title": str(task.get("directive") or "")[:300],
+               "text": str(task.get("result") or "")[:300], "id": task["id"]}
+              for task in db.list_agent_tasks(20, "failed")]
+    items += [{"kind": "error", "at": error["ts"], "title": error["kind"],
+               "text": error["message"], "where": error["where"]}
+              for error in recent_errors(50) if now - int(error["ts"]) <= 86400]
+    import feedback
+    items += [{"kind": "feedback", "at": row["created_at"], "who": row.get("email"),
+               "text": row["text"], "id": row["id"], "type": row["type"]}
+              for row in feedback.listing("new", 50)["feedback"]]
+    with db.connect() as con:
+        reported = con.execute(
+            "SELECT p.id, p.title, u.email, COUNT(r.id) AS n, MAX(r.created_at) AS at, "
+            "GROUP_CONCAT(r.reason, ' · ') AS reasons FROM marketplace_reports r "
+            "JOIN marketplace_packs p ON p.id = r.pack_id LEFT JOIN users u ON u.id = p.author_user_id "
+            "WHERE p.status = 'approved' GROUP BY p.id").fetchall()
+    items += [{"kind": "pack_reported", "at": row["at"], "who": row["email"], "title": row["title"],
+               "text": "%d report%s: %s" % (row["n"], "" if row["n"] == 1 else "s", row["reasons"]),
+               "id": row["id"]} for row in reported]
+    who = (_founder.get("email") or "").strip().lower()
+    items += [{"kind": "unresolved", "at": view["claimed_at"], "who": view["target"] if "@" in view["target"] else None,
+               "title": view["what"] + " · " + view["target"], "id": view["key"],
+               "text": view.get("message") or UNCERTAIN_TEXT, "stripe_url": view.get("stripe_url"),
+               "amount": view.get("amount"), "currency": view.get("currency"), "customer": view.get("customer")}
+              for view in (_action_view(r) for r in db.unresolved_action_keys(who, **_stale()))]
+    items.sort(key=lambda item: int(item["at"] or 0), reverse=True)
+    return JSONResponse({"count": len(items), "items": items})
 
 
 # --- Community Brain moderation (ADGR-0004) --------------------------------
@@ -925,7 +1661,8 @@ def api_community_judge(payload: dict = Body(default={}),
         raise HTTPException(status_code=400, detail="community_id, id, hlc and admit (true/false) are required")
     judged = db.judge_community_version(cid, fid, hlc, admit=admit, decided_by=founder["id"])
     _audit(founder, "/founder/api/community/judge", "community.judge", target="%s/%s@%s" % (cid, fid, hlc),
-           result={"admit": admit, "judged": judged}, ok=judged)
+           result={"admit": admit, "judged": judged,
+                   "reason": str(payload.get("reason") or "").strip()[:300]}, ok=judged)
     if not judged:
         raise HTTPException(status_code=409, detail="no pending version with that id and hlc")
     return JSONResponse({"ok": True, "status": "admitted" if admit else "rejected"})
@@ -1062,18 +1799,21 @@ def api_stripe(_founder: dict = Depends(require_founder)) -> JSONResponse:
                          "refunds": db.recent_payment_events("refund")})
 
 
-@router.post("/api/stripe/refund")
-def api_stripe_refund(payload: dict = Body(default={}),
+def _api_stripe_refund_effect(payload: dict = Body(default={}),
                       founder: dict = Depends(require_founder)) -> JSONResponse:
     """A refund the founder clicks, in two steps.
 
     Without confirm_token: a preview of the payment and a single-use token
     (five minutes, bound to this founder, payment and amount). With it: the
     refund, sent once under an idempotency key derived from the token, and
-    audited. Nothing else in the cockpit (the agent included) can refund."""
+    audited. Both steps need a reason, which the audit rows keep. Nothing else
+    in the cockpit (the agent included) can refund."""
     import billing
     actor = (founder.get("email") or "").strip().lower()
     token = str(payload.get("confirm_token") or "").strip()
+    reason = str(payload.get("reason") or "").strip()[:300]
+    if not reason:
+        return JSONResponse({"ok": False, "error": "a reason is required"}, status_code=400)
     if not token:
         intent = str(payload.get("payment_intent") or "").strip()
         if not intent.startswith("pi_"):
@@ -1092,26 +1832,52 @@ def api_stripe_refund(payload: dict = Body(default={}),
         confirm = db.issue_refund_confirmation(founder_id=founder["id"], payment_intent=intent,
                                                amount=amount, currency=preview["currency"])
         _audit(founder, "POST /founder/api/stripe/refund", "stripe.refund.preview",
-               target=intent, result={"amount": amount, "currency": preview["currency"]})
+               target=intent, result={"amount": amount, "currency": preview["currency"],
+                                      "reason": reason})
         return JSONResponse({"ok": True, "needs_confirm": True, "confirm_token": confirm,
                              "payment_intent": intent, "amount": amount,
                              "currency": preview["currency"], "expires_in_s": 300})
+    if not _typed(payload.get("typed"), "REFUND"):
+        # The money moves only with the founder's typed word, checked here, not in the page.
+        return JSONResponse({"ok": False, "error": "type REFUND to confirm"}, status_code=400)
     held = db.claim_refund_confirmation(token, founder_id=founder["id"])
     if held is None:
         return JSONResponse({"ok": False, "error": "this confirmation is used, expired or not yours"},
                             status_code=409)
+    # Stripe's idempotency key comes from the one-time confirmation, as it always has.
     key = "archhub-refund-" + held["token_digest"][:40]
+    # A non-secret correlation for a later reconciliation, stored on the action row before the
+    # call and sent as metadata. Derived from the confirmation's key, so a retry of the same
+    # confirmation sends the very same request body under the very same idempotency key.
+    import hashlib
+    correlation = "act_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+    context = {"payment": held["payment_intent"], "amount": int(held["amount"]),
+               "currency": held.get("currency") or None,
+               **_customer_of(billing.payment_customer(held["payment_intent"]))}   # the server's records only
+    db.set_action_context(str(payload.get("action_key") or ""), correlation=correlation, context=context)
     try:
         refund = billing.refund_payment(payment_intent=held["payment_intent"], amount=held["amount"],
-                                        idempotency_key=key, founder=actor)
+                                        idempotency_key=key, founder=actor, correlation=correlation)
     except Exception as exc:
-        db.release_refund_confirmation(token)
+        outcome = billing.refund_outcome(exc)
         _audit(founder, "POST /founder/api/stripe/refund", "stripe.refund",
-               target=held["payment_intent"], result={"error": type(exc).__name__}, ok=False)
-        return JSONResponse({"ok": False, "error": "Stripe: %s" % type(exc).__name__},
-                            status_code=502)
+               target=held["payment_intent"],
+               result={"error": type(exc).__name__, "reason": reason, "outcome": outcome}, ok=False)
+        if outcome == billing.UNKNOWN:                  # the confirmation stays used: nothing new can start
+            return _money_uncertain({"kind": "refund", "payment_intent": context["payment"],
+                                     "amount": context["amount"], "currency": context["currency"],
+                                     "founder_email": actor, "reason": reason, "correlation": correlation,
+                                     "customer": context["customer"],
+                                     "stripe_url": stripe_payment_url(held["payment_intent"]),
+                                     "message": REFUND_UNKNOWN_TEXT,
+                                     "detail": "refund %s %s of %s to %s" % (
+                                         held["amount"], held.get("currency") or "", held["payment_intent"],
+                                         context["customer"] or "customer not recorded")})
+        db.release_refund_confirmation(token)       # only a definite card or request error gets here
+        return JSONResponse({"ok": False, "refused": True, "retryable": True,
+                             "error": "Stripe refused it: %s" % type(exc).__name__}, status_code=502)
     _audit(founder, "POST /founder/api/stripe/refund", "stripe.refund",
-           target=held["payment_intent"], result=refund)
+           target=held["payment_intent"], result={**refund, "reason": reason})
     return JSONResponse({"ok": True, "refund": refund})
 
 
@@ -1162,8 +1928,10 @@ def api_relay_retry(task_id: str, founder: dict = Depends(require_founder)) -> J
 @router.post("/api/relay/drain")
 def api_relay_drain(payload: dict = Body(default={}),
                     founder: dict = Depends(require_founder)) -> JSONResponse:
-    """Close every queued relay task; none of them runs later."""
-    reason = "drained by the founder: %s" % (
+    """Close every queued relay task; none of them runs later. Needs {"typed": "DRAIN"}."""
+    if not _typed(payload.get("typed"), "DRAIN"):
+        return JSONResponse({"ok": False, "error": "type DRAIN to confirm"}, status_code=400)
+    reason ="drained by the founder: %s" % (
         str(payload.get("reason") or "").strip() or "no reason given")
     ids = db.drain_agent_tasks(reason)
     _audit(founder, "POST /founder/api/relay/drain", "relay.drain",
@@ -1244,8 +2012,10 @@ def api_agent_task_get(task_id: str,
 class PurgeTestUsersReq(BaseModel):
     """Body for POST /founder/api/purge-test-users. `confirm` MUST be true —
     an unconfirmed call is a dry-run that reports the count WITHOUT deleting,
-    so the founder can see exactly how many rows would go before committing."""
+    so the founder can see exactly how many rows would go before committing.
+    A confirmed call must also carry the typed word DELETE."""
     confirm: bool = False
+    typed: str = ""
 
 
 @router.post("/api/purge-test-users")
@@ -1258,13 +2028,15 @@ def api_purge_test_users(
     production users table. Also reachable as the 'purge test users' command;
     both paths write the founder_action_log audit row.
 
-    Two locks, both required:
+    Three locks, all required:
       1. FOUNDER GATE — `require_founder` (same as every cockpit route): only
          the founder email passes; everyone else (incl. unauthenticated) → 403.
       2. EXPLICIT CONFIRM — the body must carry {"confirm": true}. Without it
          the call is a safe DRY-RUN: it reports the count that WOULD be deleted
          and deletes nothing, so the destructive action can never fire by
          accident.
+      3. TYPED WORD — a confirmed call must carry {"typed": "DELETE"}; without
+         it the call is refused (400) and deletes nothing.
 
     The response carries BOTH naming conventions the cockpit surfaces use, so
     the same endpoint serves the dashboard widget and the command alias:
@@ -1288,8 +2060,10 @@ def api_purge_test_users(
             "would_delete":  n,
             "purged":        0,
             "emails":        [p["email"] for p in preview],
-            "note":          "confirm:true required to actually delete.",
+            "note":          "confirm:true and typed:DELETE required to actually delete.",
         })
+    if not _typed(body.typed, "DELETE"):
+        return JSONResponse({"ok": False, "error": "type DELETE to confirm"}, status_code=400)
     victims = db.list_test_users()
     emails = [v["email"] for v in victims]
     purged = db.delete_test_users()
@@ -1447,27 +2221,20 @@ def cockpit_asset(asset: str,
     return Response(target.read_bytes(), media_type=kind)
 
 
-@router.get("/admin", response_class=HTMLResponse)
-def cockpit_admin(_founder: dict = Depends(require_founder)) -> HTMLResponse:
-    """The users/subscriptions/errors dashboard, one click from the map."""
-    return HTMLResponse(_PAGE_HTML)
+@router.get("/map", response_class=HTMLResponse)
+def cockpit_map(_founder: dict = Depends(require_founder)) -> HTMLResponse:
+    """The system graph (atlas) the founder's application publishes."""
+    return HTMLResponse((_COCKPIT_ASSETS / "map.html").read_text(encoding="utf-8"))
 
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
-    """The single self-contained on-brand HTML dashboard. It hydrates from
-    the /founder/api/* endpoints (which share this route's founder gate) and
-    auto-refreshes every 30s. All styling is inline so the page has zero
-    external dependencies.
-
-    The cockpit IS the grand map -- brain, cockpit and graph are one
-    model, so /founder opens the atlas. The admin dashboard remains one
-    click away at /founder/admin."""
-    page = _COCKPIT_ASSETS / "map.html"
-    if page.is_file():
-        return HTMLResponse(page.read_text(encoding="utf-8"))
-    return HTMLResponse(_PAGE_HTML)
+    """The Cockpit: the founder's admin panel (founder 2026-11-17: "an admin
+    panel to manage the application from, not a dashboard"). One static page;
+    every list and action on it calls the /founder/api/* routes, which share
+    this route's founder gate, and every action lands in the founder audit log."""
+    return HTMLResponse((_COCKPIT_ASSETS / "admin.html").read_text(encoding="utf-8"))
 
 
 # --- The door (the ONLY ungated cockpit routes) -------------------------------
@@ -1522,468 +2289,6 @@ def logout() -> Response:
     resp = RedirectResponse(url="/founder/login", status_code=303)
     resp.delete_cookie(key=FOUNDER_COOKIE, path="/founder")
     return resp
-
-
-# ---------------------------------------------------------------------------
-# The page (on-brand: terracotta #d97757, Instrument Serif headings, Inter
-# body, no emoji, cards + small tables, auto-refresh ~30s).
-# ---------------------------------------------------------------------------
-_PAGE_HTML = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex, nofollow" />
-<title>ArchHub - Founder Cockpit</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg:#0f0f12; --panel:#16161b; --panel-2:#1c1c22; --line:#2a2a33;
-    --ink:#ece8e0; --ink-dim:#a39e93; --ink-faint:#6f6a60;
-    --terracotta:#d97757; --terracotta-soft:rgba(217,119,87,.14);
-    --good:#5fa777; --warn:#d9a657; --bad:#d96757;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font-family:'Inter',system-ui,-apple-system,sans-serif;
-    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;}
-  a{color:var(--terracotta);text-decoration:none}
-  .wrap{max-width:1140px;margin:0 auto;padding:40px 28px 80px}
-  header{display:flex;align-items:baseline;justify-content:space-between;
-    gap:16px;flex-wrap:wrap;margin-bottom:8px}
-  h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;
-    font-size:42px;letter-spacing:.3px;margin:0;line-height:1.05}
-  h1 .sub{color:var(--terracotta)}
-  .meta{color:var(--ink-faint);font-size:12.5px}
-  .meta b{color:var(--ink-dim);font-weight:500}
-  .grid{display:grid;gap:16px;margin-top:24px}
-  .kpis{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
-  .cards{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
-  .card{background:var(--panel);border:1px solid var(--line);
-    border-radius:14px;padding:20px 22px}
-  .card h2{font-family:'Instrument Serif',Georgia,serif;font-weight:400;
-    font-size:23px;margin:0 0 14px;letter-spacing:.2px}
-  .kpi{background:var(--panel);border:1px solid var(--line);
-    border-radius:14px;padding:18px 20px}
-  .kpi .label{color:var(--ink-faint);font-size:11.5px;text-transform:uppercase;
-    letter-spacing:.8px;margin-bottom:8px}
-  .kpi .value{font-family:'Instrument Serif',Georgia,serif;font-size:36px;
-    line-height:1;color:var(--ink)}
-  .kpi .value.accent{color:var(--terracotta)}
-  .kpi .delta{color:var(--ink-dim);font-size:12px;margin-top:8px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;color:var(--ink-faint);font-weight:500;font-size:11px;
-    text-transform:uppercase;letter-spacing:.6px;padding:6px 8px;
-    border-bottom:1px solid var(--line)}
-  td{padding:7px 8px;border-bottom:1px solid var(--panel-2);color:var(--ink-dim)}
-  td.ink{color:var(--ink)}
-  tr:last-child td{border-bottom:none}
-  .pill{display:inline-block;padding:1px 9px;border-radius:999px;font-size:11px;
-    background:var(--terracotta-soft);color:var(--terracotta);
-    border:1px solid rgba(217,119,87,.3)}
-  .pill.trial{background:rgba(163,158,147,.12);color:var(--ink-dim);
-    border-color:var(--line)}
-  .row{display:flex;justify-content:space-between;padding:6px 0;
-    border-bottom:1px solid var(--panel-2)}
-  .row:last-child{border-bottom:none}
-  .row .k{color:var(--ink-faint)}
-  .row .v{color:var(--ink);font-variant-numeric:tabular-nums}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
-    margin-right:7px;vertical-align:middle}
-  .dot.good{background:var(--good)} .dot.warn{background:var(--warn)}
-  .dot.bad{background:var(--bad)}
-  .empty{color:var(--ink-faint);font-style:italic;padding:10px 2px}
-  .btn{background:var(--terracotta-soft);color:var(--terracotta);
-    border:1px solid rgba(217,119,87,.4);border-radius:8px;
-    padding:6px 12px;font-size:12.5px;font-family:inherit;cursor:pointer}
-  .btn:hover{background:rgba(217,119,87,.22)}
-  .btn:disabled{opacity:.5;cursor:default}
-  .note{color:var(--ink-faint);font-size:11.5px;margin-top:12px;line-height:1.45}
-  .err{font-size:12.5px;padding:8px 0;border-bottom:1px solid var(--panel-2)}
-  .err:last-child{border-bottom:none}
-  .err .t{color:var(--ink-faint);font-size:11px}
-  .err .m{color:var(--ink);margin-top:2px}
-  .err .w{color:var(--terracotta)}
-  .refresh{color:var(--ink-faint);font-size:12px}
-  .span2{grid-column:span 2}
-  .cmdbar{display:flex;gap:10px;align-items:center;margin-top:22px;flex-wrap:wrap}
-  .cmd-input{flex:1;min-width:280px;background:var(--panel-2);
-    border:1px solid var(--line);border-radius:11px;color:var(--ink);
-    font-family:'Inter',sans-serif;font-size:14px;padding:13px 15px;outline:none}
-  .cmd-input:focus{border-color:var(--terracotta)}
-  .cmd-input::placeholder{color:var(--ink-faint)}
-  .cmd-confirm{color:var(--ink-dim);font-size:12.5px;display:flex;
-    align-items:center;gap:6px;white-space:nowrap;cursor:pointer}
-  .cmd-btn{background:var(--terracotta);color:#fff;border:none;
-    border-radius:11px;font-family:'Inter',sans-serif;font-weight:600;
-    font-size:14px;padding:13px 26px;cursor:pointer}
-  .cmd-btn:disabled{opacity:.5;cursor:default}
-  /* Chat transcript (scrolling) */
-  .chat{margin-top:14px;border:1px solid var(--line);border-radius:14px;
-    background:var(--panel);max-height:430px;overflow-y:auto;padding:14px 16px;
-    display:flex;flex-direction:column;gap:12px}
-  .chat:empty{display:none}
-  .turn{display:flex;flex-direction:column;gap:4px;max-width:88%}
-  .turn.me{align-self:flex-end;align-items:flex-end}
-  .turn.agent{align-self:flex-start;align-items:flex-start}
-  .turn .who{font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;
-    color:var(--ink-faint)}
-  .bubble{border-radius:12px;padding:10px 14px;font-size:13.5px;line-height:1.5;
-    white-space:pre-wrap;word-break:break-word}
-  .turn.me .bubble{background:var(--terracotta-soft);color:var(--ink);
-    border:1px solid rgba(217,119,87,.3)}
-  .turn.agent .bubble{background:var(--panel-2);color:var(--ink);
-    border:1px solid var(--line)}
-  .turn.agent .bubble.bad{border-color:rgba(217,103,87,.45);
-    background:rgba(217,103,87,.08)}
-  .turn .model{font-size:10.5px;color:var(--ink-faint);margin-top:2px}
-  /* Inline confirm card */
-  .confirm-card{border:1px solid rgba(217,166,87,.5);background:rgba(217,166,87,.1);
-    border-radius:12px;padding:13px 15px;font-size:13px;color:var(--ink);
-    align-self:flex-start;max-width:88%}
-  .confirm-card h3{margin:0 0 8px;font-family:'Instrument Serif',Georgia,serif;
-    font-weight:400;font-size:18px;color:var(--warn)}
-  .confirm-card .target{color:var(--ink);font-size:13px;margin:2px 0}
-  .confirm-card .target b{color:var(--terracotta)}
-  .confirm-card pre{margin:8px 0;white-space:pre-wrap;color:var(--ink-dim);
-    font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .confirm-card .acts{display:flex;gap:8px;margin-top:10px}
-  .confirm-card .acts button{font-family:inherit;font-size:12.5px;font-weight:600;
-    border-radius:8px;padding:7px 16px;cursor:pointer;border:none}
-  .confirm-card .yes{background:var(--terracotta);color:#fff}
-  .confirm-card .no{background:transparent;color:var(--ink-dim);
-    border:1px solid var(--line)}
-  .typing{color:var(--ink-faint);font-style:italic;font-size:12.5px;
-    align-self:flex-start}
-  @media(max-width:740px){.span2{grid-column:auto}h1{font-size:34px}}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <header>
-    <h1>Founder <span class="sub">Cockpit</span></h1>
-    <div class="meta">
-      <span class="refresh">auto-refresh 30s</span> &nbsp;|&nbsp;
-      <b id="version">-</b> &nbsp;|&nbsp;
-      <span id="env">-</span> &nbsp;|&nbsp;
-      updated <b id="updated">-</b> &nbsp;|&nbsp;
-      <a href="/founder/logout">Sign out</a>
-    </div>
-  </header>
-  <p class="meta">Private business oversight + control. Live numbers from the
-    cloud database, billing config, and the brain replica store. Type a command
-    below to ACT — purge test users, set a plan, toggle the free tier, or direct
-    an agent.</p>
-
-  <div id="chat" class="chat"></div>
-  <div class="cmdbar">
-    <input id="cmd" class="cmd-input" type="text" autocomplete="off"
-      placeholder="Ask or instruct…  e.g.  how many users on studio?   ·   set someone@studio.com to studio   ·   grant 500 credits to x@y.com   ·   free default off" />
-    <label class="cmd-confirm"><input type="checkbox" id="cmdConfirm" /> Confirm (destructive)</label>
-    <button id="cmdRun" class="cmd-btn">Send</button>
-  </div>
-
-  <div class="grid kpis" id="kpis"></div>
-
-  <div class="grid cards">
-    <div class="card">
-      <h2>Subscriptions &amp; revenue</h2>
-      <div id="subs"></div>
-    </div>
-    <div class="card">
-      <h2>Users by plan</h2>
-      <div id="byplan"></div>
-    </div>
-    <div class="card span2">
-      <h2>Recent signups</h2>
-      <div id="recent"></div>
-    </div>
-    <div class="card">
-      <h2>System</h2>
-      <div id="system"></div>
-    </div>
-    <div class="card">
-      <h2>Usage &amp; progress</h2>
-      <div id="usage"></div>
-    </div>
-    <div class="card">
-      <h2>Agent tasks</h2>
-      <div id="agentTasks"></div>
-    </div>
-    <div class="card">
-      <h2>Recent commands</h2>
-      <div id="actions"></div>
-    </div>
-    <div class="card span2">
-      <h2>Recent errors</h2>
-      <div id="errors"></div>
-    </div>
-  </div>
-</div>
-
-<script>
-const $ = (id) => document.getElementById(id);
-const fmt = (n) => (n==null?'-':Number(n).toLocaleString('en-US'));
-const money = (n) => (n==null?'-':'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:2}));
-const ago = (ts) => {
-  if(!ts) return '-';
-  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
-  if(s<60) return s+'s ago';
-  if(s<3600) return Math.floor(s/60)+'m ago';
-  if(s<86400) return Math.floor(s/3600)+'h ago';
-  return Math.floor(s/86400)+'d ago';
-};
-const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-function kpi(label, value, accent, delta){
-  return `<div class="kpi"><div class="label">${esc(label)}</div>`+
-    `<div class="value${accent?' accent':''}">${value}</div>`+
-    (delta?`<div class="delta">${esc(delta)}</div>`:'')+`</div>`;
-}
-
-function render(d){
-  const u=d.users, s=d.subscriptions, sys=d.system, us=d.usage;
-  $('version').textContent = sys.version;
-  $('env').textContent = sys.env;
-  $('updated').textContent = ago(d.generated_at);
-
-  const testN = (u.test_seed && u.test_seed.count) || 0;
-  const usersDelta = fmt(u.signups_24h)+' new in 24h'+
-    (testN ? ' · '+fmt(testN)+' test/seed excluded' : '');
-  $('kpis').innerHTML =
-    kpi('Total users (real)', fmt(u.total), false, usersDelta)+
-    kpi('Paying', fmt(s.paying_subscribers), false, fmt(s.trial_users)+' on trial')+
-    kpi('MRR (est.)', money(s.mrr_estimate), true, 'ARR '+money(s.arr_estimate))+
-    kpi('Chat completions', fmt(us.chat_completions_total), false, fmt(us.chat_completions_24h)+' in 24h')+
-    kpi('Memory captures', fmt(us.memory_captures_total), false, fmt(us.memory_captures_24h)+' in 24h');
-
-  // Subscriptions table
-  if(s.tiers && s.tiers.length){
-    let t='<table><thead><tr><th>Tier</th><th>Subs</th><th>Seats</th><th>MRR</th></tr></thead><tbody>';
-    s.tiers.forEach(x=>{ t+=`<tr><td class="ink">${esc(x.name)}</td>`+
-      `<td>${fmt(x.subscribers)}</td><td>${fmt(x.seats)}</td>`+
-      `<td class="ink">${money(x.mrr)}</td></tr>`; });
-    t+='</tbody></table>';
-    t+=`<div class="row" style="margin-top:10px"><span class="k">MRR estimate</span><span class="v">${money(s.mrr_estimate)}</span></div>`;
-    t+=`<div class="row"><span class="k">Companies</span><span class="v">${fmt(s.companies)}</span></div>`;
-    t+=`<div class="note">${esc(s.note)}</div>`;
-    $('subs').innerHTML=t;
-  } else {
-    $('subs').innerHTML='<div class="empty">No paid subscriptions yet.</div>'+
-      `<div class="note">${esc(s.note)}</div>`;
-  }
-
-  // By plan (real users only)
-  const bp=u.by_plan||{}; const keys=Object.keys(bp);
-  let t='';
-  if(keys.length){
-    keys.sort((a,b)=>bp[b]-bp[a]).forEach(k=>{
-      t+=`<div class="row"><span class="k">${esc(k)}</span><span class="v">${fmt(bp[k])}</span></div>`; });
-  } else { t='<div class="empty">No real users yet.</div>'; }
-  // Honest test/seed disclosure + one-click purge (founder-gated endpoint).
-  t+=`<div class="row" style="margin-top:8px"><span class="k">test/seed (excluded)</span>`+
-     `<span class="v">${fmt(testN)}</span></div>`;
-  if(testN){
-    t+=`<div style="margin-top:10px"><button id="purgeBtn" class="btn">Purge ${fmt(testN)} test accounts</button>`+
-       `<span id="purgeMsg" class="note"></span></div>`;
-  }
-  $('byplan').innerHTML=t;
-  const pb=$('purgeBtn');
-  if(pb){ pb.onclick=()=>purgeTest(testN); }
-
-  // Recent signups
-  if(u.recent && u.recent.length){
-    let t='<table><thead><tr><th>Email</th><th>Plan</th><th>Used</th><th>Joined</th></tr></thead><tbody>';
-    u.recent.forEach(r=>{
-      const trial = r.plan==='trial';
-      t+=`<tr><td class="ink">${esc(r.email)}</td>`+
-        `<td><span class="pill${trial?' trial':''}">${esc(r.plan)}</span></td>`+
-        `<td>${fmt(r.msg_used)}/${fmt(r.msg_limit)}</td>`+
-        `<td>${ago(r.created_at)}</td></tr>`; });
-    t+='</tbody></table>';
-    $('recent').innerHTML=t;
-  } else { $('recent').innerHTML='<div class="empty">No signups yet.</div>'; }
-
-  // System
-  const fly=sys.fly||{}; const br=sys.brain_replicas||{};
-  const health=sys.healthz&&sys.healthz.ok;
-  $('system').innerHTML =
-    `<div class="row"><span class="k">Health</span><span class="v"><span class="dot ${health?'good':'bad'}"></span>${health?'ok':'down'}</span></div>`+
-    `<div class="row"><span class="k">Version / build</span><span class="v">${esc(sys.version)}</span></div>`+
-    `<div class="row"><span class="k">Environment</span><span class="v">${esc(sys.env)}</span></div>`+
-    `<div class="row"><span class="k">Billing provider</span><span class="v">${esc(sys.billing_provider)}</span></div>`+
-    `<div class="row"><span class="k">Stripe configured</span><span class="v"><span class="dot ${sys.stripe_configured?'good':'warn'}"></span>${sys.stripe_configured?'yes':'no'}</span></div>`+
-    `<div class="row"><span class="k">Brain replicas</span><span class="v">${br.count==null?'n/a':fmt(br.count)}</span></div>`+
-    `<div class="row"><span class="k">Marketplace packs</span><span class="v">${fmt(sys.marketplace_packs)}</span></div>`+
-    `<div class="row"><span class="k">Fly app</span><span class="v">${esc(fly.app||'local')}${fly.region?(' / '+esc(fly.region)):''}</span></div>`;
-
-  // Usage
-  const st=us.memory_by_stage||{};
-  let stageStr=Object.keys(st).map(k=>`${esc(k)} ${fmt(st[k])}`).join(', ')||'none';
-  $('usage').innerHTML =
-    `<div class="row"><span class="k">Chat completions (all)</span><span class="v">${fmt(us.chat_completions_total)}</span></div>`+
-    `<div class="row"><span class="k">Chat completions (24h)</span><span class="v">${fmt(us.chat_completions_24h)}</span></div>`+
-    `<div class="row"><span class="k">Input tokens</span><span class="v">${fmt(us.input_tokens)}</span></div>`+
-    `<div class="row"><span class="k">Output tokens</span><span class="v">${fmt(us.output_tokens)}</span></div>`+
-    `<div class="row"><span class="k">Proxy spend (est.)</span><span class="v">${money(us.spend_usd_estimate)}</span></div>`+
-    `<div class="row"><span class="k">Memory captures</span><span class="v">${fmt(us.memory_captures_total)}</span></div>`+
-    `<div class="note">Capture stages: ${stageStr}</div>`;
-
-  // Errors
-  if(d.errors && d.errors.length){
-    let t='';
-    d.errors.forEach(e=>{
-      t+=`<div class="err"><div class="t">${ago(e.ts)} &middot; <span class="w">${esc(e.where)}</span>${e.status?(' &middot; '+esc(e.status)):''}</div>`+
-        `<div class="m">${esc(e.kind)}: ${esc(e.message)}</div></div>`; });
-    $('errors').innerHTML=t;
-  } else { $('errors').innerHTML='<div class="empty">No server errors recorded since last restart.</div>'; }
-}
-
-function renderActions(d){
-  const a=d.actions||[];
-  if(!a.length){ $('actions').innerHTML='<div class="empty">No commands run yet.</div>'; return; }
-  let t='';
-  a.forEach(x=>{
-    t+=`<div class="err"><div class="t">${ago(x.ts)} &middot; <span class="w">${esc(x.action)}</span>${x.target?(' &middot; '+esc(x.target)):''} &middot; ${x.ok?'ok':'fail'}</div>`+
-       `<div class="m">${esc(x.command)}</div></div>`; });
-  $('actions').innerHTML=t;
-}
-function renderAgentTasks(d){
-  const a=d.tasks||[];
-  let head=`<div class="row"><span class="k">Queued</span><span class="v">${fmt(d.queued)}</span></div>`+
-           `<div class="row"><span class="k">Total</span><span class="v">${fmt(d.total)}</span></div>`;
-  if(!a.length){ $('agentTasks').innerHTML=head+'<div class="empty">No agent tasks queued.</div>'; return; }
-  let t=head;
-  a.slice(0,8).forEach(x=>{
-    t+=`<div class="err"><div class="t">${ago(x.created_at)} &middot; <span class="w">${esc(x.status)}</span> &middot; ${esc(x.kind)}</div>`+
-       `<div class="m">${esc(x.directive)}</div>`+
-       (x.result?`<div class="m" style="opacity:.8;white-space:pre-wrap">&rarr; ${esc(String(x.result).slice(0,600))}</div>`:'')+`</div>`; });
-  $('agentTasks').innerHTML=t;
-}
-async function loadActions(){
-  try{
-    const [ra,rt] = await Promise.all([
-      fetch('/founder/api/actions',{headers:{'Accept':'application/json'}}),
-      fetch('/founder/api/agent-tasks',{headers:{'Accept':'application/json'}})]);
-    if(ra.ok) renderActions(await ra.json());
-    if(rt.ok) renderAgentTasks(await rt.json());
-  }catch(e){}
-}
-
-// --- Chat transcript (founder turn + agent answer + inline confirm cards) --
-const CHAT_HISTORY=[];   // {role, content} pairs sent back for context
-function chatScroll(){ const c=$('chat'); c.scrollTop=c.scrollHeight; }
-function addTurn(role, text, model){
-  const c=$('chat');
-  const div=document.createElement('div');
-  div.className='turn '+(role==='me'?'me':'agent');
-  const bad=(role==='agent' && model==='__bad__');
-  div.innerHTML=`<div class="who">${role==='me'?'You':'Agent'}</div>`+
-    `<div class="bubble${bad?' bad':''}">${esc(text)}</div>`+
-    (model && model!=='__bad__'?`<div class="model">${esc(model)}</div>`:'');
-  c.appendChild(div); chatScroll();
-  return div;
-}
-function addTyping(){
-  const c=$('chat');
-  const d=document.createElement('div');
-  d.className='typing'; d.id='typing'; d.textContent='Agent is thinking…';
-  c.appendChild(d); chatScroll();
-}
-function clearTyping(){ const t=$('typing'); if(t) t.remove(); }
-
-function addConfirmCard(d){
-  const c=$('chat');
-  const pv=d.preview||{}; const tgt=pv.target||{}; const chg=pv.change||{};
-  const card=document.createElement('div');
-  card.className='confirm-card';
-  let tgtStr=Object.keys(tgt).map(k=>`${esc(k)}: <b>${esc(tgt[k])}</b>`).join(' · ');
-  card.innerHTML=`<h3>Confirm: ${esc(d.action)}</h3>`+
-    `<div class="target">${tgtStr||'—'}</div>`+
-    `<pre>${esc(JSON.stringify(chg,null,2))}</pre>`+
-    `<div class="acts"><button class="yes">Confirm &amp; apply</button>`+
-    `<button class="no">Cancel</button></div>`;
-  c.appendChild(card); chatScroll();
-  card.querySelector('.yes').onclick=async()=>{
-    card.querySelector('.acts').innerHTML='<span class="model">applying…</span>';
-    try{
-      const r=await fetch('/founder/api/command',{method:'POST',
-        headers:{'Content-Type':'application/json','Accept':'application/json'},
-        body:JSON.stringify({command:d.message||'', confirm:true,
-                             pending:d.pending})});
-      const res=await r.json();
-      card.remove();
-      addTurn('agent', res.message||(res.ok?'Done.':'Failed.'),
-              res.ok?null:'__bad__');
-      load(); loadActions();
-    }catch(e){ addTurn('agent','Apply failed: '+e,'__bad__'); }
-  };
-  card.querySelector('.no').onclick=()=>{ card.remove();
-    addTurn('agent','Cancelled — nothing was changed.'); };
-}
-
-async function runCommand(){
-  const inp=$('cmd'), btn=$('cmdRun');
-  const command=inp.value.trim();
-  if(!command){ return; }
-  const confirm=$('cmdConfirm').checked;
-  addTurn('me', command);
-  CHAT_HISTORY.push({role:'user', content:command});
-  inp.value=''; btn.disabled=true; addTyping();
-  try{
-    const r=await fetch('/founder/api/command',{method:'POST',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify({command, confirm, history:CHAT_HISTORY.slice(-8)})});
-    const d=await r.json();
-    clearTyping();
-    if(d.needs_confirm){
-      addTurn('agent', d.message||'Please confirm this change.',
-              d.model||null);
-      addConfirmCard(d);
-    } else {
-      addTurn('agent', d.message||(d.ok?'Done.':'Failed.'),
-              d.ok?(d.model||null):'__bad__');
-      CHAT_HISTORY.push({role:'assistant', content:d.message||''});
-    }
-    $('cmdConfirm').checked=false;
-    load(); loadActions();
-  }catch(e){ clearTyping(); addTurn('agent','Command failed: '+e,'__bad__'); }
-  finally{ btn.disabled=false; }
-}
-$('cmdRun').addEventListener('click', runCommand);
-$('cmd').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ runCommand(); }});
-
-async function purgeTest(n){
-  const msg=$('purgeMsg'); const btn=$('purgeBtn');
-  if(!window.confirm('Permanently delete '+n+' synthetic test/seed accounts '+
-    '(reality+smoketest@archhub.io etc.)? Real users are never touched.')) return;
-  if(btn){ btn.disabled=true; btn.textContent='Purging...'; }
-  try{
-    const r=await fetch('/founder/api/purge-test-users',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify({confirm:true})});
-    const j=await r.json();
-    if(r.ok){ if(msg) msg.textContent=' purged '+fmt(j.purged)+'.'; load(); }
-    else { if(msg) msg.textContent=' error '+r.status; if(btn) btn.disabled=false; }
-  }catch(e){ if(msg) msg.textContent=' request failed'; if(btn) btn.disabled=false; }
-}
-
-async function load(){
-  try{
-    const r = await fetch('/founder/api/overview', {headers:{'Accept':'application/json'}});
-    if(!r.ok){ $('updated').textContent='auth error '+r.status; return; }
-    render(await r.json());
-  }catch(e){ $('updated').textContent='load error'; }
-}
-load(); loadActions();
-setInterval(()=>{ load(); loadActions(); }, 30000);
-</script>
-</body>
-</html>
-"""
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>ArchHub Cockpit</title>
+<!-- The Founder Cockpit: the admin panel that runs ArchHub (founder 2026-11-17). Served only at /founder behind
+     require_founder; never linked from the shipped app or any public page.
+     Design read: the founder's admin console (people, money, community, voice, operations), dense and calm, on the
+     frozen v53 tokens of prototype 35.08 app-011. Every list is read from a /founder/api route and every control
+     calls one; nothing on this page is sample data. -->
+<style>
+/* the two faces of the prototype, served by this server (byte copies of 01.APP/nodelang/data/website/fonts); no font CDN */
+@font-face{font-family:"Inter";src:url("/founder/map-assets/fonts/inter-variable.woff2") format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url("/founder/map-assets/fonts/jetbrains-mono-regular.woff2") format("woff2");font-weight:400;font-display:swap}
+:root{color-scheme:dark;
+ --bg:#0e0e11; --bgDeep:#0a0a0d; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgRaised:#1d1d22; --bgHover:#22222a;
+ --line:#26262e; --lineSoft:#1e1e24; --lineHair:#1a1a20; --ink:#ece8e0; --ink2:#9b938a; --ink3:#8b837a;
+ --onFill:#180f08; --accent:#d97757; --accentHi:#e8896a; --accentSoft:#3a2018;
+ --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f; --cyan:#5fb3b3; --blue:#7898d6;
+ --f-ui:"Inter",system-ui,sans-serif; --f-mono:"JetBrains Mono",ui-monospace,monospace;
+ --r:6px; --t-fast:120ms; --t-med:180ms; --ease:cubic-bezier(.2,0,0,1); --ease-out:cubic-bezier(.16,1,.3,1);
+ --e2:inset 0 1px 0 rgba(255,255,255,.05),0 8px 24px rgba(0,0,0,.45)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{display:grid;grid-template-columns:220px minmax(0,1fr);grid-template-rows:48px minmax(0,1fr);background:var(--bg);color:var(--ink);font:13px/1.45 var(--f-ui);-webkit-font-smoothing:antialiased;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;padding:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.mono{font-family:var(--f-mono)}
+.muted{color:var(--ink2)}.dim{color:var(--ink3)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+/* header */
+header{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:0 12px 0 16px;border-bottom:1px solid var(--lineHair);min-width:0}
+.mark{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
+.mark i{width:22px;height:22px;border-radius:5px;background:var(--accent);display:grid;place-items:center;color:var(--onFill);font-style:normal;font-weight:700;font-size:12px}
+.crumb{color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.local{display:none;align-items:center;height:20px;padding:0 7px;border:1px dashed #4a4033;border-radius:10px;color:var(--warn);font-size:11px;font-weight:500;white-space:nowrap}
+.local.on{display:inline-flex}
+.search{margin-left:auto;display:flex;align-items:center;gap:8px;height:30px;width:min(360px,34vw);padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--bgPanel);color:var(--ink3);white-space:nowrap;overflow:hidden}
+.search:hover{border-color:#34343e;color:var(--ink2)}
+.search kbd{margin-left:auto;font:11px var(--f-mono);color:var(--ink3);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.hbtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--bgPanel);white-space:nowrap}
+.hbtn:hover{background:var(--bgHover)}
+.hbtn.busy svg{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.acct{width:28px;height:28px;border-radius:50%;background:#d8c5a8;color:#5a4a2a;display:grid;place-items:center;flex:none}
+/* sidebar */
+nav.side{grid-row:2;border-right:1px solid var(--lineHair);overflow-y:auto;padding:10px 8px 16px}
+.grp{margin:12px 8px 4px;color:var(--ink3);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.grp:first-child{margin-top:2px}
+.nv{display:flex;align-items:center;gap:10px;width:100%;height:32px;padding:0 10px;border-radius:var(--r);color:var(--ink2);text-align:left;transition:background var(--t-fast) var(--ease),color var(--t-fast)}
+.nv:hover{background:var(--bgSoft);color:var(--ink)}
+.nv.on{background:var(--accentSoft);color:var(--ink)}
+.nv.on svg{color:var(--accentHi)}
+.nv span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nv b{font:500 11px var(--f-mono);color:var(--ink3)}
+.nv b.hot{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:var(--onFill);display:grid;place-items:center}
+@media (max-width:1000px){.nv{height:30px}}
+@media (max-width:900px){body{grid-template-columns:60px minmax(0,1fr)}.grp{height:1px;margin:10px 6px;background:var(--lineHair);font-size:0}.nv{justify-content:center;padding:0;position:relative}.nv span{display:none}.nv b{position:absolute;top:2px;right:4px;font-size:0}.nv b.hot{font-size:10px;min-width:15px;height:15px;padding:0 3px}}
+/* main */
+main{grid-row:2;overflow:auto;min-width:0;scroll-behavior:smooth}
+.page{max-width:1280px;margin:0 auto;padding:22px clamp(16px,2.6vw,32px) 64px}
+.ph{display:flex;align-items:flex-end;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.ph h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em}
+.ph p{margin:2px 0 0;color:var(--ink2)}
+.ph .acts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--bgPanel);white-space:nowrap;transition:background var(--t-fast) var(--ease),border-color var(--t-fast)}
+.btn:hover{background:var(--bgHover);border-color:#34343e}
+a.btn{color:inherit;text-decoration:none}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--onFill);font-weight:600}
+.btn.pri:hover{background:var(--accentHi)}
+.btn.dng{color:var(--err)}
+.btn.dng:hover{border-color:#5a2f2a;background:#24161a}
+.btn.sm{height:26px;padding:0 9px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn:active{transform:translateY(1px)}
+/* cards & tiles */
+.grid{display:grid;gap:12px}
+.g4{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+.g3{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.card{border:1px solid var(--line);border-radius:10px;background:var(--bgPanel);min-width:0}
+.card>.ch{display:flex;align-items:center;gap:8px;height:42px;padding:0 14px;border-bottom:1px solid var(--lineHair);font-weight:600}
+.card>.ch .r{margin-left:auto;font-weight:400}
+.card>.cb{padding:12px 14px}
+.tile{display:grid;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--bgPanel);text-align:left;transition:border-color var(--t-fast),background var(--t-fast),transform var(--t-med) var(--ease-out)}
+button.tile:hover{border-color:#3a3a46;background:var(--bgRaised);transform:translateY(-1px)}
+.tile .l{color:var(--ink2);font-size:12px}
+.tile .v{font-size:24px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.tile .d{font-size:12px;color:var(--ink3)}
+.sys{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1px;background:var(--lineHair);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.sysc{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:12px 14px;background:var(--bgPanel);color:inherit;text-decoration:none;min-width:0}
+a.sysc:hover{background:var(--bgRaised)}
+.sysc .k{font-weight:500}.sysc small{display:block;color:var(--ink3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sysc .v{font:12px var(--f-mono);color:var(--ink2);white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ink3);flex:none}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.err{background:var(--err);box-shadow:0 0 0 3px rgba(230,112,95,.16)}.dot.run{background:var(--cyan);animation:breathe 1.6s var(--ease) infinite}
+@keyframes breathe{50%{opacity:.4}}
+/* toolbar + table */
+.bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.fld{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--bgPanel);min-width:220px;flex:0 1 320px}
+.fld input{flex:1;min-width:0;background:none;border:0;outline:0}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:14px;color:var(--ink2);white-space:nowrap}
+.chip:hover{color:var(--ink);border-color:#34343e}
+.chip.on{background:var(--bgSoft);color:var(--ink);border-color:#3a3a46}
+.chip i{font-style:normal;font:11px var(--f-mono);color:var(--ink3);margin-left:4px}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--bgPanel)}
+.tbl{width:100%;border-collapse:separate;border-spacing:0}
+.tbl th{height:34px;padding:0 12px;text-align:left;font-weight:500;color:var(--ink3);font-size:12px;border-bottom:1px solid var(--line);background:var(--bgDeep);white-space:nowrap;user-select:none}
+.tbl th.s{cursor:pointer}.tbl th.s:hover{color:var(--ink2)}
+.tbl td{height:46px;padding:0 12px;border-bottom:1px solid var(--lineHair);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+.tbl td.wrap{white-space:normal;max-width:460px;padding-top:8px;padding-bottom:8px}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tbody tr.go{cursor:pointer}
+.tbl tbody tr{transition:background var(--t-fast)}
+.tbl tbody tr:hover{background:var(--bgRaised)}
+.tbl tbody tr.sel{background:#1f1a18}
+.tbl td.num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+.tbl .cb{width:36px;padding-right:0}
+.tbl input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;cursor:pointer}
+.who{display:flex;align-items:center;gap:10px;min-width:0}
+.who .av,.av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:600;color:#14110d;flex:none}
+.who b{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.who small{display:block;color:var(--ink3);overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:500;background:var(--bgSoft);color:var(--ink2);border:1px solid var(--line);white-space:nowrap}
+.pill.pro{color:#f0c3a8;border-color:#4a3024;background:#22160f}
+.pill.team{color:#a9c4f2;border-color:#28344d;background:#141a26}
+.pill.ok{color:var(--ok);border-color:#2a4231;background:#121c15}
+.pill.warn{color:var(--warn);border-color:#4a3c22;background:#1f1a10}
+.pill.err{color:var(--err);border-color:#4a2a26;background:#21130f}
+.mbar{display:inline-block;width:60px;height:5px;border-radius:3px;background:var(--bgSoft);vertical-align:middle;margin-left:8px;overflow:hidden}
+.mbar i{display:block;height:100%;background:var(--cyan)}
+.bulk{position:sticky;bottom:14px;margin:12px auto 0;display:flex;align-items:center;gap:8px;width:max-content;max-width:100%;padding:8px 10px 8px 14px;border:1px solid #3a3a46;border-radius:10px;background:var(--bgRaised);box-shadow:var(--e2);animation:rise .25s var(--ease-out);flex-wrap:wrap}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+.empty{padding:28px;text-align:center;color:var(--ink3)}
+.sk{display:block;height:12px;width:60%;border-radius:6px;background:var(--bgSoft)}
+@media (max-width:1100px){.hide-s{display:none}}
+/* queue cards */
+.q{display:grid;gap:10px}
+.qi{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--bgPanel);transition:border-color var(--t-fast),opacity var(--t-med),transform var(--t-med) var(--ease-out)}
+.qi.cur{border-color:var(--accent)}
+.qi .meta{color:var(--ink3);font-size:12px;margin-bottom:6px}
+.qi .txt{line-height:1.55;overflow-wrap:anywhere}
+.qi .acts{display:flex;flex-direction:column;gap:6px;align-self:start}
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(5,5,8,.45);opacity:0;pointer-events:none;transition:opacity var(--t-med);z-index:40}
+.scrim.on{opacity:1;pointer-events:auto}
+aside.dr{position:fixed;top:0;right:0;bottom:0;width:min(440px,94vw);background:var(--bgPanel);border-left:1px solid var(--line);box-shadow:var(--e2);transform:translateX(102%);transition:transform .26s var(--ease-out);z-index:41;display:flex;flex-direction:column}
+aside.dr.on{transform:none}
+.dh{display:flex;align-items:center;gap:12px;padding:16px 16px 12px;border-bottom:1px solid var(--lineHair)}
+.dh .who .av{width:40px;height:40px;font-size:14px}
+.dh .who b{font-size:15px}
+.x{margin-left:auto;width:30px;height:30px;border-radius:var(--r);display:grid;place-items:center;color:var(--ink2);flex:none}
+.x:hover{background:var(--bgHover);color:var(--ink)}
+.db{flex:1;overflow:auto;padding:4px 16px 16px}
+.ds{padding:14px 0;border-bottom:1px solid var(--lineHair)}
+.ds:last-child{border-bottom:0}
+.ds h3{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em}
+.kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:7px 12px;margin:0}
+.kv dt{color:var(--ink3)}.kv dd{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.seg button{height:30px;padding:0 14px;color:var(--ink2);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--bgSoft);color:var(--ink)}
+.li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--lineHair)}
+.li:last-child{border-bottom:0}
+.li .t{flex:1;min-width:0;overflow-wrap:anywhere}
+.li .t small{display:block;color:var(--ink3)}
+.df{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--lineHair);flex-wrap:wrap;align-items:center}
+.adv{font:11.5px/1.6 var(--f-mono);color:var(--ink3);white-space:pre-wrap;word-break:break-all}
+details.adv-d summary{cursor:pointer;color:var(--ink3);font-size:12px;list-style:none}
+details.adv-d summary::-webkit-details-marker{display:none}
+details.adv-d summary::before{content:"▸ "}
+details.adv-d[open] summary::before{content:"▾ "}
+/* dialog */
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--bgPanel);color:var(--ink);padding:0;width:min(440px,92vw);box-shadow:var(--e2)}
+dialog::backdrop{background:rgba(5,5,8,.55)}
+dialog form{display:grid;gap:12px;padding:18px}
+dialog h2{margin:0;font-size:16px}
+dialog p{margin:0;color:var(--ink2);overflow-wrap:anywhere}
+label.f{display:grid;gap:5px;color:var(--ink2);font-size:12px}
+.in,select.in,textarea.in{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--bgDeep);outline:0;min-width:0}
+textarea.in{height:auto;min-height:90px;padding:8px 10px;resize:vertical;line-height:1.5}
+.in:focus{border-color:var(--accent)}
+.in::placeholder{color:var(--ink3)}
+.dfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+/* toast */
+.toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);display:grid;gap:8px;z-index:90}
+.toast{display:flex;align-items:center;gap:12px;min-width:300px;max-width:min(560px,92vw);padding:10px 12px 10px 14px;border:1px solid #3a3a46;border-radius:10px;background:var(--bgRaised);box-shadow:var(--e2);animation:rise .22s var(--ease-out)}
+.toast.bad{border-color:#5a2f2a}
+.toast span{flex:1;overflow-wrap:anywhere}
+.toast small{color:var(--ink3)}
+/* palette */
+.pal{position:fixed;inset:0;z-index:95;display:none;align-items:flex-start;justify-content:center;padding-top:12vh;background:rgba(5,5,8,.5)}
+.pal.on{display:flex}
+.pal .box{width:min(600px,92vw);border:1px solid var(--line);border-radius:12px;background:var(--bgPanel);box-shadow:var(--e2);overflow:hidden;animation:rise .18s var(--ease-out)}
+.pal input{width:100%;height:48px;padding:0 16px;background:none;border:0;border-bottom:1px solid var(--line);outline:0;font-size:15px}
+.pal .res{max-height:50vh;overflow:auto;padding:6px}
+.pal .it{display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 10px;border-radius:var(--r);text-align:left;white-space:nowrap;overflow:hidden}
+.pal .it.on,.pal .it:hover{background:var(--bgSoft)}
+.pal .it small{margin-left:auto;color:var(--ink3);padding-left:12px}
+.chart{width:100%;height:180px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--ink2);font-size:12px;margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.two{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px;align-items:start}
+@media (max-width:1100px){.two{grid-template-columns:minmax(0,1fr)}}
+.sec{margin-top:22px}
+.sec>h2{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600}
+.sec>h2 .r{margin-left:auto;font-weight:400}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
+.tabs button{height:36px;padding:0 14px;color:var(--ink2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
+.tabs button i{font-style:normal;font:11px var(--f-mono);color:var(--ink3);margin-left:6px}
+.strip{display:flex;align-items:center;gap:2px;margin:-6px 0 18px;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--bgPanel);flex-wrap:wrap}
+.strip>button{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:var(--r);white-space:nowrap}
+.strip>button:hover{background:var(--bgHover)}
+.strip .k{color:var(--ink2)}.strip .v{font-weight:500}
+.strip .live{margin-left:auto;padding:0 10px;color:var(--ink3);font-size:12px;white-space:nowrap}
+.lnk{color:var(--ink);text-decoration:underline;text-decoration-color:#4a4a55;text-underline-offset:2px}
+.lnk:hover{text-decoration-color:var(--accent)}
+.more{width:28px;height:28px;border-radius:var(--r);color:var(--ink2);display:inline-grid;place-items:center}
+.more:hover{background:var(--bgHover);color:var(--ink)}
+.menu{position:fixed;z-index:70;min-width:200px;padding:5px;border:1px solid var(--line);border-radius:10px;background:var(--bgRaised);box-shadow:var(--e2);animation:rise .14s var(--ease-out)}
+.menu button,.menu a{display:flex;align-items:center;gap:10px;width:100%;height:32px;padding:0 10px;border-radius:var(--r);text-align:left;color:inherit;text-decoration:none}
+.menu button:hover,.menu button:focus-visible,.menu a:hover{background:var(--bgSoft)}
+.menu button.dng{color:var(--err)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+.menu .lab{padding:6px 10px 2px;color:var(--ink3);font-size:11px}
+dialog .bad{animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.appear{animation:fadeUp .4s var(--ease-out) both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}}
+.cmdout{margin-top:4px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--bgDeep);white-space:pre-wrap;overflow-wrap:anywhere}
+.cmdout.bad{border-color:#5a2f2a}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+ <span class="mark"><i>A</i>ArchHub</span>
+ <span class="crumb" id="crumb">/ Cockpit</span>
+ <span class="local" id="local" title="This page is served from this PC with seeded test accounts">local test data</span>
+ <button class="search" id="openPal" aria-label="Find a person, a company or an action"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Find a person, company or action<kbd>Ctrl K</kbd></button>
+ <button class="hbtn" id="refresh" title="Read everything on this page again"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><span id="readAt">Reading</span></button>
+ <button class="acct" id="acct" aria-label="Founder account menu"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button>
+</header>
+<nav class="side" id="side" aria-label="Cockpit sections"></nav>
+<main id="main"></main>
+<div class="scrim" id="scrim"></div>
+<aside class="dr" id="dr" aria-label="Details"></aside>
+<dialog id="dlg"></dialog>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="pal" id="pal"><div class="box"><input id="palIn" placeholder="Type a name, an email, a company, a section or an action" aria-label="Search"><div class="res" id="palRes"></div></div></div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const P = {
+ dash:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+ user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
+ co:'<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M10 21v-3h4v3"/>',
+ card:'<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/>',
+ shield:'<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+ chat:'<path d="M21 12a8 8 0 0 1-11.8 7L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+ bot:'<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6"/>',
+ pulse:'<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+ log:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+ x:'<path d="M18 6 6 18M6 6l12 12"/>', ext:'<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+ dl:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', plus:'<path d="M12 5v14M5 12h14"/>'
+};
+const I = (n, s=16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${P[n]||''}</svg>`;
+
+/* ---------- the server: every read and every action is a /founder/api route ---------- */
+async function api(path, body = undefined){
+ try {
+  const r = await fetch(path.startsWith('/founder/api/') ? path : '/founder/api'+path, {method: body === undefined ? 'GET' : 'POST',
+   headers: body === undefined ? {'Accept':'application/json'} : {'Accept':'application/json','Content-Type':'application/json'},
+   body: body === undefined ? undefined : JSON.stringify(body)});
+  if (r.status === 403) { location.href = '/founder/login'; return {ok:false, d:{}, error:'Signed out'}; }
+  let d = {}, unreadable = '';
+  try { d = await r.json(); } catch (err) { unreadable = 'The server answer could not be read ('+(err && err.name || 'parse error')+')'; }
+  const detail = typeof d.detail === 'string' ? d.detail : '';
+  return {ok: r.ok && !unreadable && d.ok !== false, status: r.status, d, unreadable: Boolean(unreadable),
+   error: d.error || detail || d.message || unreadable || (r.ok ? '' : 'The server answered '+r.status)};
+ } catch { return {ok:false, status:0, d:{}, error:'The server did not answer'}; }
+}
+/* the page's own waits, in one place: typing pause before a search, palette pause, the quiet re-read */
+const WAIT = Object.freeze({typing: 250, palette: 200, refresh: 60000});
+const S = {overview:null, inbox:null, users:null, companies:null, stripe:null, relay:null, errors:null, tasks:null, actions:null, pending:null, members:null, facts:null, user:null, err:{}};
+const now = () => Date.now() / 1e3;
+const ago = t => { if (!t) return 'never'; const s = now() - t; return s < 90 ? 'just now' : s < 3600 ? Math.round(s/60)+' min ago' : s < 86400 ? Math.round(s/3600)+' h ago' : Math.round(s/86400)+' d ago'; };
+const day = t => t ? new Date(t*1e3).toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'}) : 'None';
+const num = n => Number(n || 0).toLocaleString('en-US');
+/* shortcut: two-decimal currencies only (USD today); read the exponent from Stripe when a zero-decimal currency is sold */
+const recorded = (minor, cur) => minor == null ? 'amount not recorded' : money(minor, cur);
+const money = (minor, cur = 'usd') => new Intl.NumberFormat('en-US', {style:'currency', currency:(cur || 'usd').toUpperCase()}).format((minor || 0) / 100);
+const dollars = n => n == null ? 'hidden' : '$'+Number(n).toLocaleString('en-US', {maximumFractionDigits:2});
+const PLAN = {trial:'Trial', solo:'Solo', studio:'Studio', firm:'Firm'};
+const planPill = p => `<span class="pill ${p === 'solo' ? 'pro' : p === 'studio' || p === 'firm' ? 'team' : ''}">${esc(PLAN[p] || p)}</span>`;
+const COLORS = ['#d8c5a8','#a9c4f2','#b9d8b2','#e7b8a6','#c9b6e4','#9fd3d1','#ead39a'];
+const nameOf = u => u.full_name || (u.profile && u.profile.full_name) || String(u.email || '').split('@')[0];
+const initials = n => String(n).split(/[\s._-]+/).filter(Boolean).map(x => x[0]).join('').slice(0, 2).toUpperCase();
+const av = u => { let h = 0; for (const c of String(u.email)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return `<span class="av" style="background:${COLORS[h % COLORS.length]}">${esc(initials(nameOf(u)))}</span>`; };
+const who = u => `<span class="who">${av(u)}<span><b>${esc(nameOf(u))}</b><small>${esc(u.email)}</small></span></span>`;
+const skRows = (cols, n = 5) => Array.from({length:n}, () => `<tr>${Array.from({length:cols}, () => '<td><span class="sk"></span></td>').join('')}</tr>`).join('');
+const failed = (what, key) => `<div class="empty card">${esc(what)} could not be read: ${esc(S.err[key])}. <button class="lnk" data-a="reload">Read again</button></div>`;
+
+function toast(text, detail = '', {undo, logged, bad, again} = {}){
+ const el = document.createElement('div'); el.className = 'toast'+(bad ? ' bad' : '');
+ el.innerHTML = `<span>${esc(text)}${detail ? ` <small>· ${esc(detail)}</small>` : ''}${logged ? ' <small>· Logged</small>' : ''}</span>${logged ? '<button class="btn sm" data-view>View</button>' : ''}${undo ? '<button class="btn sm" data-undo>Undo</button>' : ''}${again ? `<button class="btn sm" data-again>${esc(again.label)}</button>` : ''}`;
+ if (logged) el.querySelector('[data-view]').onclick = () => { el.remove(); go('settings'); };
+ if (undo) el.querySelector('[data-undo]').onclick = () => { el.remove(); undo(); };
+ if (again) el.querySelector('[data-again]').onclick = () => { el.remove(); again.run(); };
+ $('#toasts').append(el); setTimeout(() => el.remove(), undo || again ? 12000 : bad ? 6000 : 4000);
+}
+/* one action: call the route, say what happened, read the page again. The server writes the audit row. */
+/* a route template filled with its values: '/founder/api/packs/{pack_id}/takedown' + {pack_id} */
+const at = (route, values) => route.replace(/\{(\w+)\}/g, (_, name) => encodeURIComponent(values[name]));
+const newKey = () => (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+async function guarded(text, detail, path, body, key = newKey()){
+ const r = await api(path, {...body, action_key:key}), d = r.d || {};
+ const askAgain = {label:'Ask again', run:() => guarded(text, detail, path, body, key)};      // same key: the server's record, never a second send
+ // a fresh key only after a DEFINITE refusal; a refused invite email is sent again for the same invite
+ const sendAgain = d.created ? {label:'Send again', run:() => guarded('Invite email sent', detail, path.replace(/\/resend$/, '')+'/resend', {email:body.email})}
+                             : {label:'Send again', run:() => guarded(text, detail, path, body)};
+ const toList = {label:'Open the list', run:() => go('settings')};
+ /* no answer, or an answer that is not ours (a 5xx without our JSON): the same key asks the server what happened */
+ if (r.status === 0 || r.unreadable || (r.status >= 500 && !('ok' in d))) { toast('No clear answer from the server', detail+' · nothing is sent again unless you ask', {bad:true, again:askAgain}); return r; }
+ if (d.state === 'in_flight') { toast('Still running', detail, {again:askAgain}); return r; }
+ if (d.state === 'uncertain' && d.replay && d.replay.stripe_url) { const url = d.replay.stripe_url;   // a refund: looked at in Stripe, never repeated here
+  toast(d.replay.message, recorded(d.replay.amount, d.replay.currency)+' · '+(d.replay.customer || 'customer not recorded')+' · '+d.replay.payment_intent, {bad:true, again:{label:'Open in Stripe', run:() => window.open(url, '_blank', 'noopener,noreferrer')}}); await load(); return r; }
+ if (d.state === 'uncertain') { toast('May have been sent; check before sending again', detail+' · held in Unresolved actions', {bad:true, again:toList}); await load(); return r; }
+ if (d.state === 'held') { toast('Not started: something earlier is unresolved', r.error, {bad:true, again:toList}); return r; }
+ if (!r.ok) { toast(d.created ? 'Invite created, email not sent' : text+' did not happen', r.error, {bad:true, logged:d.retryable, again:d.refused ? sendAgain : null}); await load(); return r; }
+ toast(text, detail+(d.repeat ? ' · already done, nothing sent again' : ''), {logged:true}); await load(); return r;
+}
+async function act(text, detail, call, undo = null){
+ const r = await call();
+ if (r.unreadable) { toast('No clear answer from the server', text+' · '+detail+' · the page shows what the server now holds', {bad:true}); await load(); return r; }
+ if (!r.ok) { toast(text+' did not happen', r.error, {bad:true}); return r; }
+ toast(text, detail, {logged:true, undo});
+ await load();
+ return r;
+}
+function ask({title, body, fields = [], ok = 'Confirm', danger = false}){
+ return new Promise(res => {
+  const d = $('#dlg');
+  d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2>${body ? `<p>${esc(body)}</p>` : ''}${fields.map(f => `<label class="f">${esc(f.label)}${f.type === 'select' ? `<select class="in" name="${f.name}">${f.options.map(o => Array.isArray(o) ? `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>` : `<option${o === f.value ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="in" name="${f.name}" placeholder="${esc(f.ph||'')}">${esc(f.value||'')}</textarea>` : `<input class="in" name="${f.name}" value="${esc(f.value||'')}" placeholder="${esc(f.ph||'')}" autocomplete="off" ${f.type === 'number' ? 'type="number" min="0" step="0.01"' : ''}>`}</label>`).join('')}<div class="dfoot"><button class="btn" value="no">Cancel</button><button class="btn ${danger ? 'dng' : 'pri'}" value="yes">${esc(ok)}</button></div></form>`;
+  const form = d.querySelector('form');
+  form.onsubmit = e => { if (!e.submitter || e.submitter.value !== 'yes') return;
+   const wrong = fields.find(f => { const v = form.elements[f.name].value.trim(); return (f.match && v.toUpperCase() !== f.match) || (f.req && !v); });
+   if (wrong) { e.preventDefault(); const i = form.elements[wrong.name]; i.classList.remove('bad'); void i.offsetWidth; i.classList.add('bad'); i.focus(); } };
+  d.onclose = () => { if (d.returnValue !== 'yes') { res(null); return; } res(Object.fromEntries(new FormData(form).entries())); };
+  d.returnValue = ''; d.showModal(); const first = d.querySelector('input,textarea,select'); if (first) first.focus();
+ });
+}
+function download(name, rows){
+ const csv = rows.map(r => r.map(c => '"'+String(c ?? '').replace(/"/g,'""')+'"').join(',')).join('\n');
+ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'})); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ---------- navigation (rail order: Inbox first, System and Settings last) ---------- */
+const NAV = [
+ ['Act', [['inbox','Inbox','dash']]],
+ ['Manage', [['users','Users','user'],['companies','Companies & seats','co'],['billing','Billing','card'],['community','Community','shield'],['feedback','Feedback','chat']]],
+ ['Run', [['system','System','pulse'],['settings','Settings & audit','log']]]
+];
+let page = (location.hash || '#inbox').slice(1), ui = {q:'', filter:'all', sort:'created_at', dir:-1, sel:new Set(), tab:{}, cmd:null, cur:0};
+const inboxOf = kind => S.inbox ? S.inbox.items.filter(i => i.kind === kind) : [];
+function counts(){
+ const o = S.overview, c = {};
+ if (S.inbox) { c.inbox = S.inbox.count; c.billing = inboxOf('payment_failed').length; c.community = inboxOf('community').length + inboxOf('pack_reported').length; c.feedback = inboxOf('feedback').length; c.system = inboxOf('relay_failed').length + inboxOf('error').length; }
+ if (o) { c.users = o.users.total_incl_test; c.companies = o.subscriptions.companies; }
+ return c;
+}
+const HOT = new Set(['inbox','billing','community','feedback','system']);
+function side(){
+ const c = counts();
+ $('#side').innerHTML = NAV.map(([g, items]) => `<div class="grp">${g}</div>` + items.map(([id, t, ic]) =>
+  `<button class="nv${page === id ? ' on' : ''}" data-go="${id}" title="${t}" aria-label="${t}">${I(ic)}<span>${t}</span>${c[id] ? `<b class="${HOT.has(id) ? 'hot' : ''}">${num(c[id])}</b>` : ''}</button>`).join('')).join('');
+}
+function go(id, opts = {}){ page = id; Object.assign(ui, {q:'', filter:'all', sel:new Set()}, opts); history.replaceState(null, '', '#'+id); closeDr(); paint(true); $('#main').scrollTop = 0; load(); }
+
+/* ---------- reads ---------- */
+const put = (key, r, pick) => { if (r.ok) { S[key] = pick(r.d); delete S.err[key]; } else S.err[key] = r.error; };
+const READ = {
+ base: async () => { const [o, i] = await Promise.all([api('/founder/api/overview'), api('/founder/api/inbox')]); put('overview', o, d => d); put('inbox', i, d => d); },
+ users: async () => put('users', await api('/users/find?limit=200&q='+encodeURIComponent(ui.q)+(page === 'users' && ui.filter !== 'all' ? '&only='+ui.filter : '')), d => d),
+ companies: async () => put('companies', await api('/founder/api/companies'), d => d.companies),
+ stripe: async () => put('stripe', await api('/stripe'), d => d),
+ paying: async () => put('paying', await api('/users/find?limit=200&only=paying'), d => d.users),
+ relay: async () => put('relay', await api('/relay'), d => d),
+ errors: async () => put('errors', await api('/errors'), d => d.errors),
+ tasks: async () => put('tasks', await api('/agent-tasks'), d => d),
+ actions: async () => put('actions', await api('/actions'), d => d.actions),
+ unresolved: async () => put('unresolved', await api('/founder/api/actions/unresolved'), d => d.actions),
+ pending: async () => put('pending', await api('/community/pending'), d => d.pending),
+ members: async () => put('members', await api('/community/members'), d => d.communities),
+ facts: async () => put('facts', await api('/community/facts'), d => d.facts),
+ feedback: async () => put('feedback', await api('/founder/api/feedback'+'?status='+(ui.filter === 'all' ? 'new' : ui.filter === 'every' ? '' : ui.filter)), d => d),
+ packs: async () => put('packs', await api('/founder/api/packs'), d => d.packs),
+ bans: async () => put('bans', await api('/founder/api/community/bans'), d => d.bans),
+ daily: async () => put('daily', await api('/founder/api/usage/daily'), d => d)
+};
+const NEEDS = {inbox:[], users:['users','companies','bans'], companies:['companies'], billing:['stripe','paying','companies'], community:['pending','members','facts','packs','bans'], feedback:['feedback'], system:['relay','errors','tasks','daily'], settings:['actions','unresolved']};
+let loading = 0;
+async function load(){
+ const b = $('#refresh'); b.classList.add('busy'); loading++;
+ await Promise.all([READ.base(), ...(NEEDS[page] || []).map(k => READ[k]()), drawer ? readDr() : null]);
+ if (--loading === 0) b.classList.remove('busy');
+ $('#readAt').textContent = 'Read '+new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
+ paint();
+}
+
+/* ---------- pages ---------- */
+const PAGES = {};
+/* one queue item, used by Inbox, Billing and Community: who, what, why, actions inline */
+const qItem = it => `<div class="qi${it.cur ? ' cur' : ''}"><div><div class="meta"><span class="pill ${it.tone||''}">${esc(it.label)}</span> &nbsp;${it.who ? `<button class="lnk" data-user="${esc(it.who)}">${esc(it.who)}</button> ` : ''}${ago(it.at)}</div>${it.title ? `<div style="font-weight:500;margin-bottom:2px">${esc(it.title)}</div>` : ''}<div class="txt">${esc(it.text)}</div>${it.why ? `<div class="dim" style="font-size:12px;margin-top:6px">${esc(it.why)}</div>` : ''}</div><div class="acts">${it.acts.map(([t, a, c]) => `<button class="btn sm ${c||''}" data-a="${esc(a)}">${t}</button>`).join('')}</div></div>`;
+const KIND = {
+ community: i => ({label:'Community post', tone:'team', why:'Shared to '+i.community_id+'. Nobody else sees it until you admit it.', acts:[['Admit','admit:'+i._n,'pri'],['Reject','reject:'+i._n,'dng'], ...(i.who ? [['Ban','ban:'+i.who]] : [])]}),
+ payment_failed: i => ({label:'Payment failed', tone:'warn', title:money(i.amount, i.currency)+' did not go through', acts:i.who ? [['Open','user:'+i.who,'pri']] : []}),
+ relay_failed: i => ({label:'Relay failed', tone:'err', acts:[['Retry','retry:'+i.id,'pri']]}),
+ unresolved: i => i.stripe_url ? ({label:'Refund result unknown', tone:'err', title:recorded(i.amount, i.currency)+' · '+(i.customer || 'customer not recorded')+' · '+i.title.split(' · ').pop(), why:'Nothing here can change it.', acts:[['Open in Stripe','openstripe:'+i._n,'pri']]}) : ({label:'Unresolved send', tone:'warn', why:'Nothing is sent again until you check and say what happened.', acts:[['Check','checkkey:'+i.id,'pri'],['It arrived','arrived:'+i.id],['It did not arrive','notarrived:'+i.id]]}),
+ error: i => ({label:'Server error', tone:'err', why:i.where, acts:[['Mark fixed','resolve:'+i._n,'pri'],['Open System','goto:system']]}),
+ feedback: i => ({label:'Feedback · '+i.type, tone:i.type === 'bug' ? 'err' : i.type === 'idea' ? 'team' : 'ok', acts:[['Answer','fbreply:'+i.id,'pri'],['Handled','fbstatus:'+i.id+':shipped'],['Open Feedback','goto:feedback']]}),
+ pack_reported: i => ({label:'Pack reported', tone:'err', acts:[['Take down','takedown:'+i.id,'dng'],['Open packs','packs']]})
+};
+const inboxItems = () => (S.inbox ? S.inbox.items : []).map((i, n) => { i._n = n; return {...i, ...KIND[i.kind](i)}; });
+function statusStrip(){
+ const o = S.overview; if (!o) return `<div class="strip"><span class="live">${S.err.overview ? esc('Status could not be read: '+S.err.overview) : 'Reading the status'}</span></div>`;
+ const errs = o.errors.filter(e => now() - e.ts < 86400).length, n = S.inbox ? S.inbox.count : 0, hz = o.system.healthz.ok;
+ const cell = (to, dot, k, v) => `<button data-go="${to}"><span class="dot ${dot}"></span><span class="k">${k}</span><span class="v">${esc(v)}</span></button>`;
+ return `<div class="strip">${cell('system', hz ? 'ok' : 'err', 'Server', hz ? 'healthy' : 'a check failed')}${cell('users', 'ok', 'Users', num(o.users.total)+(o.users.signups_24h ? ', '+o.users.signups_24h+' new today' : ''))}${cell('billing', 'ok', 'Paying', num(o.subscriptions.paying_subscribers))}${cell('inbox', n ? 'warn' : 'ok', 'Waiting on you', num(n))}${cell('system', errs ? 'err' : 'ok', 'Errors, 24 h', num(errs))}${o.system.version && o.system.version !== 'unknown' ? `<span class="live">Build ${esc(o.system.version)}</span>` : ''}</div>`;
+}
+PAGES.inbox = () => {
+ const L = inboxItems(), f = ui.filter, kinds = [...new Set(L.map(x => x.label))], rows = L.filter(x => f === 'all' || x.label === f);
+ return `${statusStrip()}<div class="ph"><div><h1>Inbox</h1><p>Everything waiting on you, newest first. Act from the row; each action is logged.</p></div></div>
+ ${S.err.inbox ? failed('The inbox', 'inbox') : !S.inbox ? '<div class="q"><div class="qi"><span class="sk"></span></div><div class="qi"><span class="sk"></span></div></div>' : `
+ <div class="bar"><div class="chips"><button class="chip${f === 'all' ? ' on' : ''}" data-f="all">All<i>${L.length}</i></button>${kinds.map(k => `<button class="chip${f === k ? ' on' : ''}" data-f="${esc(k)}">${esc(k)}<i>${L.filter(x => x.label === k).length}</i></button>`).join('')}</div></div>
+ <div class="q">${rows.map(qItem).join('') || '<div class="empty card">Nothing waits on you.</div>'}</div>`}`;
+};
+const coName = id => ((S.companies || []).find(c => c.id === id) || {}).name || '';
+function userRows(){
+ const rows = (S.users ? S.users.users : []).slice();
+ const key = {name:u => nameOf(u).toLowerCase(), plan:u => u.plan, last_seen:u => u.last_seen || 0, msg_used:u => u.msg_used, created_at:u => u.created_at}[ui.sort];
+ return rows.sort((a, b) => (key(a) > key(b) ? 1 : key(a) < key(b) ? -1 : 0) * ui.dir);
+}
+PAGES.users = () => {
+ const rows = userRows(), c = S.users ? S.users.counts : {};
+ const th = (k, t, cls = '') => `<th class="s ${cls}" data-sort="${k}" aria-sort="${ui.sort === k ? (ui.dir > 0 ? 'ascending' : 'descending') : 'none'}">${t}${ui.sort === k ? (ui.dir > 0 ? ' ↑' : ' ↓') : ''}</th>`;
+ return `<div class="ph"><div><h1>Users</h1><p>Everyone with an ArchHub account. Open one to change the plan, disconnect a device or suspend.</p></div>
+  <div class="acts"><button class="btn" data-a="export">${I('dl',14)}Export</button>${c.test ? `<button class="btn dng" data-a="purge">Remove ${num(c.test)} test accounts</button>` : ''}${(S.companies || []).length ? `<button class="btn pri" data-a="invite">${I('plus',14)}Invite</button>` : ''}</div></div>
+ <div class="bar"><label class="fld">${I('user',14)}<input id="q" placeholder="Name or email" value="${esc(ui.q)}" aria-label="Search users"></label>
+  <div class="chips">${[['all','All'],['paying','Paying'],['trial','Trial'],['test','Test'],['suspended','Suspended']].map(([k, t]) => `<button class="chip${ui.filter === k ? ' on' : ''}" data-f="${k}">${t}<i>${c[k] == null ? '' : num(c[k])}</i></button>`).join('')}</div></div>
+ ${S.err.users ? failed('The users', 'users') : `<div class="tw"><table class="tbl"><thead><tr><th class="cb"><input type="checkbox" id="all" aria-label="Select all" ${rows.length && rows.every(u => ui.sel.has(u.id)) ? 'checked' : ''}></th>${th('name','Person')}${th('plan','Plan')}<th class="hide-s">Company</th>${th('last_seen','Last seen')}${th('msg_used','Messages','num')}<th class="num hide-s">Devices</th>${th('created_at','Joined','hide-s')}<th style="width:44px"></th></tr></thead>
+ <tbody>${!S.users ? skRows(9) : rows.map(u => `<tr class="go${ui.sel.has(u.id) ? ' sel' : ''}" data-user="${esc(u.id)}"><td class="cb"><input type="checkbox" data-pick="${esc(u.id)}" ${ui.sel.has(u.id) ? 'checked' : ''} aria-label="Select ${esc(u.email)}"></td>
+  <td>${who(u)}</td><td>${planPill(u.plan)}${u.test ? ' <span class="pill">Test</span>' : ''}${u.deleted_at ? ' <span class="pill err">Deleted</span>' : u.suspended_at ? ' <span class="pill err">Suspended</span>' : ''}</td><td class="hide-s muted">${esc(coName(u.company_id))}</td>
+  <td class="muted">${ago(u.last_seen)}</td><td class="num">${num(u.msg_used)} of ${num(u.msg_limit)}<span class="mbar"><i style="width:${Math.min(100, u.msg_used / Math.max(1, u.msg_limit) * 100)}%"></i></span></td><td class="num hide-s muted">${u.devices}</td><td class="hide-s muted">${day(u.created_at)}</td><td class="num"><button class="more" data-menu="user:${esc(u.id)}" aria-label="Actions for ${esc(u.email)}">⋯</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Nobody matches.</td></tr>'}</tbody></table></div>
+ ${S.users && S.users.count === 200 ? '<p class="dim" style="margin:8px 2px 0">Showing the newest 200. Search or filter to reach the rest.</p>' : ''}`}
+ ${ui.sel.size ? `<div class="bulk"><b>${ui.sel.size} selected</b><button class="btn sm" data-a="bulkplan">Set plan</button><button class="btn sm" data-a="bulkexport">Export</button><button class="btn sm dng" data-a="bulksuspend">Suspend</button><button class="btn sm" data-a="clearsel">Clear</button></div>` : ''}`;
+};
+const AI = {byo_key:'Own keys', hosted:'ArchHub models'};
+PAGES.companies = () => `<div class="ph"><div><h1>Companies &amp; seats</h1><p>Firms with shared seats and credits. Open one to switch models, move ownership or invite someone.</p></div></div>
+ ${S.err.companies ? failed('The companies', 'companies') : `<div class="tw"><table class="tbl"><thead><tr><th>Company</th><th>Plan</th><th>Seats</th><th class="num hide-s">Credits</th><th class="hide-s">Models</th><th>Owner</th><th class="hide-s">Created</th></tr></thead><tbody>${!S.companies ? skRows(7, 3) : S.companies.map(c =>
+  `<tr class="go" data-co="${esc(c.id)}"><td><b>${esc(c.name)}</b></td><td>${planPill(c.plan)}</td><td>${c.seats_used} of ${c.seat_limit}<span class="mbar"><i style="width:${Math.min(100, c.seats_used / Math.max(1, c.seat_limit) * 100)}%;background:${c.seats_used >= c.seat_limit ? 'var(--warn)' : 'var(--cyan)'}"></i></span></td><td class="num hide-s">${num(c.credit_balance)}</td><td class="hide-s muted">${esc(AI[c.ai_mode] || c.ai_mode)}</td><td>${esc(c.owner_email || 'None')}</td><td class="hide-s muted">${day(c.created_at)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No companies yet.</td></tr>'}</tbody></table></div>`}`;
+PAGES.billing = () => {
+ const tab = ui.tab.billing || 'subs', o = S.overview, sub = o ? o.subscriptions : null, st = S.stripe, live = st ? st.live : null;
+ const waiting = inboxItems().filter(x => x.kind === 'payment_failed');
+ const refunded = st ? st.refunds.reduce((a, r) => a + (r.amount || 0), 0) : 0;
+ const mrr = live && live.available ? Object.entries(live.mrr_minor).map(([c, v]) => money(v, c)).join(' + ') || money(0) : sub ? dollars(sub.mrr_estimate) : '';
+ const pays = live && live.available ? live.payments : [];
+ const people = S.paying || [], cos = (S.companies || []).filter(c => c.plan);
+ return `<div class="ph"><div><h1>Billing</h1><p>Subscriptions, payments and refunds. Stripe stays the record; actions here call it.</p></div>
+  <div class="acts"><a class="btn" href="https://dashboard.stripe.com" target="_blank" rel="noopener">${I('ext',14)}Open Stripe</a></div></div>
+ ${waiting.length ? `<div class="sec" style="margin-top:0"><h2>Waiting on you</h2><div class="q">${waiting.map(qItem).join('')}</div></div><div class="sec"></div>` : ''}
+ <div class="grid g4"><div class="tile"><span class="l">Monthly revenue</span><span class="v">${esc(mrr) || '<span class="sk"></span>'}</span><span class="d">${live && live.available ? 'From Stripe, live' : sub ? (sub.mrr_estimate == null ? 'Pricing is hidden' : 'Estimate from stored plans') : ''}</span></div>
+  <div class="tile"><span class="l">Paying</span><span class="v">${sub ? num(sub.paying_subscribers) : ''}</span><span class="d">${sub ? num(sub.trial_users)+' on trial' : ''}</span></div>
+  <button class="tile" data-tab="billing:failed"><span class="l">Failed payments</span><span class="v${st && st.failed_payments.length ? ' warn' : ''}">${st ? st.failed_payments.length : ''}</span><span class="d">As Stripe reported them</span></button>
+  <button class="tile" data-tab="billing:refunds"><span class="l">Refunded</span><span class="v">${st ? money(refunded, st.refunds[0] && st.refunds[0].currency) : ''}</span><span class="d">${st ? st.refunds.length+' refunds on record' : ''}</span></button></div>
+ <div class="tabs sec">${[['subs','Subscriptions',people.length + cos.length],['pay','Payments',pays.length],['failed','Failed',st ? st.failed_payments.length : 0],['refunds','Refunds',st ? st.refunds.length : 0],['plans','Plans',sub ? sub.tiers.length : 0]].map(([k, t, n]) => `<button class="${tab === k ? 'on' : ''}" data-tab="billing:${k}">${t}<i>${n}</i></button>`).join('')}</div>
+ ${S.err.stripe && tab !== 'subs' && tab !== 'plans' ? failed('Payments', 'stripe') : tab === 'subs' ? `<div class="tw"><table class="tbl"><thead><tr><th>Who pays</th><th>Plan</th><th>Seats</th><th class="hide-s">Renews</th><th></th></tr></thead><tbody>${!S.paying ? skRows(5, 3) :
+   people.map(u => `<tr class="go" data-user="${esc(u.id)}"><td>${who(u)}</td><td>${planPill(u.plan)}</td><td class="muted">1</td><td class="hide-s muted">${day(u.period_end)}</td><td class="num"><button class="btn sm" data-a="user:${esc(u.id)}">Change plan</button></td></tr>`).join('') +
+   cos.map(c => `<tr${c.owner_email ? ` class="go" data-user="${esc(c.owner_email)}"` : ''}><td><span class="who"><span class="av" style="background:#a9c4f2">${esc(initials(c.name))}</span><span><b>${esc(c.name)}</b><small>${esc(c.owner_email || '')}</small></span></span></td><td>${planPill(c.plan)}</td><td class="muted">${c.seats_used} of ${c.seat_limit}</td><td class="hide-s muted">${day(c.period_end)}</td><td></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nobody pays yet.</td></tr>'}</tbody></table></div>`
+ : tab === 'pay' ? (!st ? `<div class="tw"><table class="tbl"><tbody>${skRows(5, 3)}</tbody></table></div>` : !live.available ? `<div class="empty card">${esc(live.reason)}. Payments are listed once Stripe answers.</div>` :
+  `<div class="tw"><table class="tbl"><thead><tr><th>Who paid</th><th class="num">Amount</th><th>Date</th><th>Status</th><th style="width:44px"></th></tr></thead><tbody>${pays.map((p, n) => `<tr${p.email ? ` class="go" data-user="${esc(p.email)}"` : ''}><td>${p.email ? who({email:p.email}) : '<span class="dim">No email on the payment</span>'}</td><td class="num">${money(p.amount_received, p.currency)}</td><td class="muted">${day(p.created)}</td><td>${p.amount_refunded >= p.amount_received && p.amount_received ? '<span class="pill warn">Refunded</span>' : p.amount_refunded ? `<span class="pill warn">Refunded ${money(p.amount_refunded, p.currency)}</span>` : p.status === 'succeeded' ? '<span class="pill ok">Paid</span>' : `<span class="pill">${esc(p.status)}</span>`}</td><td class="num">${p.status === 'succeeded' && p.amount_refunded < p.amount_received ? `<button class="more" data-menu="pay:${n}" aria-label="Actions for this payment">⋯</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No payments yet.</td></tr>'}</tbody></table></div>`)
+ : tab === 'failed' || tab === 'refunds' ? `<div class="tw"><table class="tbl"><thead><tr><th>Who</th><th class="num">Amount</th><th>When</th><th class="hide-s">Stripe</th><th>Detail</th></tr></thead><tbody>${!st ? skRows(5, 3) : (tab === 'failed' ? st.failed_payments : st.refunds).map(e => `<tr${e.email ? ` class="go" data-user="${esc(e.email)}"` : ''}><td>${esc(e.email || 'Unknown account')}</td><td class="num">${money(e.amount, e.currency)}</td><td class="muted">${ago(e.ts)}</td><td class="hide-s mono dim" style="font-size:12px">${esc(e.stripe_object)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${tab === 'failed' ? 'No failed payments.' : 'No refunds.'}</td></tr>`}</tbody></table></div>`
+ : `<div class="grid g3">${sub ? sub.tiers.map(t => `<div class="card"><div class="ch">${esc(t.name)}<span class="r mono muted">${t.price_per_seat == null ? '' : dollars(t.price_per_seat)+' a seat'}</span></div><div class="cb muted">${num(t.subscribers)} paying, ${num(t.seats)} seats${t.mrr == null ? '' : ', '+dollars(t.mrr)+' a month'}</div></div>`).join('') || '<div class="empty card">No paid plan has a subscriber yet.</div>' : ''}</div><p class="dim" style="margin-top:10px">${sub ? esc(sub.note) : ''} A price is changed in Stripe.</p>`}`;
+};
+PAGES.community = () => {
+ const tab = ui.tab.community || 'queue', queue = inboxItems().filter(x => x.kind === 'community');
+ return `<div class="ph"><div><h1>Community</h1><p>What members share. Nothing reaches others until you admit it. Keys in the queue: <span class="mono">J K</span> move, <span class="mono">A</span> admit, <span class="mono">R</span> reject.</p></div></div>
+ <div class="tabs">${[['queue','Review queue',queue.length],['admitted','Admitted',(S.facts || []).length],['members','Communities',(S.members || []).length],['packs','Marketplace packs',(S.packs || []).length],['bans','Banned',(S.bans || []).length]].map(([k, t, n]) => `<button class="${tab === k ? 'on' : ''}" data-tab="community:${k}">${t}<i>${n}</i></button>`).join('')}</div>
+ ${tab === 'packs' ? (S.err.packs ? failed('The packs', 'packs') : `<div class="tw"><table class="tbl"><thead><tr><th>Pack</th><th class="hide-s">Author</th><th class="num">Downloads</th><th class="num hide-s">Votes</th><th>State</th><th></th></tr></thead><tbody>${!S.packs ? skRows(6, 3) : S.packs.map(k => `<tr${k.author_email ? ` class="go" data-user="${esc(k.author_email)}"` : ''}><td><b>${esc(k.title)}</b> <span class="dim mono" style="font-size:11.5px">${esc(k.version)}</span>${k.source === 'official' ? ' <span class="pill ok">Official</span>' : ''}</td><td class="hide-s muted">${esc(k.author_name || k.author_email || '')}</td><td class="num">${num(k.download_count)}</td><td class="num hide-s">${num(k.up_votes)} / ${num(k.down_votes)}</td><td>${k.status === 'taken_down' ? `<span class="pill err" title="${esc(k.rejected_reason)}">Taken down</span>` : k.status === 'approved' ? '<span class="pill ok">On the marketplace</span>' : `<span class="pill">${esc(k.status.replace('_', ' '))}</span>`}${k.reports.length ? ` <span class="pill err" title="${esc(k.reports.map(r => r.reason).join(' · '))}">${k.reports.length} reported</span>` : ''}</td><td class="num">${k.status === 'approved' ? `<button class="btn sm dng" data-a="takedown:${esc(k.id)}">Take down</button>` : k.status === 'taken_down' ? `<button class="btn sm" data-a="packrestore:${esc(k.id)}">Put back</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No pack has been published yet.</td></tr>'}</tbody></table></div>`)
+ : tab === 'bans' ? (S.err.bans ? failed('The bans', 'bans') : `<div class="tw"><table class="tbl"><thead><tr><th>Member</th><th>Reason</th><th class="hide-s">Banned</th><th></th></tr></thead><tbody>${!S.bans ? skRows(4, 2) : S.bans.map(b => `<tr class="go" data-user="${esc(b.email)}"><td>${who({email:b.email, full_name:b.full_name})}</td><td class="wrap muted">${esc(b.reason)}</td><td class="hide-s muted">${ago(b.banned_at)}</td><td class="num"><button class="btn sm" data-a="unban:${esc(b.email)}">Allow again</button></td></tr>`).join('') || '<tr><td colspan="4" class="empty">Nobody is banned.</td></tr>'}</tbody></table></div>`)
+ : tab === 'queue' ? `<div class="q">${queue.map((x, i) => qItem({...x, cur:i === Math.min(ui.cur, queue.length - 1)})).join('') || '<div class="empty card">Nothing waits. Every post has been judged.</div>'}</div>`
+ : tab === 'admitted' ? (S.err.facts ? failed('The admitted posts', 'facts') : `<div class="tw"><table class="tbl"><thead><tr><th>Post</th><th class="hide-s">Community</th><th>By</th><th>State</th><th class="hide-s">Admitted</th></tr></thead><tbody>${!S.facts ? skRows(5, 3) : S.facts.map(a => `<tr${a.contributor ? ` class="go" data-user="${esc(a.contributor)}"` : ''}><td class="wrap">${esc(a.text)}</td><td class="hide-s muted">${esc(a.community_id)}</td><td class="muted">${esc(a.contributor || 'Unknown')}</td><td><span class="pill ${a.state === 'current' ? 'ok' : a.state === 'withdrawn' ? 'err' : ''}">${esc(a.state)}</span></td><td class="hide-s muted">${ago(a.decided_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing admitted yet.</td></tr>'}</tbody></table></div>`)
+ : (S.err.members ? failed('The communities', 'members') : `<div class="grid g3">${!S.members ? '<div class="card"><div class="cb"><span class="sk"></span></div></div>' : S.members.map(c => `<div class="card"><div class="ch">${esc(c.community_id)}<span class="r mono muted">${c.members.length} members</span></div><div class="cb">${c.members.slice(0, 8).map(m => `<div class="li"><button class="lnk t" data-user="${esc(m.email)}" style="text-align:left">${esc(m.email)}</button><span class="dim">${esc(m.role)}</span></div>`).join('')}<div class="dim" style="margin-top:8px">${c.left} left, ${queue.filter(q => q.community_id === c.community_id).length} waiting for review</div></div></div>`).join('') || '<div class="empty card">No community has a member yet.</div>'}</div>`)}`;
+};
+const FST = {new:['New',''], planned:['Planned','team'], doing:['Doing','warn'], shipped:['Shipped','ok'], declined:['Declined','err']};
+PAGES.feedback = () => {
+ const F = S.feedback, f = ui.filter === 'all' ? 'new' : ui.filter, c = F ? F.counts : {}, every = Object.values(c).reduce((a, n) => a + n, 0);
+ return `<div class="ph"><div><h1>Feedback</h1><p>What people tell ArchHub. Answer by email, move it along, merge duplicates, link it to the plan. Shipped means handled.</p></div></div>
+ <div class="bar"><div class="chips">${[...Object.entries(FST).map(([k, [t]]) => [k, t, c[k]]), ['every','All', every]].map(([k, t, n]) => `<button class="chip${f === k ? ' on' : ''}" data-f="${k}">${t}<i>${n == null ? '' : num(n)}</i></button>`).join('')}</div></div>
+ ${S.err.feedback ? failed('The feedback', 'feedback') : !F ? '<div class="q"><div class="qi"><span class="sk"></span></div></div>' : `<div class="q">${F.feedback.map(x => `<div class="qi"><div><div class="meta"><span class="pill ${x.type === 'bug' ? 'err' : x.type === 'idea' ? 'team' : 'ok'}">${esc(x.type)}</span> &nbsp;${x.email ? `<button class="lnk" data-user="${esc(x.email)}">${esc(x.full_name || x.email)}</button>` : '<span class="dim">account gone</span>'} · ${esc(x.source)} · ${ago(x.created_at)}${x.merged ? ' · '+x.merged+' merged in' : ''}${x.plan_row ? ` · <span class="pill">Plan ${esc(x.plan_row)}</span>` : ''}</div><div class="txt">${esc(x.text)}</div>${x.replies.map(r => `<div class="txt muted" style="margin-top:8px;padding-left:10px;border-left:2px solid var(--accent)">${esc(r.text)}<small class="dim" style="display:block">${esc(r.by)} · ${ago(r.at)}</small></div>`).join('')}
+  <div class="seg" style="margin-top:10px">${Object.entries(FST).map(([k, [t]]) => `<button class="${x.status === k ? 'on' : ''}" data-a="fbstatus:${esc(x.id)}:${k}" style="height:26px;padding:0 10px;font-size:12px">${t}</button>`).join('')}</div></div>
+  <div class="acts"><button class="btn sm pri" data-a="fbreply:${esc(x.id)}">Answer</button><button class="btn sm" data-a="fbplan:${esc(x.id)}">${x.plan_row ? 'Plan '+esc(x.plan_row) : 'Link to plan'}</button><button class="btn sm" data-a="fbmerge:${esc(x.id)}">Merge</button></div></div>`).join('') || `<div class="empty card">${every ? 'Nothing in this state.' : 'No feedback yet. People send it with POST /v1/feedback; the desktop app’s Feedback screen does not call it yet.'}</div>`}</div>`}`;
+};
+PAGES.system = () => {
+ const o = S.overview, sys = o ? o.system : null, us = o ? o.usage : null, R = S.relay, T = S.tasks;
+ const box = (dot, k, v, sub) => `<div class="sysc"><span class="dot ${dot}"></span><span style="min-width:0"><span class="k">${esc(k)}</span><small>${esc(sub)}</small></span><span class="v">${esc(v)}</span></div>`;
+ const ch = sys ? sys.healthz.checks : {}, fly = sys ? sys.fly.machines : {};
+ return `<div class="ph"><div><h1>System</h1><p>Whether everything runs: the server, its errors, the relay to your app, agent tasks and model spend.</p></div><div class="acts"><a class="btn" href="/founder/map">${I('ext',14)}System graph</a><button class="btn dng" data-a="drain">Drain the relay</button></div></div>
+ ${S.err.overview ? failed('The system status', 'overview') : !sys ? '<div class="sys"><div class="sysc"><span class="sk"></span></div></div>' : `<div class="sys">
+  ${box(ch.database && ch.database.ok ? 'ok' : 'err', 'Database', ch.database && ch.database.ok ? ch.database.round_trip_ms+' ms' : 'failed', ch.database && ch.database.ok ? num(Math.round(ch.database.bytes / 1024))+' KB on disk' : (ch.database || {}).reason || '')}
+  ${box(ch.data_volume && ch.data_volume.ok ? 'ok' : 'err', 'Data volume', ch.data_volume && ch.data_volume.free_bytes != null ? (ch.data_volume.free_bytes / 1073741824).toFixed(1)+' GB free' : 'failed', 'Needs 256 MB free')}
+  ${box(ch.replicas_root && ch.replicas_root.ok ? 'ok' : 'err', 'Brain replicas', sys.brain_replicas.count == null ? 'unreadable' : num(sys.brain_replicas.count), sys.brain_replicas.sync)}
+  ${box(R ? (R.application.live ? 'ok' : 'warn') : '', 'Your ArchHub app', R ? (R.application.live ? 'publishing' : 'not publishing') : '', R && R.application.pushed_at ? 'Last map '+ago(Date.parse(R.application.pushed_at) / 1e3) : 'No map published yet')}
+  ${box(fly.available ? (fly.machines.every(m => m.state === 'started') ? 'ok' : 'warn') : '', 'Server machines', fly.available ? fly.machines.length+' listed' : 'not listed', fly.available ? fly.machines.map(m => m.region+' '+m.state).join(', ') : fly.reason || '')}
+  ${sys.version && sys.version !== 'unknown' ? box('ok', 'Build', sys.version, sys.env+', billing by '+sys.billing_provider) : ''}</div>`}
+ <div class="sec"><h2>Server errors</h2>${S.err.errors ? failed('The errors', 'errors') : `<div class="tw"><table class="tbl"><thead><tr><th>What failed</th><th class="hide-s">Where</th><th class="num">Status</th><th>When</th><th></th></tr></thead><tbody>${!S.errors ? skRows(5, 3) : S.errors.map((e, n) => `<tr><td class="wrap"><b>${esc(e.kind)}</b> ${esc(e.message)}</td><td class="hide-s mono dim" style="font-size:12px">${esc(e.where)}</td><td class="num muted">${e.status || ''}</td><td class="muted">${ago(e.ts)}</td><td class="num"><button class="btn sm" data-a="fixerr:${n}">Mark fixed</button></td></tr>`).join('') || '<tr><td colspan="5" class="empty">No errors recorded.</td></tr>'}</tbody></table></div>`}</div>
+ <div class="sec"><h2>Relay tasks<span class="r muted">${R ? Object.entries(R.counts).map(([k, v]) => v+' '+k).join(', ') || 'empty queue' : ''}</span></h2>${S.err.relay ? failed('The relay', 'relay') : `<div class="tw"><table class="tbl"><thead><tr><th>Failed task</th><th class="hide-s">Asked by</th><th>What happened</th><th class="hide-s">When</th><th></th></tr></thead><tbody>${!R ? skRows(5, 2) : R.failed.map(r => `<tr><td class="wrap"><b>${esc(r.kind)}</b> ${esc(r.directive)}</td><td class="hide-s muted">${esc(r.created_by)}</td><td class="wrap err">${esc(r.result)}</td><td class="hide-s muted">${ago(r.finished_at || r.created_at)}</td><td class="num"><button class="btn sm" data-a="retry:${esc(r.id)}">Retry</button></td></tr>`).join('') || '<tr><td colspan="5" class="empty">No failed task.</td></tr>'}</tbody></table></div>`}</div>
+ ${usageCharts()}
+ <div class="two sec"><div class="card"><div class="ch">Usage<span class="r muted">all time</span></div><div class="cb">${us ? `<dl class="kv" style="grid-template-columns:170px minmax(0,1fr)"><dt>Chat completions</dt><dd>${num(us.chat_completions_total)}, ${num(us.chat_completions_24h)} in 24 h</dd><dt>Tokens in</dt><dd>${num(us.input_tokens)}</dd><dt>Tokens out</dt><dd>${num(us.output_tokens)}</dd><dt>Model spend, estimate</dt><dd>${dollars(us.spend_usd_estimate)}</dd><dt>Memory captures</dt><dd>${num(us.memory_captures_total)}, ${num(us.memory_captures_24h)} in 24 h</dd></dl>` : '<span class="sk"></span>'}</div></div>
+  <div class="card"><div class="ch">Agent tasks<span class="r mono muted">${T ? T.queued+' queued of '+T.total : ''}</span></div><div class="cb">${S.err.tasks ? esc(S.err.tasks) : !T ? '<span class="sk"></span>' : T.tasks.slice(0, 8).map(t => `<div class="li"><span class="dot ${t.status === 'done' ? 'ok' : t.status === 'failed' ? 'err' : t.status === 'queued' ? '' : 'run'}"></span><span class="t">${esc(String(t.directive).slice(0, 120))}<small>${esc(t.status)}${t.claimed_by ? ', '+esc(t.claimed_by) : ''}, ${ago(t.created_at)}</small></span></div>`).join('') || '<div class="dim">No agent task yet.</div>'}</div></div></div>`;
+};
+function usageCharts(){
+ const U = S.daily; if (S.err.daily) return `<div class="sec">${failed('The daily usage', 'daily')}</div>`; if (!U) return '';
+ const DAY = 86400, today = Math.floor(now() / DAY) * DAY, by = Object.fromEntries(U.days.map(d => [d.day, d]));
+ const days = Array.from({length:30}, (_, i) => by[today - (29 - i) * DAY] || {day:today - (29 - i) * DAY, claude:0, gpt:0, other:0});
+ const mx = Math.max(1, ...days.map(d => d.claude + d.gpt + d.other)), w = 900, h = 160, bw = w / days.length;
+ const bars = days.map((d, i) => { let y = h; return [['other','#5fb3b3'],['gpt','#7898d6'],['claude','#d97757']].map(([k, c]) => { const bh = d[k] / mx * (h - 10); y -= bh; return bh ? `<rect x="${(i*bw+2).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${bh.toFixed(1)}" fill="${c}" rx="1.5"><title>${day(d.day)}: ${d[k]} ${k}</title></rect>` : ''; }).join(''); }).join('');
+ const tot = U.top.reduce((a, u) => a + (u.cost_micros || 0), 0);
+ return `<div class="two sec"><div class="card"><div class="ch">Messages a day<span class="r muted">30 days</span></div><div class="cb">${U.days.length ? `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Messages a day for 30 days">${bars}</svg><div class="legend"><span><i style="background:#d97757"></i>Claude</span><span><i style="background:#7898d6"></i>GPT</span><span><i style="background:#5fb3b3"></i>Other models</span></div>` : '<div class="dim">No message in the last 30 days.</div>'}</div></div>
+  <div class="card"><div class="ch">Top model spend<span class="r mono muted">${dollars(tot / 1e6)} · 30 d</span></div><div class="cb">${U.top.map(u => `<div class="li" data-user="${esc(u.email)}" style="cursor:pointer">${av(u)}<span class="t">${esc(nameOf(u))}<small>${num(u.calls)} messages</small></span><span class="mono">${dollars((u.cost_micros || 0) / 1e6)}</span></div>`).join('') || '<div class="dim">No spend in the last 30 days.</div>'}</div></div></div>`;
+}
+const resultText = a => { try { const r = JSON.parse(a.result || '{}'); return r.message || Object.entries(r).filter(([, v]) => typeof v !== 'object').map(([k, v]) => k+' '+v).join(', '); } catch { return a.result || ''; } };
+PAGES.settings = () => {
+ const q = ui.q.toLowerCase(), sys = S.overview ? S.overview.system : null;
+ const rows = (S.actions || []).filter(a => !q || (a.action+' '+(a.target||'')+' '+a.result+' '+a.command).toLowerCase().includes(q));
+ const c = ui.cmd;
+ return `<div class="ph"><div><h1>Settings &amp; audit</h1><p>What the server is connected to, the command box, and the log of everything done from the Cockpit.</p></div></div>
+ <div class="two"><div class="card"><div class="ch">Command</div><div class="cb" style="display:grid;gap:8px"><p class="muted" style="margin:0">Say it in a sentence. A change is shown first and runs only after you confirm it.</p>
+   <form id="cmdForm" style="display:flex;gap:8px"><input class="in" id="cmd" style="flex:1" autocomplete="off" placeholder="e.g. how many users on studio?" aria-label="Command"><button class="btn pri">Run</button></form>
+   ${c ? `<div class="cmdout${c.ok === false ? ' bad' : ''}">${esc(c.message || (c.ok ? 'Done.' : 'It did not run.'))}${c.needs_confirm ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm pri" data-a="cmdyes">Confirm and apply</button><button class="btn sm" data-a="cmdno">Cancel</button></div>` : ''}</div>` : ''}
+   <p class="dim" style="margin:0;font-size:12px">POST /founder/api/command</p></div></div>
+  <div class="card"><div class="ch">This server</div><div class="cb">${sys ? `<dl class="kv"><dt>Address</dt><dd>${esc(sys.public_url)}</dd><dt>Environment</dt><dd>${esc(sys.env)}</dd><dt>Billing</dt><dd>${esc(sys.billing_provider)}</dd><dt>Stripe prices</dt><dd>${sys.stripe_configured ? 'configured' : 'not configured'}</dd><dt>Packs</dt><dd>${num(sys.marketplace_packs)} in the marketplace</dd></dl>` : '<span class="sk"></span>'}<div style="margin-top:12px"><a class="btn sm" href="/founder/logout">Sign out of the Cockpit</a></div></div></div></div>
+ <div class="sec"><h2>Unresolved actions<span class="r muted">${(S.unresolved || []).length}</span></h2>${S.err.unresolved ? failed('The unresolved actions', 'unresolved') : `<div class="tw"><table class="tbl"><thead><tr><th>What</th><th>To</th><th>State</th><th>When</th><th></th></tr></thead><tbody>${!S.unresolved ? skRows(5, 1) : S.unresolved.map(a => a.stripe_url ? `<tr><td>${esc(a.what)}</td><td class="muted wrap">${esc(recorded(a.amount, a.currency))} · ${esc(a.customer || 'customer not recorded')} · <span class="mono">${esc(a.payment_intent)}</span><small class="dim" style="display:block">${esc(a.message)}</small></td><td><span class="pill err">${a.state === 'in_flight' ? 'Still running' : 'Result unknown'}</span></td><td class="muted">${ago(a.claimed_at)}</td><td class="num"><a class="btn sm" href="${esc(a.stripe_url)}" target="_blank" rel="noopener noreferrer">Open in Stripe</a></td></tr>` : `<tr><td>${esc(a.what)}</td><td class="muted wrap">${esc(a.detail || a.target)}</td><td><span class="pill warn">${a.state === 'in_flight' ? 'Still running' : 'May have been sent'}</span></td><td class="muted">${ago(a.claimed_at)}</td><td class="num"><button class="btn sm" data-a="checkkey:${esc(a.key)}">Check</button> <button class="btn sm" data-a="arrived:${esc(a.key)}">It arrived</button> <button class="btn sm dng" data-a="notarrived:${esc(a.key)}">It did not arrive</button></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing is unresolved.</td></tr>'}</tbody></table></div>`}</div>
+ <div class="sec"><h2>Audit log<span class="r"><button class="btn sm" data-a="exportaudit">${I('dl',13)}Export</button></span></h2>
+ <div class="bar"><label class="fld">${I('log',14)}<input id="q" placeholder="Search actions" value="${esc(ui.q)}" aria-label="Search the audit log"></label></div>
+ ${S.err.actions ? failed('The audit log', 'actions') : `<div class="tw"><table class="tbl"><thead><tr><th>Action</th><th>On</th><th>Result</th><th class="hide-s">Route</th><th>When</th></tr></thead><tbody>${!S.actions ? skRows(5) : rows.map(a => `<tr><td><span class="dot ${a.ok ? 'ok' : 'err'}" style="display:inline-block;margin-right:8px"></span>${esc(a.action)}</td><td class="muted">${esc(a.target || '')}</td><td class="muted" title="${esc(a.result)}">${esc(resultText(a))}</td><td class="hide-s mono dim" style="font-size:11.5px">${esc(a.command)}</td><td class="muted">${ago(a.ts)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing logged yet.</td></tr>'}</tbody></table></div>`}</div>`;
+};
+
+/* ---------- the person panel ---------- */
+let drawer = null;
+async function readDr(){
+ const d = drawer;
+ if (d.kind === 'co') { const c = await api(at('/founder/api/companies/{company_id}', {company_id:d.key})); if (drawer !== d) return; d.co = c.ok ? c.d : null; d.error = c.ok ? '' : c.error; return; }
+ const [u, a, f, p] = await Promise.all([api('/users/'+encodeURIComponent(d.key)), api('/actions'), api('/community/facts'), api('/community/pending')]);
+ if (drawer !== d) return;
+ d.user = u.ok ? u.d.user : null; d.error = u.ok ? '' : u.error;
+ d.history = a.ok && d.user ? a.d.actions.filter(x => x.target && x.target.split('/')[0] === d.user.email).slice(0, 6) : [];
+ const mine = x => d.user && (x.contributor === d.user.email || x.contributor === d.user.id || x.who === d.user.email);
+ d.community = f.ok && p.ok ? {admitted:f.d.facts.filter(mine).length, waiting:(S.inbox ? S.inbox.items : []).filter(i => i.kind === 'community' && mine(i)).length} : null;
+}
+async function openDr(key, kind = 'user'){ drawer = {key, kind}; paintDr(); $('#dr').classList.add('on'); $('#scrim').classList.add('on'); await readDr(); paintDr(); }
+function closeDr(){ drawer = null; $('#dr').classList.remove('on'); $('#scrim').classList.remove('on'); }
+function paintCo(el, close){
+ const D = drawer.co;
+ if (!D) { el.innerHTML = `<div class="dh"><span class="who"><span><b>${esc(drawer.error ? 'Not found' : 'Reading')}</b><small>${esc(drawer.error || '')}</small></span></span>${close}</div><div class="db"><div class="ds"><span class="sk"></span></div></div>`; return; }
+ const c = D.company, owner = D.members.find(m => m.role === 'owner');
+ el.innerHTML = `<div class="dh"><span class="who"><span class="av" style="background:#a9c4f2">${esc(initials(c.name))}</span><span><b>${esc(c.name)}</b><small>${c.seats_used} of ${c.seat_limit} seats · ${num(c.credit_balance)} credits</small></span></span>${close}</div><div class="db">
+  <div class="ds"><h3>Seats</h3><div style="display:flex;align-items:center;gap:10px"><b class="mono" style="font-size:16px">${c.seats_used} of ${c.seat_limit}</b><span class="dim">used${c.stripe_subscription_id ? ', billed by Stripe' : ''}; the company owner changes seats</span></div></div>
+  <div class="ds"><h3>Models</h3><div class="seg">${Object.entries(AI).map(([k, t]) => `<button class="${c.ai_mode === k ? 'on' : ''}" data-a="aimode:${esc(c.id)}:${k}">${t}</button>`).join('')}</div></div>
+  <div class="ds"><h3>People · ${D.members.length}</h3>${D.members.map(m => `<div class="li" data-user="${esc(m.email)}" style="cursor:pointer">${av(m)}<span class="t">${esc(nameOf(m))}<small>${esc(m.email)}</small></span>${m.role === 'owner' ? '<span class="pill">Owner</span>' : `<button class="btn sm" data-a="owner:${esc(c.id)}:${esc(m.user_id)}">Make owner</button>`}</div>`).join('') || '<div class="dim">Nobody yet.</div>'}</div>
+  <div class="ds"><details class="adv-d"><summary>Advanced</summary><div class="adv" style="margin-top:8px">id ${esc(c.id)}\nGET /founder/api/companies/{id}\nPOST /founder/api/companies/{id}/ai-mode, /owner, /invite</div></details></div></div>
+  <div class="df">${owner ? `<button class="btn" data-user="${esc(owner.email)}">Open the owner</button><button class="btn" style="margin-left:auto" data-a="email:${esc(owner.email)}">Email the owner</button>` : ''}<button class="btn pri"${owner ? '' : ' style="margin-left:auto"'} data-a="invite:${esc(c.id)}">${I('plus',14)}Invite</button></div>`;
+}
+function paintDr(){
+ if (!drawer) return; const el = $('#dr'), u = drawer.user, close = `<button class="x" data-x aria-label="Close">${I('x')}</button>`;
+ if (drawer.kind === 'co') { paintCo(el, close); return; }
+ if (!u) { el.innerHTML = `<div class="dh"><span class="who"><span><b>${esc(drawer.error ? 'Not found' : 'Reading')}</b><small>${esc(drawer.error || drawer.key)}</small></span></span>${close}</div><div class="db"><div class="ds"><span class="sk"></span></div></div>`; return; }
+ const p = u.profile || {}, us = u.usage || {}, row = (k, v) => v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : '';
+ el.innerHTML = `<div class="dh">${who(u)}${close}</div><div class="db">
+  <div class="ds"><h3>Plan</h3><div class="seg">${Object.keys(PLAN).map(k => `<button class="${u.plan === k ? 'on' : ''}" data-a="setplan:${esc(u.id)}:${k}">${PLAN[k]}</button>`).join('')}</div>
+   <p class="dim" style="margin:8px 0 0;font-size:12px">The message quota moves with the plan. ${num(u.msg_used)} of ${num(u.msg_limit)} messages used.${u.stripe_customer ? ' A Stripe customer.' : ''}${u.period_end ? ' Renews '+day(u.period_end)+'.' : ''}</p></div>
+  <div class="ds"><h3>Profile</h3><dl class="kv">${row('Firm', p.firm_name)}${row('Role', p.aec_role)}${row('Discipline', p.aec_discipline)}${row('Firm size', p.firm_size)}${row('Country', p.country)}${row('Came from', p.signup_source)}<dt>Joined</dt><dd>${day(u.created_at)}</dd></dl></div>
+  <div class="ds"><h3>Activity</h3><dl class="kv"><dt>Last seen</dt><dd>${ago(u.last_seen)}</dd><dt>Sessions</dt><dd>${num(u.sessions_active)} signed in</dd><dt>Calls, 30 d</dt><dd>${num(us.calls_last_30d)} of ${num(us.calls)} ever</dd><dt>Model spend</dt><dd>${dollars((us.cost_micros || 0) / 1e6)}</dd></dl></div>
+  <div class="ds"><h3>Devices, ${u.devices.length}</h3>${u.devices.map(d => `<div class="li">${I('dash',14)}<span class="t">${esc(d.name || d.device_id)}<small>${d.disconnected_at ? 'disconnected '+ago(d.disconnected_at) : d.online ? 'online now' : 'seen '+ago(d.last_heartbeat)}</small></span>${d.disconnected_at ? '' : `<button class="btn sm" data-a="disconnect:${esc(u.id)}:${esc(d.device_id)}">Disconnect</button>`}</div>`).join('') || '<div class="dim">No devices.</div>'}</div>
+  ${drawer.community ? `<div class="ds"><h3>Community</h3><dl class="kv"><dt>Admitted posts</dt><dd>${num(drawer.community.admitted)}</dd><dt>Waiting review</dt><dd>${drawer.community.waiting ? `<button class="lnk" data-go="community">${num(drawer.community.waiting)}</button>` : '0'}</dd></dl></div>` : ''}
+  <div class="ds"><h3>History</h3>${drawer.history.length ? drawer.history.map(a => `<div class="li"><span class="dot ${a.ok ? 'ok' : 'err'}"></span><span class="t">${esc(a.action)}<small>${esc(resultText(a))} ${ago(a.ts)}</small></span></div>`).join('') : `<div class="dim">Joined ${ago(u.created_at)}. No founder action in the recent log.</div>`}</div>
+  <div class="ds"><details class="adv-d"><summary>Advanced</summary><div class="adv" style="margin-top:8px">id ${esc(u.id)}\nGET /founder/api/users/{key}\nPOST /founder/api/users/{key}/plan, /suspend, /restore, /email\nPOST /founder/api/devices/{user}/{device}/disconnect</div></details></div></div>
+  <div class="df">${u.suspended_at ? `<span class="pill err" title="${esc(u.suspended_reason)}">${u.deleted_at ? 'Deleted '+ago(u.deleted_at) : 'Suspended '+ago(u.suspended_at)}</span><span class="muted" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.suspended_reason)}</span><button class="btn pri" data-a="restore:${esc(u.id)}">Restore</button></div><div class="df">` : ''}${u.founder ? '<span class="muted">A founder account. It cannot be suspended or deleted.</span>' : `${u.suspended_at ? '' : `<button class="btn dng" data-a="suspend:${esc(u.id)}">Suspend</button>`}${u.deleted_at ? '' : `<button class="btn dng" data-a="deluser:${esc(u.id)}">Delete</button>`}${(S.bans || []).some(b => b.email === u.email) ? `<button class="btn" data-a="unban:${esc(u.email)}">Allow in community</button>` : `<button class="btn" data-a="ban:${esc(u.email)}">Ban from community</button>`}`}<button class="btn" style="margin-left:auto" data-a="email:${esc(u.id)}">Email</button></div>`;
+}
+
+/* ---------- actions: each one is a founder route; the server refuses what it must and logs the rest ---------- */
+const known = id => (S.users ? S.users.users : []).concat(S.paying || [], drawer && drawer.user ? [drawer.user] : []).find(u => u.id === id || u.email === id) || {id, email:id};
+const key = u => encodeURIComponent(u.id);
+const SUSPEND = n => [{name:'reason', label:'Reason (they will not see it)', ph:'e.g. payment disputed', req:true}, {name:'typed', label:'Type SUSPEND to confirm', match:'SUSPEND', ph:'SUSPEND'}];
+const H_ = {
+ reload(){ load(); }, goto(id){ go(id); }, user(k){ openDr(k); },
+ async checkkey(k){ const r = await api('/actions/key/'+encodeURIComponent(k)+'/check', {}); if (!r.ok) { toast('Not found', r.error, {bad:true}); return; }
+  const a = r.d.action;
+  if (r.d.settled) { toast('Stripe shows the refund', a.what+' · '+(a.detail || a.target)+' · '+r.d.found.id+' · read only, nothing was done', {logged:true}); { load(); return; } }
+  if (r.d.error) { toast(a.money ? 'Not settled' : 'Check', r.d.error+(a.money ? ' · read only, nothing was done' : ''), {bad:true, logged:true}); return; }
+  toast(a.what+' · '+a.target, {in_flight:'Still running', uncertain:'May have been sent: check the mailbox or the person, then say what happened', done:'Done', resolved_sent:'You confirmed it arrived', resolved_not_sent:'You confirmed it did not arrive'}[a.state] || a.state); },
+ async resolvekey(k, arrived){ const a = ((S.unresolved || []).find(x => x.key === k) || {what:'This action', target:''});
+  const r = await ask({title:(a.money ? (arrived ? 'It happened: ' : 'It did not happen: ') : (arrived ? 'It arrived: ' : 'It did not arrive: '))+a.what+' · '+a.target, body:(a.money ? 'Checked in Stripe: '+(a.detail || '')+'. ' : '')+(arrived ? 'The action is closed as done. Nothing is sent or charged.' : 'The action is closed as not done. Only then can it be done anew, under a new confirmation.'), ok:arrived ? 'It arrived' : 'It did not arrive', danger:!arrived}); if (!r) return;
+  await act(arrived ? 'Closed as sent' : 'Closed as not sent', a.what+' · '+a.target, () => api('/actions/key/'+encodeURIComponent(k)+'/resolve', {arrived})); },
+ arrived(k){ H_.resolvekey(k, true); }, notarrived(k){ H_.resolvekey(k, false); },
+ openstripe(n){ const i = S.inbox.items[+n]; if (i && /^https:\/\/dashboard\.stripe\.com\//.test(i.stripe_url)) window.open(i.stripe_url, '_blank', 'noopener,noreferrer'); },
+ async setplan(id, plan){ const u = known(id), old = u.plan; if (old === plan) return;
+  await act('Plan changed to '+PLAN[plan], u.email, () => api('/users/'+key(u)+'/plan', {plan}), old ? () => act('Plan changed back to '+PLAN[old], u.email, () => api('/users/'+key(u)+'/plan', {plan:old})) : null); },
+ async suspend(id){ const u = known(id);
+  const r = await ask({title:'Suspend '+u.email+'?', body:'Every session this account holds stops working, everywhere. You can restore it later.', fields:SUSPEND(1), ok:'Suspend', danger:true}); if (!r) return;
+  await act('Suspended', u.email, () => api('/users/'+key(u)+'/suspend', r), () => H_.restore(id)); },
+ async restore(id){ const u = known(id), r = await api('/users/'+key(u)+'/restore', {});
+  if (!r.ok) { toast('Restore did not happen', r.error, {bad:true}); return; }
+  const v = r.d.user || {};
+  toast(v.suspended_at ? 'Reopened, still suspended since '+day(v.suspended_at) : 'Restored', u.email+(v.suspended_reason ? ' · '+v.suspended_reason : ''), {logged:true});
+  await load(); },
+ async disconnect(id, device){ const u = known(id); await act('Device disconnected', u.email, () => api('/devices/'+key(u)+'/'+encodeURIComponent(device)+'/disconnect', {})); },
+ async email(id){ const u = known(id);
+  const r = await ask({title:'Email '+u.email, fields:[{name:'subject', label:'Subject', ph:'In a few words', req:true}, {name:'text', label:'Message', type:'area', req:true}], ok:'Send'}); if (!r) return;
+  await guarded('Email sent', u.email+' · '+r.subject, '/users/'+key(u)+'/email', r); },
+ async invite(cid){ const cos = S.companies || []; if (!cos.length) { toast('No company to invite into'); return; }
+  const pick = cos.find(c => c.id === cid) || cos[0];
+  const r = await ask({title:'Invite someone', body:'They get an emailed link that joins them to the company and takes a seat.', fields:[{name:'email', label:'Email', ph:'name@firm.com', req:true}, {name:'co', label:'Into', type:'select', options:cos.map(c => [c.id, cos.filter(o => o.name === c.name).length > 1 ? c.name+' ('+(c.slug || c.id)+')' : c.name]), value:pick.id}, {name:'role', label:'Role', type:'select', options:['member','admin'], value:'member'}], ok:'Send invite'}); if (!r) return;
+  const co = cos.find(c => c.id === r.co); if (!co) { toast('Choose the company again', '', {bad:true}); return; }
+  await guarded('Invite sent', r.email+' · '+co.name, '/companies/'+encodeURIComponent(co.id)+'/invite', {email:r.email, role:r.role}); },
+ async fbstatus(id, st){ await act('Feedback: '+FST[st][0], id, () => api(at('/founder/api/feedback/{feedback_id}/status', {feedback_id:id}), {status:st})); },
+ async fbreply(id){ const r0 = await api(at('/founder/api/feedback/{feedback_id}', {feedback_id:id})); if (!r0.ok) { toast('The feedback could not be read', r0.error, {bad:true}); return; } const x = r0.d.feedback;
+  const r = await ask({title:'Answer '+(x.email || 'this person'), body:String(x.text).slice(0, 200), fields:[{name:'subject', label:'Subject', value:'About your ArchHub feedback', req:true}, {name:'text', label:'Answer (sent by email, kept on the row)', type:'area', req:true}], ok:'Send'}); if (!r) return;
+  await guarded('Answer sent', x.email, '/feedback/'+encodeURIComponent(id)+'/reply', r); },
+ async fbplan(id){ const r = await ask({title:'Link to a plan row', fields:[{name:'plan_row', label:'Plan row (empty unlinks)', ph:'e.g. R238 or F48.4'}], ok:'Link'}); if (!r) return;
+  await act(r.plan_row ? 'Linked to '+r.plan_row : 'Unlinked', id, () => api(at('/founder/api/feedback/{feedback_id}/plan', {feedback_id:id}), r)); },
+ async fbmerge(id){ const others = ((S.feedback || {}).feedback || []).filter(x => x.id !== id); if (!others.length) { toast('Nothing to merge into', 'Open All to see every row'); return; }
+  const r = await ask({title:'Merge this feedback into', fields:[{name:'into', label:'The row it duplicates', type:'select', options:others.map(x => x.id+' · '+String(x.text).slice(0, 60)), value:''}], ok:'Merge'}); if (!r) return;
+  await act('Merged', id, () => api(at('/founder/api/feedback/{feedback_id}/merge', {feedback_id:id}), {into:r.into.split(' · ')[0]})); },
+ async ban(email){ const r = await ask({title:'Ban '+email+' from the community?', body:'Nothing they share reaches the review queue until you allow them again. Their account keeps working.', fields:[{name:'reason', label:'Reason, kept in the log', ph:'e.g. repeated client data', req:true}, {name:'typed', label:'Type BAN to confirm', match:'BAN', ph:'BAN'}], ok:'Ban', danger:true}); if (!r) return;
+  await act('Banned from the community', email, () => api('/community/ban', {user:email, ...r}), () => H_.unban(email)); },
+ async unban(email){ await act('Allowed again', email, () => api('/community/unban', {user:email})); },
+ packs(){ ui.tab.community = 'packs'; go('community', {tab:ui.tab}); },
+ async takedown(id){ const k = (S.packs || []).find(x => x.id === id) || {title:id};
+  const r = await ask({title:'Take down '+k.title+'?', body:'Members stop seeing and downloading it. You can put it back.', fields:[{name:'reason', label:'Reason, kept in the log', ph:'e.g. contains a client logo', req:true}, {name:'typed', label:'Type TAKEDOWN to confirm', match:'TAKEDOWN', ph:'TAKEDOWN'}], ok:'Take down', danger:true}); if (!r) return;
+  await act('Taken down', k.title, () => api(at('/founder/api/packs/{pack_id}/takedown', {pack_id:id}), r), () => H_.packrestore(id)); },
+ async packrestore(id){ const k = (S.packs || []).find(x => x.id === id) || {title:id}; await act('Back on the marketplace', k.title, () => api(at('/founder/api/packs/{pack_id}/restore', {pack_id:id}), {})); },
+ async deluser(id){ const u = known(id);
+  const r = await ask({title:'Delete '+u.email+'?', body:'The account is closed: every session stops and sign-in is refused. Stripe is not touched and no data is removed; Restore reopens it.', fields:[{name:'reason', label:'Reason, kept in the log', ph:'e.g. asked to close the account'}, {name:'typed', label:'Type DELETE to confirm', match:'DELETE', ph:'DELETE'}], ok:'Delete', danger:true}); if (!r) return;
+  await act('Account deleted', u.email, () => api('/users/'+key(u)+'/delete', r), () => H_.restore(id)); },
+ async resolve(n){ const i = S.inbox.items[+n]; await act('Marked fixed', i.title || i.where, () => api('/errors/resolve', {where:i.where, kind:i.title})); },
+ async fixerr(n){ const e = S.errors[+n]; await act('Marked fixed', e.kind, () => api('/errors/resolve', {where:e.where, kind:e.kind})); },
+ async aimode(id, mode){ const c = drawer && drawer.co ? drawer.co.company : {name:id}; if (c.ai_mode === mode) return;
+  await act('Models: '+AI[mode], c.name, () => api(at('/founder/api/companies/{company_id}/ai-mode', {company_id:id}), {ai_mode:mode})); },
+ async owner(id, userId){ const D = drawer && drawer.co, m = D ? D.members.find(x => x.user_id === userId) : null;
+  const r = await ask({title:'Make '+(m ? m.email : 'this member')+' the owner?', body:'The current owner stays in the company as an admin.', ok:'Make owner'}); if (!r) return;
+  await act('Owner changed', (D ? D.company.name : '')+' · '+(m ? m.email : ''), () => api(at('/founder/api/companies/{company_id}/owner', {company_id:id}), {user_id:userId})); },
+ async discall(id){ const r = await api('/devices?user='+encodeURIComponent(id)); const live = r.ok ? r.d.devices.filter(d => !d.disconnected_at) : [];
+  if (!live.length) { toast('No connected device', known(id).email); return; }
+  await act('Disconnected '+live.length+' devices', known(id).email, async () => { let last = {ok:true}; for (const d of live) { last = await api('/devices/'+encodeURIComponent(id)+'/'+encodeURIComponent(d.device_id)+'/disconnect', {}); if (!last.ok) break; } return last; }); },
+ export(){ const rows = userRows(); download('archhub-users.csv', [['Name','Email','Plan','Company','Last seen','Messages used','Message limit','Suspended','Joined'], ...rows.map(u => [nameOf(u), u.email, u.plan, coName(u.company_id), u.last_seen ? new Date(u.last_seen*1e3).toISOString() : '', u.msg_used, u.msg_limit, u.suspended_at ? 'yes' : '', new Date(u.created_at*1e3).toISOString()])]); toast('Exported '+rows.length+' people', 'archhub-users.csv'); },
+ bulkexport(){ const rows = userRows().filter(u => ui.sel.has(u.id)); download('archhub-users-selected.csv', [['Name','Email','Plan'], ...rows.map(u => [nameOf(u), u.email, u.plan])]); toast('Exported '+rows.length+' people', 'archhub-users-selected.csv'); },
+ async bulk(text, rows, call){ let done = 0, error = ''; for (const u of rows) { const r = await call(u); if (r.ok) done++; else error = r.error; }
+  ui.sel = new Set(); toast(text, done+' of '+rows.length+' accounts'+(error ? ', last refusal: '+error : ''), {logged:done > 0, bad:done < rows.length}); await load(); },
+ async bulkplan(){ const rows = userRows().filter(u => ui.sel.has(u.id));
+  const r = await ask({title:'Change plan for '+rows.length+' people', fields:[{name:'plan', label:'New plan', type:'select', options:Object.values(PLAN), value:'Solo'}], ok:'Change'}); if (!r) return;
+  const plan = Object.keys(PLAN).find(k => PLAN[k] === r.plan); await H_.bulk('Plan changed to '+r.plan, rows, u => api('/users/'+key(u)+'/plan', {plan})); },
+ async bulksuspend(){ const rows = userRows().filter(u => ui.sel.has(u.id) && !u.suspended_at); if (!rows.length) { toast('Everyone selected is already suspended'); return; }
+  const r = await ask({title:'Suspend '+rows.length+' accounts?', body:'Their sessions stop working everywhere. Stripe subscriptions keep billing; a refund is made in Billing.', fields:SUSPEND(rows.length), ok:'Suspend all', danger:true}); if (!r) return;
+  await H_.bulk('Suspended', rows, u => api('/users/'+key(u)+'/suspend', r)); },
+ clearsel(){ ui.sel = new Set(); paint(); },
+ async purge(){ const dry = await api('/purge-test-users', {}); if (!dry.ok) { toast('The test accounts could not be counted', dry.error, {bad:true}); return; }
+  const n = dry.d.would_delete; if (!n) { toast('No test accounts left'); return; }
+  const r = await ask({title:'Remove '+n+' test accounts?', body:'These synthetic accounts and their sessions are deleted: '+dry.d.emails.slice(0, 4).join(', ')+(n > 4 ? ' and '+(n - 4)+' more' : '')+'. Real accounts and Stripe are never touched. This cannot be undone.', fields:[{name:'typed', label:'Type DELETE to confirm', match:'DELETE', ph:'DELETE'}], ok:'Remove', danger:true}); if (!r) return;
+  await act('Removed test accounts', n+' accounts', () => api('/purge-test-users', {confirm:true, typed:r.typed})); },
+ async refund(n){ const p = S.stripe.live.payments[+n], left = p.amount_received - p.amount_refunded, whom = p.email || p.payment_intent;
+  const r = await ask({title:'Refund '+whom, body:'Paid '+money(p.amount_received, p.currency)+' on '+day(p.created)+'. Refund all of it or a part.', fields:[{name:'amount', label:'Amount, up to '+money(left, p.currency), type:'number', value:(left / 100).toFixed(2), req:true}, {name:'why', label:'Reason', type:'select', options:['Requested by customer','Duplicate charge','Fraudulent','Other'], value:'Requested by customer'}, {name:'note', label:'Note for the log (needed for Other)', ph:'What happened'}], ok:'Continue', danger:true}); if (!r) return;
+  const reason = [r.why === 'Other' ? '' : r.why, r.note.trim()].filter(Boolean).join(': '), amount = Math.round(parseFloat(r.amount) * 100);
+  if (!reason) { toast('The refund needs a reason', 'Write a note when the reason is Other', {bad:true}); return; }
+  const pre = await api('/stripe/refund', {payment_intent:p.payment_intent, amount, reason, action_key:newKey()}); if (!pre.ok) { toast('The refund was not started', pre.error, {bad:true}); return; }
+  const yes = await ask({title:'Send '+money(pre.d.amount, pre.d.currency)+' back to '+whom+'?', body:'Stripe returns the money to the card. This cannot be undone.', fields:[{name:'typed', label:'Type REFUND to confirm', match:'REFUND', ph:'REFUND'}], ok:'Refund '+money(pre.d.amount, pre.d.currency), danger:true}); if (!yes) { toast('No refund was made', whom); return; }
+  await guarded('Refunded '+money(pre.d.amount, pre.d.currency), whom+', '+reason, '/stripe/refund', {confirm_token:pre.d.confirm_token, customer:whom, reason, typed:yes.typed}); },
+ async judge(n, admit, reason){ const i = S.inbox.items[+n]; await act(admit ? 'Admitted' : 'Rejected', i.community_id+', '+(i.who || 'unknown member'), () => api('/community/judge', {community_id:i.community_id, id:i.id, hlc:i.hlc, admit, reason})); },
+ admit(n){ H_.judge(n, true); },
+ async reject(n){ const i = S.inbox.items[+n]; const r = await ask({title:'Reject this post?', body:String(i.text).slice(0, 140), fields:[{name:'why', label:'Reason, kept in the log', type:'select', options:['Not about practice','Contains client data','Wrong or unsafe advice','Duplicate'], value:'Not about practice'}], ok:'Reject', danger:true}); if (r) H_.judge(n, false, r.why); },
+ async retry(id){ await act('Put back in the queue', 'relay task', () => api('/relay/tasks/'+encodeURIComponent(id)+'/retry', {})); },
+ async drain(){ const q = S.relay ? (S.relay.counts.queued || 0) : 0; if (!q) { toast('The queue is empty'); return; }
+  const r = await ask({title:'Close '+q+' queued relay tasks?', body:'None of them runs later. Your app keeps working; only the waiting instructions are dropped.', fields:[{name:'reason', label:'Reason', ph:'e.g. stale instructions', req:true}, {name:'typed', label:'Type DRAIN to confirm', match:'DRAIN', ph:'DRAIN'}], ok:'Drain', danger:true}); if (!r) return;
+  await act('Drained the relay', q+' tasks', () => api('/relay/drain', {reason:r.reason, typed:r.typed})); },
+ exportaudit(){ download('archhub-cockpit-audit.csv', [['When','Actor','Action','On','Result','Route','OK'], ...(S.actions || []).map(a => [new Date(a.ts*1e3).toISOString(), a.actor, a.action, a.target, a.result, a.command, a.ok ? 'yes' : 'no'])]); toast('Exported the audit log', 'archhub-cockpit-audit.csv'); },
+ async cmdyes(){ const c = ui.cmd; ui.cmd = {message:'Applying'}; paint(); const r = await api('/command', {command:c.message || '', confirm:true, pending:c.pending}); ui.cmd = {...r.d, ok:r.ok, message:r.d.message || r.error}; await load(); },
+ cmdno(){ ui.cmd = {message:'Cancelled. Nothing was changed.'}; paint(); }
+};
+async function runCommand(text){ if (!text) return; ui.cmd = {message:'Working on: '+text}; paint();
+ const r = await api('/command', {command:text}); ui.cmd = {...r.d, ok:r.ok, message:r.d.message || r.error}; await load(); }
+
+/* ---------- paint + events ---------- */
+function paint(fresh = false){
+ side(); const me = S.overview && S.overview.me; if (me && me.email) { const a = $('#acct'); a.textContent = initials(me.name || me.email.split('@')[0]); a.title = me.email; a.style.fontWeight = '600'; a.style.fontSize = '12px'; } const nav = NAV.flatMap(g => g[1]).find(n => n[0] === page) || NAV[0][1][0]; if (nav[0] !== page) page = nav[0];
+ $('#crumb').textContent = '/ Cockpit / '+nav[1];
+ const q = $('#q'), focused = q && document.activeElement === q, pos = focused ? q.selectionStart : 0, cmd = $('#cmd'), typing = cmd && document.activeElement === cmd ? cmd.value : null;
+ $('#main').innerHTML = `<div class="page${fresh ? ' appear' : ''}">${PAGES[page]()}</div>`;
+ if (focused && $('#q')) { const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); }
+ if (typing !== null && $('#cmd')) { $('#cmd').value = typing; $('#cmd').focus(); }
+ if (drawer) paintDr();
+}
+document.addEventListener('click', e => {
+ const t = e.target.closest('[data-go],[data-a],[data-user],[data-co],[data-f],[data-sort],[data-tab],[data-x],[data-pick],#all');
+ if (!t) return;
+ if (t.matches('[data-pick]')) { const k = t.dataset.pick; ui.sel.has(k) ? ui.sel.delete(k) : ui.sel.add(k); { paint(); return; } }
+ if (t.id === 'all') { const rows = userRows(); rows.every(u => ui.sel.has(u.id)) ? rows.forEach(u => ui.sel.delete(u.id)) : rows.forEach(u => ui.sel.add(u.id)); { paint(); return; } }
+ if (t.dataset.x !== undefined) { closeDr(); return; }
+ if (t.dataset.go) { go(t.dataset.go); return; }
+ if (t.dataset.a) { const [fn, ...args] = t.dataset.a.split(':'); { H_[fn] && H_[fn](...args); return; } }
+ if (t.dataset.f) { ui.filter = t.dataset.f; ui.sel = new Set(); paint(); { page === 'users' || page === 'feedback' ? load() : null; return; } }
+ if (t.dataset.sort) { ui.dir = ui.sort === t.dataset.sort ? -ui.dir : -1; ui.sort = t.dataset.sort; { paint(); return; } }
+ if (t.dataset.tab) { const [p, k] = t.dataset.tab.split(':'); ui.tab[p] = k; { paint(); return; } }
+ if (t.dataset.user) { openDr(t.dataset.user); return; }
+ if (t.dataset.co) { openDr(t.dataset.co, 'co'); return; }
+});
+let typingTimer = 0;
+document.addEventListener('input', e => { if (e.target.id !== 'q') return; ui.q = e.target.value; if (page !== 'users') { paint(); return; } clearTimeout(typingTimer); typingTimer = setTimeout(load, WAIT.typing); });
+document.addEventListener('submit', e => { if (e.target.id !== 'cmdForm') return; e.preventDefault(); const text = $('#cmd').value.trim(); $('#cmd').value = ''; runCommand(text); });
+/* row menu: the ⋯ button and right-click hold the common actions */
+function menuFor(spec){ const [kind, k] = spec.split(':');
+ if (kind === 'user') { const u = known(k);
+  return [['lab', u.email], ['Open', 'user:'+k], ['Email', 'email:'+k], ['hr'], ['lab', 'Plan'], ...Object.keys(PLAN).filter(p => p !== u.plan).map(p => ['Set to '+PLAN[p], 'setplan:'+k+':'+p]), ['hr'],
+   ...(u.devices ? [['Disconnect every device', 'discall:'+k]] : []), ...(u.suspended_at ? [['Restore', 'restore:'+k]] : u.founder ? [] : [['Suspend', 'suspend:'+k, 'dng']])]; }
+ if (kind === 'pay') { const p = S.stripe.live.payments[+k]; return [['lab', p.payment_intent], ['Refund', 'refund:'+k, 'dng'], ...(p.email ? [['Open the person', 'user:'+p.email]] : [])]; }
+ if (kind === 'acct') return [['lab', 'Founder account'], ['a', 'System graph', '/founder/map'], ['Settings & audit', 'goto:settings'], ['hr'], ['a', 'Sign out', '/founder/logout']];
+ return [];
+}
+function openMenu(spec, x, y){ closeMenu(); const items = menuFor(spec); if (!items.length) return; const m = document.createElement('div'); m.className = 'menu'; m.id = 'menu';
+ m.innerHTML = items.map(([t, a, c]) => t === 'hr' ? '<hr>' : t === 'lab' ? `<div class="lab">${esc(a)}</div>` : t === 'a' ? `<a href="${c}">${esc(a)}</a>` : `<button class="${c||''}" data-a="${esc(a)}">${esc(t)}</button>`).join('');
+ document.body.append(m); const r = m.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8))+'px'; m.style.top = Math.min(y, window.innerHeight - r.height - 8)+'px'; (m.querySelector('button,a')).focus(); }
+function closeMenu(){ const m = $('#menu'); if (m) m.remove(); }
+document.addEventListener('click', e => { const b = e.target.closest('[data-menu]'); if (b) { e.stopPropagation(); const r = b.getBoundingClientRect(); { openMenu(b.dataset.menu, r.right - 200, r.bottom + 4); return; } } if (!e.target.closest('#menu')) closeMenu(); else if (e.target.closest('[data-a]')) setTimeout(closeMenu); }, true);
+document.addEventListener('contextmenu', e => { const row = e.target.closest('tr[data-user]'); if (!row) return; e.preventDefault(); openMenu('user:'+row.dataset.user, e.clientX, e.clientY); });
+$('#acct').dataset.menu = 'acct:';
+$('#scrim').onclick = closeDr;
+$('#refresh').onclick = load;
+/* Ctrl K: finds people on the server and runs named actions on them */
+let palSel = 0, palList = [], palPeople = [], palTimer = 0;
+const palItems = q => [
+ ...palPeople.flatMap(u => [{t:nameOf(u), s:u.email, ic:'user', run:() => openDr(u.id)}, {t:'Email '+u.email, s:'Action', ic:'chat', run:() => H_.email(u.id)},
+  ...Object.keys(PLAN).filter(p => p !== u.plan).slice(0, 2).map(p => ({t:'Set '+u.email+' to '+PLAN[p], s:'Action', ic:'card', run:() => H_.setplan(u.id, p)})),
+  u.suspended_at ? {t:'Restore '+u.email, s:'Action', ic:'user', run:() => H_.restore(u.id)} : {t:'Suspend '+u.email, s:'Action', ic:'user', run:() => H_.suspend(u.id)}]),
+ ...(S.companies || []).map(c => ({t:c.name, s:'Company', ic:'co', run:() => openDr(c.id, 'co')})),
+ ...NAV.flatMap(g => g[1]).map(([id, t, ic]) => ({t, s:'Section', ic, run:() => go(id)})),
+ {t:'Remove test accounts', s:'Action', ic:'user', run:() => H_.purge()}, {t:'Drain the relay', s:'Action', ic:'bot', run:async () => { await READ.relay(); H_.drain(); }},
+ {t:'Review the community queue', s:'Action', ic:'shield', run:() => go('community')}, {t:'Open the audit log', s:'Action', ic:'log', run:() => go('settings')}, {t:'Read this page again', s:'Action', ic:'pulse', run:load}
+].filter(i => !q || i.s === 'Action' && palPeople.length && i.t.includes('@') || (i.t+' '+i.s).toLowerCase().includes(q));
+function palPaint(){ const q = $('#palIn').value.trim().toLowerCase(); palList = palItems(q).slice(0, 12); palSel = Math.max(0, Math.min(palSel, palList.length - 1));
+ $('#palRes').innerHTML = palList.map((i, n) => `<button class="it${n === palSel ? ' on' : ''}" data-pi="${n}">${I(i.ic,15)}${esc(i.t)}<small>${esc(i.s)}</small></button>`).join('') || '<div class="empty">Nothing found.</div>'; }
+function palOpen(){ $('#pal').classList.add('on'); $('#palIn').value = ''; palPeople = []; palSel = 0; palPaint(); $('#palIn').focus(); if (!S.companies) READ.companies().then(palPaint); }
+function palClose(){ $('#pal').classList.remove('on'); }
+$('#openPal').onclick = palOpen;
+$('#pal').onclick = e => { const b = e.target.closest('[data-pi]'); if (b) { palClose(); palList[+b.dataset.pi].run(); } else if (e.target.id === 'pal') palClose(); };
+$('#palIn').oninput = () => { palSel = 0; palPaint(); clearTimeout(palTimer); const q = $('#palIn').value.trim();
+ palTimer = setTimeout(async () => { if (q.length < 2) { palPeople = []; { palPaint(); return; } } const r = await api('/users/find?limit=3&q='+encodeURIComponent(q)); if ($('#palIn').value.trim() === q) { palPeople = r.ok ? r.d.users : []; palPaint(); } }, WAIT.palette); };
+document.addEventListener('keydown', e => {
+ if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); { palOpen(); return; } }
+ if ($('#pal').classList.contains('on')) { if (e.key === 'Escape') palClose(); if (e.key === 'ArrowDown') { palSel = Math.min(palSel + 1, palList.length - 1); palPaint(); e.preventDefault(); } if (e.key === 'ArrowUp') { palSel = Math.max(palSel - 1, 0); palPaint(); e.preventDefault(); } if (e.key === 'Enter' && palList[palSel]) { palClose(); palList[palSel].run(); } return; }
+ if (page === 'community' && (ui.tab.community || 'queue') === 'queue' && !$('#dlg').open && !drawer && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  const queue = inboxItems().filter(x => x.kind === 'community'), k = e.key.toLowerCase(), cur = queue[Math.min(ui.cur, queue.length - 1)];
+  if (k === 'j' || k === 'k') { ui.cur = Math.max(0, Math.min(queue.length - 1, ui.cur + (k === 'j' ? 1 : -1))); { paint(); return; } }
+  if (cur && k === 'a') { H_.admit(cur._n); return; }
+  if (cur && k === 'r') { H_.reject(cur._n); return; }
+ }
+ if (e.key === 'Escape' && $('#menu')) { closeMenu(); return; }
+ if (e.key === 'Escape' && drawer && !$('#dlg').open) { closeDr(); return; }
+});
+const idle = () => !$('#dlg').open && !$('#menu') && !$('#pal').classList.contains('on') && !ui.sel.size && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+if (['127.0.0.1','localhost','[::1]'].includes(location.hostname)) $('#local').classList.add('on');
+paint(true); load();
+setInterval(() => { if (idle()) load(); }, WAIT.refresh);
+</script>
+</body>
+</html>

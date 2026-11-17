@@ -175,9 +175,8 @@ class TestFounderAllowed:
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
         html = r.text
-        # On-brand: terracotta accent + the two brand fonts, no emoji.
+        # On-brand: terracotta accent + the interface font, no emoji.
         assert "#d97757" in html
-        assert "Instrument Serif" in html
         assert "Inter" in html
         assert "Founder" in html and "Cockpit" in html
         # Auto-refresh wired.

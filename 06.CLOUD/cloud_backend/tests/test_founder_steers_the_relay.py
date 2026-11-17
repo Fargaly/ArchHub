@@ -66,7 +66,7 @@ def test_draining_closes_every_queued_task_and_nothing_else(client):
     import db
     queued, claimed, failed = _seed()
     r = client.post("/founder/api/relay/drain", headers=_auth(FOUNDER),
-                    json={"reason": "court: app reinstalled"})
+                    json={"reason": "court: app reinstalled", "typed": "DRAIN"})
     assert r.status_code == 200 and r.json()["drained"] == 2
     assert sorted(r.json()["ids"]) == sorted(task["id"] for task in queued)
     for task in queued:

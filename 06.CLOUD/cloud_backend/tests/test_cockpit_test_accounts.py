@@ -232,11 +232,11 @@ PURGE = "/founder/api/purge-test-users"
 
 class TestPurgeEndpointGate:
     def test_unauthenticated_is_403(self, client):
-        r = client.post(PURGE, json={"confirm": True})
+        r = client.post(PURGE, json={"confirm": True, "typed": "DELETE"})
         assert r.status_code == 403
 
     def test_garbage_token_is_403(self, client):
-        r = client.post(PURGE, json={"confirm": True},
+        r = client.post(PURGE, json={"confirm": True, "typed": "DELETE"},
                         headers=_auth("ah_live_not_real"))
         assert r.status_code == 403
 
@@ -247,7 +247,7 @@ class TestPurgeEndpointGate:
         token = _sign_in(client, monkeypatch, "someone.else@studio.com")
         # Sanity: token works on a normal route.
         assert client.get("/v1/me", headers=_auth(token)).status_code == 200
-        r = client.post(PURGE, json={"confirm": True}, headers=_auth(token))
+        r = client.post(PURGE, json={"confirm": True, "typed": "DELETE"}, headers=_auth(token))
         assert r.status_code == 403
         # Row still there.
         assert db.count_test_users() == 1
@@ -293,7 +293,7 @@ class TestPurgeEndpointDeletesOnlyTest:
         before_real = db.count_users(exclude_test=True)
         assert db.count_test_users() == 6
 
-        r = client.post(PURGE, json={"confirm": True}, headers=_auth(token))
+        r = client.post(PURGE, json={"confirm": True, "typed": "DELETE"}, headers=_auth(token))
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["dry_run"] is False
@@ -316,7 +316,7 @@ class TestPurgeEndpointDeletesOnlyTest:
                      cost_micros=1)
         # Give it a token too, to prove dependent cleanup.
         db.issue_token(testu["id"])
-        r = client.post(PURGE, json={"confirm": True}, headers=_auth(token))
+        r = client.post(PURGE, json={"confirm": True, "typed": "DELETE"}, headers=_auth(token))
         assert r.status_code == 200
         assert r.json()["purged"] == 1
         with db.connect() as con:
@@ -333,6 +333,6 @@ class TestPurgeEndpointDeletesOnlyTest:
         import db
         token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
         db.get_or_create_user("real.only@studio.com")
-        r = client.post(PURGE, json={"confirm": True}, headers=_auth(token))
+        r = client.post(PURGE, json={"confirm": True, "typed": "DELETE"}, headers=_auth(token))
         assert r.status_code == 200
         assert r.json()["purged"] == 0

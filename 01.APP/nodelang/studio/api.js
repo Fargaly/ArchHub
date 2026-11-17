@@ -1743,7 +1743,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
  if(navigation!==fileNavigation)return {cancelled:true};
- const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,base_revision:sessionRevision});
+ const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath});
  if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };

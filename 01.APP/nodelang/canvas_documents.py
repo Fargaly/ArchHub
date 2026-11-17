@@ -693,8 +693,9 @@ def merge(base, ours, theirs):
         result[field] = list(t.values())
     node_ids = {n['id'] for n in result['nodes']}
     result['wires'] = [w for w in result['wires'] if w['from']['node'] in node_ids and w['to']['node'] in node_ids]
-    seen = set()
-    result['wires'] = [w for w in result['wires'] if not ((w['to']['node'], w['to']['socket']) in seen or seen.add((w['to']['node'], w['to']['socket'])))]
+    targets = {(wire['to']['node'], wire['to']['socket']) for wire in result['wires']}
+    if len(targets) != len(result['wires']):
+        raise ValueError('An input was connected elsewhere. Reopen the workflow before saving.')
     for key in ('title', 'groups', 'notes'):
         if (base or {}).get(key) != ours.get(key):
             result[key] = copy.deepcopy(ours[key])
@@ -720,17 +721,19 @@ def remember(path, document):
         held.pop(old, None)
 
 
-def commit_ui(path, document, base_revision, by='You', *, record_creation=True):
+def commit_ui(path, document, base_revision, by='You', *, record_creation=True, expect_existing=False):
     """The founder's window saves: merge with any agent edit made since its base."""
     from .session_files import read_document, write_document, validate, portable_parameters
     document = copy.deepcopy(document)
     validate(document)
     with locked(path):
         current = read_document(path) if Path(path).exists() else None
+        base = _SNAPSHOTS.get(str(path).lower(), {}).get(base_revision)
+        if current is None and (expect_existing or base is not None and base['id'] == document['id']):
+            raise ValueError('This workflow moved or was removed. Reopen it before saving.')
         if current is not None and current['id'] != document['id']:
             raise ValueError('This path now contains a different workflow. Reopen it before saving.')
         if current is not None and revision(current) != base_revision:
-            base = _SNAPSHOTS.get(str(path).lower(), {}).get(base_revision)
             if base is None or base['id'] != document['id']:
                 raise ValueError('This workflow changed and its earlier revision is unavailable. Reopen it before saving.')
             document = merge(base, document, current)

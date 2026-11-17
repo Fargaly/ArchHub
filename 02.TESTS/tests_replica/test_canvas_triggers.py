@@ -388,6 +388,31 @@ def test_opening_autosave_keeps_committed_schedule_retime(profile):
         service.close()
 
 
+def test_stale_autosave_does_not_recreate_removed_armed_workflow(profile):
+    from nodelang import canvas_triggers, session_files
+
+    path = profile / 'removed-armed.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': 600, 'armed': True})
+    files = session_files.SessionFiles()
+    service = canvas_triggers.TriggerService(files)
+    key = (str(path), 't')
+    try:
+        opened = files.dispatch({'action': 'open', 'path': str(path)})['document']
+        service.refresh()
+        old_timer = service.timers[key]
+        old_timer.cancel()
+        path.unlink()
+        opened['nodes'][0]['position']['x'] = 20
+        with pytest.raises(ValueError, match='workflow moved or was removed'):
+            files.dispatch({'action': 'autosave', 'path': str(path), 'document': opened})
+        service.refresh()
+        old_timer.function()
+        assert not path.exists() and key not in service.timers
+        assert service.armed == [] and service.fired == []
+    finally:
+        service.close()
+
+
 def test_timed_approval_uses_the_same_saved_parameters_as_admission(profile, monkeypatch):
     from nodelang.canvas_triggers import TriggerService
     from nodelang.session_files import read_runs

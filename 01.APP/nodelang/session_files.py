@@ -1901,7 +1901,7 @@ class SessionFiles:
                 from .canvas_documents import commit_ui
                 path = str(local_path(body['path'])) if body.get('path') else str(document_path(self.directory, document))
                 base = int(body.get('base_revision', canvas_documents.revision(document)))
-                merged = commit_ui(path, document, base)
+                merged = commit_ui(path, document, base, expect_existing=bool(body.get('path')))
                 # APPTIDY owns names only in Sessions; external filenames belong to the user.
                 renamed = move_session(path, Path(path).parent) if Path(path).parent == self.directory.resolve() else path
                 if renamed != path:
@@ -1928,7 +1928,8 @@ class SessionFiles:
                 canvas_documents.remember(path, document)
             else:
                 base = int(body.get('base_revision', canvas_documents.revision(document)))
-                document = canvas_documents.commit_ui(path, document, base, record_creation=False)
+                document = canvas_documents.commit_ui(path, document, base, record_creation=False,
+                                                      expect_existing=body.get('expect_existing') is True)
             self.remember(path,document)
             self._current(document['id'], path)
             return {'ok':True,'path':path,'document':document,'revision':canvas_documents.revision(document)}

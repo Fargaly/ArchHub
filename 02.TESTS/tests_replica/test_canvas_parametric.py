@@ -270,6 +270,28 @@ def test_stale_autosave_without_a_base_leaves_file_untouched(profile):
     assert path.read_bytes() == committed
 
 
+def test_autosave_rejects_conflicting_wire_targets(profile):
+    from nodelang import canvas_documents as docs
+    from nodelang.session_files import SessionFiles, write_document
+
+    owner = SessionFiles()
+    path = profile / 'wire-conflict.archhub'
+    original = workflow()
+    incoming = original['wires'].pop()
+    write_document(path, original)
+    opened = owner.dispatch({'action': 'open', 'path': str(path)})['document']
+    docs.edit(path, 'agent:claude', 'wire count',
+              lambda document: document['wires'].append(incoming), solve_changed=False)
+    committed = path.read_bytes()
+    opened['wires'][0]['to'] = incoming['to'].copy()
+
+    with pytest.raises(ValueError, match='input was connected elsewhere'):
+        owner.dispatch({'action': 'autosave', 'path': str(path), 'document': opened,
+                        'base_revision': docs.revision(opened)})
+    assert path.read_bytes() == committed
+    assert opened['wires'][0]['to'] == incoming['to']
+
+
 def test_model_node_param_writes_router_json(profile):
     from nodelang.settings_owner import read_router_settings
     from nodelang.session_files import SessionFiles, catalogue

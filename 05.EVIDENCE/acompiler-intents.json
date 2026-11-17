@@ -11311,6 +11311,7 @@
         "01.APP/nodelang/settings_owner.py",
         "01.APP/nodelang/workshop_tasks.py",
         "02.TESTS/tests_replica/test_chat_acp.py",
+        "01.APP/nodelang/hook_decision.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

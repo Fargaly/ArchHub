@@ -11382,6 +11382,14 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "F320": {
+      "source": "Founder F320 WORKSHOP-LABEL-FOLLOWS-FOLDER (T1), 2026-11-16: the Workshop routes by session id, not by the folder in the label. A label 'App / folder / session-<id>' is matched by its stable session-<id> token after the agent changes folder; a reply reaches the replied message's author when the To line names it by an old or new label; a short id is resolved once at send time and an ended session's short id is returned, never queued; a declared name ending in another session's token is refused; one recipient's seen never removes another recipient's receipt. Isolated-profile tests on a real temp mailbox only, branch-only commits on lane/f320-routing, hooks on, no push, install or live profile access.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_workshop_returned_truth.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

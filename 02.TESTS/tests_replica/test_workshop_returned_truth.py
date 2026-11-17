@@ -242,3 +242,280 @@ def test_concurrent_sends_lose_no_mailbox_rows_or_injections(peer, tmp_path):
     assert len(frames) == 12
     assert all(sum(('\nconcurrent-%d\n' % index) in frame for frame in frames) == 1 for index in range(12))
     print('CONCURRENT: 12 sends; 12 mailbox rows; 12 peer frames; lost=0')
+
+
+# F320: the Workshop routes by session id, not by the folder in the label.
+
+class RecordingTransport:
+    """The app's background loop pushes through this instead of a live session."""
+    def __init__(self):
+        self.sent = []
+
+    def inject(self, recipient, text, **kwargs):
+        self.sent.append((recipient['id'], kwargs['message_id']))
+        return {'status': 'injected', 'dispatch_attempted': True}
+
+
+def move_folder(tmp_path, observed, context, status='working'):
+    """The same agent process, now working in another folder of the same project."""
+    moved = tmp_path / 'ArchHub' / '35.02-APP-DESIGN'
+    moved.mkdir(parents=True, exist_ok=True)
+    peer = SimpleNamespace(pid=observed.pid, created_at=observed.created_at, cwd=str(moved))
+    return peer, mailbox.call('declare', {'task': 'moved folder', 'paths': [str(moved)], 'status': status,
+        'request_id': 'unassigned'}, context, peer=peer)['declaration']
+
+
+def pulled(context, observed):
+    return [row['id'] for row in mailbox.call('pending', {}, context, peer=observed)['pending']]
+
+
+def sender_label(tmp_path):
+    return mailbox._identity({'threadId': 'wsreturned-sender'}, sender(tmp_path))[0]['sender_label']
+
+
+def routed_sessions(message_id):
+    with mailbox.application_history() as history:
+        message = history.get(mailbox.ROOM, message_id, principal=mailbox.DELIVERY_AUTHOR)
+        return [row['session'] for row in mailbox._routing(message)['recipients']]
+
+
+def test_old_folder_label_reaches_the_moved_session_by_push(peer, tmp_path):
+    declaration, _label, transcript, context, observed = peer
+    old_label = declaration['agent']
+    moved_peer, updated = move_folder(tmp_path, observed, context)
+    assert updated['agent'] != old_label and updated['session'] == declaration['session']
+    assert updated['agent'].rsplit(' / ', 1)[-1] == old_label.rsplit(' / ', 1)[-1]
+    result = mailbox.call('send', {'to': old_label, 'text': 'address by earlier folder label'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'recorded' and result['matched'] == 1, result
+    assert wait_receipts(result)[0]['state'] == 'delivered'
+    frames = [json.loads(line)['text'] for line in transcript.read_text().splitlines()]
+    assert sum('address by earlier folder label' in frame for frame in frames) == 1
+    visible = mailbox.call('read', {'since': 0}, context, peer=moved_peer)['messages']
+    assert result['message_id'] in {row['id'] for row in visible}
+
+
+def test_old_folder_label_reaches_the_moved_session_by_pull_exactly_once(peer, tmp_path, monkeypatch):
+    """Review fault 7: the pull path (an agent reading its pending messages) after a folder move."""
+    declaration, _label, transcript, context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)   # nothing is pushed: only the pull path
+    old_label = declaration['agent']
+    before = mailbox.call('send', {'to': old_label, 'text': 'sent before the move'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    moved_peer, updated = move_folder(tmp_path, observed, context)
+    assert updated['agent'] != old_label
+    after = mailbox.call('send', {'to': old_label, 'text': 'sent to the old label after the move'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert (before['matched'], after['matched'], after['status']) == (1, 1, 'recorded'), (before, after)
+    assert pulled(context, moved_peer) == [before['message_id'], after['message_id']]
+    mailbox.call('seen', {'message_ids': [before['message_id'], after['message_id']],
+        'channel': 'connector tool result'}, context, peer=moved_peer)
+    assert pulled(context, moved_peer) == []
+    assert not transcript.exists()
+
+
+def test_dead_session_token_under_another_folder_is_returned_not_passed_to_its_successor(peer, tmp_path):
+    _declaration, _label, transcript, _context, observed = peer
+    body = {'task': 'role handover', 'paths': [str(tmp_path)], 'request_id': 'unassigned', 'role': 'design'}
+    dead = mailbox.call('declare', {**body, 'status': 'done'},
+        {'claude/sessionID': 'old-role-session'}, peer=observed)['declaration']
+    mailbox.call('declare', {**body, 'status': 'working'}, {'claude/sessionID': 'new-role-session'}, peer=observed)
+    host, _folder, token = dead['agent'].split(' / ')
+    result = mailbox.call('send', {'to': host + ' / another-folder / ' + token, 'text': 'must not redirect'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'returned', result
+    assert [row['state'] for row in result['delivery']] == ['returned'], result
+    assert not transcript.exists()
+
+
+def test_seen_by_one_recipient_keeps_the_other_recipients_receipt_and_one_delivery(peer, tmp_path, monkeypatch):
+    """Review fault 1: A marks a two-recipient message seen; B's receipt survives and B gets it exactly once."""
+    first, _label, _transcript, context_a, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    context_b = {'claude/sessionID': 'wsreturned-second-claude'}
+    second = mailbox.call('declare', {'task': 'second receiver', 'paths': [observed.cwd], 'status': 'working',
+        'request_id': 'unassigned'}, context_b, peer=observed)['declaration']
+    result = mailbox.call('send', {'to': first['agent'] + ', ' + second['agent'], 'text': 'two recipients'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'recorded' and result['matched'] == 2, result
+    message_id = result['message_id']
+
+    def receipts():
+        with mailbox.application_history() as history:
+            return dict(history._db.execute(
+                'SELECT recipient, state FROM workshop_live_deliveries WHERE message_id=?', (message_id,)).fetchall())
+    with mailbox.application_history() as history:
+        history._db.execute(workshop_live.SCHEMA)
+        for recipient in (first['agent'], second['session'], second['agent']):   # A's provisional name; B's receipts
+            history._db.execute('INSERT INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)',
+                (message_id, recipient, recipient, 'claude', '', 'workshop', 'pending', 'queued',
+                 '2026-11-16T00:00:00+00:00', 0))
+    mailbox.call('seen', {'message_ids': [message_id], 'channel': 'connector tool result'}, context_a, peer=observed)
+    assert receipts() == {first['session']: 'delivered', second['session']: 'pending', second['agent']: 'pending'}
+    pushes = []
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: pushes.append(a) or ('delivered', 'workshop', ''))
+    with mailbox.application_history() as history:   # a later push finds B's receipt, so it does not inject again
+        again = workshop_live.deliver(history, message_id, [{'session': second['session'], 'agent': second['agent'],
+            'runtime': 'claude', 'native_session_id': second['native_session_id']}], 'sender', 'two recipients')
+    assert pushes == [] and again[0]['repeat'] is True, (pushes, again)
+    assert pulled(context_b, observed) == [message_id]
+    mailbox.call('seen', {'message_ids': [message_id], 'channel': 'connector tool result'}, context_b, peer=observed)
+    assert receipts() == {first['session']: 'delivered', second['session']: 'delivered'}
+    assert pulled(context_b, observed) == [] and pulled(context_a, observed) == []
+
+
+@pytest.mark.parametrize('ended', ['never existed', 'ended', 'ended role holder'])
+def test_short_id_of_an_ended_session_is_returned_and_never_reaches_a_later_session(peer, tmp_path, monkeypatch, ended):
+    """Review fault 2: a short id is resolved once, at send; it is returned, not queued, and never floats on."""
+    _declaration, _label, transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    body = {'task': 'short id', 'paths': [str(tmp_path)], 'request_id': 'unassigned',
+            **({'role': 'design'} if ended == 'ended role holder' else {})}
+    if ended != 'never existed':
+        mailbox.call('declare', {**body, 'status': 'done'}, {'claude/sessionID': 'abc123ff-ended'}, peer=observed)
+    result = mailbox.call('send', {'to': 'abc123', 'text': 'short id of a session that is not there'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'returned', result
+    assert [row['state'] for row in result['delivery']] == ['returned'], result
+    with mailbox.application_history() as history:
+        assert history._db.execute('SELECT count(*) FROM workshop_waiting WHERE message_id=?',
+            (result['message_id'],)).fetchone()[0] == 0
+    later = {'claude/sessionID': 'abc123ff-later'}   # an unrelated new session whose id starts the same
+    mailbox.call('declare', {**body, 'status': 'working'}, later, peer=observed)
+    assert result['message_id'] not in pulled(later, observed)
+    transport = RecordingTransport()
+    worker = mailbox.WorkshopInjection(None, transport)
+    for _ in range(3):
+        worker.tick()
+    assert not [row for row in transport.sent if row[1].startswith(result['message_id'])], transport.sent
+    with mailbox.application_history() as history:
+        message = history.get(mailbox.ROOM, result['message_id'], principal=mailbox.DELIVERY_AUTHOR)
+        assert mailbox.delivery_events(history, message) == {}
+    assert not transcript.exists()
+
+
+def test_short_id_still_reaches_the_session_it_named_when_it_was_sent(peer, tmp_path, monkeypatch):
+    _declaration, _label, _transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    live = {'claude/sessionID': 'feed01aa-live'}
+    mailbox.call('declare', {'task': 'short id', 'paths': [str(tmp_path)], 'status': 'working',
+        'request_id': 'unassigned'}, live, peer=observed)
+    result = mailbox.call('send', {'to': 'feed01', 'text': 'short id of a live session'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'recorded' and result['matched'] == 1, result
+    assert pulled(live, observed) == [result['message_id']]
+
+
+def asked_from_a_session_without_a_token(tmp_path, observed):
+    """An agent whose connector gives no session id: its label has no token, only its folder changes."""
+    author = mailbox.call('declare', {'task': 'asks a question', 'paths': [observed.cwd], 'status': 'working',
+        'request_id': 'unassigned'}, {}, peer=observed)['declaration']
+    assert ' / session-' not in author['agent']
+    question = mailbox.call('send', {'to': sender_label(tmp_path), 'text': 'a question from the first folder?'},
+        {}, peer=observed)
+    return author, question
+
+
+def test_reply_naming_the_authors_old_label_reaches_the_moved_author(peer, tmp_path, monkeypatch):
+    """Review fault 3, positive: the To line names the author by the label it wrote under."""
+    _declaration, _label, _transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    author, question = asked_from_a_session_without_a_token(tmp_path, observed)
+    moved_peer, updated = move_folder(tmp_path, observed, {})
+    assert updated['agent'] != author['agent'] and updated['session'] == author['session']
+    reply = mailbox.call('send', {'to': author['agent'], 'text': 'the answer', 'reply_to': question['message_id']},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert reply['status'] == 'recorded' and reply['matched'] == 1, reply
+    assert routed_sessions(reply['message_id']) == [author['session']]
+    assert pulled({}, moved_peer) == [reply['message_id']]
+    visible = mailbox.call('read', {'since': 0}, {}, peer=moved_peer)['messages']
+    assert reply['message_id'] in {row['id'] for row in visible}
+    mailbox.call('seen', {'message_ids': [reply['message_id']], 'channel': 'connector tool result'}, {}, peer=moved_peer)
+    assert pulled({}, moved_peer) == []
+
+
+def test_reply_addressed_to_someone_else_does_not_add_the_replied_author(peer, tmp_path, monkeypatch):
+    """Review faults 3 and 4, negative: on send and in the background loop the author is not a recipient."""
+    declaration, _label, _transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    _author, question = asked_from_a_session_without_a_token(tmp_path, observed)
+    moved_peer, _updated = move_folder(tmp_path, observed, {})
+    reply = mailbox.call('send', {'to': declaration['agent'], 'text': 'for another agent',
+        'reply_to': question['message_id']}, {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert reply['matched'] == 1, reply
+    assert routed_sessions(reply['message_id']) == [declaration['session']]
+    transport = RecordingTransport()
+    worker = mailbox.WorkshopInjection(None, transport)
+    for _ in range(3):
+        worker.tick()
+    with mailbox.application_history() as history:
+        message = history.get(mailbox.ROOM, reply['message_id'], principal=mailbox.DELIVERY_AUTHOR)
+        assert set(mailbox.delivery_events(history, message)) == {declaration['session']}
+    assert reply['message_id'] not in pulled({}, moved_peer)
+
+
+def test_background_loop_resolves_a_reply_like_the_direct_path(peer, tmp_path, monkeypatch):
+    """Review fault 4: the author was resting when the reply was sent; the app's loop re-routes it by the same
+    rule the send uses (the To line names the author's old label), and the author can then pull it."""
+    _declaration, _label, _transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    author, question = asked_from_a_session_without_a_token(tmp_path, observed)
+    move_folder(tmp_path, observed, {}, status='done')
+    reply = mailbox.call('send', {'to': author['agent'], 'text': 'answered while resting',
+        'reply_to': question['message_id']}, {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert reply['matched'] == 0 and routed_sessions(reply['message_id']) == [], reply
+    moved_peer, _back = move_folder(tmp_path, observed, {})
+    worker = mailbox.WorkshopInjection(None, RecordingTransport())
+    for _ in range(3):
+        worker.tick()
+    with mailbox.application_history() as history:
+        message = history.get(mailbox.ROOM, reply['message_id'], principal=mailbox.DELIVERY_AUTHOR)
+        assert 'attempt' in mailbox.delivery_events(history, message).get(author['session'], {})
+    assert pulled({}, moved_peer) == [reply['message_id']]
+
+
+def test_declared_name_ending_in_another_sessions_token_is_refused_and_never_addressed(peer, tmp_path, monkeypatch):
+    """Review fault 5: nobody receives another session's messages by naming itself after its token."""
+    victim, _label, _transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    impostor = {'claude/sessionID': 'wsreturned-impostor'}
+    body = {'task': 'impostor', 'paths': [str(tmp_path)], 'status': 'working', 'request_id': 'unassigned'}
+    token = victim['agent'].rsplit(' / ', 1)[-1]
+    for name in (victim['agent'], token, 'Friendly helper / ' + token):
+        for field in ('display_name', 'title'):
+            with pytest.raises(ValueError, match="another session's id"):
+                mailbox.call('declare', {**body, field: name}, impostor, peer=observed)
+    own = mailbox.call('declare', body, impostor, peer=observed)['declaration']
+    renamed = mailbox.call('declare', {**body, 'title': own['agent']}, impostor, peer=observed)['declaration']
+    assert renamed['title'] == own['agent']   # its own token is its own name
+    with mailbox.application_history() as history:   # a row stored before this rule existed
+        history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.display_name',?) "
+            'WHERE root=?', (victim['agent'], own['root']))
+    result = mailbox.call('send', {'to': victim['agent'], 'text': 'for the real session only'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['matched'] == 1 and routed_sessions(result['message_id']) == [victim['session']], result
+    assert result['message_id'] not in pulled(impostor, observed)
+
+
+def test_two_running_rows_of_one_native_session_get_one_injection(peer, tmp_path):
+    """Review fault 6: a second live row with the same native id must not double the delivery."""
+    declaration, _label, transcript, context, observed = peer
+    twin = {**declaration, 'root': declaration['root'] + ':twin', 'session': 'agent:session:' + 'd' * 64,
+            'updated_at': '2026-01-01T00:00:00+00:00'}
+    with mailbox.application_history() as history:
+        history._db.execute('INSERT INTO workshop_declarations VALUES(?,?)', (twin['root'], json.dumps(twin)))
+        running = [row for row in mailbox.read_declarations(history._db)
+                   if row['native_session_id'] == declaration['native_session_id']]
+    assert len(running) == 2 and all(row['current'] for row in running)
+    result = mailbox.call('send', {'to': declaration['agent'], 'text': 'one session, one delivery'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'recorded' and result['matched'] == 1, result
+    assert [row['state'] for row in wait_receipts(result)] == ['delivered']
+    time.sleep(1)   # a second push, if one were made, has landed by now
+    frames = [json.loads(line)['text'] for line in transcript.read_text().splitlines()]
+    assert sum('one session, one delivery' in frame for frame in frames) == 1, frames
+    with mailbox.application_history() as history:
+        twin_identity = {'sender_key': twin['session'], 'sender_label': twin['agent'],
+                         'sender': twin['agent'] + ' [' + twin['session'] + ']'}
+        assert mailbox._pending(history, twin_identity, 'claude')['pending'] == []
+    assert pulled(context, observed) == []

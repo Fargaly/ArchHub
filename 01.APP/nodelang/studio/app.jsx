@@ -555,7 +555,7 @@
               flex: 'none'
             }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
-  {toast && <div role="alert" className="flex" style={{
+  {(s.canvasSaveConflict || toast) && <div role="alert" className="flex" style={{
         position: 'fixed',
         top: 100,
         left: '50%',
@@ -567,10 +567,19 @@
         background: '#24242b',
         padding: '12px 18px',
         zIndex: 200,
-        boxShadow: '0 8px 30px #0008'
-      }}><span>{toast}</span><Btn sm ghost style={{pointerEvents:'auto'}} onClick={event => executeAction("appShell.Dismiss.17", {
+        boxShadow: '0 8px 30px #0008',
+        ...(s.canvasSaveConflict ? {display:'grid',gap:8} : {})
+      }}>{s.canvasSaveConflict ? <>
+        <span>{s.canvasSaveConflict}</span>
+        {s.canvasSaveRecoveryError && <span>{s.canvasSaveRecoveryError}</span>}
+        <div style={{display:'flex',flexWrap:'wrap',gap:8,pointerEvents:'auto'}}>
+          <Btn sm disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>api.resolveSaveConflict(true),event)}>Keep my changes as a copy</Btn>
+          <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>api.resolveSaveConflict(false),event)}>Discard my changes and reload</Btn>
+          <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>{api.dismissSaveConflict();setToast('');},event)}>Dismiss</Btn>
+        </div>
+      </> : <><span>{toast}</span><Btn sm ghost style={{pointerEvents:'auto'}} onClick={event => executeAction("appShell.Dismiss.17", {
           setToast
-        }, event)}>Dismiss</Btn></div>}
+        }, event)}>Dismiss</Btn></>}</div>}
   {modal && <Dialog key={modal.kind + ':' + (modal.id || '')} modal={modal} close={close} />}
  </Ctx.Provider>;
   }

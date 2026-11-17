@@ -8,7 +8,7 @@ const {chromium}=require('playwright');
 const root=path.resolve(__dirname,'../..'),app=path.join(root,'01.APP');
 const python=process.env.ARCHHUB_COURT_PYTHON || 'C:/Users/fargaly/AppData/Local/ArchHub/.venv/Scripts/python.exe';
 
-test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {timeout:240000}, async t=>{
+async function openCourt(t){
   const cache=path.join(root,'.cache');fs.mkdirSync(cache,{recursive:true});
   const profile=fs.mkdtempSync(path.join(cache,'testiso-designv22g-ui-'));
   const env={...process.env,USERPROFILE:profile,HOME:profile,LOCALAPPDATA:path.join(profile,'LOCAL'),APPDATA:path.join(profile,'ROAMING'),TEMP:path.join(profile,'tmp'),TMP:path.join(profile,'tmp'),ARCHHUB_HOME:profile,ARCHHUB_TEST_STATE_DIR:path.join(profile,'state'),ARCHHUB_TEST_SECRET_STORE:'memory',PYTHONPATH:app};
@@ -30,6 +30,76 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
   page.on('pageerror',error=>errors.push(error.message));
   const url=server.url+'/studio?bootstrap='+server.bootstrap;
   await page.goto(url);await page.locator('[data-home-page]').waitFor({state:'attached',timeout:15000}).catch(async error=>{throw Error(error.message+'; page errors='+JSON.stringify(errors)+'; body='+(await page.locator('body').innerText()).slice(0,2000));});
+  const restart=async()=>{child.stdin.end();await ended;return start();};
+  return {page,profile,server,errors,restart};
+}
+
+test('Canvas save conflict recovery on compiled Studio at 1009 and 1440', {timeout:120000}, async t=>{
+  const {page,profile,errors}=await openCourt(t);
+  const wire=(id,from,to)=>({id,from:{node:from,socket:'out'},to:{node:to,socket:'in'}});
+  await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Canvas',exact:true}).click();
+  for(const width of [1009,1440])for(const keep of [true,false]){
+    await page.setViewportSize({width,height:900});
+    const id='recovery-'+width+(keep?'-keep':'-discard');
+    const file=path.join(profile,id+'.archhub');
+    const nodes=['source','middle','end'].map((id,index)=>({id,type:'data.convert',item:'data.convert',title:id,
+      params:{target_type:'text'},position:{x:120+index*350,y:180}}));
+    fs.writeFileSync(file,JSON.stringify({format:'archhub',version:1,id,title:id,nodes,
+      wires:[wire('original','source','middle')],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{viewportSaved:false}}));
+    await page.evaluate(file=>window.ArchHubAPI.openSession(file),file);
+    const base=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument());
+    const newer=JSON.parse(JSON.stringify(base));
+    newer.wires.push(wire('committed','middle','end'));
+    let bytes;
+    const handler=async route=>{
+      const draft=route.request().postDataJSON();
+      if(!bytes&&draft?.action==='autosave'&&draft.path===file&&
+          draft.document.wires.some(w=>w.from.node==='source'&&w.to.node==='end')){
+        const saved=await page.request.post(route.request().url(),{headers:route.request().headers(),
+          data:{...draft,document:newer,base_revision:base.properties?.revision||0}});
+        assert.equal(saved.ok(),true);
+        bytes=fs.readFileSync(file);
+      }
+      await route.continue();
+    };
+    await page.route('**/api/session-files',handler);
+    try{
+      await page.evaluate(async()=>{
+        const api=window.ArchHubAPI;
+        await api.deleteWire('original');
+        await api.connectSockets({from:'source',fromPort:'out',to:'end',toPort:'in'});
+      });
+      const alert=page.getByRole('alert').filter({hasText:'This workflow changed elsewhere'});
+      await alert.waitFor();
+      assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().sessionDirty),true);
+      const keepButton=alert.getByRole('button',{name:'Keep my changes as a copy',exact:true});
+      const discardButton=alert.getByRole('button',{name:'Discard my changes and reload',exact:true});
+      assert.ok(await keepButton.isVisible()&&await discardButton.isVisible());
+      const action=keep?keepButton:discardButton;
+      await action.click();
+      await alert.waitFor({state:'hidden'});
+      const recovered=await page.evaluate(()=>({document:window.ArchHubAPI.getSessionDocument(),
+        file:window.ArchHubAPI.getSessionPath(),dirty:window.ArchHubAPI.getSnapshot().sessionDirty}));
+      assert.equal(recovered.file,file);
+      assert.equal(recovered.dirty,false);
+      assert.deepEqual(recovered.document.wires,newer.wires);
+      assert.deepEqual(fs.readFileSync(file),bytes);
+      const copies=fs.readdirSync(profile).filter(name=>name.startsWith(id+' (my changes ')&&name.endsWith('.archhub'));
+      assert.equal(copies.length,keep?1:0);
+      if(keep){
+        const copy=JSON.parse(fs.readFileSync(path.join(profile,copies[0]),'utf8'));
+        assert.notEqual(copy.id,base.id);
+        assert.deepEqual(copy.wires.map(w=>[w.from.node,w.to.node]),[['source','end']]);
+      }
+    }finally{await page.unroute('**/api/session-files',handler);}
+  }
+  assert.deepEqual(errors,[]);
+});
+
+test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {timeout:240000}, async t=>{
+  const court=await openCourt(t);
+  const {page,profile,errors,restart}=court;
+  let {server}=court;
   const opened=title=>page.waitForFunction(title=>window.ArchHubAPI.getSessionDocument()?.title===title&&!window.ArchHubAPI.getSnapshot().sessionDirty&&document.querySelector('[role="tab"][aria-selected="true"]')?.textContent===title,title);
   const create=async(name,workspace='')=>{await page.locator('body').press('Control+n');await page.getByRole('textbox',{name:'Task name',exact:true}).fill(name);if(workspace)await page.getByRole('combobox',{name:'Workspace',exact:true}).selectOption(workspace);await page.getByRole('button',{name:'Create and open',exact:true}).click();await page.getByRole('dialog',{name:'New task',exact:true}).waitFor({state:'hidden'});await page.getByRole('tab',{name,exact:true}).waitFor();await page.waitForFunction(title=>window.ArchHubAPI.getSessionDocument()?.title===title&&!window.ArchHubAPI.getSnapshot().sessionDirty,name);};
   const current=()=>page.evaluate(()=>window.ArchHubAPI.getSnapshot().focusedTask);
@@ -116,7 +186,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     const tabs=page.locator('.v22g-tab');assert.equal(await tabs.count(),2);
     await tabs.nth(1).dragTo(tabs.nth(0));
     await page.waitForFunction(async id=>(await window.ArchHubAPI.readCanvasTabs()).canvasTabs.tabs[0].id===id,second);
-    await page.goto('about:blank');child.stdin.end();await ended;server=await start();
+    await page.goto('about:blank');server=await restart();
     await page.goto(server.url+'/studio?bootstrap='+server.bootstrap);await page.locator('[data-home-page]').waitFor({state:'attached'});
     await page.getByRole('button',{name:/^Canvas UI second/}).click();
     await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
@@ -595,7 +665,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
         assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().notes),remote.notes);
         await page.evaluate(()=>window.ArchHubAPI.saveSession());
       }finally{release();await page.unrouteAll({behavior:'wait'});}
-      await page.goto('about:blank');child.stdin.end();await ended;server=await start();
+      await page.goto('about:blank');server=await restart();
       await page.goto(server.url+'/studio?bootstrap='+server.bootstrap);await page.locator('[data-home-page]').waitFor({state:'attached'});
       await page.waitForFunction(()=>Array.isArray(window.ArchHubAPI.getSnapshot().libraryPorts));
       await page.evaluate(file=>window.ArchHubAPI.openSession(file),file);

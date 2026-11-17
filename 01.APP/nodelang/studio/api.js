@@ -1676,20 +1676,34 @@ function acknowledgeSave(sent,saved){
  }
  localDirty=!same(sessionDocument,saved.document);projectFile();
 }
+let saveConflict=null, resolvingSaveConflict=false, savedConflictDraft=null;
+const saveConflictMessage='This workflow changed elsewhere. Keep your changes in a copy, or discard them and reload.';
+function rememberSaveConflict(error,path){
+ if(error.response?.code!=='canvas_save_conflict'||!path||path!==sessionPath)return;
+ saveConflict=path;savedConflictDraft=null;clearTimeout(autosaveTimer);
+ publish({canvasSaveConflict:saveConflictMessage,canvasSaveRecoveryError:''});
+}
+function refuseUnresolvedSave(){
+ if(!saveConflict)return;
+ publish({canvasSaveConflict:saveConflictMessage});
+ throw Error(saveConflictMessage);
+}
 function saveNow(){
  const id=sessionDocument?.id;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
   if(sessionDocument?.id!==id)return {cancelled:true};
+  refuseUnresolvedSave();
   const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision;
-  const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base});
+  const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base}).catch(error=>{rememberSaveConflict(error,currentPath);throw error;});
   if(sessionDocument?.id===sent.id&&sessionPath===currentPath){sessionPath=saved.path;acknowledgeSave(sent,saved);}
   return saved;
  });
  return fileWrites;
 }
 function queueAutosave(){
+ if(saveConflict)return;
  clearTimeout(autosaveTimer);autosaveTimer=setTimeout(()=>{
-  saveNow().catch(error=>notice('Autosave failed: '+error.message));
+  saveNow().catch(error=>{if(!saveConflict)notice('Autosave failed: '+error.message);});
  },Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));
 }
 // The open file is shared with agents: pick up their edits (file revision), no background solve.
@@ -1708,25 +1722,52 @@ async function pollFile(force=false){
 }
 if(typeof window.setInterval==='function')window.setInterval(()=>pollFile().catch(()=>{}),Number(state.canvasPolicy?.file_poll_ms??1000));
 function portableDocument(){return copy(sessionDocument);}
-async function adoptFile(document,path='',navigation=++fileNavigation){
+async function adoptFile(document,path='',navigation=++fileNavigation,recoveredDraft=null){
+ if(recoveredDraft===null)refuseUnresolvedSave();
  const checked=await sessionRequest('validate',{document});
  if(navigation!==fileNavigation)return {cancelled:true};
  // The untouched startup draft has no file to flush when another workflow opens.
- if(sessionDocument&&(sessionPath||localDirty||autosaveTimer!==null))await flushAutosave();
+ if(recoveredDraft===null&&sessionDocument&&(sessionPath||localDirty||autosaveTimer!==null))await flushAutosave();
  if(navigation!==fileNavigation)return {cancelled:true};
- sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();queueAutosave();return state.graph;
+ if(recoveredDraft!==null){
+  if(recoveredDraft!==JSON.stringify(sessionDocument))throw Error('Your draft changed during recovery. Choose again to keep the latest edits.');
+  saveConflict=null;savedConflictDraft=null;publish({canvasSaveConflict:''});notice('');
+ }
+ sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();if(recoveredDraft===null)queueAutosave();return state.graph;
 }
 async function flushAutosave(){
+ refuseUnresolvedSave();
  const navigation=fileNavigation;
  // A solve or edit during the save leaves the revision unacknowledged; drain it before restoring history.
  do{clearTimeout(autosaveTimer);if(!sessionDocument)return;await saveNow();}while(navigation===fileNavigation&&localDirty);
 }
+api.dismissSaveConflict=()=>publish({canvasSaveConflict:''});
+api.resolveSaveConflict=async keep=>{
+ if(!saveConflict||resolvingSaveConflict)return {cancelled:true};
+ const path=saveConflict,navigation=++fileNavigation,draft=portableDocument(),snapshot=JSON.stringify(draft);
+ clearTimeout(solveTimer);solveIds.clear();solveParams=[];runEpoch++;
+ resolvingSaveConflict=true;publish({canvasSaveResolving:true,canvasSaveRecoveryError:''});
+ try{
+  if(keep&&savedConflictDraft!==snapshot){
+   await sessionRequest('save',{document:draft,save_as:true,conflict_copy_of:path});
+   savedConflictDraft=snapshot;
+  }
+  const opened=await sessionRequest('open',{path});
+  return await adoptFile(opened.document,opened.path,navigation,snapshot);
+ }catch(error){
+  publish({canvasSaveRecoveryError:error.message});
+  return {ok:false};
+ }finally{
+  resolvingSaveConflict=false;publish({canvasSaveResolving:false});
+ }
+};
 api.newSession=async title=>{
  sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});
  const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
  return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom},properties:{viewportSaved:false}});
 };
 api.openSession=async(path,linked=false)=>{
+ refuseUnresolvedSave();
  if(!path&&typeof window.ARCHHUB_WINDOW_ACTION!=='function')return new Promise((resolve,reject)=>{
   const picker=document.createElement('input');picker.type='file';picker.accept='.archhub';picker.hidden=true;
   picker.onchange=()=>{const file=picker.files[0];picker.remove();if(file)api.importSession(file).then(resolve,reject);else resolve({cancelled:true});};
@@ -1743,7 +1784,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
  if(navigation!==fileNavigation)return {cancelled:true};
- const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath});
+ const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath}).catch(error=>{rememberSaveConflict(error,path);throw error;});
  if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };
@@ -2018,7 +2059,7 @@ api.saveSkill=async name=>{if(name)fileEdit(d=>{d.title=String(name).trim()||d.t
 api.openTemplateGraph=async id=>{const row=state.templates.find(t=>t.id===id);if(row?.path)return api.openSession(row.path);return api.openStarter(id);};
 api.readSessionsFolder=()=>settingsAction('readSessionsFolder').then(result=>{publish({sessionsFolder:result.sessionsFolder});return result;});
 api.chooseSessionsFolder=async()=>{await flushAutosave();const result=await settingsAction('setSessionsFolder',[]);sessionPath=result.moved?.find(([old])=>old===sessionPath)?.[1]||sessionPath;publish({sessionsFolder:result.sessionsFolder,sessionFile:sessionPath});await api.refreshLibraryPorts();return result;};
-window.addEventListener('pagehide',()=>{if(sessionDocument&&localDirty){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath,base_revision:sessionRevision});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
+window.addEventListener('pagehide',()=>{if(sessionDocument&&localDirty&&!saveConflict){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath,base_revision:sessionRevision});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
 
 const initialState=copy(state);
 api.ready=(async()=>{

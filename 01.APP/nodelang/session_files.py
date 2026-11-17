@@ -1911,7 +1911,16 @@ class SessionFiles:
                 self._current(document['id'], path)
                 return {'ok':True,'path':path,'document':merged,'revision':merged.get('properties',{}).get('revision',0)}
             path = body.get('path')
-            if not path and body.get('save_as') and save_picker:
+            conflict_copy = body.get('conflict_copy_of') if body.get('save_as') else None
+            if conflict_copy:
+                original = local_path(conflict_copy)
+                copy_id = str(uuid4())
+                path = str(original.with_name(original.stem + ' (my changes ' + copy_id[:8] + ').archhub'))
+                document = {**document, 'id': copy_id, 'properties': {
+                    key: value for key, value in document.get('properties', {}).items()
+                    if key not in ('revision', 'history', 'checkpoints', 'canvasRun')
+                }}
+            elif not path and body.get('save_as') and save_picker:
                 path = save_picker('Save session','ArchHub session (*.archhub)',str(document_path(self.directory, document)))
                 if not path:
                     return {'ok':True,'cancelled':True}
@@ -1922,7 +1931,9 @@ class SessionFiles:
             if body.get('save_as'):
                 document = {**document, 'title': Path(path).stem}
             path = str(local_path(path))
-            if body.get('save_as'):
+            if conflict_copy:
+                document = canvas_documents.commit_ui(path, document, 0, record_creation=False)
+            elif body.get('save_as'):
                 portable_parameters(document, path, read_document(path) if Path(path).exists() else None)
                 path = write_document(path, document)
                 canvas_documents.remember(path, document)

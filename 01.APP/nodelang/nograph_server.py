@@ -52,9 +52,10 @@ _SERVER = None  # the running NoGraphServer (one per app process)
 
 
 class Refused(Exception):
-    def __init__(self, message, status=409):
+    def __init__(self, message, status=409, *, code=None):
         super().__init__(message)
         self.status = status
+        self.code = code
 
 
 def not_available(what):
@@ -496,7 +497,10 @@ class NoGraphServer:
                                     length -= len(chunk)
                         except (OSError, ValueError):
                             self.close_connection = True
-                    self.send_json(refusal.status, {'ok': False, 'error': str(refusal)})
+                    body = {'ok': False, 'error': str(refusal)}
+                    if refusal.code:
+                        body['code'] = refusal.code
+                    self.send_json(refusal.status, body)
                 except (ValueError, TypeError, KeyError, OSError, RecursionError) as error:
                     self.send_json(400, {'ok': False, 'error': str(error) or type(error).__name__})
                 except Exception as error:  # noqa: BLE001 - every owner failure is an answer, never a dropped socket
@@ -698,6 +702,7 @@ def _action(req, default=None):
 
 
 def r_session_files(s, req):
+    from .canvas_documents import CanvasSaveConflict
     from .session_files import SessionFiles
     from .enforce import guard_effect
     if s.is_halted():
@@ -709,6 +714,8 @@ def r_session_files(s, req):
     try:
         result = SessionFiles().dispatch(req.body, invoke=guard_effect, picker=s.native_file_picker,
                                          save_picker=s.native_save_file_picker, stopped=s.is_halted)
+    except CanvasSaveConflict as conflict:
+        raise Refused(str(conflict), 400, code='canvas_save_conflict') from conflict
     finally:
         if canvas_job:
             s._canvas_jobs -= 1

@@ -659,6 +659,10 @@ def undo_last(path, by):
     return edit(path, by, 'undo', change)
 
 
+class CanvasSaveConflict(ValueError):
+    """Two editors changed the same workflow and the open draft needs a choice."""
+
+
 def merge(base, ours, theirs):
     """Apply fields changed by this editor to the current nodes and wires."""
     def apply_changes(before, edited, current):
@@ -680,7 +684,7 @@ def merge(base, ours, theirs):
                 continue  # we did not touch it: theirs stands
             if key in o:
                 if key in b and key not in t:
-                    raise ValueError('An item you edited was removed elsewhere. Reopen the workflow before saving.')
+                    raise CanvasSaveConflict('An item you edited was removed elsewhere.')
                 if key in b and key in t:
                     merged = apply_changes(b[key], o[key], t[key])
                     if field == 'nodes':
@@ -695,7 +699,7 @@ def merge(base, ours, theirs):
     result['wires'] = [w for w in result['wires'] if w['from']['node'] in node_ids and w['to']['node'] in node_ids]
     targets = {(wire['to']['node'], wire['to']['socket']) for wire in result['wires']}
     if len(targets) != len(result['wires']):
-        raise ValueError('An input was connected elsewhere. Reopen the workflow before saving.')
+        raise CanvasSaveConflict('An input was connected elsewhere.')
     for key in ('title', 'groups', 'notes'):
         if (base or {}).get(key) != ours.get(key):
             result[key] = copy.deepcopy(ours[key])
@@ -735,7 +739,7 @@ def commit_ui(path, document, base_revision, by='You', *, record_creation=True, 
             raise ValueError('This path now contains a different workflow. Reopen it before saving.')
         if current is not None and revision(current) != base_revision:
             if base is None or base['id'] != document['id']:
-                raise ValueError('This workflow changed and its earlier revision is unavailable. Reopen it before saving.')
+                raise CanvasSaveConflict('This workflow changed and its earlier revision is unavailable.')
             document = merge(base, document, current)
             validate(document)
         portable_parameters(document, path, current)

@@ -11307,6 +11307,14 @@
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },
+    "LAUNCHERBOUND": {
+      "source": "Founder app outage, coordinator Workshop 6ba2070ccfd541e9814854887e57ecb7: shortcut setup cannot request hidden console input; bound optional assistant setup and prove startup.",
+      "scope": [
+        "01.APP/colleague_setup.py",
+        "02.TESTS/tests_replica/test_colleague_install.py",
+        "03.TOOLS/installer/ArchHub.bat"
+      ]
+    },
     "DESIGNV51": {
       "source": "Founder 2026-11-13 on the installed app: apply the design (archhub-directions, frozen v52 then v53) all at once, in one release. Founder 2026-11-16: 'we are not redoing the work again'; Community, Cloud, Website, Profiles must not look removed, 'where is Settings, where is Social media'. Package 1 of 4 (Shell): tokens (canvas colour, node radius) in one place, header status, bell dropdown, tray and ArchHub menus with All pages listing every working page (Cockpit never), BABOOM parked in the rail, account popover, one composer size and style on Home and Canvas only, top-centre notice. Commit only on lane/design-v51; no push, install, release or live profile access.",
       "scope": [

@@ -513,3 +513,55 @@ def test_nested_legacy_frames_convert_from_the_inside_out(tmp_path):
     assert {group['id']: group['nodes'] for group in projected['groups']} == {
         'outer': ['inner'], 'inner': ['member']
     }
+
+
+def test_saved_group_boundary_aliases_solve_and_run_without_rewriting_wire(tmp_path):
+    document = definition()
+    document['nodes'].pop()
+    document['wires'].pop()
+    def group(identity, children, parent=None):
+        node = {'id': identity, 'type': 'note', 'title': identity, 'params': {},
+                'position': {'x': 0, 'y': 0}, 'children': children, 'collapsed': True}
+        if parent:
+            node['parent'] = parent
+        document['nodes'].append(node)
+        document['groups'].append({'id': identity, 'nodes': children})
+
+    document['nodes'][0]['parent'] = 'inner'
+    document['nodes'][1]['parent'] = 'receiver'
+    group('outer', ['inner'])
+    group('inner', ['0'], parent='outer')
+    group('receiver', ['1'])
+    document['wires'][0].update(
+        {'from': {'node': 'inner', 'socket': 'out:0:value'},
+         'to': {'node': 'receiver', 'socket': 'in:1:in'}, 'route': 'Step'}
+    )
+    path = tmp_path / 'saved-boundary.archhub'
+    write_document(path, document)
+    original = path.read_bytes()
+    loaded = read_document(path)
+    loaded['nodes'][0]['params']['value'] = 'changed'
+    before = copy.deepcopy(loaded['wires'])
+
+    def only_convert(engine, source, params, feeds):
+        assert engine == 'data.convert'
+        return source(params, feeds)
+
+    owner = SessionFiles(tmp_path / 'sessions')
+    solved = owner.dispatch({'action': 'solve', 'document': loaded, 'changed': ['0']}, invoke=only_convert)
+    assert solved['results']['1']['output']['out'] == 'changed'
+    assert loaded['wires'] == before and path.read_bytes() == original
+    ran = run_document(loaded, roots=['1'], invoke=only_convert)
+    assert ran['results']['1']['output']['out'] == 'changed'
+    assert loaded['wires'] == before and path.read_bytes() == original
+
+    invalid = copy.deepcopy(loaded)
+    invalid['wires'][0]['from']['socket'] = 'out:1:out'
+    with pytest.raises(ValueError, match='Unknown or ambiguous group socket'):
+        run_document(invalid, roots=['1'], invoke=only_convert)
+
+    duplicate = copy.deepcopy(loaded)
+    duplicate['wires'].append({'id': 'same-destination', 'from': {'node': '0', 'socket': 'value'},
+                               'to': {'node': '1', 'socket': 'in'}})
+    with pytest.raises(ValueError, match='An input socket accepts one wire'):
+        run_document(duplicate, roots=['1'], invoke=only_convert)

@@ -1286,6 +1286,62 @@ def split_sessions(path):
     return saved
 
 
+def execution_wires(document, known=None, *, strict=False):
+    """Resolve saved group aliases for execution, leaving portable wire records alone."""
+    from .node_params import ports as node_ports
+
+    nodes = {node['id']: node for node in document['nodes']}
+    groups = {identity for identity, node in nodes.items() if node.get('children') and not node.get('fixed')}
+    if not groups:
+        return document['wires']
+
+    def contains(group, member):
+        seen = set()
+        while member['id'] not in seen and member.get('parent') in nodes:
+            seen.add(member['id'])
+            parent = nodes[member['parent']]
+            if member['id'] not in parent.get('children', []):
+                break
+            if parent['id'] == group:
+                return True
+            member = parent
+        return False
+
+    def physical(endpoint, prefix, side):
+        nonlocal known
+        group, key = endpoint['node'], endpoint['socket']
+        if group not in groups or not key.startswith(prefix):
+            return endpoint
+        suffix = key[len(prefix):]
+        matches = []
+        for split, char in enumerate(suffix):
+            if char != ':':
+                continue
+            member = nodes.get(suffix[:split])
+            socket = suffix[split + 1:]
+            if not member or member['id'] in groups or not contains(group, member):
+                continue
+            if known is None:
+                known = {row['id']: row for row in catalogue()}
+            engine = member['type']
+            item = known.get(member.get('item')) or next((r for r in known.values() if r['engine'] == engine), None)
+            base = member.get('ports') if engine in ('skill', 'script.python') else None
+            if item and item['engine'] == engine and any(p['id'] == socket for p in node_ports(member, base or item['ports'])[side]):
+                matches.append({'node': member['id'], 'socket': socket})
+        if len(matches) == 1:
+            return matches[0]
+        if strict:
+            raise ValueError('Unknown or ambiguous group socket on ' + nodes[group].get('title', group))
+        return endpoint
+
+    return [
+        wire if wire.get('inferred') or wire.get('enabled') is False else {
+            **wire, 'from': physical(wire['from'], 'out:', 'source'), 'to': physical(wire['to'], 'in:', 'target')
+        }
+        for wire in document['wires']
+    ]
+
+
 def approval_current(document, continuation, identity):
     expected = continuation['document'].get('properties', {}).get('canvasRun', {})
     current = document.get('properties', {}).get('canvasRun', {})
@@ -1302,8 +1358,12 @@ def approval_current(document, continuation, identity):
     if canonical(document) != canonical(continuation.get('source') or continuation['document']):
         return False
     execution = continuation['document'] if continuation.get('source') else document
+    try:
+        wires = execution_wires(execution, strict=True)
+    except ValueError:
+        return False
     for row in execution['nodes']:
-        incoming = [wire for wire in execution['wires'] if wire['to']['node'] == row['id'] and not wire.get('inferred') and wire.get('enabled') is not False]
+        incoming = [wire for wire in wires if wire['to']['node'] == row['id'] and not wire.get('inferred') and wire.get('enabled') is not False]
         if input_signature(row, incoming, continuation['path']) != expected.get('inputs', {}).get(row['id']):
             return False
     return True
@@ -1381,9 +1441,15 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     incoming = {key: [] for key in nodes}
     outgoing = {key: [] for key in nodes}
     known = {row['id']: row for row in catalogue()}
-    for wire in document['wires']:
+    wires = execution_wires(document, known, strict=True)
+    connected_inputs = set()
+    for wire in wires:
         if wire.get('inferred') or wire.get('enabled') is False:
             continue
+        target = wire['to']['node'], wire['to']['socket']
+        if target in connected_inputs:
+            raise ValueError('An input socket accepts one wire')
+        connected_inputs.add(target)
         incoming[wire['to']['node']].append(wire)
         outgoing[wire['from']['node']].append(wire)
     selected = set(nodes)
@@ -1442,12 +1508,12 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     if only is None:
         signatures = {key: input_signature(nodes[key], incoming[key], path) for key in nodes}
         previous = document.get('properties', {}).get('canvasRun', {})
-        invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)])
+        invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)], wires=wires)
         if previous and (invalid or again) and _resume is None:
             from .hook_decision import ask_reviews, withdraw_approval
             pending = {c['id'] for c in ask_reviews() if c['status'] == 'pending'}
             waiting_nodes = [key for key in nodes if nodes[key].get('result', {}).get('status') == 'Waiting for approval']
-            invalid.update(canvas_documents.downstream(document, waiting_nodes))
+            invalid.update(canvas_documents.downstream(document, waiting_nodes, wires=wires))
             for key in waiting_nodes:
                 identity = nodes[key]['result'].get('output', {}).get('approvalId')
                 if identity in pending:

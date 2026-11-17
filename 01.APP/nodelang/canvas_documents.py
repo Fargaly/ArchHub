@@ -478,9 +478,10 @@ def attach_member(document, group_id, node_id):
 
 
 # ----------------------------------------------------------------- solve --
-def downstream(document, changed):
+def downstream(document, changed, *, wires=None):
+    from .session_files import execution_wires
     out = {}
-    for wire in document['wires']:
+    for wire in execution_wires(document) if wires is None else wires:
         out.setdefault(wire['from']['node'], []).append(wire['to']['node'])
     seen, pending = set(changed), list(changed)
     while pending:
@@ -493,14 +494,15 @@ def downstream(document, changed):
 
 def solve(document, changed, *, invoke=None, stopped=None, path=None):
     """Re-solve the pure nodes downstream of an edit; mark effects Out of date. Mutates and returns results."""
-    from .session_files import run_document, validate
+    from .session_files import execution_wires, run_document, validate
     started = time.perf_counter()
     validate(document)
     nodes = {n['id']: n for n in document['nodes']}
-    affected = downstream(document, [c for c in changed if c in nodes])
+    wires = execution_wires(document)
+    affected = downstream(document, [c for c in changed if c in nodes], wires=wires)
     incoming = {}
     controlled_scripts = set()
-    for wire in document['wires']:
+    for wire in wires:
         if wire.get('enabled') is False:
             continue
         incoming.setdefault(wire['to']['node'], []).append(wire['from']['node'])
@@ -513,7 +515,7 @@ def solve(document, changed, *, invoke=None, stopped=None, path=None):
     unsolved = {k for k in plan if k not in controlled_scripts and is_pure(nodes[k]['type'], nodes[k]['params']) and not nodes[k].get('frozen')
                 and (nodes[k].get('result') or {}).get('status') not in ('Done',)}
     if unsolved - affected:
-        affected = downstream(document, affected | unsolved)
+        affected = downstream(document, affected | unsolved, wires=wires)
         plan = run_document(document, roots=sorted(affected), plan_only=True)['order']
     for key in plan:
         node = nodes[key]

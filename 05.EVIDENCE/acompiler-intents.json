@@ -11406,6 +11406,43 @@
         "02.TESTS/tests_js/chat_picker_live.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "COCKPITADMIN": {
+      "source": "Founder 2026-11-17 on the Cockpit prototype: 'the Cockpit is an admin panel to manage the application from, not a dashboard', 'users, community, billing management, feedback', 'why is it not implemented in the live thing'. F48.1 to F48.5 (spec 35.08 app-002 sections 7 to 9, research res-055): the real founder page served by the cloud backend becomes an admin panel where every element acts through the real founder routes and writes the founder audit log; feedback and announcements each get one owner module and one table. Sole builder on lane/cockpit-admin; local 127.0.0.1 runs on seeded test data only; commit only, no push, deploy, install or live access.",
+      "scope": [
+        "06.CLOUD/cloud_backend/founder_cockpit.py",
+        "06.CLOUD/cloud_backend/db.py",
+        "06.CLOUD/cloud_backend/main.py",
+        "06.CLOUD/cloud_backend/billing.py",
+        "06.CLOUD/cloud_backend/companies.py",
+        "06.CLOUD/cloud_backend/marketplace.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_sees_payments.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_user_views.py",
+        "06.CLOUD/cloud_backend/tests/test_marketplace.py",
+        "06.CLOUD/cloud_backend/feedback.py",
+        "06.CLOUD/cloud_backend/email_sender.py",
+        "06.CLOUD/cloud_backend/cockpit_assets/admin.html",
+        "06.CLOUD/cloud_backend/cockpit_assets/map.html",
+        "06.CLOUD/cloud_backend/cockpit_assets/fonts/inter-variable.woff2",
+        "06.CLOUD/cloud_backend/cockpit_assets/fonts/jetbrains-mono-regular.woff2",
+        "06.CLOUD/cloud_backend/community_review.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_backend_health.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_reads_the_community.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_steers_the_relay.py",
+        "06.CLOUD/cloud_backend/tests/test_the_incident_queue_reports_real_failures.py",
+        "06.CLOUD/cloud_backend/tests/test_companies.py",
+        "06.CLOUD/cloud_backend/tests/test_cockpit_admin_panel.py",
+        "06.CLOUD/cloud_backend/tests/test_cockpit_test_accounts.py",
+        "06.CLOUD/cloud_backend/tests/test_cockpit_tells_the_truth.py",
+        "06.CLOUD/cloud_backend/tests/test_every_founder_route_is_gated.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_actions_are_audited.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_cockpit.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_cockpit_command.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_refunds.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_suspends_and_restores.py",
+        "06.CLOUD/cloud_backend/tests/test_the_cockpit_has_one_source.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

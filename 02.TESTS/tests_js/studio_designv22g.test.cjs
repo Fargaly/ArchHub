@@ -96,6 +96,36 @@ test('Canvas save conflict recovery on compiled Studio at 1009 and 1440', {timeo
   assert.deepEqual(errors,[]);
 });
 
+test('Pasted file watcher preserves its source folder across workflows and stays paused', {timeout:75000}, async t=>{
+  const {page,profile,errors}=await openCourt(t);
+  const sourceRoot=path.join(profile,'source'),targetRoot=path.join(profile,'target');
+  for(const root of [sourceRoot,targetRoot])fs.mkdirSync(path.join(root,'watched'),{recursive:true});
+  const source=path.join(sourceRoot,'original.archhub'),target=path.join(targetRoot,'destination.archhub');
+  const watcher={id:'watch',type:'trigger.file',item:'tr_file',title:'Watcher',
+    params:{folder:'watched',pattern:'*.txt',debounce_seconds:600,armed:true,ask_before_running:false},
+    position:{x:120,y:120}};
+  for(const [id,file,nodes] of [['original',source,[watcher]],['destination',target,[]]]){
+    fs.writeFileSync(file,JSON.stringify({format:'archhub',version:1,id,title:id,nodes,wires:[],groups:[],
+      notes:[],viewport:{x:0,y:0,zoom:1},properties:{viewportSaved:true}}));
+  }
+  await page.evaluate(async ({source,target})=>{
+    const api=window.ArchHubAPI;
+    await api.ready;
+    await api.openSession(source);
+    await api.copyNodes(['watch']);
+    await api.openSession(target);
+    await api.pasteNodes();
+    await api.saveSession();
+  },{source,target});
+  const original=JSON.parse(fs.readFileSync(source,'utf8')).nodes[0];
+  const pasted=JSON.parse(fs.readFileSync(target,'utf8')).nodes[0];
+  assert.equal(original.params.armed,true);
+  assert.equal(pasted.params.armed,false);
+  assert.equal(pasted.params.pattern,original.params.pattern);
+  assert.equal(path.resolve(targetRoot,pasted.params.folder),path.join(sourceRoot,'watched'));
+  assert.deepEqual(errors,[]);
+});
+
 test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {timeout:240000}, async t=>{
   const court=await openCourt(t);
   const {page,profile,errors,restart}=court;

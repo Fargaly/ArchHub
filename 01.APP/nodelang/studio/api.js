@@ -2002,12 +2002,19 @@ api.copyNodes=async ids=>{
  for(const id of ids)include(id);
  const nodes=sessionDocument.nodes.filter(n=>selected.has(n.id));
  if(!nodes.length||nodes.some(n=>n.fixed))throw Error('Choose editable nodes to copy.');
- copiedNodes={nodes:copy(nodes),wires:copy(sessionDocument.wires.filter(w=>selected.has(w.from.node)&&selected.has(w.to.node))),groups:copy(sessionDocument.groups.filter(g=>selected.has(g.id)))};
+ copiedNodes={path:sessionPath,nodes:copy(nodes),wires:copy(sessionDocument.wires.filter(w=>selected.has(w.from.node)&&selected.has(w.to.node))),groups:copy(sessionDocument.groups.filter(g=>selected.has(g.id)))};
  return {ok:true};
 };
 api.pasteNodes=async point=>{
  if(!copiedNodes)throw Error('Copy nodes from a canvas first.');
- const source=copy(copiedNodes),ids=new Map(source.nodes.map(n=>[n.id,window.crypto.randomUUID()])),dx=(point?.x??Math.min(...source.nodes.map(n=>n.position.x))+32)-Math.min(...source.nodes.map(n=>n.position.x)),dy=(point?.y??Math.min(...source.nodes.map(n=>n.position.y))+32)-Math.min(...source.nodes.map(n=>n.position.y));
+ const source=copy(copiedNodes),navigation=fileNavigation;
+ const watchers=source.nodes.filter(node=>node.type==='trigger.file'&&typeof node.params.folder==='string'&&node.params.folder);
+ if(source.path&&source.path!==sessionPath&&watchers.length){
+  const {folders}=await sessionRequest('copy-watch-folders',{source_path:source.path,folders:watchers.map(node=>node.params.folder)});
+  if(navigation!==fileNavigation)return {cancelled:true};
+  watchers.forEach((node,index)=>{node.params.folder=folders[index];});
+ }
+ const ids=new Map(source.nodes.map(n=>[n.id,window.crypto.randomUUID()])),dx=(point?.x??Math.min(...source.nodes.map(n=>n.position.x))+32)-Math.min(...source.nodes.map(n=>n.position.x)),dy=(point?.y??Math.min(...source.nodes.map(n=>n.position.y))+32)-Math.min(...source.nodes.map(n=>n.position.y));
  for(const node of source.nodes)if(node.type==='trigger.schedule'||node.type==='trigger.file')node.params.armed=false;
  for(const n of source.nodes){n.id=ids.get(n.id);n.position={x:n.position.x+dx,y:n.position.y+dy};delete n.result;if(n.parent&&ids.has(n.parent))n.parent=ids.get(n.parent);else delete n.parent;if(n.children)n.children=n.children.map(id=>ids.get(id));if(n.frameMembers)n.frameMembers=n.frameMembers.filter(id=>ids.has(id)).map(id=>ids.get(id));if(n.bind&&ids.has(n.bind.node))n.bind.node=ids.get(n.bind.node);for(const p of n.paramDefs||[])if(p.promoted)p.promoted=ids.get(p.promoted)||null;}
  for(const w of source.wires){w.id=window.crypto.randomUUID();w.from.node=ids.get(w.from.node);w.to.node=ids.get(w.to.node);}

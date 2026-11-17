@@ -2040,6 +2040,12 @@ class SessionFiles:
             return {'ok': True, 'document': validate(document), 'changed': changed}
         if action == 'validate':
             return {'ok':True,'document':validate(body.get('document'))}
+        if action == 'copy-watch-folders':
+            folders = body.get('folders')
+            if not isinstance(folders, list) or any(not isinstance(folder, str) for folder in folders):
+                raise ValueError('Choose file watcher folders to copy.')
+            source = local_path(body.get('source_path'))
+            return {'ok': True, 'folders': [resolve_file_parameter(folder, source) for folder in folders]}
         if action == 'recover-run':
             def recover(document):
                 identity = body.get('node')

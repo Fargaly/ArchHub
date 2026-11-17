@@ -109,8 +109,10 @@ for line in sys.stdin:
     if not first:   # like the real CLI: its init line comes after the first message is written, before any answer
         first = True
         log.write(json.dumps({"user": True}) + "\n"); log.flush()
+        # like the real CLI: with --tools only those tools exist, and the init line lists exactly them
+        tools = sys.argv[sys.argv.index("--tools") + 1].split(",") if "--tools" in sys.argv else ["Read", "Write", "Bash"]
         send({"type": "system", "subtype": "init", "session_id": "s1",
-              **json.loads(os.environ.get("FAKE_CLAUDE_INIT") or '{"mcp_servers": [], "tools": ["Read", "Write", "Bash"]}')})
+              **json.loads(os.environ.get("FAKE_CLAUDE_INIT") or json.dumps({"mcp_servers": [], "tools": tools}))})
     text = message["message"]["content"][0]["text"]
     if "hang" in text:
         grandchild()
@@ -165,6 +167,37 @@ def server_list(params, off):
     if quiet and LEAK == "a new one appears":
         rows.append({"name": "project_local", "runtimeStatus": "ready", "tools": {"x": {}}})
     return {"result": {"data": rows, "nextCursor": "more" if LEAK == "more pages" else None}}
+FEATURES = ["plugins", "apps", "shell_tool", "unified_exec", "code_mode_host", "code_mode", "multi_agent", "multi_agent_v2",
+            "computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser",
+            "image_generation", "view_image", "goals", "sleep_tool", "in_app_local_automation", "skill_mcp_dependency_install",
+            "hooks", "fast_mode"]
+# switched off on the start line; like the real 0.163, unified_exec stays on whatever the start line says
+DISABLED = {sys.argv[i + 1] for i, word in enumerate(sys.argv[:-1]) if word == "--disable"} - {"unified_exec"}
+def feature_list(params):
+    # the thread's own feature list, like the real one: every feature with its state, answered in pages
+    if LEAK == "features fail":
+        return {"error": {"code": -32603, "message": "features unavailable"}}
+    if LEAK == "features are not a list":
+        return {"result": {"data": "many"}}
+    rows = [{"name": name, "enabled": name not in DISABLED, "defaultEnabled": True, "stage": "stable"} for name in FEATURES]
+    if LEAK == "its shell stays on":
+        rows[2]["enabled"] = True
+    if LEAK == "a feature is not listed":
+        rows = [row for row in rows if row["name"] != "goals"]
+    half = len(rows) // 2
+    return {"result": {"data": rows[:half], "nextCursor": "page-2"} if params.get("cursor") is None else
+                      {"data": rows[half:], "nextCursor": None}}
+def started_as(params):
+    # its own account of how the thread was started, as the real thread/start answer gives it
+    said = {"approvalPolicy": params.get("approvalPolicy"),
+            "sandbox": {"type": "readOnly" if params.get("sandbox") == "read-only" else "dangerFullAccess"}}
+    if LEAK == "it does not ask first":
+        said["approvalPolicy"] = "never"
+    if LEAK == "it may write":
+        said["sandbox"] = {"type": "workspaceWrite"}
+    if LEAK == "it has the network":
+        said["sandbox"]["networkAccess"] = True
+    return {} if LEAK == "it does not say how it started" else said
 log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
 log.write(json.dumps(sys.argv[1:]) + "\n"); log.write(json.dumps({"pid": os.getpid(), "user": "USERPROFILE" in os.environ,
     "archhub": sorted(k for k in os.environ if k.upper().startswith("ARCHHUB_") or k.upper() in ("QTWEBENGINE_CHROMIUM_FLAGS", "QT_OPENGL"))}) + "\n"); log.flush()
@@ -193,10 +226,13 @@ for line in sys.stdin:
         asks = (params.get("approvalPolicy"), params.get("sandbox"), params.get("approvalsReviewer")) == ("untrusted", "read-only", "user")
         told = str(params.get("developerInstructions"))   # how an approved write can happen, or that none can
         asks = asks and ("apply_patch" in told or "answer and read only" in told)
-        send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") and asks else
+        send({"id": ident, "result": {"thread": {"id": "thread-1"}, **started_as(params)}} if ready and params.get("cwd") and asks else
              {"id": ident, "error": {"code": -32600, "message": "Not initialized"}})
     elif method == "mcpServerStatus/list":
         send({"id": ident, **server_list(params, off)})
+    elif method == "experimentalFeature/list":
+        log.write(json.dumps({"features_asked": params.get("threadId")}) + "\n"); log.flush()
+        send({"id": ident, **feature_list(params)})
     elif method == "turn/start":
         log.write(json.dumps({"turn": True}) + "\n"); log.flush()
         text = params["input"][0]["text"]
@@ -1163,6 +1199,139 @@ def test_codex_is_told_that_chat_is_answer_and_read_only(monkeypatch):
     start = sent[0]['params']
     assert 'answer and read only' in start['developerInstructions'] and 'apply_patch' not in start['developerInstructions']
     assert (start['approvalPolicy'], start['sandbox'], start['approvalsReviewer']) == ('untrusted', 'read-only', 'user')
+
+
+def test_claude_is_started_with_only_its_reading_tools_while_chat_grants_no_action(installed, monkeypatch):
+    """Answering every request with No is not enough: a CLI has tools that never ask. Measured on Claude Code 2.1.325
+    with every request denied: CronCreate scheduled a task, and Bash ran a command the user's own allow rule names."""
+    from nodelang import acp_client
+    install, log = installed
+    install('claude')
+    assert acp_client.start_command('claude')[0][2:] == CLAUDE_ARGS      # with actions on: the CLI as it is
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    words = acp_client.start_command('claude')[0][2:]
+    assert words[:-1] == CLAUDE_ARGS + ['--tools', 'Read,Glob,Grep', '--append-system-prompt']
+    assert 'answer and read only' in words[-1]
+    assert acp_client.ask('claude', 'how many sheets?')['text'] == 'There are 12 sheets.'
+    assert json.loads(log.read_text(encoding='utf-8').splitlines()[0]) == words   # the CLI was started with exactly these
+
+
+@pytest.mark.parametrize('tools', [['Read', 'Write', 'Bash'], ['Read', 'Glob', 'Grep', 'CronCreate'],
+                                   ['Glob', 'Grep', 'Read', 'SomethingNew'], ['Read', {'name': 'Bash'}]])
+def test_claude_gets_no_turn_when_its_start_line_lists_a_tool_that_acts(installed, monkeypatch, tools):
+    """--tools is the request; Claude's own first line is the proof. Any tool beyond the three that read ends the session."""
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, log = installed
+    install('claude')
+    monkeypatch.setenv('FAKE_CLAUDE_INIT', json.dumps({'mcp_servers': [], 'tools': tools}))
+    with pytest.raises(acp_client.AcpRefused, match='tools that act'):
+        acp_client.ask('claude', 'how many sheets?')
+    assert not acp_client._SESSIONS
+    pid = json.loads(log.read_text(encoding='utf-8').splitlines()[1])['pid']
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)
+
+
+def test_codex_is_started_with_no_shell_and_nothing_that_acts_while_chat_grants_no_action(installed, monkeypatch):
+    """Codex's shell is its only way to read, run or write outside a file change, so chat with Codex is answer only."""
+    from nodelang import acp_client
+    install, log = installed
+    install('codex')
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    words = acp_client.start_command('codex')[0][2:]
+    off = [words[at + 1] for at, word in enumerate(words[:-1]) if word == '--disable']
+    assert off[:2] == ['plugins', 'apps'] and words[-1] == 'app-server'
+    assert {'shell_tool', 'code_mode_host', 'multi_agent', 'computer_use', 'browser_use', 'image_generation', 'view_image',
+            'goals', 'sleep_tool', 'in_app_local_automation'} <= set(off)
+    assert 'hooks' not in off                                            # the user's hooks stay on
+    assert acp_client.ask('codex', 'how many sheets?')['text'] == 'There are 12 sheets.'
+    lines = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    assert lines.index({'features_asked': 'thread-1'}) < lines.index({'turn': True})   # the thread's own list, read first
+
+
+@pytest.mark.parametrize('leak, said', [
+    ('its shell stays on', 'shell_tool'), ('a feature is not listed', 'goals'),
+    ('features fail', 'could not be listed'), ('features are not a list', 'could not be listed'),
+    ('it does not ask first', 'did not start as asked'), ('it may write', 'did not start as asked'),
+    ('it has the network', 'did not start as asked'), ('it does not say how it started', 'did not start as asked')])
+def test_codex_gets_no_turn_unless_its_own_answers_prove_it_cannot_act(installed, monkeypatch, leak, said):
+    """The start words are the request. Codex's own answers are the proof: thread/start says it asks first and may only
+    read, and the thread's feature list says every feature that acts is off. Anything else: nothing is sent to it."""
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, log = installed
+    install('codex')
+    monkeypatch.setenv('FAKE_CODEX_LEAK', leak)
+    with pytest.raises(acp_client.AcpRefused, match=said):
+        acp_client.ask('codex', 'how many sheets?')
+    lines = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    assert {'turn': True} not in lines and not acp_client._SESSIONS      # nothing was sent to it
+    pid = lines[1]['pid']
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)
+
+
+def test_codex_is_told_to_say_that_it_cannot_read_files_in_chat(monkeypatch):
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    sent = []
+    acp_client._Codex(sent.append, lambda value: None).say({'id': 2, 'method': 'session/new', 'params': {'cwd': 'C:/work'}})
+    assert 'Codex cannot read files in chat yet' in sent[0]['params']['developerInstructions']
+
+
+def test_the_real_codex_proves_it_cannot_act_before_it_is_asked_anything(canaries, tmp_path, monkeypatch):
+    """Launch, thread/start, inventory and feature list against the REAL Codex, as answer-only chat does them. No model turn."""
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    session = acp_client.AgentSession('codex', tmp_path / 'launch')
+    try:
+        session.start()
+        assert session.session_id                                        # every gate passed on Codex's own answers
+        said = session.transport.dialect.features
+        assert [name for name in ('plugins', 'apps', *acp_client._CODEX_ACTING) if said[name] is not False] == []
+        assert said['hooks'] is True                                     # the user's hooks stay on
+    finally:
+        session.close()
+
+
+def test_the_real_codex_is_refused_when_its_shell_was_left_on(canaries, tmp_path, monkeypatch):
+    """The proof is real: started without the word that switches its shell off, Codex's own list says so."""
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    real = acp_client.start_command
+
+    def shell_left_on(agent):
+        argv, fallback, speaks = real(agent)
+        at = argv.index('shell_tool')
+        return argv[:at - 1] + argv[at + 1:], fallback, speaks
+    monkeypatch.setattr(acp_client, 'start_command', shell_left_on)
+    session = acp_client.AgentSession('codex', tmp_path / 'launch')
+    try:
+        with pytest.raises(acp_client.AcpRefused, match='shell_tool'):
+            session.start()
+    finally:
+        session.close()
+
+
+def test_the_users_own_hook_makes_no_card_for_an_agent_started_for_chat(monkeypatch):
+    """ArchHub's decision hook runs inside a chat agent as one of the user's hooks. With Ask first on, a call outside
+    his folders becomes an Approve card there. For an agent started for chat it must not: chat grants no action."""
+    from nodelang import hook_decision
+    hook_decision.write_permissions({'runMode': 'Ask first'})
+    call = {'hook_event_name': 'PreToolUse', 'tool_name': 'Write', 'session_id': 's1', 'cwd': 'C:/elsewhere',
+            'tool_input': {'file_path': 'C:/elsewhere/notes.txt', 'content': 'one'}}
+    asked = hook_decision.decide(call, 'claude')
+    assert asked['verdict'] == 'ask' and asked.get('hold') and len(hook_decision.ask_reviews()) == 1   # any other session: a card
+    monkeypatch.setenv('ARCHHUB_CHAT_OWNED', '1')
+    owned = hook_decision.decide({**call, 'tool_input': {'file_path': 'C:/elsewhere/notes.txt', 'content': 'two'}}, 'claude')
+    assert owned['verdict'] == 'ask' and 'hold' not in owned             # still asked: the chat client answers No
+    assert len(hook_decision.ask_reviews()) == 1                         # and no card was made for it
+    assert hook_decision.render(owned, 'claude')['hookSpecificOutput']['permissionDecision'] == 'ask'
 
 
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():

@@ -1387,6 +1387,11 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
         # Every other ask is one pending card in the approval file.
         if _RELEASING.get():
             mode = None
+        elif environment.get("ARCHHUB_CHAT_OWNED") == "1":
+            # An agent ArchHub started for chat (acp_client.child_environment) runs this hook as the user's own.
+            # Chat grants no action in this release: no card is made and no permit is taken here; the agent asks
+            # its own way and the chat client answers No.
+            notes.append(_REASONS.get(mode[1], mode[1]) + "; actions are not available in chat yet.")
         else:
             digest = _call_digest(event, action, mode[1])
             if _take_permit(digest, environment):

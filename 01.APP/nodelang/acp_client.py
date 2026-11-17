@@ -50,6 +50,23 @@ AGENTS = {
         '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers. The user's hooks stay ON.
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
 }
+# The first chat release grants no action (CHAT_ACTIONS below). Answering every request with No is not enough: a CLI
+# also has tools that never ask (measured on Claude Code 2.1.325 with every request denied: CronCreate scheduled a
+# task, and Bash ran a command the user's own allow rule names). So while chat grants no action each agent is started
+# WITHOUT the tools that act, and its own first lines must prove it, or the session is refused:
+#   Claude Code: only its three reading tools exist (--tools); its init line must list no other tool.
+#   Codex: its shell is its only way to read a file, so chat with Codex is answer only: no shell, no code host, no
+#     helper agents, no screen, browser, image or schedule tool. The thread's own feature list must say each one is
+#     off, and its thread/start answer must say it asks first and may only read.
+#     Measured on Codex 0.163: with shell_tool off it has no command tool (unified_exec cannot be switched off and is
+#     no tool by itself, so it is not in the list); with code_mode_host off its exec tool answers "code-mode host is
+#     disabled", and its file change and web tools, which only run through that host, do not run either.
+_READ_TOOLS = ('Read', 'Glob', 'Grep')
+_READ_ONLY = ('This chat is answer and read only. Every command and every file change you request is declined at '
+              'once; do not retry it another way. Say plainly that actions are not available in chat yet.')
+_CODEX_ACTING = ('shell_tool', 'code_mode_host', 'code_mode', 'multi_agent', 'multi_agent_v2', 'computer_use', 'browser_use',
+                 'browser_use_external', 'browser_use_full_cdp_access', 'in_app_browser', 'image_generation', 'view_image',
+                 'goals', 'sleep_tool', 'in_app_local_automation', 'skill_mcp_dependency_install')
 # Not offered in chat yet: these speak ACP themselves, and nothing here can switch off or check their own connectors
 # (session/new mcpServers=[] only adds none). Their rows are kept for the day that is proven; no route reaches them.
 _NOT_YET = {
@@ -95,6 +112,7 @@ class _ClaudeCode:
     # first gate and no message is written until it says it has no MCP server. Its init line (tools and MCP
     # servers) comes only after the first message, before any answer: that is the second gate.
     _CONNECTORS = "Claude Code still has its own connectors (%s), so its session was ended."
+    _TOOLS = "Claude Code still has tools that act (%s), so its session was ended."
 
     def __init__(self, wire, hear):
         self.wire, self.hear, self.prompt, self.asked = wire, hear, None, {}
@@ -138,8 +156,11 @@ class _ClaudeCode:
             else:
                 named = [str(row.get('name') if isinstance(row, dict) else row) for row in servers] + [
                     str(tool) for tool in tools if str(tool).startswith('mcp__')]
+                acting = [] if CHAT_ACTIONS else [str(tool) for tool in tools if tool not in _READ_TOOLS]
                 if named:
                     self.hear({'refuse': self._CONNECTORS % ', '.join(named)[:200]})
+                elif acting:   # --tools was the request; this is the proof
+                    self.hear({'refuse': self._TOOLS % ', '.join(acting)[:200]})
                 else:
                     self.checked = True
         elif kind == 'control_response' and (line.get('response') or {}).get('request_id') == 'connectors':
@@ -197,8 +218,10 @@ class _Codex:
     # change files with its file tool: the card comes before the write, Deny leaves nothing, Approve writes.
     _WRITES = ('Shell commands in this session run in a read-only sandbox and cannot write files. To create, change or '
                'delete a file, use the apply_patch file tool; the user is asked to approve each change.')
-    _READ_ONLY = ('This chat is answer and read only. Every command and every file change you request is declined at '
-                  'once; do not retry it another way. Say plainly that actions are not available in chat yet.')
+    _ANSWER_ONLY = _READ_ONLY + (' You have no shell and no file tool in this chat, so you cannot read files either. '
+                                 'When asked to read a file, say plainly: Codex cannot read files in chat yet.')
+    _POLICY = "Codex did not start as asked (it asks first and may only read), so nothing was sent to it."
+    _FEATURES = "Codex can still act in this thread (%s), so nothing was sent to it."
 
     # Measured on Codex 0.163: its MCP servers are switched off on the start line (_codex_servers_off). After the
     # thread exists, mcpServerStatus/list with the threadId must report each one 'disabled' with no tools. The same
@@ -208,7 +231,12 @@ class _Codex:
 
     def __init__(self, wire, hear):
         self.wire, self.hear, self.sent, self.prompt, self.asked = wire, hear, {}, None, set()
-        self.opening, self.thread, self.changes = None, None, {}
+        self.opening, self.thread, self.changes, self.features = None, None, {}, {}
+
+    def _ask_features(self, cursor=None):
+        self.sent['features'] = 'features'
+        self.wire({'id': 'features', 'method': 'experimentalFeature/list', 'params': {
+            'threadId': self.thread, 'limit': ACP_NODE['params']['inventory_rows'], 'cursor': cursor}})
 
     def _servers(self, line):
         """The server names of one complete inventory answer; None (and the session is refused) when it is not one."""
@@ -231,7 +259,7 @@ class _Codex:
             self.sent[ident] = 'session/new'
             self.wire({'id': ident, 'method': 'thread/start', 'params': {
                 'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only',
-                'approvalsReviewer': 'user', 'developerInstructions': self._WRITES if CHAT_ACTIONS else self._READ_ONLY}})
+                'approvalsReviewer': 'user', 'developerInstructions': self._WRITES if CHAT_ACTIONS else self._ANSWER_ONLY}})
         elif method == 'session/prompt':
             self.sent[ident], self.prompt = method, ident
             self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [
@@ -262,6 +290,8 @@ class _Codex:
             asked = self.sent.pop(ident, None)
             if 'error' in line and asked == 'verify':
                 self.hear({'refuse': self._CONNECTORS % 'they could not be listed'})
+            elif 'error' in line and asked == 'features':
+                self.hear({'refuse': self._FEATURES % 'its features could not be listed'})
             elif 'error' in line:
                 self.prompt = None if asked == 'session/prompt' else self.prompt
                 self.hear(line)
@@ -271,16 +301,39 @@ class _Codex:
                             if row.get('runtimeStatus') != 'disabled' or row.get('tools')]
                     if live:
                         self.hear({'refuse': self._CONNECTORS % ', '.join(live)[:200]})
+                    elif CHAT_ACTIONS:
+                        self.hear({'id': self.opening[0], 'result': {'sessionId': self.thread}})
+                    else:
+                        self._ask_features()
+            elif asked == 'features':   # the third gate: what this thread can do, in Codex's own words, page by page
+                result = line.get('result') or {}
+                rows = result.get('data')
+                if type(rows) is not list or not all(isinstance(row, dict) and type(row.get('name')) is str for row in rows):
+                    self.hear({'refuse': self._FEATURES % 'its features could not be listed'})
+                else:
+                    self.features.update({row['name']: row.get('enabled') for row in rows})
+                    # a feature it does not list is unknown, not off
+                    live = [name for name in (*_CODEX_NO_PLUGINS[1::2], *_CODEX_ACTING) if self.features.get(name) is not False]
+                    if result.get('nextCursor'):
+                        self._ask_features(result['nextCursor'])
+                    elif live:
+                        self.hear({'refuse': self._FEATURES % ', '.join(live)[:200]})
                     else:
                         self.hear({'id': self.opening[0], 'result': {'sessionId': self.thread}})
             elif asked == 'initialize':
                 self.wire({'method': 'initialized'})
                 self.hear({'id': ident, 'result': {'protocolVersion': 1}})
-            elif asked == 'session/new':
-                self.thread = ((line.get('result') or {}).get('thread') or {}).get('id')
-                self.sent['verify'] = 'verify'
-                self.wire({'id': 'verify', 'method': 'mcpServerStatus/list',
-                           'params': {**self._INVENTORY, 'threadId': self.thread}})
+            elif asked == 'session/new':   # the first gate: its own answer says how the thread was started
+                result = line.get('result') or {}
+                sandbox = result.get('sandbox')
+                if (result.get('approvalPolicy') != 'untrusted' or not isinstance(sandbox, dict)
+                        or sandbox.get('type') != 'readOnly' or sandbox.get('networkAccess')):
+                    self.hear({'refuse': self._POLICY})
+                else:
+                    self.thread = (result.get('thread') or {}).get('id')
+                    self.sent['verify'] = 'verify'
+                    self.wire({'id': 'verify', 'method': 'mcpServerStatus/list',
+                               'params': {**self._INVENTORY, 'threadId': self.thread}})
             # the answer to turn/start only says the turn began; turn/completed settles the prompt
         elif method == 'item/agentMessage/delta':
             self.hear(_update(thread, sessionUpdate='agent_message_chunk', content={'type': 'text', 'text': params.get('delta')}))
@@ -573,6 +626,10 @@ def start_command(agent):
     args = list(row['args'])
     if row.get('speaks') == 'codex':
         args[-1:-1] = _CODEX_NO_PLUGINS   # its own MCP servers: _codex_servers_off at start, checked by _Codex
+        if not CHAT_ACTIONS:              # answer only: nothing that acts is on; _Codex reads the thread's list back
+            args[-1:-1] = [word for name in _CODEX_ACTING for word in ('--disable', name)]
+    elif row.get('speaks') == 'claude' and not CHAT_ACTIONS:   # only its reading tools exist; its init line is the proof
+        args += ['--tools', ','.join(_READ_TOOLS), '--append-system-prompt', _READ_ONLY]
     return head + args, (head + list(fallback)) if fallback else None, row.get('speaks')
 
 

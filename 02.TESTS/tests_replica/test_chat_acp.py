@@ -13,6 +13,9 @@ import time
 
 import pytest
 
+from nodelang import acp_client as _shipped_client
+_SHIPPED_CHAT_ACTIONS = _shipped_client.CHAT_ACTIONS   # as the release has it, read before any test changes it
+
 FAKE_AGENT = r'''
 import json, os, sys
 log = open(os.environ["FAKE_AGENT_LOG"], "a", encoding="utf-8")
@@ -114,7 +117,13 @@ for line in sys.stdin:
         delta("Thinking")
         stubborn = True
         continue
-    if "write" in text:
+    if "unknown" in text:   # a request kind the client has no answer for: it must be refused, never left waiting
+        send({"type": "control_request", "request_id": "odd-1", "request": {"subtype": "hook_callback", "callback_id": "c1"}})
+        answer = json.loads(sys.stdin.readline())
+        said = "Refused." if answer["response"]["subtype"] == "error" else "Granted."
+        delta(said)
+        assistant({"type": "text", "text": said})
+    elif "write" in text:
         call = {"file_path": "sheets.txt", "content": "A-101"}
         assistant({"type": "tool_use", "id": "t2", "name": "Write", "input": call})
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool",
@@ -171,6 +180,7 @@ def note(method, **params):
 def command(ident, text, status):
     return {"type": "commandExecution", "id": ident, "command": text, "status": status}
 ready = stubborn = False
+answers = []
 off = all("mcp_servers.%s.enabled=false" % name in sys.argv for name in SERVERS)   # switched off on the start line
 for line in sys.stdin:
     message = json.loads(line)
@@ -181,7 +191,8 @@ for line in sys.stdin:
         ready = True
     elif method == "thread/start":
         asks = (params.get("approvalPolicy"), params.get("sandbox"), params.get("approvalsReviewer")) == ("untrusted", "read-only", "user")
-        asks = asks and "apply_patch" in str(params.get("developerInstructions"))   # told how an approved write can happen
+        told = str(params.get("developerInstructions"))   # how an approved write can happen, or that none can
+        asks = asks and ("apply_patch" in told or "answer and read only" in told)
         send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") and asks else
              {"id": ident, "error": {"code": -32600, "message": "Not initialized"}})
     elif method == "mcpServerStatus/list":
@@ -195,7 +206,13 @@ for line in sys.stdin:
             note("item/agentMessage/delta", itemId="m1", delta="Thinking")
             stubborn = True
             continue
-        if "write" in text:
+        if "unknown" in text:
+            for number, method in ((71, "item/permissions/requestApproval"), (72, "item/tool/requestUserInput"),
+                                   (73, "mcpServer/elicitation/request"), (74, "execCommandApproval")):
+                send({"id": number, "method": method, "params": {"threadId": "thread-1", "turnId": "turn-1", "itemId": "t9"}})
+                answers.append("error" in json.loads(sys.stdin.readline()))
+            note("item/agentMessage/delta", itemId="m1", delta="Refused." if all(answers) else "Granted.")
+        elif "write" in text:
             note("item/started", item=command("t2", "Write sheets.txt", "inProgress"))
             send({"id": 70, "method": "item/commandExecution/requestApproval", "params": {"threadId": "thread-1",
                   "turnId": "turn-1", "itemId": "t2", "command": "Write sheets.txt", "cwd": "."}})
@@ -224,6 +241,9 @@ def profile(tmp_path, monkeypatch):
     monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR', raising=False)
     from nodelang import workshop_live
     monkeypatch.setattr(workshop_live, 'live_agents', lambda with_status=False: [])  # no live session is reachable
+    # This release ships answer and read only. The action path (cards, guards, permits) is kept behind the switch and
+    # the tests written for it still run with it on; the tests of the shipped behaviour switch it off themselves.
+    monkeypatch.setattr(_shipped_client, 'CHAT_ACTIONS', True)
     yield tmp_path
     from nodelang import acp_client
     acp_client.close_all()
@@ -1078,6 +1098,71 @@ def test_no_guard_list_and_a_guard_that_cannot_run_do_not_refuse(tmp_path, guard
     assert acp_client._guards_refuse([('Bash', {'command': 'pip install x'})], 'C:/work', 's1') == ''   # as the CLI itself treats it
     settings.unlink()
     assert acp_client._guards_refuse([('Bash', {'command': 'pip install x'})], 'C:/work', 's1') == ''
+
+
+def test_this_release_ships_answer_and_read_only():
+    assert _SHIPPED_CHAT_ACTIONS is False
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+@pytest.mark.parametrize('tool, data', [('Write', {'file_path': 'C:/work/a.txt', 'content': 'hi'}), ('Edit', {'file_path': 'C:/work/a.txt'}),
+                                        ('Bash', {'command': 'pip install requests'}), ('Bash', {'command': 'dir'}),
+                                        ('PowerShell', {'command': 'cmd /c rmdir /s /q C:/work'}), ('WebFetch', {'url': 'https://example.com'}),
+                                        ('mcp__x__send', {'text': 'hi'}), ('SomethingNew', {})])
+def test_every_request_from_a_chat_agent_is_denied_and_nothing_else_happens(guards, tmp_path, monkeypatch, agent, tool, data):
+    """No card, no guard process, no permit, nothing in the approval store: the answer is ours and immediate."""
+    from nodelang import acp_client, hook_decision
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    reached = []
+    monkeypatch.setattr(hook_decision, 'agent_permission', lambda *a, **kw: reached.append('permit') or ('', ''))
+    monkeypatch.setattr(acp_client, '_guards_refuse', lambda *a, **kw: reached.append('guards') or '')
+    if agent == 'codex':   # Codex asks in two shapes only: a command, or a file change
+        tool, data = ('Write', data) if 'file_path' in data else ('Bash', {'command': data.get('command', 'x')})
+    request = _asks(agent, tool, data)
+    request['options'] = [{'optionId': 'yes', 'kind': 'allow_once'}, {'optionId': 'no', 'kind': 'reject_once'}]
+    began = time.monotonic()
+    outcome = acp_client.approve_card('Codex', time.monotonic() + 20, cwd=str(tmp_path))(request, {}, {})
+    assert outcome == {'outcome': 'selected', 'optionId': 'no', 'reason': 'Actions are not available in chat yet. I can read and answer.'}
+    assert time.monotonic() - began < 1 and reached == []
+    assert not hook_decision._ask_path(os.environ).exists() and not guards.exists()   # no store write, no guard process
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+def test_a_chat_agent_that_asks_to_act_is_told_no_and_finishes_its_turn(installed, guards, tmp_path, monkeypatch, agent):
+    from nodelang import acp_client, hook_decision, nograph_server
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, log = installed
+    install(agent)
+    result = nograph_server._chat({'prompt': '@%s write the sheet list' % agent}, lambda text: None)
+    assert result['text'] == 'File not written.'                         # the agent was told no and finished its turn
+    step = next(s for s in result['steps'] if 'sheets.txt' in s['tool'])
+    assert step['status'] == 'failed' and step['tool'].endswith('refused: Actions are not available in chat yet. I can read and answer.')
+    assert hook_decision.ask_reviews() == [] and not hook_decision._ask_path(os.environ).exists() and not guards.exists()
+    folder = tmp_path / 'LOCALAPPDATA' / 'ArchHub' / 'agents' / agent
+    assert not folder.exists() or list(folder.iterdir()) == []           # no file changed
+    assert nograph_server._chat({'prompt': '@%s how many sheets?' % agent}, lambda text: None)['text'] == 'There are 12 sheets.'
+    assert len([line for line in log.read_text(encoding='utf-8').splitlines() if line.startswith('[')]) == 1   # the same session
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+def test_a_request_kind_the_client_does_not_know_is_refused_not_left_waiting(installed, monkeypatch, agent):
+    from nodelang import acp_client, hook_decision
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    install, _log = installed
+    install(agent)
+    assert acp_client.ask(agent, 'try an unknown request')['text'] == 'Refused.'
+    assert not hook_decision._ask_path(os.environ).exists()
+
+
+def test_codex_is_told_that_chat_is_answer_and_read_only(monkeypatch):
+    from nodelang import acp_client
+    monkeypatch.setattr(acp_client, 'CHAT_ACTIONS', False)
+    sent = []
+    dialect = acp_client._Codex(sent.append, lambda value: None)
+    dialect.say({'id': 2, 'method': 'session/new', 'params': {'cwd': 'C:/work'}})
+    start = sent[0]['params']
+    assert 'answer and read only' in start['developerInstructions'] and 'apply_patch' not in start['developerInstructions']
+    assert (start['approvalPolicy'], start['sandbox'], start['approvalsReviewer']) == ('untrusted', 'read-only', 'user')
 
 
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():

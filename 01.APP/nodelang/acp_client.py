@@ -197,6 +197,8 @@ class _Codex:
     # change files with its file tool: the card comes before the write, Deny leaves nothing, Approve writes.
     _WRITES = ('Shell commands in this session run in a read-only sandbox and cannot write files. To create, change or '
                'delete a file, use the apply_patch file tool; the user is asked to approve each change.')
+    _READ_ONLY = ('This chat is answer and read only. Every command and every file change you request is declined at '
+                  'once; do not retry it another way. Say plainly that actions are not available in chat yet.')
 
     # Measured on Codex 0.163: its MCP servers are switched off on the start line (_codex_servers_off). After the
     # thread exists, mcpServerStatus/list with the threadId must report each one 'disabled' with no tools. The same
@@ -229,7 +231,7 @@ class _Codex:
             self.sent[ident] = 'session/new'
             self.wire({'id': ident, 'method': 'thread/start', 'params': {
                 'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only',
-                'approvalsReviewer': 'user', 'developerInstructions': self._WRITES}})
+                'approvalsReviewer': 'user', 'developerInstructions': self._WRITES if CHAT_ACTIONS else self._READ_ONLY}})
         elif method == 'session/prompt':
             self.sent[ident], self.prompt = method, ident
             self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [
@@ -578,6 +580,15 @@ def start_command(agent):
 _ACTIONS = {'edit': 'write', 'delete': 'delete', 'move': 'write', 'execute': 'shell', 'fetch': 'send'}
 
 
+# The first chat release is ANSWER AND READ ONLY: no action of an agent can be granted from chat. Every permission
+# or approval request a chat agent makes (a Claude tool that asks, a Codex command or file change, anything else) is
+# answered No by this client at once, with _NO_ACTIONS for the agent and the thread. Built-in policy, not a setting.
+# The action path below (the user's guards before a card, the card, its permit) is kept and tested behind this switch
+# and is not reachable while it is off.
+CHAT_ACTIONS = False
+_NO_ACTIONS = 'Actions are not available in chat yet. I can read and answer.'
+
+
 def _guard_commands(tool):
     """The user's own PreToolUse guards for one tool, as his Claude Code settings list them (read only, never edited).
     This is his composition, not a second policy: the same commands his own sessions run before a tool."""
@@ -640,10 +651,13 @@ def approve_card(agent_label, deadline, stopped=lambda: False, cwd='', refused=l
         seen = tool_calls.get((request.get('sessionId'), call.get('toolCallId'))) or {}
         title = str(call.get('title') or seen.get('title') or 'Agent action')[:200]
         action = _ACTIONS.get(call.get('kind') or seen.get('kind'), 'write')
+        options = {row.get('kind'): row.get('optionId') for row in request.get('options') or ()}
+        if not CHAT_ACTIONS:   # this release: the answer is ours and immediate. No guard runs, no card, no permit, no store.
+            refused(_NO_ACTIONS)
+            return {'outcome': 'selected', 'optionId': options.get('reject_once'), 'reason': _NO_ACTIONS}
         reason = _guards_refuse(call.get('checks'), cwd, request.get('sessionId'), stopped)
         if reason:
             refused(reason)
-            options = {row.get('kind'): row.get('optionId') for row in request.get('options') or ()}
             return {'outcome': 'selected', 'optionId': options.get('reject_once'), 'reason': reason}
         # The owner's permit-only entry: what the agent calls its action is shown, never used to choose what Approve does.
         hold, digest = hook_decision.agent_permission(os.environ, agent_label, title, action, call.get('rawInput'),

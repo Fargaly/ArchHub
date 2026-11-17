@@ -1554,10 +1554,28 @@ def _ask_path(environment) -> Path:
     return _settings_dir(environment) / _ASK_FILE
 
 
+# The approval file is read without the writer's lock (a waiting agent, the Studio list) while a decision replaces
+# it. On Windows the two can meet: the read or the replace fails for a moment. Both try again for about a second.
+_STORE_TRIES = 40
+_STORE_PAUSE = 0.025
+
+
 def _read_holds(path: Path) -> dict:
+    """The store. A file that is not there is an empty store; a file that cannot be read right now is NOT:
+    after the bounded retries the OSError is raised, meaning "unknown, read again"."""
+    for attempt in range(_STORE_TRIES):
+        try:
+            text = path.read_text(encoding="utf-8")
+            break
+        except FileNotFoundError:
+            return {"revision": 0, "holds": {}}
+        except OSError:
+            if attempt >= _STORE_TRIES - 1:
+                raise
+            time.sleep(_STORE_PAUSE)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+        data = json.loads(text)
+    except (ValueError, TypeError):
         return {"revision": 0, "holds": {}}
     if type(data) is not dict or type(data.get("holds")) is not dict:
         return {"revision": 0, "holds": {}}
@@ -1574,7 +1592,14 @@ def _write_holds(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-    os.replace(temporary, path)
+    for attempt in range(_STORE_TRIES):
+        try:
+            os.replace(temporary, path)   # all or nothing: when it fails the file on disk is unchanged
+            return
+        except PermissionError:           # a reader has the file open right now
+            if attempt >= _STORE_TRIES - 1:
+                raise
+            time.sleep(_STORE_PAUSE)
 
 
 def _with_ask_file(environment, change):
@@ -1582,7 +1607,7 @@ def _with_ask_file(environment, change):
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = path.with_suffix(".lock")
     held = None
-    for _ in range(40):
+    for _ in range(_STORE_TRIES * 2):
         try:
             held = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_RDWR)
             break
@@ -1594,6 +1619,9 @@ def _with_ask_file(environment, change):
             except OSError as busy:
                 if type(busy).__name__ == "":
                     break
+            time.sleep(_STORE_PAUSE)   # another writer is inside: wait for it instead of failing at once
+        except PermissionError:
+            time.sleep(_STORE_PAUSE)   # Windows: the lock file is being removed by the writer that just left
     if held is None:
         raise OSError("The approval file is busy.")
     try:
@@ -1625,6 +1653,13 @@ def _stamp_decision(row, who, outcome):
     record["decided"] = {"who": who, "when": _approval_now(), "outcome": outcome}
     row["record"] = record
     row["outcome"] = outcome
+
+
+def approval_status(environment, hold_id):
+    """The live status of one approval, for whoever waits on it; None when the row is not in the store.
+    Raises OSError when the file cannot be read right now: that is unknown, never a denial; read again."""
+    environment = os.environ if environment is None else environment
+    return (_read_holds(_ask_path(environment))["holds"].get(hold_id) or {}).get("status")
 
 
 def approval_record(environment, hold_id):
@@ -1862,6 +1897,13 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
             claimed["row"] = json.loads(json.dumps(row, default=str))
             return None
         _stamp_decision(row, decided_by, "approved")
+        if (row.get("replay") or {}).get("kind") == "permit":
+            # A permit runs nothing here, so it is decided in this one write: there is no `releasing` in between
+            # to get stuck in. If the write fails the file still says pending and the click can be repeated.
+            row["status"], row["permit_open"] = "approved", True
+            _write_holds(path, held)
+            claimed["card"] = _ask_card(row)
+            return None
         row["status"] = "releasing"
         _write_holds(path, held)
         claimed["row"] = json.loads(json.dumps(row, default=str))
@@ -1904,10 +1946,13 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
         claimed["card"] = _ask_card(row)
         return None
 
-    try:
-        _with_ask_file(environment, finish)
-    except OSError as exc:
-        raise ValueError("The approval could not be saved.") from exc
+    for attempt in range(3):   # the action has run once: its outcome is written, never run again, never left `releasing`
+        try:
+            _with_ask_file(environment, finish)
+            break
+        except OSError as exc:
+            if attempt == 2:
+                raise ValueError("The approval could not be saved.") from exc
     if status == "failed":
         raise ValueError(error or "The held action failed.")
     return claimed["card"]

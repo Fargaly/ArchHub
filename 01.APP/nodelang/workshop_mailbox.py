@@ -443,11 +443,6 @@ def _recipient_rows(message, declarations):
         and "[" + row["session"] + "]" not in author and _addressed(message,
         {"sender":row["agent"] + " [" + row["session"] + "]", "sender_label":row["agent"],
          "sender_key":row["session"]}, row)]
-    # Two live rows of one native session are one addressee: the newest row takes the message, once.
-    newest = {}
-    for row in sorted(matched, key=lambda row: str(row.get("updated_at") or "")):
-        newest[(row.get("runtime"), row.get("native_session_id") or row["session"])] = row
-    matched = [row for row in matched if any(row is kept for kept in newest.values())]
     project = _message_project(message)
     if not project:
         return matched
@@ -465,8 +460,13 @@ def _resolve(history, message, declarations):
     the agents its To line names, then the answered message's author when the To line names that author."""
     rows = _recipient_rows(message, declarations)
     author, sessions = _replied_author(history, message), {row["session"] for row in rows}
-    return rows + [row for row in declarations if row.get("current") and row["session"] not in sessions
-                   and _reply_reaches(author, message, row)]
+    rows += [row for row in declarations if row.get("current") and row["session"] not in sessions
+             and _reply_reaches(author, message, row)]
+    # Two live rows of one native session are one addressee: the newest row takes the message, once.
+    newest = {}
+    for row in sorted(rows, key=lambda row: str(row.get("updated_at") or "")):
+        newest[recipient_identity(row)] = row
+    return [row for row in rows if any(row is kept for kept in newest.values())]
 
 
 def _reply_recipients(history, message, identity, declaration, declarations, reply=None):
@@ -478,8 +478,8 @@ def _reply_recipients(history, message, identity, declaration, declarations, rep
     routing = _routing(message)
     if not recipients:
         recipients = routing["recipients"] if routing and routing["recipients"] else _resolve(history, message, declarations)
-    live_sessions = {row["session"] for row in declarations if row.get("current")}
-    if recipients and not any(row["session"] in live_sessions for row in recipients):
+    live = {recipient_identity(row) for row in declarations if row.get("current")}
+    if recipients and not any(recipient_identity(row, declarations) in live for row in recipients):
         recipients = _resolve(history, message, declarations)
     reply_targets = set()
     if reply is not None and reply.get("reply_to") == message["id"] and agent_addressed(reply):
@@ -547,6 +547,42 @@ def delivery_events(history, message):
     return result
 
 
+def recipient_identity(row, declarations=()):
+    """F320: the one identity of an addressee, defined once. (runtime, native session id) when the session has a
+    native id, otherwise its declaration key. Every receipt read and every "same addressee" decision uses it."""
+    session = row.get("session") or row.get("recipient")
+    bound = next((value for value in declarations if value.get("session") == session), {}) if session else {}
+    native = row.get("native_session_id") or bound.get("native_session_id")
+    if native:
+        return ("native", str(row.get("runtime") or row.get("app") or bound.get("runtime") or ""), str(native))
+    return ("session", str(session or ""))
+
+
+# Inside one addressee a receipt holds for the whole group by meaning, not by which row recorded it.
+_GROUP_PRECEDENCE = {"attempt": lambda value: value.get("status") == "caller-owned",
+                     "initial-outcome": lambda value: value.get("status") in ("injected", "ok", "delivered")}
+
+
+def receipts(history, message, declarations):
+    """A message's delivery receipts grouped by recipient_identity, and each recorded key's identity. A receipt
+    written under an old or sibling declaration key counts for every row of the same native session."""
+    groups, owner = {}, {}
+    for session, records in delivery_events(history, message).items():
+        owner[session] = recipient_identity({**records.get("addressed", {}), "session": session}, declarations)
+        merged = groups.setdefault(owner[session], {})
+        for event, value in records.items():
+            prefer = _GROUP_PRECEDENCE.get(event)
+            if event not in merged or prefer and prefer(value) and not prefer(merged[event]):
+                merged[event] = value
+    return groups, owner
+
+
+def _routed_to(history, message, declaration, declarations):
+    """A stored addressed receipt names this addressee, under any of its declaration keys."""
+    return "addressed" in receipts(history, message, declarations)[0].get(
+        recipient_identity(declaration, declarations), {})
+
+
 def _routing(message):
     evidence = message.get("evidence", [])
     return json.loads("".join(evidence[1:])) if evidence and evidence[0] == ROUTING_EVIDENCE else None
@@ -578,7 +614,7 @@ def _settle_waiting(history, message, declarations):
         return True
     targets = [part for part in _header_targets(message) if part.casefold() not in _ROOM_TARGETS]
     for target in targets:
-        rows = _recipient_rows({**message, "content": "To " + target + ":\nx"}, declarations)
+        rows = _resolve(history, {**message, "content": "To " + target + ":\nx"}, declarations)
         if not rows or not all(_acknowledged(history, message, {"sender_key": row["session"],
                 "sender": row["agent"] + " [" + row["session"] + "]"}, row) for row in rows):
             return False
@@ -600,8 +636,9 @@ def _seen(history, body, identity, runtime):
         declarations = read_declarations(history._db)
         for message_id in ids:
             message = history.get(ROOM, message_id, principal=DELIVERY_AUTHOR)
-            if not message or not _deliver_to(message, identity, declaration, history) or not _can_ack(
-                    history, message, identity, declaration, declarations):
+            if not message or not (_deliver_to(message, identity, declaration, history) or _routed_to(
+                    history, message, declaration, read_declarations(history._db, include_archived=True))) \
+                    or not _can_ack(history, message, identity, declaration, declarations):
                 continue
             # Resolve only this recipient's provisional aliases; other recipients retain their receipts.
             # The name test only (_named): each row is judged by its own name, never by who the message went to.
@@ -624,6 +661,11 @@ def _seen(history, body, identity, runtime):
 def _pending(history, identity, runtime):
     declaration = _declaration(history, identity, runtime)
     declarations = read_declarations(history._db)
+    known = read_declarations(history._db, include_archived=True)
+    mine = recipient_identity(declaration, known)
+    # Every declaration key of this addressee, current or archived: its receipts are this addressee's receipts.
+    keys = sorted({identity["sender_key"]} | {row["session"] for row in known if recipient_identity(row, known) == mine})
+    seat = mine[1:] if mine[0] == "native" else ("", "")
     pending, size = [], 0
     since = 0
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_delivery_cursors'").fetchone():
@@ -647,25 +689,25 @@ def _pending(history, identity, runtime):
         + " OR (reply_to IS NOT NULL AND (SELECT parent.author FROM messages parent WHERE parent.conversation_id="
         "messages.conversation_id AND parent.id=messages.reply_to) LIKE ?) OR id IN ("
         "SELECT reply_to FROM messages WHERE conversation_id=? AND author=? AND category=? "
-        "AND json_extract(content,'$.event')='addressed' AND json_extract(content,'$.recipient')=?)) ORDER BY sequence",
+        "AND json_extract(content,'$.event')='addressed' AND (json_extract(content,'$.recipient') IN ("
+        + ",".join("?" for _ in keys) + ") OR (json_extract(content,'$.runtime')=? "
+        "AND json_extract(content,'$.native_session_id')=?)))) ORDER BY sequence",
         (ROOM, CATEGORY, since,
          *aliases, *("," + value + "," for value in aliases), *("/" + value + "," for value in tokens),
          "% [" + identity["sender_key"] + "]",
-         ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, identity["sender_key"]))
+         ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, *keys, *seat))
     with closing(cursor):
         for raw in cursor:
             message = history._message(raw)
-            if not _deliver_to(message, identity, declaration, history):
+            groups, _owner = receipts(history, message, known)
+            routed = {key for key, records in groups.items() if "addressed" in records}
+            if not (_deliver_to(message, identity, declaration, history) or mine in routed):
                 continue
             if not _can_ack(history, message, identity, declaration, declarations):
                 continue
-            all_events = delivery_events(history, message)
-            routed = {key for key, records in all_events.items() if "addressed" in records}
-            if routed and identity["sender_key"] not in routed and routed & {r["session"] for r in declarations}:
+            if routed and mine not in routed and routed & {recipient_identity(r, known) for r in declarations}:
                 continue
-            if not routed and not _can_ack(history, message, identity, declaration, declarations):
-                continue
-            events = all_events.get(identity["sender_key"], {})
+            events = groups.get(mine, {})
             if "answered" in events or "delivered" in events or _acknowledged(history, message, identity, declaration):
                 continue
             message["delivery_sequence"] = message["sequence"]
@@ -746,6 +788,7 @@ class WorkshopInjection:
             value = json.loads(raw["content"])
             if value.get("event") == "attempt" and raw["reply_to"]:
                 attempts[(raw["reply_to"], value["recipient"])] = raw["created_at"]
+        handled = set()
         for (message_id, session), at in sorted(attempts.items(), key=lambda item: item[1]):
             elapsed = now - datetime.fromisoformat(at).timestamp()
             due = [step for step, seconds in zip(WATCH_STEPS, retry) if elapsed >= seconds]
@@ -753,7 +796,11 @@ class WorkshopInjection:
                 continue
             with history._transaction():
                 message = history.get(ROOM, message_id, principal=DELIVERY_AUTHOR)
-                events = delivery_events(history, message).get(session, {}) if message else {}
+                groups, owner = receipts(history, message, declarations) if message else ({}, {})
+            if (message_id, owner.get(session)) in handled:
+                continue   # the earliest attempt of an addressee speaks for all its declaration keys
+            handled.add((message_id, owner.get(session)))
+            events = groups.get(owner.get(session), {})
             if not events or "answered" in events:
                 continue
             asks = _asks_for_reply(message)
@@ -909,7 +956,8 @@ class WorkshopInjection:
                 declaration = _reply_binding(history, reply, identity)
                 for recipient in _reply_recipients(history, parent, identity, declaration, declarations, reply):
                     with history._transaction(write=True):
-                        if "answered" in delivery_events(history, parent).get(recipient["session"], {}):
+                        if "answered" in receipts(history, parent, declarations)[0].get(
+                                recipient_identity(recipient, declarations), {}):
                             continue
                         _delivery_receipt(history, parent, recipient,
                             "answered", reply_message_id=reply["id"])
@@ -949,7 +997,7 @@ class WorkshopInjection:
                 if routing is not None:
                     recipients = list(routing.get("recipients") or [])
                 elif agent_addressed(message):
-                    recipients = _recipient_rows(message, [row for row in declarations
+                    recipients = _resolve(history, message, [row for row in declarations
                         if row.get("updated_at", "") <= message["created_at"]])
                 else:
                     recipients = []
@@ -957,8 +1005,8 @@ class WorkshopInjection:
                     for row in recipients:
                         _delivery_receipt(history, message, row, "addressed", now=now,
                             runtime=row["runtime"], native_session_id=row.get("native_session_id"))
-            live_sessions = {row["session"] for row in declarations if row.get("current")}
-            if not recipients or not any(row["session"] in live_sessions for row in recipients):
+            live = {recipient_identity(row) for row in declarations if row.get("current")}
+            if not recipients or not any(recipient_identity(row, declarations) in live for row in recipients):
                 recipients = _resolve(history, message, declarations)
             controls = [events["native-control"] for events in recorded.values() if "native-control" in events]
             asks_for_reply = _asks_for_reply(message)
@@ -967,24 +1015,25 @@ class WorkshopInjection:
                 if "[" + recipient["session"] + "]" in message["author"] or message["author"] == recipient["agent"]:
                     continue
                 with history._transaction(write=True):
-                    events = delivery_events(history, message).get(recipient["session"], {})
+                    events = receipts(history, message, declarations)[0].get(recipient_identity(recipient, declarations), {})
                     control = next((value for value in controls
                         if value["native_session_id"] == recipient.get("native_session_id")
                         or recipient["session"] == "address:" + value["native_session_id"].casefold()), None)
                     if control and "attempt" not in events:
                         _delivery_receipt(history, message, recipient, "attempt",
                             now=datetime.fromisoformat(control["created_at"]).timestamp(), via="workshop", status="caller-owned")
-                        events = delivery_events(history, message).get(recipient["session"], {})
+                        events = receipts(history, message, declarations)[0].get(recipient_identity(recipient, declarations), {})
                     if "answered" not in events:
                         replies = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND reply_to=? "
                             "AND category=? ORDER BY sequence", (ROOM, message["id"], CATEGORY)).fetchall()
                         for raw in replies:
                             label, separator, session = raw["author"].removesuffix("]").rpartition(" [")
                             identity = {"sender":raw["author"], "sender_key":session, "sender_label":label}
-                            if separator and any(row["session"] == recipient["session"] for row in _reply_recipients(
+                            if separator and any(recipient_identity(row, declarations) == recipient_identity(
+                                    recipient, declarations) for row in _reply_recipients(
                                     history, message, identity, _reply_binding(history, history._message(raw), identity), declarations, history._message(raw))):
                                 _delivery_receipt(history, message, recipient, "answered", now=now, reply_message_id=raw["id"])
-                                events = delivery_events(history, message).get(recipient["session"], {})
+                                events = receipts(history, message, declarations)[0].get(recipient_identity(recipient, declarations), {})
                                 break
                     if "answered" in events:
                         continue
@@ -1516,8 +1565,9 @@ def _deliver_now(database, result, body, identity):
         recipients = [row for row in (_routing(message) or {}).get("recipients", [])
                       if row.get("session") != identity["sender_key"]]
         current = read_declarations(selected._db)
-        live = {row["session"] for row in current}
-        if not recipients or not any(row["session"] in live or row["session"].startswith("native:") for row in recipients):
+        live = {recipient_identity(row) for row in current}
+        if not recipients or not any(recipient_identity(row, current) in live or row["session"].startswith("native:")
+                                     for row in recipients):
             recipients = _resolve(selected, message, current)
         founder = body["to"].strip().casefold() in ("ahmed", "founder", "you")
         parts = {part.strip().casefold() for part in body["to"].split(",") if part.strip()}

@@ -135,12 +135,18 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
     mid-turn instead of holding it for approval (Claude Code permission-mode parity)."""
     if not recipients:
         return []
+    from .workshop_mailbox import recipient_identity
     history._db.execute(SCHEMA)
     rows = []
     for row in recipients:
         key = row.get('session') or row.get('native_session_id')
-        done = history._db.execute('SELECT state, channel, reason, at, ms FROM workshop_live_deliveries WHERE message_id=? AND recipient=?',
-                                   (message, key)).fetchone()
+        # F320: one receipt per addressee identity; a push recorded under an old declaration key of the same native
+        # session (same runtime) is this recipient's push.
+        identity = recipient_identity(row)
+        seat = identity[1:] if identity[0] == 'native' else ('', '')
+        done = history._db.execute('SELECT state, channel, reason, at, ms FROM workshop_live_deliveries WHERE message_id=? '
+                                   "AND (recipient=? OR (app=? AND native_session_id=? AND native_session_id!='')) "
+                                   "ORDER BY state='delivered' DESC LIMIT 1", (message, key, *seat)).fetchone()
         if done is not None:
             rows.append({'recipient': key, 'agent': row.get('agent'), 'state': done[0], 'channel': done[1], 'reason': done[2],
                          'at': done[3], 'ms': done[4], 'repeat': True})

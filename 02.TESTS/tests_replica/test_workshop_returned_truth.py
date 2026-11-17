@@ -519,3 +519,280 @@ def test_two_running_rows_of_one_native_session_get_one_injection(peer, tmp_path
                          'sender': twin['agent'] + ' [' + twin['session'] + ']'}
         assert mailbox._pending(history, twin_identity, 'claude')['pending'] == []
     assert pulled(context, observed) == []
+
+
+def test_reply_to_the_old_row_of_a_native_session_with_two_live_rows_reaches_it_once(peer, tmp_path):
+    """Two live rows (old key, new key) of one native session share the label token; a reply answers a message
+    written under the old key and names the old label. The final union is one addressee: one receipt, one push."""
+    declaration, _label, transcript, context, observed = peer
+    host, _folder, token = declaration['agent'].split(' / ')
+    old = {**declaration, 'root': declaration['root'] + ':old', 'session': 'agent:session:' + 'e' * 64,
+           'agent': host + ' / old-folder / ' + token, 'updated_at': '2026-01-01T00:00:00+00:00'}
+    with mailbox.application_history() as history:
+        history._db.execute('INSERT INTO workshop_declarations VALUES(?,?)', (old['root'], json.dumps(old)))
+        question = history.append(mailbox.ROOM, author=old['agent'] + ' [' + old['session'] + ']',
+            content='To ' + sender_label(tmp_path) + ':\na question from the old key?', category=mailbox.CATEGORY,
+            idempotency_key='f320-old-key-question')
+        rows = mailbox.read_declarations(history._db, include_archived=True)
+        running = [row for row in rows if row.get('current')
+                   and row['native_session_id'] == declaration['native_session_id']]
+        assert {row['session'] for row in running} == {declaration['session'], old['session']}
+        probe = {'content': 'To ' + old['agent'] + ':\nx', 'category': mailbox.CATEGORY,
+                 'author': 'another sender', 'reply_to': question['id']}
+        assert [row['session'] for row in mailbox._resolve(history, probe, rows)] == [declaration['session']]
+    result = mailbox.call('send', {'to': old['agent'], 'text': 'one reply, one native session',
+        'reply_to': question['id']}, {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'recorded' and result['matched'] == 1, result
+    assert routed_sessions(result['message_id']) == [declaration['session']]
+    assert [row['state'] for row in wait_receipts(result)] == ['delivered']
+    time.sleep(1)   # a second push, if one were made, has landed by now
+    frames = [json.loads(line)['text'] for line in transcript.read_text().splitlines()]
+    assert sum('one reply, one native session' in frame for frame in frames) == 1, frames
+    assert pulled(context, observed) == []
+
+
+def test_attempt_under_a_replaced_declaration_key_counts_for_its_replacement_in_the_background_loop(peer, tmp_path):
+    """A stored message was addressed to, and attempted for, the old declaration key of a native session; the
+    session was then re-declared under a new key (same native id, same token). The app's loop must not push it
+    again under the new key: one native session, one attempt, one injection."""
+    declaration, _label, transcript = peer[:3]
+    host, _folder, token = declaration['agent'].split(' / ')
+    old = {**declaration, 'root': declaration['root'] + ':old', 'session': 'agent:session:' + 'f' * 64,
+           'agent': host + ' / old-folder / ' + token, 'status': 'done', 'updated_at': '2026-01-01T00:00:00+00:00'}
+    native = declaration['native_session_id']
+    with mailbox.application_history() as history:
+        history._db.execute('INSERT INTO workshop_declarations VALUES(?,?)', (old['root'], json.dumps(old)))
+        message = history.append(mailbox.ROOM, author='another sender',
+            content='To ' + old['agent'] + ':\nhistorical message for the old key', category=mailbox.CATEGORY,
+            idempotency_key='f320-historical-old-key')
+        recipient = {'session': old['session'], 'agent': old['agent']}
+        mailbox._delivery_receipt(history, message, recipient, 'addressed', runtime='claude', native_session_id=native)
+        mailbox._delivery_receipt(history, message, recipient, 'attempt')
+        assert not next(row for row in mailbox.read_declarations(history._db, include_archived=True)
+                        if row['session'] == old['session'])['current']
+    transport = RecordingTransport()
+    worker = mailbox.WorkshopInjection(None, transport)
+    for _ in range(3):
+        worker.tick()
+    assert not [row for row in transport.sent if row[1].startswith(message['id'])], transport.sent
+    with mailbox.application_history() as history:
+        events = mailbox.delivery_events(history, history.get(mailbox.ROOM, message['id'],
+                                                              principal=mailbox.DELIVERY_AUTHOR))
+    assert [key for key, records in events.items() if 'attempt' in records] == [old['session']], events
+    assert not transcript.exists()
+
+
+# F320 matrix: one native session is one addressee on every path, whatever its declaration history.
+# Each cell asserts exactly one delivery per addressee (or none where an earlier receipt already holds) and no
+# stranded unacknowledged receipt. The resolver and the receipt grouping are never mocked; only the outer
+# transports (sender push, app injection) are recorded.
+
+class MatrixTransport:
+    def __init__(self):
+        self.sent = []
+
+    def inject(self, recipient, text, **kwargs):
+        self.sent.append((recipient['app'], recipient['id'], kwargs['message_id']))
+        return {'status': 'injected', 'dispatch_attempted': True}
+
+
+MATRIX_HISTORIES = ('one-row', 'two-live', 'old-archived', 'old-gone', 'moved', 'second-recipient', 'other-runtime')
+MATRIX = [(path, history) for path in ('send', 'push', 'pull', 'tick', 'watch', 'reply') for history in MATRIX_HISTORIES] + [
+    ('pull', 'old-archived-header-elsewhere'),   # reviewer (b): only the receipt routes it; the header names no alias
+    ('pull', 'old-gone-header-elsewhere'),       # reviewer (c): no declaration; only the receipt keeps the native id
+    ('pull', 'old-gone-answered'),               # (c): an answered sibling suppresses replay
+    ('pull', 'old-archived-delivered'),          # a delivered sibling suppresses replay
+    ('repeat', 'old-archived'),                  # (e): same idempotency key after a push under the old key, re-declared
+    ('repeat', 'old-gone'),                      # (e): the same, the old declaration removed
+]
+
+
+def run_repeat_cell(peer_value, tmp_path, monkeypatch, history_name):
+    """The real sender worker: a push lands under the old key; the session is re-declared under a new key with the
+    same native identity; the sender repeats the same idempotency key. No second live push."""
+    declaration = peer_value[0]
+    host, _folder, token = declaration['agent'].split(' / ')
+    plain = {key: value for key, value in declaration.items() if key not in ('display_name', 'title', 'aliases')}
+    old = {**plain, 'root': declaration['root'] + ':old', 'session': 'agent:session:' + '5' * 64,
+           'agent': host + ' / old-folder / ' + token, 'updated_at': '2099-01-01T00:00:00+00:00'}   # newest: it takes it
+    _insert_declaration(old)
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: True)
+    pushes = []
+    monkeypatch.setattr(workshop_live, 'push',
+        lambda runtime, native, *a, **k: pushes.append((runtime, native)) or ('delivered', 'workshop', ''))
+    body = {'to': old['agent'], 'text': 'repeat-' + history_name, 'idempotency_key': 'f320-repeat-' + history_name}
+    first = mailbox.call('send', body, {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert routed_sessions(first['message_id']) == [old['session']], first
+    assert [row['state'] for row in wait_receipts(first)] == ['delivered']
+    with mailbox.application_history() as history:
+        if history_name == 'old-gone':
+            history._db.execute('DELETE FROM workshop_declarations WHERE root=?', (old['root'],))
+        else:
+            history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.status','done') WHERE root=?",
+                                (old['root'],))
+    again = mailbox.call('send', body, {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert again['message_id'] == first['message_id'], again
+    time.sleep(1)   # a second push, if one were made, has landed by now
+    assert pushes == [('claude', declaration['native_session_id'])], pushes
+    with mailbox.application_history() as history:   # the sender worker's own lookup, given the replacement key
+        rows = workshop_live.deliver(history, first['message_id'], [{'session': declaration['session'],
+            'agent': declaration['agent'], 'runtime': 'claude', 'native_session_id': declaration['native_session_id']}],
+            'sender', body['text'])
+    assert pushes == [('claude', declaration['native_session_id'])] and rows[0].get('repeat') is True, (pushes, rows)
+
+
+def _insert_declaration(row):
+    with mailbox.application_history() as history:
+        history._db.execute('INSERT INTO workshop_declarations VALUES(?,?)', (row['root'], json.dumps(row)))
+
+
+def _matrix_setup(history_name, peer_value, tmp_path):
+    """(addressees, target) for one history. An addressee is the row its native session pulls with; target is the
+    key and label the message's receipts and To line use for the first addressee."""
+    declaration, _label, _transcript, context, observed = peer_value
+    host, folder, token = declaration['agent'].split(' / ')
+    old_label = host + ' / old-folder / ' + token
+    plain = {key: value for key, value in declaration.items() if key not in ('display_name', 'title', 'aliases')}
+    main, target, addressees = declaration, {'session': declaration['session'], 'agent': declaration['agent']}, []
+    if history_name == 'two-live':
+        target = {**plain, 'root': declaration['root'] + ':twin', 'session': 'agent:session:' + '7' * 64,
+                  'agent': old_label, 'updated_at': '2026-01-01T00:00:00+00:00'}
+        _insert_declaration(target)
+    elif history_name.startswith('old-archived'):
+        target = {**plain, 'root': declaration['root'] + ':old', 'session': 'agent:session:' + '8' * 64,
+                  'agent': old_label, 'status': 'done', 'updated_at': '2026-01-01T00:00:00+00:00'}
+        _insert_declaration(target)
+    elif history_name.startswith('old-gone'):
+        target = {'session': 'agent:session:' + '9' * 64, 'agent': old_label}
+    elif history_name == 'moved':
+        _peer, main = move_folder(tmp_path, observed, context)
+        target = {'session': main['session'], 'agent': declaration['agent']}
+    elif history_name in ('second-recipient', 'other-runtime'):
+        native = 'wsreturned-second-native' if history_name == 'second-recipient' else declaration['native_session_id']
+        second = {**plain, 'root': declaration['root'] + ':second', 'session': 'agent:session:' + '6' * 64,
+                  'native_session_id': native,
+                  'runtime': 'claude' if history_name == 'second-recipient' else 'codex',
+                  'agent': (host if history_name == 'second-recipient' else 'Codex') + ' / ' + folder
+                  + ' / session-' + sha256(native.encode()).hexdigest()[:12]}
+        _insert_declaration(second)
+        addressees.append(second)
+    return [main, *addressees], target
+
+
+def _key_identity(row):
+    return {'sender_key': row['session'], 'sender_label': row['agent'], 'sender': row['agent'] + ' [' + row['session'] + ']'}
+
+
+def _matrix_pull(row):
+    with mailbox.application_history() as history:
+        return [message['id'] for message in mailbox._pending(history, _key_identity(row), row['runtime'])['pending']]
+
+
+def _matrix_seen(row, message_id):
+    with mailbox.application_history() as history:
+        mailbox._seen(history, {'message_ids': [message_id], 'channel': 'connector tool result'},
+                      _key_identity(row), row['runtime'])
+
+
+def _matrix_seed(target, addressees, header, text):
+    """A stored message routed by addressed receipts (the historical path), one per addressee."""
+    with mailbox.application_history() as history:
+        message = history.append(mailbox.ROOM, author='another sender', content='To ' + header + ':\n' + text,
+                                 category=mailbox.CATEGORY, idempotency_key='f320-matrix-' + text)
+        for row in [target, *addressees[1:]]:
+            mailbox._delivery_receipt(history, message, {'session': row['session'], 'agent': row['agent']},
+                'addressed', runtime=row.get('runtime') or 'claude',
+                native_session_id=row.get('native_session_id') or addressees[0]['native_session_id'])
+    return message
+
+
+@pytest.mark.parametrize('path, history_name', MATRIX)
+def test_one_native_session_is_one_addressee_on_every_path(peer, tmp_path, monkeypatch, path, history_name):
+    run_matrix_cell(peer, tmp_path, monkeypatch, path, history_name)
+
+
+def run_matrix_cell(peer_value, tmp_path, monkeypatch, path, history_name):
+    if path == 'repeat':
+        run_repeat_cell(peer_value, tmp_path, monkeypatch, history_name)
+        return
+    addressees, target = _matrix_setup(history_name, peer_value, tmp_path)
+    identities = [mailbox.recipient_identity(row) for row in addressees]
+    assert len(set(identities)) == len(identities), identities   # a different runtime is a different addressee
+    labels = ', '.join([target['agent'], *(row['agent'] for row in addressees[1:])])
+    text = path + '-' + history_name + '-please-confirm?'
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: path in ('push', 'reply'))
+    pushes = []
+    monkeypatch.setattr(workshop_live, 'push',
+        lambda runtime, native, *a, **k: pushes.append((runtime, native)) or ('delivered', 'workshop', ''))
+    caller = {'threadId': 'wsreturned-sender'}
+
+    def per_identity(pairs):
+        return [sum(1 for pair in pairs if tuple(pair) == identity[1:]) for identity in identities]
+
+    if path in ('send', 'push', 'reply'):
+        body = {'to': labels, 'text': text}
+        if path == 'reply':
+            with mailbox.application_history() as history:   # a question written under the target's key
+                question = history.append(mailbox.ROOM, author=target['agent'] + ' [' + target['session'] + ']',
+                    content='To ' + sender_label(tmp_path) + ':\na question?', category=mailbox.CATEGORY,
+                    idempotency_key='f320-matrix-question-' + history_name)
+            body['reply_to'] = question['id']
+        result = mailbox.call('send', body, caller, peer=sender(tmp_path))
+        assert result['status'] == 'recorded' and result['matched'] == len(addressees), result
+        with mailbox.application_history() as history:
+            message = history.get(mailbox.ROOM, result['message_id'], principal=mailbox.DELIVERY_AUTHOR)
+            routed = [mailbox.recipient_identity(row) for row in mailbox._routing(message)['recipients']]
+        assert sorted(routed) == sorted(identities), routed
+        if path != 'send':
+            wait_receipts(result)
+            time.sleep(1)   # a second push, if one were made, has landed by now
+            assert per_identity(pushes) == [1] * len(addressees), pushes
+        return
+    header = 'retired-alias' if history_name.endswith('header-elsewhere') else labels
+    message = _matrix_seed(target, addressees, header, text)
+    if path == 'pull':
+        expected = [message['id']]
+        if history_name == 'old-gone-answered':
+            with mailbox.application_history() as history:
+                mailbox._delivery_receipt(history, message, target, 'answered', reply_message_id='earlier')
+            expected = []
+        if history_name == 'old-archived-delivered':
+            with mailbox.application_history() as history:
+                history._db.execute(workshop_live.SCHEMA)
+                history._db.execute('INSERT INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)',
+                    (message['id'], target['session'], target['agent'], 'claude', target['native_session_id'],
+                     'workshop', 'delivered', 'pushed before the move', '2026-11-16T00:00:00+00:00', 0))
+            expected = []
+        for row in addressees:
+            assert _matrix_pull(row) == expected, (row['session'], expected)   # first pull: exactly once
+            _matrix_seen(row, message['id'])
+            assert _matrix_pull(row) == [], row['session']                    # second pull: nothing stranded
+        if history_name == 'two-live':
+            assert _matrix_pull(target) == []
+        return
+    transport = MatrixTransport()
+    worker = mailbox.WorkshopInjection(None, transport)
+    if path == 'tick':
+        for _ in range(3 * len(addressees) + 3):
+            worker.tick()
+        initial = [(app, native) for app, native, key in transport.sent if key == message['id'] + ':initial']
+        assert per_identity(initial) == [1] * len(addressees), transport.sent
+        return
+    # watch: aged attempts, one retry step due. A sibling's caller-owned dispatch holds for the whole session.
+    siblings = history_name in ('two-live', 'old-archived', 'old-gone')
+    aged = time.time() - 90
+    with mailbox.application_history() as history:
+        if siblings:   # both siblings addressed and attempted; only the old one's dispatch is caller-owned
+            mailbox._delivery_receipt(history, message, addressees[0], 'addressed', runtime='claude',
+                                      native_session_id=addressees[0]['native_session_id'])
+            mailbox._delivery_receipt(history, message, target, 'attempt', now=aged, via='workshop', status='caller-owned')
+            mailbox._delivery_receipt(history, message, addressees[0], 'attempt', now=aged + 1)
+        else:
+            for row in [target, *addressees[1:]]:
+                mailbox._delivery_receipt(history, message, row, 'attempt', now=aged)
+    for _ in range(len(addressees) + 2):
+        worker._watched_at = float('-inf')
+        with mailbox.application_history() as history:
+            worker._watch(history, time.time(), mailbox.read_declarations(history._db, include_archived=True))
+    follow_ups = [(app, native) for app, native, key in transport.sent if key == message['id'] + ':reminder']
+    assert per_identity(follow_ups) == [0 if siblings else 1] * len(addressees), transport.sent

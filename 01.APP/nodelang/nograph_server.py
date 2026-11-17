@@ -1471,6 +1471,9 @@ def r_settings_action(s, req):
     if function in ('readHomeLayout', 'setHomeLayout'):
         from .settings_owner import home_layout
         return {'ok': True, 'result': home_layout(function, args, settings)}
+    if function in ('readDockLayout', 'setDockLayout'):
+        from .settings_owner import dock_layout
+        return {'ok': True, 'result': dock_layout(function, args, settings)}
     if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
         from .library_engines import LIBRARY_PRESENTATION
         categories = list(dict.fromkeys(category for category, _ in LIBRARY_PRESENTATION))
@@ -1499,7 +1502,8 @@ def r_settings_action(s, req):
     if function == 'readControls':
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {},
-                  'appearanceSettings': rows, 'homeLayout': settings.read().get('homeLayout', {})}
+                  'appearanceSettings': rows, 'homeLayout': settings.read().get('homeLayout', {}),
+                  'dockLayout': settings.read().get('dockLayout', {})}
         try:
             result['secrets'] = _secrets()
         except Exception:  # noqa: BLE001

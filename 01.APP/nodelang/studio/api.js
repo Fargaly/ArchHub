@@ -1138,7 +1138,7 @@ async function settingsAction(functionName, args=[]) {
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','sessionListFilters','homeLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','sessionListFilters','homeLayout','dockLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
@@ -1182,6 +1182,7 @@ api.readSessionListFilters=()=>settingsAction('readSessionListFilters');
 api.setSessionListFilter=(list,value)=>settingsAction('setSessionListFilter',[list,value]);
 api.readHomeLayout=()=>settingsAction('readHomeLayout');
 api.setHomeLayout=value=>settingsAction('setHomeLayout',[value]);
+api.setDockLayout=(session,project,layout)=>settingsAction('setDockLayout',[session,project,layout]);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};

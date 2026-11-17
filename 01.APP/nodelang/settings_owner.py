@@ -702,6 +702,55 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
     return {'homeLayout': {**{key: held.get(key, value) for key, value in default.items()}, **({'sections': held['sections']} if 'sections' in held else {})}}
 
 
+DOCK_PANELS = ('workshop', 'library', 'map', 'insp')
+
+
+def dock_layout(function='readDockLayout', args=(), settings=None):
+    """Canvas dock layout: one record per session, its project's last one as the fallback, in the Settings owner file.
+
+    The right dock's width is the existing 'Appearance.Inspector width' parameter, so it is not stored here."""
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    if function == 'setDockLayout':
+        session, project, layout = args if len(args) == 3 else (None, None, None)
+        def valid_id(item):
+            return type(item) is str and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}', item))
+        if not valid_id(session) or project != '' and not valid_id(project):
+            raise ValueError('Choose the session this dock layout belongs to.')
+        if layout is not None:  # None is Reset: this session and its project go back to the default layout
+            if type(layout) is not dict or set(layout) != {'left', 'right'}:
+                raise ValueError('Choose a left and a right dock.')
+            placed = []
+            for side, keys in (('left', {'w', 'c', 'st'}), ('right', {'c', 'st'})):
+                dock = layout[side]
+                if (type(dock) is not dict or set(dock) != keys or type(dock['c']) is not bool
+                        or type(dock['st']) is not list or len(dock['st']) > len(DOCK_PANELS)):
+                    raise ValueError('Choose the panels of the %s dock.' % side)
+                if side == 'left' and (type(dock['w']) is not int or not 200 <= dock['w'] <= 360):
+                    raise ValueError('Choose a left dock width from 200 to 360 pixels.')
+                for slot in dock['st']:
+                    if (type(slot) is not dict or set(slot) != {'p', 'a', 'h', 'c'} or type(slot['c']) is not bool
+                            or type(slot['p']) is not list or slot['a'] not in slot['p']
+                            or type(slot['h']) not in (int, float) or not 0.05 <= slot['h'] <= 20):
+                        raise ValueError('Choose the tabs, the open tab and the height of each stacked panel.')
+                    placed += slot['p']
+            if any(panel not in DOCK_PANELS for panel in placed) or len(set(placed)) != len(placed):
+                raise ValueError('Each dock panel can sit in one place only.')
+        with settings.lock:
+            held = settings.read().get('dockLayout', {})
+            sessions = {key: value for key, value in held.get('sessions', {}).items() if key != session}
+            projects = {key: value for key, value in held.get('projects', {}).items() if key != project}
+            if layout is not None:
+                sessions[session] = layout
+                if project:
+                    projects[project] = layout
+            # shortcut: keeps the 200 most recently changed sessions; older ones fall back to their project's layout
+            settings.update({'dockLayout': {'sessions': dict(list(sessions.items())[-200:]), 'projects': projects}})
+    held = settings.read().get('dockLayout', {})
+    return {'dockLayout': {'sessions': held.get('sessions', {}), 'projects': held.get('projects', {})}}
+
+
 def appearance_settings(function='readControls', args=(), settings=None):
     """Appearance rows and node bindings use the same validated settings owner."""
     from .nograph_server import JsonFile, Refused

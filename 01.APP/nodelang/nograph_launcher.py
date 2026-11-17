@@ -198,6 +198,15 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         show_home()
         window.statusBar().showMessage(detail)
 
+    def ask_baboom():
+        # A click on BABOOM: ArchHub's one composer, pointed at BABOOM, with the caret in it.
+        if window.isMinimized() or not window.isVisible():
+            window.showNormal()  # minimised or in the tray: the same restore as the tray's Open ArchHub
+        window.raise_()
+        window.activateWindow()
+        view.setFocus()
+        view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:ask-baboom'))")
+
     def open_launch(arguments):
         return _open_launch(arguments, companion, show_home, show_unavailable)
 
@@ -275,7 +284,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     from .studio_downloads import install_studio_downloads
     window_commands = bind_window_commands(view, window, quit_app, server.public_url, title_bar)  # Studio window buttons
     from .baboom_nograph import set_studio_surface
-    from .window_commands import StudioGone
+    from .window_commands import CompanionFollows, StudioGone
     StudioGone(window, view.page(), set_studio_surface)  # the pet comes back when the Studio is gone
     downloads = install_studio_downloads(view.page().profile(), view.page(), server.public_url, parent=window,
                                          on_status=lambda status: window.statusBar().showMessage(status['detail']))
@@ -291,6 +300,9 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             window_ = create_baboom_native_projection(host, atlas=companion['atlas'], position_path=Path(state_dir) / 'baboom-position.json',
                                                       on_stop=host.request_stop, on_open=show_home,
                                                       on_open_task=lambda task_id: _open_task(window, view, task_id))
+            # BABOOM belongs to ArchHub: beside its composer, wherever the window goes, never left on another screen.
+            window_.stand_with(window, server.files['companion'], ask_baboom)
+            companion['follows'] = CompanionFollows(window, view, window_commands, window_)
             window_.show()
             window_.start_projection()
             host.start()

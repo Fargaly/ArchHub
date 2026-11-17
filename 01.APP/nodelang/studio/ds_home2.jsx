@@ -162,7 +162,7 @@
     const [layoutReady, setLayoutReady] = React.useState(false);
     const retrySave = React.useRef(() => {});
     const canvasRef = React.useRef(null);
-    const dockRef = React.useRef(null), dockWrites = React.useRef(Promise.resolve()), [mapHost, setMapHost] = React.useState(null), [dockRoom, setDockRoom] = React.useState({left: 0, right: 0});
+    const dockRef = React.useRef(null), dockWrites = React.useRef(Promise.resolve()), [mapHost, setMapHost] = React.useState(null);
     const shellRef = React.useRef(null), tabsRef = React.useRef(null), viewsRef = React.useRef(null);
     const [viewsWidth,setViewsWidth]=React.useState(0),[threadWidth,setThreadWidth]=React.useState(0),[besideShown,setBesideShown]=React.useState(false);
     const singleCanvas=Boolean(beside)&&viewsWidth-(face==='split'?Math.max(300,threadWidth)+6:0)<646;
@@ -347,10 +347,9 @@
       // A Workshop card's Show of a thread: the one composer now has that task as its context; put the cursor in it.
       focusAsk = {task: target.id, from: target.id === task?.id ? '' : task?.id || ''};   // settled by placeComposer below
     };
-    const syncDock = (layout, room) => {
+    const syncDock = layout => {
       const shown = window.UI.dockModel.visible(layout, 'library');
       if (shown !== u.libraryOpen) u.setLibraryOpen(shown);
-      setDockRoom(held => held.left === room.left && held.right === room.right ? held : room);
     };
     const saveSession = patch => {
       if (!task) return Promise.resolve(false);
@@ -474,7 +473,7 @@
       if (task?.id === focusAsk.task) element.querySelector('textarea')?.focus();
       focusAsk = null;
     };
-    const composer = <div className="v22g-composer-dock" ref={placeComposer} data-composer-task={task?.id || ''} style={{'--dock-l': dockRoom.left + 'px', '--dock-r': dockRoom.right + 'px'}}>{composerForm}</div>;
+    const composer = <div className="v22g-composer-dock" ref={placeComposer} data-composer-task={task?.id || ''}>{composerForm}</div>;
     const tabs = u.canvasTabs?.tabs || [], tabCount = Math.max(1, Math.floor((tabsWidth - 100) / 150));
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));

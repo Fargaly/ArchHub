@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from nodelang.baboom_companion_placement import Rect, place_baboom_companion
+from nodelang.baboom_companion_placement import Rect, place_baboom_beside_composer, place_baboom_companion, screen_at
 
 
 def test_companion_moves_away_from_occupied_default_corner():
@@ -87,6 +87,57 @@ def test_companion_hides_the_report_box_before_covering_active_work():
     assert layout.collision_state == "clear"
     assert layout.sprite.intersection_area(Rect(540, 270, 310, 110)) == 0
     assert layout.message is None
+
+
+# ONEBABOOM: his two monitors as measured (the app on the right one), and the app's composer strip.
+LEFT, RIGHT = Rect(-1920, 0, 1920, 1040), Rect(0, 0, 1920, 1040)
+
+
+def _composer(app):
+    return Rect(app.x + 280, app.bottom - 96, app.width - 320, 72)
+
+
+def test_baboom_stands_above_the_right_end_of_the_composer_on_the_apps_screen():
+    app = Rect(240, 66, 1440, 900)
+    composer = _composer(app)
+    stood = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer)
+
+    assert (stood.right, stood.bottom) == (composer.right, composer.y - 4)
+    assert stood.contained_by(app) and stood.contained_by(RIGHT)
+    assert stood.intersection_area(composer) == 0
+    assert screen_at((LEFT, RIGHT), stood.x, stood.y) == RIGHT
+    # A page with no composer: the window's bottom right corner.
+    corner = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87))
+    assert (corner.right, corner.bottom) == (app.right - 16, app.bottom - 16)
+
+
+def test_baboom_steps_aside_off_a_control_by_at_most_48_px():
+    app = Rect(240, 66, 1440, 900)
+    composer = _composer(app)
+    home = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer)
+    zoom_control = Rect(home.x + 10, home.bottom - 30, 60, 28)
+
+    stepped = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(zoom_control,))
+    assert stepped.intersection_area(zoom_control) == 0
+    assert (stepped.x, home.y - stepped.y) == (home.x, 48)
+    # Text right across the patch leaves no clear spot: he stays where he lives, never hunting the screen.
+    paragraph = Rect(app.x, home.y - 60, app.width, 160)
+    assert place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(paragraph,)) == home
+
+
+@pytest.mark.parametrize("width", [1009, 1440])
+def test_baboom_stays_whole_in_the_work_area_at_snapped_and_full_widths(width):
+    for x in (0, 240, RIGHT.right - width, RIGHT.right - 300):   # the last hangs off the right edge of the screen
+        app = Rect(x, 66, width, 900)
+        stood = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=_composer(app))
+        assert stood.contained_by(RIGHT), (width, x, stood)
+        assert stood.x >= app.x and stood.bottom <= _composer(app).y
+
+
+def test_a_spot_on_no_screen_is_on_no_screen():
+    assert screen_at((LEFT, RIGHT), -1592, 954) == LEFT   # his saved spot: a real screen, but not the app's
+    assert screen_at((RIGHT,), -1592, 954) is None        # the left monitor unplugged
+    assert screen_at((LEFT, RIGHT), 5000, 5000) is None
 
 
 def test_oversized_visuals_fail_before_any_layout_is_returned():

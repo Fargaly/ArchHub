@@ -26,6 +26,8 @@ from .baboom_companion_placement import (
     _clear_message,
     BaboomCompanionLayout,
     Rect,
+    place_baboom_beside_composer,
+    screen_at,
 )
 from .baboom_native_host import BaboomNativeHost
 from .baboom_native_visual import (
@@ -381,6 +383,13 @@ def compact_baboom_response_report(response: Mapping[str, object]) -> str:
     compact = " ".join(report.split())
     return compact if compact else "BABOOM has no report yet."
 
+
+# In ArchHub BABOOM is the website's figure at the website's size (one-BABOOM spec 5: 80 x 87 frames).
+_STANDING_SIZE = (80, 87)
+# His one greeting a visit (spec 5, greeting bubble): when after he arrives, for how long, and the words.
+GREETING_NODE = {"id": "baboom.greeting", "params": {
+    "after_ms": 1200, "for_ms": 8000,
+    "text": "Hi, I'm BABOOM. Ask me about ArchHub or your office standard."}}
 
 # A poll can land a few seconds late on a busy machine; that is not a dead server.
 _FRAME_GRACE_SECONDS = 20.0
@@ -843,6 +852,11 @@ def create_baboom_native_companion_window(
             self._sessions_directory = sessions_directory
             self._skill_offer: dict[str, str] | None = None
             self._position_path = position_path
+            # With ArchHub (stand_with): its window, the pin setting, the composer door, and where the
+            # window, its composer, the busy boxes and the screens are (follow_app).
+            self._owner = self._pin = self._on_ask = self._beside = self._stood = self._app_screen = None
+            self._pinned = False
+            self._greeting = None  # None: not arrived yet; a time: arrived then; False: said or dismissed
             self._voice_input = voice_input or BaboomVoiceInput()
             self._voice_cancel: threading.Event | None = None
             self._companion_font = companion_font()
@@ -1121,6 +1135,8 @@ def create_baboom_native_companion_window(
             if presence.state in {"idle", "done"} and (self._busy or (type(active) is int and active > 0)):
                 name = self._submitted_utterance or "Working on your request"
                 presence = BaboomWorkPresence("thinking", name, "think", False, name)
+            if presence.state == "idle" and self._greeting_due():
+                presence = BaboomWorkPresence("needs-you", "", "wave", False, GREETING_NODE["params"]["text"])
             if presence.bubble:
                 from dataclasses import replace
                 presence = replace(presence, bubble=speech(presence.bubble))
@@ -1163,8 +1179,9 @@ def create_baboom_native_companion_window(
             )
             return replace(frame, motion=motion, source=source, orb=orb)
 
-        def _place_idle_chrome(self, x: int, y: int, size: int, edge: str) -> None:
+        def _place_idle_chrome(self, spot: Rect, edge: str) -> None:
             """Keep the glyph on the edge. A state bubble sits inward of it."""
+            x, y, width, height = spot.x, spot.y, spot.width, spot.height
             presence = self._work_presence
             text = ""
             badge = False
@@ -1186,28 +1203,28 @@ def create_baboom_native_companion_window(
                 origin_x, origin_y = x - gap - bubble_w, y
                 sprite_x, sprite_y = gap + bubble_w, 0
                 bubble_x, bubble_y = 0, 0
-                win_w, win_h = size + gap + bubble_w, max(size, bubble_h)
+                win_w, win_h = width + gap + bubble_w, max(height, bubble_h)
             elif text and edge == "left":
                 origin_x, origin_y = x, y
                 sprite_x, sprite_y = 0, 0
-                bubble_x, bubble_y = size + gap, 0
-                win_w, win_h = size + gap + bubble_w, max(size, bubble_h)
+                bubble_x, bubble_y = width + gap, 0
+                win_w, win_h = width + gap + bubble_w, max(height, bubble_h)
             elif text and edge == "bottom":
                 origin_x, origin_y = x, y - gap - bubble_h
                 sprite_x, sprite_y = 0, gap + bubble_h
                 bubble_x, bubble_y = 0, 0
-                win_w, win_h = max(size, bubble_w), size + gap + bubble_h
+                win_w, win_h = max(width, bubble_w), height + gap + bubble_h
             elif text:
                 origin_x, origin_y = x, y
                 sprite_x, sprite_y = 0, 0
-                bubble_x, bubble_y = 0, size + gap
-                win_w, win_h = max(size, bubble_w), size + gap + bubble_h
+                bubble_x, bubble_y = 0, height + gap
+                win_w, win_h = max(width, bubble_w), height + gap + bubble_h
             else:
                 origin_x, origin_y = x, y
                 sprite_x = sprite_y = 0
-                win_w = win_h = size
+                win_w, win_h = width, height
             self.setGeometry(origin_x, origin_y, win_w, win_h)
-            self._sprite_rect = QRect(sprite_x, sprite_y, size, size)
+            self._sprite_rect = QRect(sprite_x, sprite_y, width, height)
             self._connection_status.setGeometry(
                 self._sprite_rect.right() - 12, self._sprite_rect.bottom() - 12, 8, 8
             )
@@ -1221,18 +1238,22 @@ def create_baboom_native_companion_window(
                 self._state_badge.raise_()
 
         def _idle_presence(self, screen, frame) -> None:
-            # One small glyph, always at an edge; never search through work areas.
-            size = 56
-            x, y = controller._user_origin or (screen.right - size, screen.bottom - size)
-            x = min(max(x, screen.x), screen.right - size)
-            y = min(max(y, screen.y), screen.bottom - size)
-            edge = min(((x - screen.x, "left"), (screen.right - size - x, "right"),
-                        (y - screen.y, "top"), (screen.bottom - size - y, "bottom")))[1]
-            if edge in ("left", "right"):
-                x = screen.x if edge == "left" else screen.right - size
-            else:
-                y = screen.y if edge == "top" else screen.bottom - size
-            sprite = Rect(x, y, size, size)
+            self._stood = sprite = self._home()
+            edge = "right"
+            if sprite is None:
+                # One small glyph, always at an edge; never search through work areas.
+                with_app = self._beside is not None and self._beside[0] is not None
+                width, height = _STANDING_SIZE if with_app else (56, 56)
+                x, y = self._free_spot() or (screen.right - width, screen.bottom - height)
+                x = min(max(x, screen.x), screen.right - width)
+                y = min(max(y, screen.y), screen.bottom - height)
+                edge = min(((x - screen.x, "left"), (screen.right - width - x, "right"),
+                            (y - screen.y, "top"), (screen.bottom - height - y, "bottom")))[1]
+                if edge in ("left", "right"):
+                    x = screen.x if edge == "left" else screen.right - width
+                else:
+                    y = screen.y if edge == "top" else screen.bottom - height
+                sprite = Rect(x, y, width, height)
             self._layout = replace(frame.layout, sprite=sprite, message=None, edge=edge)
             self._frame = replace(frame, layout=self._layout, report=None)
             self._sprite = render_baboom_native_sprite(self._atlas, self._frame)
@@ -1244,7 +1265,7 @@ def create_baboom_native_companion_window(
                 widget.hide()
             if self._approval is not None:
                 self._approval.hide()
-            self._place_idle_chrome(x, y, size, edge)
+            self._place_idle_chrome(sprite, edge)
             if self._shows_as != "Screen":
                 self._state_bubble.hide()
                 self._state_badge.hide()
@@ -1256,6 +1277,10 @@ def create_baboom_native_companion_window(
             # transparent pixels are not part of the window, so they fall
             # through to the desktop. The whole window is never click-through.
             self._apply_hit_mask()
+            if self._stood is not None and self._greeting is None:
+                # He has just come to stand in ArchHub: the one greeting of this visit is due.
+                self._greeting = time.monotonic()
+                QTimer.singleShot(GREETING_NODE["params"]["after_ms"], self.refresh)
             set_native_click_through(int(self.winId()), False)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             if not self.isVisible():
@@ -1297,6 +1322,84 @@ def create_baboom_native_companion_window(
             if on_stop is not None:
                 on_stop()
 
+        def stand_with(self, owner, pin, on_ask) -> None:
+            """Belong to the ArchHub window: beside its composer, at its place among the windows.
+
+            ``pin`` is the companion setting (its "pinned" is on while BABOOM stays on a spot he
+            dragged it to); ``on_ask`` points ArchHub's one composer at BABOOM.
+            """
+            self._owner, self._pin, self._on_ask = owner, pin, on_ask
+            self._pinned = self._pin_on()
+            self.winId()
+
+        def follow_app(self, app, composer=None, busy=(), screens=()) -> None:
+            """Where ArchHub is now: its window, its composer, the busy boxes above it, the screens.
+
+            ``app`` is None while the window is minimised or hidden to the tray. BABOOM stays on
+            screen then (F277), small, in the bottom right corner of the screen ArchHub was last
+            on, and is home beside the composer when ArchHub is shown again.
+            """
+            had = self._beside
+            self._beside = (app, composer, tuple(busy), tuple(screens))
+            if had is not None and had[0] is None and app is not None and self._pinned:
+                self._pin_here(False)
+            if had is None or (had[0] is None) != (app is None):
+                # Beside ArchHub he keeps its place among the windows and is never over another program.
+                # With ArchHub away he is the desktop companion he was: on top, owned by no window.
+                self.windowHandle().setTransientParent(self._owner.windowHandle() if app is not None else None)
+                self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, app is None)
+                # That hid him; shown again for ArchHub's sake he must not take the keyboard, his own box open or not.
+                self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            before, now = self._stood, self._home()
+            if had is None or (had[0] is None) != (app is None) or (before is None) != (now is None):
+                self.refresh()
+            elif now is not None and self.isVisible() and not self._dragged:
+                # ArchHub moved or resized: go along now, without a whole projection for every step of a drag.
+                self._stood = now
+                self.move(self.x() + now.x - before.x, self.y() + now.y - before.y)
+
+        def _free_spot(self) -> tuple[int, int] | None:
+            """The spot he dragged BABOOM to. With ArchHub it holds only while pinned and on a screen."""
+            placed = controller._user_origin
+            if self._beside is None:
+                return placed
+            if self._pinned and placed is not None and screen_at(self._beside[3], *placed) is not None:
+                return placed
+            return None
+
+        def _home(self) -> Rect | None:
+            """Where BABOOM stands in ArchHub; None with no ArchHub window on screen or on a spot of his own."""
+            if self._beside is None or self._beside[0] is None or self._free_spot() is not None:
+                return None
+            app, composer, busy, _screens = self._beside
+            return place_baboom_beside_composer(
+                app, self._screen_rect(), sprite_size=_STANDING_SIZE, composer=composer, busy=busy)
+
+        def _pin_here(self, pinned: bool) -> None:
+            """Keep the one companion setting true: on his own spot, or home with ArchHub."""
+            self._pinned = pinned
+            if self._pin is not None:
+                try:
+                    self._pin.update({"pinned": pinned})
+                except (OSError, ValueError, AttributeError, TypeError) as refused:
+                    # A broken or locked settings file never costs him BABOOM; the miss goes to the geometry log.
+                    controller.geometry_receipt("pin setting not saved: %s" % type(refused).__name__)
+
+        def _pin_on(self) -> bool:
+            """The companion setting's "pinned". A missing, broken or unreadable file reads as not pinned."""
+            try:
+                return self._pin.read().get("pinned") is True
+            except (OSError, ValueError, AttributeError, TypeError):
+                return False
+
+        def _greeting_due(self) -> bool:
+            """One greeting a visit: a moment after he arrives in ArchHub, while no box of his is open."""
+            if type(self._greeting) is not float or self._details_open:
+                return False
+            timing = GREETING_NODE["params"]
+            age = (time.monotonic() - self._greeting) * 1000
+            return timing["after_ms"] <= age < timing["after_ms"] + timing["for_ms"]
+
         def _screen_rect(self) -> Rect | None:
             # The screen the WINDOW happens to sit on is the wrong
             # authority at birth: a fresh frameless widget can be assigned
@@ -1311,7 +1414,17 @@ def create_baboom_native_companion_window(
             # placed it back there (2026-09-07). The primary screen is only
             # the answer at birth, when he has chosen nothing yet.
             screen = None
-            placed = getattr(controller, "_user_origin", None)
+            placed = self._free_spot()
+            if self._beside is not None:
+                # With ArchHub the authority is the screen most of its window is on (the one it was last on
+                # while it is minimised or in the tray), unless he pinned BABOOM elsewhere.
+                app, screens = self._beside[0], self._beside[3]
+                if placed:
+                    return screen_at(screens, *placed)
+                if app is not None:
+                    self._app_screen = max(screens, key=app.intersection_area, default=app)
+                if app is not None or self._app_screen in screens:
+                    return self._app_screen
             if placed:
                 from PyQt6.QtCore import QPoint
 
@@ -1414,11 +1527,20 @@ def create_baboom_native_companion_window(
                 # A drag in progress owns the geometry; the 750ms
                 # projection must not fight the founder's hand.
                 return
+            if self._beside is not None:
+                self._pinned = self._pin_on()
+                if self._pinned and controller._user_origin is not None and self._free_spot() is None:
+                    self._pin_here(False)  # his own spot is on no screen now: BABOOM is home again
             screen = self._screen_rect()
             if screen is None:
                 return
             frame = controller.next_frame(screen)
+            home = self._home()
             if frame is not None:
+                if home is not None:
+                    # With ArchHub he is drawn where he stands, at the spec's size, with a report open or not.
+                    frame = replace(frame, layout=replace(
+                        frame.layout, sprite=home, message=None, edge="right", overlap_area=0, collision_state="clear"))
                 frame = self._overlay_work_pose(frame)
             else:
                 frame = self._frame
@@ -1474,7 +1596,9 @@ def create_baboom_native_companion_window(
                 self._approval_binding = ""
             if report is None and self._interaction_requested:
                 report = "Ask ArchHub…"
-            layout = self._layout_for_report(frame, screen, report)
+            # With ArchHub the report opens beside him inside the ArchHub window, not across the screen.
+            layout = self._layout_for_report(frame, screen if home is None else self._beside[0], report)
+            self._stood = home
             self._frame = frame
             self._layout = layout
             self._sprite = render_baboom_native_sprite(self._atlas, frame)
@@ -1582,16 +1706,20 @@ def create_baboom_native_companion_window(
             created -- here the ArchHub main window. Windows moves and hides
             owned windows with their owner, which is how the companion ended
             up shrunk at the bottom of the screen after the main window was
-            minimized and restored. The companion belongs to the desktop.
+            minimized and restored. The companion belongs to the desktop, or,
+            once it stands with ArchHub (stand_with), to that window alone:
+            it is placed again on every move, hide and restore of it.
             """
             try:
                 import ctypes as _ct
 
                 user32 = _ct.windll.user32
                 handle = int(self.winId())
+                with_app = self._beside is not None and self._beside[0] is not None
+                owner = int(self._owner.winId()) if with_app else 0
                 GWLP_HWNDPARENT = -8
                 setter = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
-                setter(_ct.c_void_p(handle), GWLP_HWNDPARENT, _ct.c_void_p(0))
+                setter(_ct.c_void_p(handle), GWLP_HWNDPARENT, _ct.c_void_p(owner))
             except Exception:
                 pass
 
@@ -1948,6 +2076,11 @@ def create_baboom_native_companion_window(
                 return
             if self._input.isVisible() or self._transient_report is not None:
                 return
+            if self._on_ask is not None:
+                # ArchHub has one composer: the click points it at BABOOM (one-BABOOM spec 5b).
+                self._greeting = False
+                self._on_ask()
+                return
             self._open_interaction()
 
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
@@ -1983,8 +2116,10 @@ def create_baboom_native_companion_window(
                 if self._dragged:
                     origin = self.pos() + self._sprite_rect.topLeft()
                     self._dragged = False
-                    controller.pin_sprite_origin(origin.x(), origin.y())
-                    self._save_position(origin.x(), origin.y())
+                    if self._beside is None or self._pinned:
+                        # With ArchHub a drag holds only after he un-pinned BABOOM from it; else he springs home.
+                        controller.pin_sprite_origin(origin.x(), origin.y())
+                        self._save_position(origin.x(), origin.y())
                     self.refresh()
                 elif self._input.isVisible() or self._transient_report is not None:
                     self._quiet_click.stop()

@@ -81,7 +81,7 @@ test('stack splitter shares the two neighbours and leaves the others alone', () 
   assert.ok(Math.abs(sized.left.st[0].h / sized.left.st[1].h - 3) < .02);
   const pinned = dock.resizeSlots(three, 'left', 0, 395, 5);
   assert.ok(pinned.left.st[1].h >= .05 && pinned.left.st[1].h < .25, 'the lower panel keeps its header');
-  assert.equal(dock.setLeftWidth(three, 9999).left.w, 360);
+  assert.equal(dock.setLeftWidth(three, 9999).left.w, 520);
   assert.equal(dock.setLeftWidth(three, 10).left.w, 200);
 });
 
@@ -90,7 +90,7 @@ test('a stored record is repaired: unknown and repeated panels go, missing ones 
     right: {c: true, st: [{p: ['workshop'], a: 'workshop', h: 1, c: false}]}}, 1920);
   assert.deepEqual(tabs(repaired, 'left'), ['workshop|library|map']);
   assert.deepEqual(tabs(repaired, 'right'), ['insp']);
-  assert.equal(repaired.left.w, 360);
+  assert.equal(repaired.left.w, 520);
   assert.equal(repaired.left.st[0].a, 'workshop');
   assert.equal(repaired.left.st[0].h, 1);
   assert.deepEqual(plain(dock.normalize(null, 1009)), plain(dock.defaultLayout(1009)));

@@ -727,8 +727,8 @@ def dock_layout(function='readDockLayout', args=(), settings=None):
                 if (type(dock) is not dict or set(dock) != keys or type(dock['c']) is not bool
                         or type(dock['st']) is not list or len(dock['st']) > len(DOCK_PANELS)):
                     raise ValueError('Choose the panels of the %s dock.' % side)
-                if side == 'left' and (type(dock['w']) is not int or not 200 <= dock['w'] <= 360):
-                    raise ValueError('Choose a left dock width from 200 to 360 pixels.')
+                if side == 'left' and (type(dock['w']) is not int or not 200 <= dock['w'] <= 520):
+                    raise ValueError('Choose a left dock width from 200 to 520 pixels.')
                 for slot in dock['st']:
                     if (type(slot) is not dict or set(slot) != {'p', 'a', 'h', 'c'} or type(slot['c']) is not bool
                             or type(slot['p']) is not list or slot['a'] not in slot['p']

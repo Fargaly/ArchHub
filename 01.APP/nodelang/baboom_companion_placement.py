@@ -245,4 +245,41 @@ def place_baboom_companion(
     )
 
 
-__all__ = ["BaboomCompanionLayout", "Rect", "place_baboom_companion"]
+def screen_at(screens: Iterable[Rect], x: int, y: int) -> Rect | None:
+    """The screen that shows this desktop point, or None when no screen does."""
+    return next((item for item in screens if item.x <= x < item.right and item.y <= y < item.bottom), None)
+
+
+# Off a control or text BABOOM steps up, then left, by at most 48 px (one-BABOOM spec 5c).
+_ASIDE = ((0, 0), (0, -24), (0, -48), (-48, 0))
+
+
+def place_baboom_beside_composer(
+    app: Rect,
+    screen: Rect,
+    *,
+    sprite_size: tuple[int, int],
+    composer: Rect | None = None,
+    busy: Iterable[Rect] = (),
+    margin: int = 16,
+    gap: int = 4,
+) -> Rect:
+    """BABOOM's place in the ArchHub window, whole on the screen that window is on.
+
+    He stands above the right end of the composer; on a page with no composer, in
+    the window's bottom right corner. The first spot clear of every busy rectangle
+    (the controls and text the page reported) wins. With none clear he keeps the
+    first: he never leaves the window to find room.
+    """
+    width, height = sprite_size
+    obstacles = tuple(busy)
+    x = app.right - margin - width
+    if composer is None:
+        y = app.bottom - margin - height
+    else:
+        x, y = min(x, composer.right - width), composer.y - gap - height
+    spots = [_bounded_rect(screen, width=width, height=height, x=x + dx, y=y + dy) for dx, dy in _ASIDE]
+    return next((spot for spot in spots if all(spot.intersection_area(item) == 0 for item in obstacles)), spots[0])
+
+
+__all__ = ["BaboomCompanionLayout", "Rect", "place_baboom_beside_composer", "place_baboom_companion", "screen_at"]

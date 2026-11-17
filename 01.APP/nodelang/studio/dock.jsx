@@ -4,7 +4,7 @@
   const PANELS = {workshop: ['Workshop', 'workshop'], library: ['Library', 'library'], map: ['Map', 'canvas'], insp: ['Inspector', 'settings']};
   const HOME = {workshop: 'left', library: 'left', map: 'left', insp: 'right'};
   const SIDES = ['left', 'right'];
-  const LEFT = {min: 200, max: 360, base: 268}, RIGHT = {min: 280, max: 480, base: 320};
+  const LEFT = {min: 200, max: 520, base: 268}, RIGHT = {min: 280, max: 480, base: 320};
   const clone = layout => JSON.parse(JSON.stringify(layout));
   const slot = id => ({p: [id], a: id, h: 1, c: false});
   const NARROW = 1280;  // below this window width the right dock starts folded to icons, so the canvas keeps its room

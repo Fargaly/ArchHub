@@ -159,6 +159,12 @@
       window.addEventListener('archhub:open-home', openHome);
       return () => window.removeEventListener('archhub:open-home', openHome);
     }, []);
+    React.useEffect(() => {
+      // A click on BABOOM, who stands beside the composer: his panel opens or closes (the composer points at him, ui.jsx).
+      const askBaboom = () => setCompanion(open => !open);
+      window.addEventListener('archhub:ask-baboom', askBaboom);
+      return () => window.removeEventListener('archhub:ask-baboom', askBaboom);
+    }, []);
     const settingsOrigin = React.useRef('home');
     React.useEffect(() => {
       if (window.performance.getEntriesByType?.('navigation')?.[0]?.type === 'reload'

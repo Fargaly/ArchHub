@@ -1,20 +1,24 @@
 """The Studio's window buttons call the existing Qt window, not another owner."""
 import json
 import logging
+import math
 import threading
 
-from PyQt6.QtCore import QEvent, QFile, QIODevice, QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEngineScript
 
 
 class WindowCommands(QObject):
     voiceFinished = pyqtSignal(str, 'QVariantMap')
+    companionHomeChanged = pyqtSignal()
 
     def __init__(self, view, window, quit_application, origin, title_bar=None):
         super().__init__(view.page())
         self.view, self.window, self.quit_application, self.title_bar = view, window, quit_application, title_bar
         self.origin = QUrl(origin)
+        self.companion_home = (None, [])  # the composer box and the busy boxes above it, as the page last reported
         from .baboom_native_voice import BaboomVoiceInput
         self._voice_input = BaboomVoiceInput()
         self._voice_cancel = threading.Event()
@@ -96,6 +100,61 @@ class WindowCommands(QObject):
         if self.title_bar is not None and self._in_studio():
             self.title_bar.layout(caption, holes, buttons)
 
+    @pyqtSlot("QVariantList", "QVariantList")
+    def companionHome(self, composer, busy):
+        """Where BABOOM stands: the Studio's composer box, and the controls and text just above its right end."""
+        if self._in_studio():
+            self.companion_home = (_page_box(composer), [box for box in map(_page_box, busy[:64]) if box])
+            self.companionHomeChanged.emit()
+
+
+def _page_box(values):
+    """One page rectangle (left, top, width, height) the page reported, or None when it is not one."""
+    if (type(values) is not list or len(values) != 4 or any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 100000 for v in values)
+            or values[2] <= 0 or values[3] <= 0):
+        return None
+    return tuple(values)
+
+
+class CompanionFollows(QObject):
+    """BABOOM stands with the ArchHub window: the companion is told where the window and its composer are.
+
+    Told again on every move, resize, show, hide, minimise and monitor change, and whenever the page reports
+    a new composer box, so the companion is never left on another screen or away from the window. With the
+    window minimised or in the tray it is told so, and stays on the desktop (F277).
+    """
+
+    def __init__(self, window, view, commands, companion):
+        super().__init__(window)
+        self.window, self.view, self.commands, self.companion = window, view, commands, companion
+        window.installEventFilter(self)
+        commands.companionHomeChanged.connect(self.tell)
+        QGuiApplication.instance().screenRemoved.connect(self.tell)
+        self.tell()
+
+    def tell(self, *_changed):
+        from .baboom_companion_placement import Rect
+        window = self.window
+        desk = lambda area: Rect(area.x(), area.y(), area.width(), area.height())
+        screens = [desk(screen.availableGeometry()) for screen in QGuiApplication.screens()]
+        if not window.isVisible() or window.isMinimized():
+            self.companion.follow_app(None, None, (), screens)
+            return
+        origin, zoom = self.view.mapToGlobal(QPoint(0, 0)), self.view.zoomFactor() or 1.0
+        placed = lambda box: Rect(origin.x() + round(box[0] * zoom), origin.y() + round(box[1] * zoom),
+                                  max(1, round(box[2] * zoom)), max(1, round(box[3] * zoom)))
+        composer, busy = self.commands.companion_home
+        self.companion.follow_app(desk(window.geometry()), placed(composer) if composer else None,
+                                  [placed(box) for box in busy], screens)
+
+    def eventFilter(self, watched, event):
+        if watched is self.window and event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show,
+                                                       QEvent.Type.Hide, QEvent.Type.WindowStateChange):
+            self.tell()
+        elif watched is self.window and event.type() == QEvent.Type.WinIdChange and self.companion.isVisible():
+            self.companion._disown()  # Qt rebuilt the ArchHub window: BABOOM belongs to the new one
+        return False
+
 
 class StudioGone(QObject):
     """The window hidden to the tray, minimised or closed, or its renderer dead: the Studio shows no screen.
@@ -174,7 +233,7 @@ def bind_window_commands(view, window, quit_application, origin, title_bar=None)
         "window.ARCHHUB_WINDOW_ACTION = action => new Promise((resolve,reject) => {\n"
         "channel.objects.desktopWindow.perform(action, result => {\n"
         "if(result.ok)resolve(result);else reject(new Error(result.error));\n"
-        "});});\n" + (TITLE_BAR_BRIDGE if title_bar is not None else "") + VOICE_BRIDGE + "\n});})();")
+        "});});\n" + (TITLE_BAR_BRIDGE if title_bar is not None else "") + COMPANION_BRIDGE + VOICE_BRIDGE + "\n});})();")
     page.scripts().insert(script)
     return commands
 
@@ -199,6 +258,36 @@ window.ARCHHUB_ONE_TITLE_BAR = true;
  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(report); } };
  new MutationObserver(schedule).observe(document.documentElement, {subtree: true, childList: true, characterData: true});
  window.addEventListener("resize", schedule);
+ schedule();
+})();
+"""
+
+
+COMPANION_BRIDGE = """
+(() => {
+ // BABOOM stands above the right end of the composer, or bottom right on a page with none. Report that box and
+ // every control and line of text in the patch he may stand in (his 80 x 87 figure and the 48 px he steps aside);
+ // place_baboom_beside_composer picks the spot.
+ const controls = "button,a[href],input,select,textarea,label,[role=button],[role=switch],[tabindex]:not([tabindex='-1'])";
+ const box = r => [r.left, r.top, r.width, r.height];
+ let sent = "", queued = false;
+ const report = () => {
+  queued = false;
+  const composer = [...document.querySelectorAll("[data-design='composer.surface']")].filter(e => e.offsetParent).pop();
+  const c = composer ? composer.getBoundingClientRect() : null, busy = new Set();
+  const right = Math.min(c ? c.right : innerWidth, innerWidth - 16), floor = c ? c.top - 4 : innerHeight - 16;
+  for (let x = right - 120; x < right; x += 16) for (let y = floor - 128; y < floor; y += 16)
+   for (const e of document.elementsFromPoint(x, y)) {
+    const hit = e.closest(controls) || (e.childElementCount === 0 && e.textContent.trim() ? e : null);
+    if (hit && !(composer && composer.contains(hit))) busy.add(hit);
+   }
+  const layout = [c ? box(c) : [], [...busy].slice(0, 64).map(e => box(e.getBoundingClientRect()))];
+  const text = JSON.stringify(layout);
+  if (text !== sent) { sent = text; channel.objects.desktopWindow.companionHome(layout[0], layout[1]); }
+ };
+ const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(report); } };
+ new MutationObserver(schedule).observe(document.documentElement, {subtree: true, childList: true, characterData: true});
+ for (const kind of ["resize", "scroll", "pointerup", "wheel"]) window.addEventListener(kind, schedule, true);
  schedule();
 })();
 """

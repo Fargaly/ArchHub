@@ -767,6 +767,25 @@
       if (paneBox.current) observer.observe(paneBox.current);
       return () => observer.disconnect();
     }, [requestState]);
+    // Zoom rule (design): the zoom control rests 36px above the canvas bottom; where it would touch the composer it rises
+    // so its bottom is the composer's top less 8px. Checked again on every resize and dock change.
+    const zoomBar = React.useRef(null), [zoomRise, setZoomRise] = React.useState(null);
+    React.useLayoutEffect(() => {
+      const place = () => {
+        const bar = zoomBar.current, form = document.querySelector('.v22g-composer-dock>form');
+        if (!bar || !form || !bar.offsetParent) { setZoomRise(null); return; }
+        const raised = bar.style.bottom;
+        bar.style.bottom = '';  // measured where it rests
+        const b = bar.getBoundingClientRect(), c = form.getBoundingClientRect();
+        bar.style.bottom = raised;
+        const touches = b.right > c.left - 8 && b.left < c.right + 8 && b.bottom > c.top - 8 && b.top < c.bottom + 8;
+        setZoomRise(touches ? Math.round(bar.offsetParent.getBoundingClientRect().bottom - c.top + 8) : null);
+      };
+      const observer = new window.ResizeObserver(place);
+      for (const element of [paneBox.current, document.querySelector('.v22g-composer-dock>form')]) if (element) observer.observe(element);
+      place();
+      return () => observer.disconnect();
+    }, [requestState]);
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
@@ -1352,7 +1371,7 @@
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
     {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).length} more steps →</button>}
-    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
+    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
 
    </div>
    </CanvasPanel>

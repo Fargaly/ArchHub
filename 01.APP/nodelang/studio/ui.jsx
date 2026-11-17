@@ -155,6 +155,19 @@
     const cols = columns || Object.keys(rows[0] || {});
     return rows.length ? <table className="table"><thead><tr>{cols.map(c => <th key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={r.id || i}>{cols.map(c => <td key={c}>{typeof r[c] === 'object' ? JSON.stringify(r[c]) : String(r[c] ?? '—')}</td>)}</tr>)}</tbody></table> : <Empty>Nothing here yet.</Empty>;
   }
+  // A click on BABOOM that opens his panel points a composer at him ('' is BABOOM in the To list) and puts the caret in
+  // the one on screen. The click that closes the panel changes nothing: a thread's running chat stays its recipient.
+  function useAskBaboom(setTo, field) {
+    React.useEffect(() => {
+      const askBaboom = () => {
+        if (document.querySelector('[aria-label="BABOOM companion"]')) return;
+        setTo('');
+        if (field.current?.offsetParent) field.current.focus();
+      };
+      window.addEventListener('archhub:ask-baboom', askBaboom);
+      return () => window.removeEventListener('archhub:ask-baboom', askBaboom);
+    }, []);
+  }
   function Composer({
     taskId,
     placeholder = 'Ask for anything, or @ an agent…',
@@ -181,6 +194,7 @@
       if (inputRef.current) observer.observe(inputRef.current.closest('form'));
       return () => observer.disconnect();
     }, []);
+    useAskBaboom(setTo, inputRef);
     const send = async () => {
       if (!text.trim()) return;
       // DESIGNSYS-050 4.9: the same To-list as the Workshop; a joined agent is @mentioned, a start choice starts that chat agent.
@@ -447,6 +461,7 @@
   // The avatar letters come from the real name, else the account email; never from a placeholder.
   const profileInitials = profile => (profile.name ? profile.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2) : (profile.email || '').slice(0, 1)).toUpperCase();
   window.UI = {
+    useAskBaboom,
     profileInitials,
     deliveryAttention,
     taskRowReason,

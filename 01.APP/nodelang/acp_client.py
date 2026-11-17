@@ -28,7 +28,7 @@ from pathlib import Path
 from .model_router import ModelRouteRefused
 
 # The node of this client: how long an agent may take to start, and to finish one turn (an Approve card waits inside it).
-ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
+ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 60, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
                                           'quiet_seconds': 10,     # no word for this long: the thread says "not responding"
                                           'inventory_rows': 500,   # one page of an agent's own MCP servers; more is refused
                                           # One line from an agent. Codex answers its MCP inventory in one line: measured
@@ -43,7 +43,10 @@ AGENTS = {
     'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
         '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
         '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', 'manual',
-        '--strict-mcp-config')},   # with no --mcp-config: none of its own MCP servers
+        '--strict-mcp-config',     # with no --mcp-config: none of its own MCP servers
+        # A chat agent does not run the user's hooks: they join it to the Workshop as a working agent and can hand
+        # it Workshop messages mid-answer (measured: 89 s to its first control answer with them, 12 s without).
+        '--settings', '{"disableAllHooks": true}')},
     'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
 }
 # Not offered in chat yet: these speak ACP themselves, and nothing here can switch off or check their own connectors
@@ -87,13 +90,15 @@ class _ClaudeCode:
               'NotebookEdit': 'edit', 'Glob': 'search', 'Grep': 'search', 'WebFetch': 'fetch', 'WebSearch': 'fetch',
               'Task': 'think', 'Agent': 'think'}
 
-    # Measured on Claude Code 2.1.325: the init line comes only after the first message is written, and before any
-    # answer. So the message is already with it when this check runs; a connector ends the session at that point.
+    # Measured on Claude Code 2.1.325: it answers the control request mcp_status before any message, so that is the
+    # first gate and no message is written until it says it has no MCP server. Its init line (tools and MCP
+    # servers) comes only after the first message, before any answer: that is the second gate.
     _CONNECTORS = "Claude Code still has its own connectors (%s), so its session was ended."
 
     def __init__(self, wire, hear):
         self.wire, self.hear, self.prompt, self.asked = wire, hear, None, {}
         self.checked = False   # its init line was read and names no MCP server and no mcp__ tool
+        self.opening = None    # the session/new that waits for its answer about MCP servers
 
     def _call(self, ident, name, data):
         data = data if isinstance(data, dict) else {}
@@ -105,8 +110,11 @@ class _ClaudeCode:
 
     def say(self, message):
         method = message.get('method')
-        if method in ('initialize', 'session/new'):   # the CLI is ready as started; it has one conversation per process
-            self.hear({'id': message['id'], 'result': {'protocolVersion': 1, 'sessionId': 'claude'}})
+        if method == 'initialize':   # the CLI is ready as started; it has one conversation per process
+            self.hear({'id': message['id'], 'result': {'protocolVersion': 1}})
+        elif method == 'session/new':   # first gate, before any message is written: which MCP servers does it have
+            self.opening = message['id']
+            self.wire({'type': 'control_request', 'request_id': 'connectors', 'request': {'subtype': 'mcp_status'}})
         elif method == 'session/prompt':
             self.prompt = message['id']
             self.wire({'type': 'user', 'message': {'role': 'user', 'content': message['params']['prompt']},
@@ -122,7 +130,7 @@ class _ClaudeCode:
         if kind == 'system' and line.get('subtype') == 'init':
             # Its own account of what it can use, plugin and managed connectors included (--strict-mcp-config is the
             # request; this is the proof). A key that is present must be a list; a connector ends the session.
-            servers, tools = line.get('mcp_servers', []), line.get('tools', [])
+            servers, tools = line.get('mcp_servers'), line.get('tools')   # a missing key is unknown, not empty
             if type(servers) is not list or type(tools) is not list:
                 self.hear({'refuse': self._CONNECTORS % 'its tool list could not be read'})
             else:
@@ -132,6 +140,17 @@ class _ClaudeCode:
                     self.hear({'refuse': self._CONNECTORS % ', '.join(named)[:200]})
                 else:
                     self.checked = True
+        elif kind == 'control_response' and (line.get('response') or {}).get('request_id') == 'connectors':
+            answer = (line.get('response') or {}).get('response')
+            servers = answer.get('mcpServers') if isinstance(answer, dict) else None
+            if (line.get('response') or {}).get('subtype') != 'success' or type(servers) is not list:
+                self.hear({'refuse': self._CONNECTORS % 'it did not say which it has'})
+            elif servers:
+                self.hear({'refuse': self._CONNECTORS % ', '.join(
+                    str(row.get('name') if isinstance(row, dict) else row) for row in servers)[:200]})
+            elif self.opening is not None:
+                ident, self.opening = self.opening, None
+                self.hear({'id': ident, 'result': {'sessionId': 'claude'}})
         elif not self.checked and kind in ('stream_event', 'assistant', 'user', 'control_request', 'result'):
             self.hear({'refuse': self._CONNECTORS % 'it answered before saying what it can use'})
         elif kind == 'stream_event':
@@ -177,9 +196,9 @@ class _Codex:
     _WRITES = ('Shell commands in this session run in a read-only sandbox and cannot write files. To create, change or '
                'delete a file, use the apply_patch file tool; the user is asked to approve each change.')
 
-    # Measured on Codex 0.163: plugins and apps go off at start (start_command). Its own MCP servers cannot be removed
-    # by a start flag, but thread/start config {mcp_servers: {name: {enabled: false}}} switches them off for the
-    # thread, and mcpServerStatus/list with the threadId then reports each one 'disabled' with no tools.
+    # Measured on Codex 0.163: its MCP servers are switched off on the start line (_codex_servers_off). After the
+    # thread exists, mcpServerStatus/list with the threadId must report each one 'disabled' with no tools. The same
+    # call WITHOUT a thread starts every configured server, so it is never made.
     _INVENTORY = {'detail': 'toolsAndAuthOnly', 'limit': ACP_NODE['params']['inventory_rows']}
     _CONNECTORS = "Codex still has its own connectors in this thread (%s), so nothing was sent to it."
 
@@ -203,10 +222,12 @@ class _Codex:
             self.sent[ident] = method
             self.wire({'id': ident, 'method': 'initialize',
                        'params': {'clientInfo': {'name': 'archhub', 'title': 'ArchHub', 'version': '1'}}})
-        elif method == 'session/new':   # first: which of its own MCP servers does this process have (same config, same cwd)
-            self.opening = (ident, params)
-            self.sent['servers'] = 'servers'
-            self.wire({'id': 'servers', 'method': 'mcpServerStatus/list', 'params': dict(self._INVENTORY)})
+        elif method == 'session/new':   # never the user's ambient Codex config: it asks, it may only read, a person
+            self.opening = (ident, params)   # decides. No inventory is asked before the thread exists.
+            self.sent[ident] = 'session/new'
+            self.wire({'id': ident, 'method': 'thread/start', 'params': {
+                'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only',
+                'approvalsReviewer': 'user', 'developerInstructions': self._WRITES}})
         elif method == 'session/prompt':
             self.sent[ident], self.prompt = method, ident
             self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [
@@ -232,21 +253,12 @@ class _Codex:
         thread = params.get('threadId')
         if method is None:
             asked = self.sent.pop(ident, None)
-            if 'error' in line and asked in ('servers', 'verify'):
+            if 'error' in line and asked == 'verify':
                 self.hear({'refuse': self._CONNECTORS % 'they could not be listed'})
             elif 'error' in line:
                 self.prompt = None if asked == 'session/prompt' else self.prompt
                 self.hear(line)
-            elif asked == 'servers':   # never the user's ambient Codex config: it asks, it may only read, a person
-                names = self._servers(line)   # decides; and every MCP server it has is off for this thread
-                if names is not None:
-                    ident, params = self.opening
-                    self.sent[ident] = 'session/new'
-                    self.wire({'id': ident, 'method': 'thread/start', 'params': {
-                        'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only',
-                        'approvalsReviewer': 'user', 'developerInstructions': self._WRITES,
-                        'config': {'mcp_servers': {name: {'enabled': False} for name in names}}}})
-            elif asked == 'verify':    # the thread's effective inventory, read back before any message is sent
+            elif asked == 'verify':    # the second gate: the thread's effective inventory, read back before any message
                 if self._servers(line) is not None:
                     live = [row['name'] for row in line['result']['data']
                             if row.get('runtimeStatus') != 'disabled' or row.get('tools')]
@@ -457,7 +469,34 @@ def child_environment():
             if not name.upper().startswith('ARCHHUB_') and name.upper() not in ('QTWEBENGINE_CHROMIUM_FLAGS', 'QT_OPENGL')}
 
 
-_CODEX_NO_PLUGINS = ['--disable', 'plugins', '--disable', 'apps']
+# Codex starts with its plugins, apps and hooks off (a chat agent does not join the Workshop through the user's hooks).
+_CODEX_NO_PLUGINS = ['--disable', 'plugins', '--disable', 'apps', '--disable', 'hooks']
+
+
+def _codex_servers_off(cwd):
+    """The start words that switch off every MCP server Codex's config names, so that none can start: not when the
+    process starts, not on any call. Codex 0.163 has no switch for all of them, and an inventory call without a
+    thread starts every configured server (a remote one opens its connection). So the names are read here from the
+    config text alone, before Codex exists: CODEX_HOME (default ~/.codex) and the launch folder's own
+    .codex/config.toml (the chat's launch folder is ArchHub's own, with no project above it; the thread inventory
+    is the second gate). Names only: no value is used, shown or logged, and no other file is opened.
+    A config that cannot be read or parsed, or a name that is not a plain identifier, starts nothing."""
+    import tomllib
+    refused = ValueError("Codex's own connectors could not be switched off (its config could not be read for their "
+                         "names), so it was not started. Check config.toml in the Codex folder, then send again.")
+    names = []
+    for path in (Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'config.toml',
+                 Path(cwd) / '.codex' / 'config.toml'):
+        try:
+            servers = tomllib.loads(path.read_text(encoding='utf-8')).get('mcp_servers', {})
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            raise refused from None
+        if type(servers) is not dict or not all(re.fullmatch(r'[A-Za-z0-9_-]{1,80}', name) for name in servers):
+            raise refused
+        names += [name for name in servers if name not in names]
+    return [word for name in names for word in ('-c', 'mcp_servers.%s.enabled=false' % name)]
 _INTERPRETERS = {'.js': 'node'}        # what runs the script an npm shim points to
 _UNSAFE_PATH = re.compile(r'[%^&|"\']')
 
@@ -507,7 +546,7 @@ def start_command(agent):
     fallback = row.get('fallback_args')
     args = list(row['args'])
     if row.get('speaks') == 'codex':
-        args[-1:-1] = _CODEX_NO_PLUGINS   # its own MCP servers are switched off per thread and checked: _Codex
+        args[-1:-1] = _CODEX_NO_PLUGINS   # its own MCP servers: _codex_servers_off at start, checked by _Codex
     return head + args, (head + list(fallback)) if fallback else None, row.get('speaks')
 
 
@@ -570,6 +609,8 @@ class AgentSession:
     def start(self, stopped=lambda: False):
         stopped = self._stopped(stopped)
         argv, fallback, self.speaks = start_command(self.agent)
+        if self.speaks == 'codex':   # the same folder for reading its config and for the process
+            argv[-1:-1] = _codex_servers_off(self.cwd)
         try:
             self._open(argv, stopped)
         except AcpRefused:

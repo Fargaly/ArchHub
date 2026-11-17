@@ -142,6 +142,7 @@ for line in sys.stdin:
         ready = True
     elif method == "thread/start":
         asks = (params.get("approvalPolicy"), params.get("sandbox"), params.get("approvalsReviewer")) == ("untrusted", "read-only", "user")
+        asks = asks and "apply_patch" in str(params.get("developerInstructions"))   # told how an approved write can happen
         send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") and asks else
              {"id": ident, "error": {"code": -32600, "message": "Not initialized"}})
     elif method == "turn/start":

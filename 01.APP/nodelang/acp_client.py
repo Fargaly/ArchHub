@@ -142,6 +142,12 @@ class _Codex:
     _STEPS = {'commandExecution': 'execute', 'fileChange': 'edit', 'mcpToolCall': 'other', 'dynamicToolCall': 'other',
               'webSearch': 'fetch', 'collabAgentToolCall': 'think'}
 
+    # Measured on Codex 0.163 / Windows, policy untrusted + read-only: an approved shell command still runs inside the
+    # read-only sandbox and writes nothing; an approved file change (apply_patch) is applied. So Codex is told to
+    # change files with its file tool: the card comes before the write, Deny leaves nothing, Approve writes.
+    _WRITES = ('Shell commands in this session run in a read-only sandbox and cannot write files. To create, change or '
+               'delete a file, use the apply_patch file tool; the user is asked to approve each change.')
+
     def __init__(self, wire, hear):
         self.wire, self.hear, self.sent, self.prompt, self.asked = wire, hear, {}, None, set()
 
@@ -154,7 +160,8 @@ class _Codex:
         elif method == 'session/new':   # never the user's ambient Codex config: it asks, it may only read, a person decides
             self.sent[ident] = method
             self.wire({'id': ident, 'method': 'thread/start', 'params': {
-                'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only', 'approvalsReviewer': 'user'}})
+                'cwd': params.get('cwd'), 'approvalPolicy': 'untrusted', 'sandbox': 'read-only', 'approvalsReviewer': 'user',
+                'developerInstructions': self._WRITES}})
         elif method == 'session/prompt':
             self.sent[ident], self.prompt = method, ident
             self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [

@@ -1092,7 +1092,10 @@ def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
         path, skill = (str(saved['path']), saved['skill']) if saved else (None, None)
     if skill is None:
         raise ValueError('Saved session is unavailable')
-    source = copy.deepcopy(skill)
+    pure = skill.get('properties', {}).get('nodeType', {}).get('kind') == 'pure'
+    if pure and not all(canvas_documents.is_pure(node['type'], node['params']) for node in skill['nodes']):
+        raise ValueError('A pure saved node cannot run a node with effects')
+    source = None if pure else copy.deepcopy(skill)
     original = {n['id']: dict(n['params']) for n in skill['nodes']}
     inputs = {n['id']: n for n in skill['nodes'] if n['type'] in (PARAM_ENGINE, 'thing.session') and not n.get('bind')}
     feeds = dict(feeds or {})
@@ -1116,9 +1119,11 @@ def _run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
             skill['wires'].append({'id': identity, 'from': {'node': identity, 'socket': 'value'}, 'to': {'node': endpoint[0], 'socket': endpoint[1]}})
             continue
         held['params']['value'] = coerce(held['params'].get('type', 'json'), value)   # a wired value sets the inner Parameter
+    # A pure call computes outputs without recording a run in its definition file.
+    only = {node['id'] for node in skill['nodes']} if pure else None
     inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1, path=path,
-                         _source=source, _parent=parent)
-    if path and source.get('properties', {}).get('nodeType', {}).get('kind') != 'pure':
+                         only=only, _source=source, _parent=parent)
+    if path and not pure:
         def record(document):
             for node in document['nodes']:
                 if node['id'] in inner['results'] and node['params'] == original.get(node['id']):

@@ -555,6 +555,68 @@ def test_nothing_is_written_to_an_agent_after_its_session_is_stopped_whatever_qu
         transport.process.stdin = real
 
 
+def _waiter():
+    """The agent's side of one Approve card, as approve_card runs it; returns (thread, outcome list)."""
+    from nodelang import acp_client
+    ask = acp_client.approve_card('Codex', time.monotonic() + 30)
+    request = {'sessionId': 's1', 'toolCall': {'toolCallId': 't', 'title': 'Write sheets.txt', 'kind': 'edit',
+                                               'rawInput': {'n': time.monotonic_ns()}},
+               'options': [{'optionId': 'yes', 'kind': 'allow_once'}, {'optionId': 'no', 'kind': 'reject_once'}]}
+    outcome = []
+    worker = threading.Thread(target=lambda: outcome.append(ask(request, {}, {})), daemon=True)
+    worker.start()
+    return worker, outcome
+
+
+def _pending_card():
+    from nodelang import hook_decision
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        cards = [c for c in hook_decision.ask_reviews() if c['status'] == 'pending']
+        if cards:
+            return cards[0]
+        time.sleep(0.01)
+    raise AssertionError('no pending card')
+
+
+def test_a_waiting_agent_never_takes_an_unreadable_approval_file_for_a_denial(monkeypatch):
+    from nodelang import acp_client, hook_decision
+    monkeypatch.setitem(acp_client.ACP_NODE['params'], 'card_poll_seconds', 0.01)
+    real, failed = hook_decision.approval_status, []
+
+    def unreadable(environment, hold):
+        if len(failed) < 5:
+            failed.append(hold)
+            raise PermissionError(13, 'Access is denied')
+        return real(environment, hold)
+    monkeypatch.setattr(hook_decision, 'approval_status', unreadable)
+    worker, outcome = _waiter()
+    card = _pending_card()
+    while len(failed) < 5:
+        time.sleep(0.01)
+    assert outcome == []                                                 # five failed reads: still waiting, not denied
+    hook_decision.ask_apply(card['id'], card['input_digest'], 'approve')
+    worker.join(10)
+    assert outcome == [{'outcome': 'selected', 'optionId': 'yes'}]
+
+
+def test_approve_and_deny_under_a_polling_agent_give_exactly_one_decision_each_time(monkeypatch):
+    """The live race: the waiting agent reads the file as fast as it can while the click replaces it."""
+    from nodelang import acp_client, hook_decision
+    monkeypatch.setitem(acp_client.ACP_NODE['params'], 'card_poll_seconds', 0.0)
+    for turn in range(30):
+        decision = 'approve' if turn % 2 else 'deny'
+        worker, outcome = _waiter()
+        card = _pending_card()
+        saved = hook_decision.ask_apply(card['id'], card['input_digest'], decision)   # one click, no retry
+        worker.join(10)
+        assert saved['status'] == ('approved' if decision == 'approve' else 'declined')
+        assert outcome == [{'outcome': 'selected', 'optionId': 'yes' if decision == 'approve' else 'no'}], turn
+        assert hook_decision._take_permit(card['input_digest'], os.environ) is False   # taken once, by the waiter
+    rows = json.loads(hook_decision._ask_path(os.environ).read_text(encoding='utf-8'))['holds'].values()
+    assert len(rows) == 30 and not [row for row in rows if row['status'] in ('releasing', 'pending')]
+
+
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():
     from nodelang import acp_client
     for agent in ('claude', 'codex'):

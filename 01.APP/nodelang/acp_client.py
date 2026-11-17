@@ -444,17 +444,21 @@ def approve_card(agent_label, deadline, stopped=lambda: False):
         options = {row.get('kind'): row.get('optionId') for row in request.get('options') or ()}
         if not hold:
             return {'outcome': 'cancelled'}
-        path = hook_decision._ask_path(os.environ)
         while time.monotonic() < deadline and not stopped():
-            status = (hook_decision._read_holds(path)['holds'].get(hold) or {}).get('status')
+            try:
+                status = hook_decision.approval_status(os.environ, hold)
+            except OSError:   # the file could not be read just now: unknown, not a denial; read again
+                time.sleep(ACP_NODE['params']['card_poll_seconds'])
+                continue
             if status == 'approved' and hook_decision._take_permit(digest, os.environ) and options.get('allow_once'):
                 return {'outcome': 'selected', 'optionId': options['allow_once']}
             if status not in ('pending', 'releasing', 'approved'):
                 break
             time.sleep(ACP_NODE['params']['card_poll_seconds'])
         else:
-            if (hook_decision._read_holds(path)['holds'].get(hold) or {}).get('status') == 'pending':
-                hook_decision.withdraw_approval(os.environ, hold, agent_label)   # out of time: nothing runs
+            # out of time: nothing runs. An unreadable file here raises: the turn fails and its agent is closed.
+            if hook_decision.approval_status(os.environ, hold) == 'pending':
+                hook_decision.withdraw_approval(os.environ, hold, agent_label)
         rejected = options.get('reject_once')
         return {'outcome': 'selected', 'optionId': rejected} if rejected else {'outcome': 'cancelled'}
     return permission

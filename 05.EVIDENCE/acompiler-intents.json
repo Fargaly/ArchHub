@@ -11688,6 +11688,22 @@
         "02.TESTS/tests_js/studio_perf_court.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ONELAYOUT": {
+      "source": "Founder 2026-11-18 (design verdicts): the layout never changes between sessions; it stays as he set it. One dock layout for the user, kept across a session switch, Home and back, and a restart; selecting a node never changes it; below 1280 px the right dock folds for display only.",
+      "scope": [
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "02.TESTS/tests/test_dock_live.py",
+        "02.TESTS/tests_js/dock_live.cjs",
+        "02.TESTS/tests_js/dock_model.test.cjs",
+        "02.TESTS/tests_js/dock_one_layout_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

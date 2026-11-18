@@ -696,7 +696,8 @@ def _session_context(path):
         stat = os.stat(path)
         stamp = (stat.st_mtime_ns, stat.st_size)
         held = _SESSION_CONTEXTS.get(path)
-        if held and held[0] == stamp:
+        # A file written in the last 2 s may change again within one coarse (FAT/SMB) timestamp tick: read it fresh.
+        if held and held[0] == stamp and time.time() - stat.st_mtime >= 2:
             return copy.deepcopy(held[1])
         from .session_files import read_document
         document = read_document(path)

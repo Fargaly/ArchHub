@@ -11527,6 +11527,7 @@
         "01.APP/nodelang/nograph_server.py",
         "02.TESTS/tests_replica/test_baboom_companion_process.py",
         "02.TESTS/tests_replica/test_baboom_atlas_is_inspected_off_the_gui_thread.py",
+        "02.TESTS/tests_replica/test_baboom_persona_standard_reactions.py",
         "01.APP/nodelang/agent_status.py",
         "01.APP/nodelang/baboom_reactions.py",
         "01.APP/nodelang/window_chrome.py",

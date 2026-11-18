@@ -11422,7 +11422,8 @@
         "01.APP/nodelang/workshop_live.py",
         "01.APP/nodelang/workshop_mailbox.py",
         "02.TESTS/tests_replica/test_workshop_returned_truth.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/workshop/vendor/src/peer-protocol.mjs"
       ]
     },
     "CHATPICKER": {

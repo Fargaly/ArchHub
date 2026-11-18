@@ -548,7 +548,7 @@
                 {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
               </section>:request === 'empty'?<section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>:null}
               {/* The composer belongs to the work column: beside the Sessions list at every width, never over it. */}
-              <div className="global-composer"><window.UI.Composer compact /></div>
+              <div className="global-composer"><window.UI.Composer compact homeSession={list.find(t => t.id === focus)} key={focus || ''} /></div>
             </main>
           </Column>
         </Group> :

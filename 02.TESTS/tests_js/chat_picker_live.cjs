@@ -61,6 +61,10 @@ const {chromium} = require('playwright');
         console.log('answered ' + text);
       };
       const chip = scope => scope.locator('.recipient-name').first().innerText();
+      // A session is selected on Home (the seeded Workshop thread), so a message goes to it; a new session is his explicit pick.
+      const newSession = async () => { const to = home.locator('[data-design="composer.to"]');
+        if (await to.getAttribute('aria-pressed') === 'false') await to.click();
+        assert.equal((await to.innerText()).trim(), 'New session'); };
       // Open the Home chat's session: double-click its row, or (narrow window, rows folded) Open its Canvas on the selected one.
       const openChat = async () => { const row = page.locator('.dx-task').filter({hasText: 'how many sheets?'}).first(); await row.waitFor({state: 'attached'});
         if (await row.isVisible()) await row.dblclick(); else await page.getByRole('button', {name: 'Open its Canvas', exact: true}).click(); };
@@ -70,6 +74,7 @@ const {chromium} = require('playwright');
       await home.waitFor();
       assert.match(await chip(home), /BABOOM/, 'the default stays BABOOM');
       if (input.phase === 'refuse') {
+        await newSession();
         const chosen = await startChoice(home, 'home');
         await chosen.click();
         await home.getByLabel('Message', {exact: true}).fill('how many sheets?');
@@ -81,6 +86,7 @@ const {chromium} = require('playwright');
         assert.equal(await home.locator('.composer-answer').count(), 0, 'no "Claude Code · starting…" line is left under the composer');
         await shot('refused');
       } else if (input.phase === 'chat' && width === 1009) {
+        await newSession();
         const chosen = await startChoice(home, 'home');
         await chosen.click();
         await send(home, 'how many sheets?');

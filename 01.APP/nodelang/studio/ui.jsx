@@ -172,10 +172,15 @@
     taskId,
     placeholder = 'Ask for anything, or @ an agent…',
     compact = false,
-    onSent
+    onSent,
+    homeSession
   }) {
     const s = useData(),
       u = useApp();
+    // Home (design v61 C1-C3): the session selected on Home is the recipient and the message lands in its thread while Home stays;
+    // a new session only when none is selected or he picks New session on the scope chip.
+    const [freshPick, setFreshPick] = React.useState(false);
+    const toSession = u.route === 'home' && !taskId && !onSent && homeSession && !freshPick ? homeSession : null;
     const [localDraft,setLocalDraft] = React.useState({text:'',revision:0});
     const draftKey = JSON.stringify([u.route,taskId || '']);
     const {text} = onSent ? localDraft : u.composerDraft[draftKey] || {text:'',revision:0},
@@ -205,6 +210,13 @@
       pending.current += 1;
       setSending(true);
       try {
+        if (toSession) {
+          const sent = await u.act(() => agent === 'BABOOM' ? api.sendToBaboom(message, {taskId: toSession.id, scope: s.graph.id}) : api.sendChatTurn(turn, undefined, toSession.id));
+          if (!sent) { setDraft(current => current.text ? current : {text,revision:current.revision+1}); return; }
+          await api.listTasks?.();
+          u.setToast('Sent to ' + (toSession.sessionTitle || toSession.title) + '. It is in that session’s thread.');
+          return;
+        }
         const t = await u.act(() => {
           if(u.route==='home'&&!taskId&&!onSent)return api.createTask(message);
           if ((!taskId || agent !== 'BABOOM') && typeof api.apiRouterChat === 'function') return api.sendChatTurn(turn, undefined, taskId || undefined);
@@ -243,10 +255,12 @@
   <div className="spread composer-scope" style={{
         fontSize: 11,
         marginBottom: 8
-      }}><button type="button" className="tab-button" data-design="composer.to" aria-label="Composer scope" title={u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name} onClick={event => executeAction("sharedUI.ComposerScope.1", {
+      }}>{u.route === 'home' && homeSession && !taskId && !onSent
+        ? <button type="button" className="tab-button" data-design="composer.to" aria-label={'Composer scope: ' + (toSession ? (toSession.sessionTitle || toSession.title) : 'New session') + '. Change'} aria-pressed={!toSession} title={toSession ? 'Messages go to this session. Press for a new session.' : 'A new session starts. Press to message ' + (homeSession.sessionTitle || homeSession.title) + '.'} onClick={event => executeAction('ui.select', () => setFreshPick(!freshPick), event)}><window.AHIcon name={toSession ? 'workshop' : 'plus'} size={12} /> {toSession ? (toSession.sessionTitle || toSession.title) : 'New session'}</button>
+        : <button type="button" className="tab-button" data-design="composer.to" aria-label="Composer scope" title={u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name} onClick={event => executeAction("sharedUI.ComposerScope.1", {
           contextOpen,
           setContextOpen
-        }, event)}><window.AHIcon name="canvas" size={12} /> {u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
+        }, event)}><window.AHIcon name="canvas" size={12} /> {u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button>}<button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
           contextOpen,
           setContextOpen
         }, event)}>＠</button></div>{contextOpen && <div className="composer-mentions" role="region" aria-label="Context choices">{u.route==='home'&&<div className="flex"><button type="button" onClick={event=>executeAction('sharedUI.Commands.6',{u},event)}>Commands</button>{['Sketch','Mark','Mask'].map(tool=><button type="button" key={tool} onClick={event=>executeAction('sharedUI.Control.7',{api,tool,u},event)}>{tool}</button>)}</div>}{[['Nodes', s.graph.nodes], ['Workflows', s.graphs], ['Agents', s.providers], ['Sessions', s.tasks]].map(([label, rows]) => <details key={label}><summary>{label}</summary>{rows.slice(0, 20).map(r => <button type="button" key={r.id} onClick={event => executeAction("sharedUI.Control.3", {

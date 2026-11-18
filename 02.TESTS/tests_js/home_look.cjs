@@ -80,6 +80,32 @@ const {chromium} = require('playwright');
         // The selection is in the Home owner's record before this window closes (the next width opens on it).
         await page.waitForFunction(async id => (await window.ArchHubAPI.readHomeLayout()).homeLayout.resume === id, input.echoTask, {polling: 250});
       }
+      // D (design v61 C1-C3): the session selected on Home is the composer's recipient; the message lands in its thread and Home stays.
+      // The model's answer is stood in for (one streamed result); the recipient, the request and the screen are the app's own.
+      const composer = page.locator('.global-composer'), chip = composer.locator('[data-design="composer.to"]'), sent = [];
+      await page.route('**/api/router/chat', route => { sent.push(JSON.parse(route.request().postData() || '{}'));
+        return route.fulfill({status: 200, contentType: 'text/event-stream', body: 'data: ' + JSON.stringify({result: {answer: 'Noted.', provider: 'BABOOM'}}) + '\n\n'}); });
+      assert.equal((await chip.innerText()).trim(), input.echo, 'the selected session is the recipient' + at);
+      const before = await page.evaluate(() => window.ArchHubAPI.getSnapshot().tasks.length);
+      await composer.getByLabel('Message', {exact: true}).fill('Check the north elevation too');
+      await composer.getByLabel('Message', {exact: true}).press('Enter');
+      await page.getByText('Sent to ' + input.echo + '. It is in that session’s thread.').first().waitFor();
+      assert.deepEqual(sent.map(body => [body.task, body.prompt]), [[input.echoTask, 'Check the north elevation too']], 'one message, to that session' + at);
+      assert.equal(await page.locator('[data-home-page]').count(), 1, 'Home stays' + at);
+      assert.equal(await page.evaluate(() => window.ArchHubAPI.getSnapshot().tasks.length), before, 'no new session' + at);
+      // An explicit New session pick belongs to the session it was made on: selecting another session clears it.
+      // (Only a session he selected is a recipient: a hidden or archived selection leaves the chip on New session.)
+      await chip.click();
+      assert.equal((await chip.innerText()).trim(), 'New session');
+      const sessions = page.locator('aside[aria-label="Sessions"]');
+      await sessions.getByRole('button', {name: /^Sheet index check/}).first().click();
+      await page.locator('.resume-heading h1').filter({hasText: 'Sheet index check'}).waitFor();
+      assert.equal((await chip.innerText()).trim(), 'Sheet index check', 'the pick does not follow to another session' + at);
+      await sessions.getByRole('button', {name: new RegExp('^' + input.echo)}).first().click();
+      await page.locator('.resume-heading h1').filter({hasText: input.echo}).waitFor();
+      await page.waitForFunction(async id => (await window.ArchHubAPI.readHomeLayout()).homeLayout.resume === id, input.echoTask, {polling: 250});
+      assert.equal((await chip.innerText()).trim(), input.echo);
+      await page.unroute('**/api/router/chat');
       assert.deepEqual(errors, [], 'no page errors' + at);
       if (input.shots) await page.screenshot({path: path.join(input.shots, 'home-' + width + '.png')});
       await context.close();

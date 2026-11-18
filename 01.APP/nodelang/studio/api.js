@@ -25,7 +25,17 @@ const defaults=new Map(), parameterWrites=new Map();
 let insertionPoint={scope:null,x:240};
 const insertionReservations=new Set();
 const copy=value=>window.structuredClone(value);
-function publish(values={}) { state={...state,...values,revision:state.revision+1};listeners.forEach(fn=>fn()); }
+// A refresh whose answer equals what is shown neither replaces state nor re-renders. graph and the streamed answer change every time.
+const sameValue=(key,a,b)=>Object.is(a,b)||key!=='graph'&&key!=='composerAnswer'&&a!==null&&b!==null&&typeof a==='object'&&typeof b==='object'&&JSON.stringify(a)===JSON.stringify(b);
+function publish(values={}) {
+ const keys=Object.keys(values), changed=keys.filter(key=>!sameValue(key,state[key],values[key]));
+ if(keys.length&&!changed.length)return;
+ // Unchanged keys keep their old reference, so screens that read only them stay as they are.
+ state={...state,...Object.fromEntries(changed.map(key=>[key,values[key]])),revision:state.revision+1};listeners.forEach(fn=>fn());
+}
+// Poll reads answered 304 (unchanged) reuse the last parsed answer: no body, no parse.
+const POLLED=new Set(['listTasks','listWorkshopMessages','listLiveAgents','listApprovals','listNotifications','readWatcher','readDesktop','readHostSkills','readControls']);
+const conditional=new Map();
 function notice(message) { window.dispatchEvent(new CustomEvent('archhub:notice',{detail:{message}})); }
 function unavailable(operation,reason='') {
  const result={ok:false,status:'not_connected',operation,message:reason||'This action is not available in this release.'};
@@ -58,8 +68,14 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
   if(body.control==='app:control:canvas:remove-member')keys.push('membership','expected_scope','command_id');
   body=Object.fromEntries(keys.filter(k=>Object.hasOwn(body,k)).map(k=>[k,body[k]]));
  }
+ const polled=body===undefined||POLLED.has(body.function)&&(path==='/api/universal/workshop'?body.action==='data-api':path==='/api/universal/settings-action');
+ const readKey=polled?path+JSON.stringify({...body,request_id:undefined}):null, cached=readKey&&conditional.get(readKey);
  const response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
- 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+ 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio',...(cached?{'If-None-Match':cached.etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+ if(response.status===304){
+  if(!cached||requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
+  return cached.result;
+ }
  const data=await response.json();
  if(requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
  if(response.status===403&&/browser session|session lease|credential digest|browser-session/i.test(data.error||'')) {
@@ -80,6 +96,7 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  if((result?.root&&Array.isArray(result.nodes))||result?.canvas){
   if(requestEpoch!==scopeEpoch)throw Error('The graph changed while this request was in flight.');
  }
+ if(readKey&&response.headers.get('ETag'))conditional.set(readKey,{etag:response.headers.get('ETag'),result});
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}
@@ -360,7 +377,7 @@ async function refreshLive() {
 }
 function stopRefresh(){if(refreshTimer!==null){window.clearInterval(refreshTimer);refreshTimer=null;}}
 function clearCanvas(){
- scopeEpoch++;accountEpoch++;canvas=null;commands?.clear();defaults.clear();state=copy(initialState);providerRoster=[];controlsGeneration++;notificationGeneration++;
+ scopeEpoch++;accountEpoch++;canvas=null;commands?.clear();defaults.clear();conditional.clear();state=copy(initialState);providerRoster=[];controlsGeneration++;notificationGeneration++;
  workingAgents=[];agentsChecked=false;
  publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
 }
@@ -1177,8 +1194,10 @@ async function settingsAction(functionName, args=[]) {
  if(result.workspacePolicies)values.workspaces=state.workspaces.map(row=>({...row,...result.workspacePolicies[row.id]}));
  if(result.workspaceIds)values.graph={...state.graph,workspaceIds:result.workspaceIds};
  if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...(values.profile||state.profile),...settingsProfile};}
+ const shownSettings=state.settings;
  publish(values);
- if(result.appearanceSettings&&sessionDocument)projectFile();
+ // The canvas re-projects only when an appearance value really changed, not on every Settings read.
+ if(result.appearanceSettings&&sessionDocument&&state.settings!==shownSettings)projectFile();
  if(result.controlErrors&&Object.keys(result.controlErrors).length)notice(Object.values(result.controlErrors).join(' '));
  if(result.message)notice(result.message);
  if(result.open_url){

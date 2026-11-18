@@ -16,6 +16,7 @@ plain ``not_available`` refusal the Studio already shows as a notice.
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import hmac
 import json
 import mimetypes
@@ -411,6 +412,12 @@ class NoGraphServer:
 
             def send_json(self, status, payload, headers=()):
                 raw = json.dumps(payload, separators=(',', ':'), default=str).encode('utf-8')
+                if status == 200:
+                    # RFC 9110 conditional read: an unchanged answer to a Studio poll is a bodiless 304.
+                    etag = '"%s"' % hashlib.sha256(raw).hexdigest()[:32]
+                    headers = (*headers, ('ETag', etag))
+                    if self.headers.get('If-None-Match') == etag:
+                        status, raw = 304, b''
                 try:
                     self.send_response(status)
                     self.send_header('Content-Type', 'application/json; charset=utf-8')

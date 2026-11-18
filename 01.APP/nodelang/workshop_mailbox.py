@@ -837,21 +837,61 @@ class _StoreWatch:
     def close(self):
         self._held.__exit__(None, None, None)
 
-    def pending(self, context):
-        """call('pending', {}, context) on this kept store: one poll without opening the store again."""
-        identity, runtime, _peer = _identity(context, None)
+    def _parsed(self):
         version = self.version()
         if getattr(self, '_records', (None,))[0] != version:
             # The declarations change only with a commit: parsed once per commit counter, never on a timer.
             table = self._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone()
             self._records = (version, [json.loads(row[0]) for row in self._db.execute(
                 "SELECT record FROM workshop_declarations ORDER BY root")] if table else None)
-        return _pending(self._history, identity, runtime, self._records[1])
+        return self._records[1]
+
+    def pending(self, context):
+        """call('pending', {}, context) on this kept store: one poll without opening the store again."""
+        identity, runtime, _peer = _identity(context, None)
+        return _pending(self._history, identity, runtime, self._parsed())
+
+    def declarations(self, *, include_archived=False):
+        """read_declarations on the kept store, its rows parsed once per commit; liveness is read fresh."""
+        records = self._parsed()
+        return [] if records is None else read_declarations(self._db, include_archived=include_archived, records=records)
+
+    def latest_activity(self, action):
+        """The newest workshop_activity row of one action, as (at, detail), or None."""
+        if not self._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_activity'").fetchone():
+            return None
+        return self._db.execute("SELECT at,detail FROM workshop_activity WHERE action=? ORDER BY sequence DESC LIMIT 1",
+                                (action,)).fetchone()
+
+    def tasks_view(self):
+        """The kept store for the Workshop's own task reader (workshop_tasks.rows)."""
+        from types import SimpleNamespace
+        return SimpleNamespace(_db=self._db)
 
 
 def store_watch(timeout_seconds):
     """A watcher an agent connector keeps between polls; only this owner opens the Workshop file."""
     return _StoreWatch(timeout_seconds)
+
+
+_THREAD_WATCH = threading.local()
+
+
+def thread_watch(timeout_seconds):
+    """One kept watcher per thread, for the polls that ask several times a second (BABOOM's reactions and work
+    rows); None while there is no Workshop file yet (it is never created here)."""
+    path = profile_database()
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    key = (str(path), stat.st_ino, stat.st_ctime_ns)   # a replaced file is a new store
+    held = getattr(_THREAD_WATCH, 'held', None)
+    if held is None or held[0] != key:
+        if held is not None:
+            held[1].close()
+            _THREAD_WATCH.held = None
+        held = _THREAD_WATCH.held = (key, store_watch(timeout_seconds))
+    return held[1]
 
 
 def _pending(history, identity, runtime, records=None):

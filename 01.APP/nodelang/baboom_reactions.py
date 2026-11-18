@@ -21,7 +21,7 @@ _EVENTS = {'UserPromptSubmit': 'thinking', 'beforeSubmitPrompt': 'thinking', 'ta
            'StopFailure': 'error', 'PostToolUseFailure': 'error', 'failure': 'error', 'turn_aborted': 'error'}
 _LOG = logging.getLogger(__name__)
 REACTION_NODE = {'id': 'baboom.reactions', 'params': {'sqlite_seconds': .05, 'cooldown_seconds': 10,
-                                                   'poll_ms': 100, 'active_seconds': 10}}
+                                                   'poll_ms': 100, 'idle_poll_ms': 500, 'active_seconds': 10}}
 
 
 def reaction_kind(payload, verdict=''):
@@ -86,6 +86,16 @@ def emit(payload, vendor, *, verdict='', environment=None, event_id='', now=None
 def latest(*, environment=None, now=None):
     """Project declared native events into this profile's Workshop, then read its latest reaction."""
     from .baboom_work_presence import BaboomWorkPresence
+    if environment is None:
+        from .workshop_mailbox import thread_watch
+        try:
+            watch = thread_watch(REACTION_NODE['params']['sqlite_seconds'])
+        except (OSError, ValueError, sqlite3.Error):
+            watch = False   # a file the Workshop owner does not open as its store: the plain read below
+        if watch is None:
+            return None
+        if watch is not False:
+            return _latest_kept(watch, BaboomWorkPresence, now)
     path = state_directory(environment) / 'workshop' / 'messages.sqlite3'
     if not path.is_file():
         return None
@@ -109,6 +119,31 @@ def latest(*, environment=None, now=None):
             return None
         motion, text = REACTIONS[kind]
         return BaboomWorkPresence(kind, '', motion, kind == 'waiting', speech(text))
+    except (OSError, ValueError, KeyError, sqlite3.Error):
+        _LOG.warning('BABOOM reaction read unavailable; open Workshop to inspect its activity')
+        return None
+
+
+def _latest_kept(watch, presence_type, now):
+    """latest() for this profile on the Workshop's kept store: no open per ask, declarations parsed once per commit.
+
+    Live agents only (the Workshop's liveness), at most 64 of them; the old read took the first 64 declaration rows
+    of any age, the founder's store holds over 600."""
+    from .agent_status import project_baboom_reaction
+    try:
+        agents = [agent for agent in watch.declarations()
+                  if agent.get('runtime') in ('claude', 'codex') and agent.get('native_session_id')][:64]
+        for agent in agents:
+            project_baboom_reaction(agent['runtime'], agent['native_session_id'])
+        row = watch.latest_activity('baboom.reaction')
+        if not row:
+            return None
+        age = (time.time() if now is None else now) - datetime.fromisoformat(row[0]).timestamp()
+        kind = json.loads(row[1])['reaction']
+        if kind not in REACTIONS or not -5 <= age <= REACTION_NODE['params']['active_seconds']:
+            return None
+        motion, text = REACTIONS[kind]
+        return presence_type(kind, '', motion, kind == 'waiting', speech(text))
     except (OSError, ValueError, KeyError, sqlite3.Error):
         _LOG.warning('BABOOM reaction read unavailable; open Workshop to inspect its activity')
         return None

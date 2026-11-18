@@ -219,3 +219,30 @@ def test_declared_codex_agents_without_a_transcript_do_not_walk_the_sessions_fol
     assert len(walks) == first + 1
     assert any(value[0] == log for value in agent_status._REACTION_FILES.values())   # a transcript that appears is found
     assert agent_status.indexed_transcript('codex', 'no-transcript-0') == log        # the Workshop's status reads it too
+
+
+def test_baboom_polls_reuse_one_workshop_connection_and_parse_declarations_once_per_commit(monkeypatch):
+    # Installed build 7: BABOOM's reaction thread opened the Workshop and parsed every declaration ten times a second,
+    # and every redraw parsed them again for the work rows.
+    from pathlib import Path
+    from nodelang import baboom_reactions, workshop_mailbox
+    from nodelang.workshop_mailbox import call
+    call('declare', {'task': 'reactions', 'paths': [str(Path.cwd())], 'status': 'working', 'request_id': 'F419'},
+         {'threadId': 'reaction-poll'})
+    opened = []
+    real = workshop_mailbox.application_history
+    monkeypatch.setattr(workshop_mailbox, 'application_history', lambda *a, **k: opened.append(1) or real(*a, **k))
+    monkeypatch.setattr(workshop_mailbox, '_THREAD_WATCH', __import__('threading').local())
+    baboom_reactions.latest()
+    watch = workshop_mailbox.thread_watch(baboom_reactions.REACTION_NODE['params']['sqlite_seconds'])
+    parsed = watch._records
+    for _ in range(20):
+        baboom_reactions.latest()
+    assert len(opened) == 1                                     # one open for 21 polls (it was one per poll)
+    assert watch._records is parsed                             # no commit: the declarations were not parsed again
+    monkeypatch.setattr(workshop_mailbox, 'application_history', real)
+    call('declare', {'task': 'reactions, renamed', 'paths': [str(Path.cwd())], 'status': 'working', 'request_id': 'F419'},
+         {'threadId': 'reaction-poll'})
+    baboom_reactions.latest()
+    assert watch._records is not parsed                         # a commit: parsed afresh, once
+    watch.close()

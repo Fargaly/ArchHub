@@ -212,11 +212,27 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
     Pytest stays off the founder's Workshop file unless a test points
     ARCHHUB_TEST_STATE_DIR at its own directory and opts in.
     """
-    from .workshop_tasks import _declaration_for
-
     if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("ARCHHUB_BABOOM_READ_WORKSHOP"):
         return []
     root = str(state_directory())
+    from .baboom_reactions import REACTION_NODE
+    from .workshop_mailbox import thread_watch
+    from .workshop_tasks import rows
+    try:
+        # BABOOM asks on every redraw: the Workshop's kept store, declarations parsed once per commit.
+        watch = thread_watch(REACTION_NODE["params"]["sqlite_seconds"])
+    except (OSError, ValueError, sqlite3.Error):
+        watch = False   # a file the Workshop owner does not open as its store: the plain read below
+    if watch is None:
+        return []
+    if watch is not False:
+        try:
+            view = watch.tasks_view()
+            if view._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone() is None:
+                return []
+            return _shown(root, rows(view, include_archived=False, settle=False), watch.declarations())
+        except (OSError, sqlite3.Error):
+            return []
     database = Path(root) / "workshop" / "messages.sqlite3"
     if not database.is_file():
         return []
@@ -228,33 +244,37 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
         if connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone() is None:
             return []
         from .workshop_mailbox import read_declarations
-        from .workshop_tasks import rows
-        from .baboom_nograph import own_session
 
         # The Workshop owns ordering, leases, archive filtering and native liveness.
         found = rows(SimpleNamespace(_db=connection), include_archived=False, settle=False)
-        declarations = read_declarations(connection)
-        own = own_session(root)
-        shown = []
-        for row in found:
-            declaration = _declaration_for(row, declarations)
-            if own and declaration and declaration.get("session") == own and declaration.get("request_id") == "BABOOM":
-                continue
-            declared = (declaration or {}).get("status")
-            if row.get("status") == "done":
-                row["status"] = "DONE"
-            elif declared == "blocked":
-                row["status"] = "IN REVIEW"
-            elif declared == "working" or (row.get("status") == "claimed" and not row.get("lease_expired")):
-                row["status"] = "WIP"
-            elif row.get("status") == "open":
-                row["status"] = "PLANNED"
-            shown.append(row)
-        return shown
+        return _shown(root, found, read_declarations(connection))
     except sqlite3.Error:
         return []
     finally:
         connection.close()
+
+
+def _shown(root, found, declarations):
+    """The task rows BABOOM shows, in the Workshop's own status words; its own BABOOM session left out."""
+    from .workshop_tasks import _declaration_for
+    from .baboom_nograph import own_session
+    own = own_session(root)
+    shown = []
+    for row in found:
+        declaration = _declaration_for(row, declarations)
+        if own and declaration and declaration.get("session") == own and declaration.get("request_id") == "BABOOM":
+            continue
+        declared = (declaration or {}).get("status")
+        if row.get("status") == "done":
+            row["status"] = "DONE"
+        elif declared == "blocked":
+            row["status"] = "IN REVIEW"
+        elif declared == "working" or (row.get("status") == "claimed" and not row.get("lease_expired")):
+            row["status"] = "WIP"
+        elif row.get("status") == "open":
+            row["status"] = "PLANNED"
+        shown.append(row)
+    return shown
 
 
 def _words(text: str) -> set[str]:

@@ -974,7 +974,8 @@ def create_baboom_native_companion_window(
             self._reaction_state = 'idle'
             self._reaction_timer = QTimer(self)
             from .baboom_reactions import REACTION_NODE
-            self._reaction_timer.setInterval(REACTION_NODE['params']['poll_ms'])
+            # Every half second while nothing reacts; at the animation's pace only while a reaction plays.
+            self._reaction_timer.setInterval(REACTION_NODE['params']['idle_poll_ms'])
             self._reaction_timer.timeout.connect(self._check_reactions)
             self._animation_timer = QTimer(self)
             # A companion that changes pose three times a second reads as
@@ -1094,9 +1095,10 @@ def create_baboom_native_companion_window(
         def _check_reactions(self):
             if self._dismissed or self._stopped or self._dragged:
                 return
-            from .baboom_reactions import latest_soon
+            from .baboom_reactions import REACTION_NODE, latest_soon
             reaction = latest_soon()  # never read files on the GUI thread
             state = reaction.state if reaction is not None else 'idle'
+            self._reaction_timer.setInterval(REACTION_NODE['params']['poll_ms' if reaction is not None else 'idle_poll_ms'])
             if state != self._reaction_state:
                 self._reaction_state = state
                 self.refresh()

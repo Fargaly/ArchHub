@@ -11556,6 +11556,59 @@
         "02.TESTS/tests_replica/test_workshop_reply_index.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "GROUPONE": {
+      "source": "Founder F3 and 2026-11-16 Group is one concept: Ctrl+G makes one node, a group sits around its members, collapses and expands in place, is entered and left both ways at every level and keeps every socket. Independent check on the installed build found Group failing; this lands the fix with a document test and a rendered check.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/studio_designv22g.test.cjs",
+        "02.TESTS/tests_js/studio_group_document.test.cjs",
+        "02.TESTS/tests_js/studio_boxselection.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "DESIGNLIBRARY": {
+      "source": "Founder 2026-11-18: I want the whole application; the approved design is not applied in the app, and parts that are not built yet are shown as designed and marked as coming later. The Library rows of the one design source are built in the live Studio on real owners (tree, search by name, summary, program and group, agent sessions not offered as skills), with one shared Soon component for designed-but-unbuilt parts. The commit gate admits that label only inside that one component; everywhere else the placeholder rule still refuses it.",
+      "scope": [
+        "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "01.APP/nodelang/studio/ds_library.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs",
+        "02.TESTS/tests_js/command_registry.test.cjs",
+        "02.TESTS/tests_js/raildoors.test.cjs",
+        "02.TESTS/tests_js/settingsmatch.test.cjs",
+        "02.TESTS/tests_js/studio_library_tree.test.cjs",
+        "02.TESTS/tests_js/studio_sessionwork.test.cjs",
+        "02.TESTS/tests_js/studio_workflows_categories.test.cjs",
+        "02.TESTS/tests_replica/test_command_registry.py",
+        "02.TESTS/tests_replica/test_one_library_catalogue.py",
+        "02.TESTS/tests_replica/test_session_files.py",
+        "03.TOOLS/tools/archhub-compiler/src/intent.rs",
+        "03.TOOLS/tools/archhub-compiler/src/lib.rs",
+        "03.TOOLS/tools/archhub-compiler/tests/absorbed.rs",
+        "03.TOOLS/tools/archhub-compiler/tests/diagnostics.rs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "GROKWAKE": {
+      "source": "Founder 2026-11-18: find a way to get the Grok bot inside the Workshop so it works like the rest of the agents. Grok Bot could send but never received: its only inbound door was a routine webhook with no address recorded. A hidden local wake hands it an addressed message only when nobody has used the keyboard or mouse and its message box is empty, presses the application own Send control, types nothing, and puts the previous window back; otherwise the message stays queued.",
+      "scope": [
+        "01.APP/nodelang/workshop/grok-wake.ps1",
+        "01.APP/nodelang/workshop/workshop-apps.mjs",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests_js/grok_wake.test.cjs",
+        "02.TESTS/tests_js/fixtures/grok_wake_fake.ps1",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

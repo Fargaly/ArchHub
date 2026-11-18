@@ -1,6 +1,32 @@
 {
   "schema_version": 1,
   "intents": {
+    "SITELINKS": {
+      "source": "Founder website-and-links LIGHT lane, 2026-11-12: one public links source, Git-history changelog, stdlib static generator using v48 identity and current documentation, README repair, archived exporter instructions and one scoped test. Branch only; hooks on; Cargo allowed for the commit hook only by coordinator decision 2026-11-12; no push, deploy, publish, install or live profiles. 2026-11-17: archhub.io follows the latest release and carries the BABOOM companion from baboom.archhub.io through a Caddy proxy (founder yes, Fly v45/v46).",
+      "scope": [
+        "03.TOOLS/packaging/links.json",
+        "03.TOOLS/packaging/links.py",
+        "CHANGELOG.md",
+        "03.TOOLS/packaging/website/build_site.py",
+        "03.TOOLS/packaging/website/static/favicon.svg",
+        "03.TOOLS/packaging/website/static/favicon.ico",
+        "03.TOOLS/packaging/website/static/og.png",
+        "03.TOOLS/packaging/website/assets/home.png",
+        "03.TOOLS/packaging/website/assets/canvas.png",
+        "03.TOOLS/packaging/website/assets/library.png",
+        "03.TOOLS/packaging/website/assets/session.png",
+        "03.TOOLS/packaging/website/Dockerfile",
+        "03.TOOLS/packaging/website/fly.toml",
+        "03.TOOLS/packaging/website/httpd.conf",
+        "03.TOOLS/packaging/website/.dockerignore",
+        "03.TOOLS/packaging/website/Caddyfile",
+        "README.md",
+        "06.CLOUD/public_site/README.md",
+        "03.TOOLS/packaging/README.md",
+        "02.TESTS/test_site_links.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "COMMANDREGISTRY": {
       "source": "Founder 2026-11-16 ONE BUILD step 6, res-047 section 3, res-048 step 6 and res-045 section 6: one command registry serves existing context menus, Ctrl K, navigation and agent tools; Library category ids; read-only grouped tools and existing approval policies; existing parameter owners; no redesign. Sole builder on lane/command-registry; isolated tests only; hooks on; no push/install/release/deploy or live-profile access.",
       "scope": [

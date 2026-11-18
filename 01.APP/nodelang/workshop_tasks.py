@@ -7,7 +7,9 @@ A lease that lapses frees the task for the next agent; nothing runs on a timer.
 Adapted from DeepSeek Harness 8bd07339 (MIT, (c) 2026 DeepSeek).
 Every task write names the revision it read. A stale revision conflicts.
 """
+import copy
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -682,18 +684,29 @@ def _root_task_id(root, request_id):
     return "declared-" + sha256((root + "\0" + request_id).encode()).hexdigest()[:32]
 
 
+# path -> ((mtime_ns, size), context): an unchanged file is not resolved, opened and parsed again on every Work column read.
+_SESSION_CONTEXTS = {}
+
+
 def _session_context(path):
     """Task-session fields already stored in the task file. A missing file leaves them empty."""
     if not isinstance(path, str) or not path:
         return {}
     try:
+        stat = os.stat(path)
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        held = _SESSION_CONTEXTS.get(path)
+        if held and held[0] == stamp:
+            return copy.deepcopy(held[1])
         from .session_files import read_document
         document = read_document(path)
         context = _held_context(document)
     except (OSError, ValueError, KeyError, TypeError):
+        _SESSION_CONTEXTS.pop(path, None)
         return {}
     context["sessionTitle"] = document["title"]
     context["fileMessages"] = _file_messages(document)
+    _SESSION_CONTEXTS[path] = (stamp, copy.deepcopy(context))
     return context
 
 

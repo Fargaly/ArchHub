@@ -69,7 +69,12 @@ def test_studio_perf_court(tmp_path, monkeypatch):
         assert all(metrics['inspectorClears']), metrics['inspectorClears']
         assert metrics['idleResponsesPerMinute']['changed200'] <= metrics['idleRequestsTotalPerMinute'] / 2, metrics['idleResponsesPerMinute']
         assert max(row['paintedMs'] for row in metrics['select']) <= FEEDBACK_MS, metrics['select']
-        # Workshop fold/open (workshopToggleMs) is reported, not asserted: it is not yet inside 100 ms.
+        # Same-frame selection: the selected class is set before the first frame after the press.
+        assert all(row['sameFrame'] for row in metrics['select']), metrics['select']
+        # Drag, including the drop and its save: no long task (> 50 ms).
+        assert not metrics['longTasks']['drag'], metrics['longTasks']
+        # Workshop fold and open: a local action, acknowledged (painted) within 100 ms.
+        assert max(metrics['workshopToggleMs']) <= FEEDBACK_MS, metrics['workshopToggleMs']
         assert metrics['openCanvasMs'] <= OPEN_CANVAS_MS, metrics['openCanvasMs']
         assert not metrics['idleLongTasks'], metrics['idleLongTasks']
         for gesture in ('panP95', 'zoomP95', 'dragP95'):

@@ -19,7 +19,10 @@ async function court() {
     const context = await browser.newContext({viewport: {width: 1440, height: 900}});
     await context.addCookies([{name: 'archhub_studio', value: input.cookie, url: input.url}]);
     await context.addInitScript(() => {
-      window.__perf = {long: [], frames: null};
+      window.__perf = {long: [], loaf: [], frames: null};
+      // Long animation frames name the scripts (and rendering) behind a slow frame that no single long task shows.
+      try { new window.PerformanceObserver(list => { for (const e of list.getEntries()) if (e.duration > 50) window.__perf.loaf.push({ms: Math.round(e.duration), render: Math.round(e.renderStart ? e.startTime + e.duration - e.renderStart : 0),
+        scripts: (e.scripts || []).filter(x => x.duration > 5).map(x => (x.invoker || '') + ' ' + (x.sourceFunctionName || '') + ' ' + String(x.sourceURL || '').split('/').pop() + ' ' + Math.round(x.duration))}); }).observe({type: 'long-animation-frame', buffered: true}); } catch {}
       new window.PerformanceObserver(list => { for (const e of list.getEntries()) window.__perf.long.push(Math.round(e.duration)); }).observe({type: 'longtask', buffered: true});
       window.__perfFrames = () => { const f = []; let last = window.performance.now(), on = true; const tick = t => { f.push(t - last); last = t; if (on) requestAnimationFrame(tick); }; requestAnimationFrame(tick); return () => { on = false; return f.slice(1); }; };
     });
@@ -40,18 +43,28 @@ async function court() {
         out.splitPerFrameMs = {};
     // Frame p95 (rAF deltas, vsync-bound) and main-thread work per frame (CDP TaskDuration), which shows cost below one vsync.
     out.workPerFrameMs = {};
+    // Self time by function over one step (input.profile names it): where the work goes.
+    const profiled = async (name, step) => {
+      if (input.profile !== name) return step();
+      await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', {interval: 200}); await cdp.send('Profiler.start');
+      const result = await step();
+      const {profile} = await cdp.send('Profiler.stop'), self = {}, gap = profile.timeDeltas;
+      const byId = new Map(profile.nodes.map(n => [n.id, n]));
+      profile.samples.forEach((id, i) => { const f = byId.get(id).callFrame; const key = f.functionName + ' ' + f.url.split('/').pop() + ':' + (f.lineNumber + 1); self[key] = (self[key] || 0) + (gap[i] || 0) / 1000; });
+      out.profile = Object.entries(self).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => k + ' ' + v.toFixed(1));
+      return result;
+    };
+    const longTasks = () => page.evaluate(() => { const list = window.__perf.long; window.__perf.long = []; return list.filter(d => d > 50); });
+    const longFrames = () => page.evaluate(() => { const list = window.__perf.loaf; window.__perf.loaf = []; return list; });
     const frames = async (gesture, name) => {
       await page.evaluate(() => { window.__stop = window.__perfFrames(); }); const start = await metric();
-      if (input.profile === name) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.start'); }
-      await gesture();
-      if (input.profile === name) {
-        // Self time by function over the gesture: where the frame work goes.
-        const {profile} = await cdp.send('Profiler.stop'), self = {}, gap = profile.timeDeltas;
-        const byId = new Map(profile.nodes.map(n => [n.id, n]));
-        profile.samples.forEach((id, i) => { const f = byId.get(id).callFrame; const key = f.functionName + ' ' + f.url.split('/').pop() + ':' + (f.lineNumber + 1); self[key] = (self[key] || 0) + (gap[i] || 0) / 1000; });
-        out.profile = Object.entries(self).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, v]) => k + ' ' + v.toFixed(1));
-      }
+      await longTasks(); await longFrames();
+      await profiled(name, gesture);
+      await page.waitForTimeout(300);  // the gesture's end (drop, save) belongs to it
       const list = await page.evaluate(() => window.__stop());
+      out.longTasks = {...out.longTasks, [name]: await longTasks()};
+      out.longFrames = {...out.longFrames, [name]: await longFrames()};
+      out.maxFrameMs = {...out.maxFrameMs, [name]: Math.round(Math.max(...list))};
       const end = await metric(), per = key => +((end[key] - start[key]) / Math.max(1, list.length)).toFixed(2);
       out.workPerFrameMs[name] = per('TaskDuration');
       out.splitPerFrameMs[name] = {script: per('ScriptDuration'), style: per('RecalcStyleDuration'), layout: per('LayoutDuration')};
@@ -67,11 +80,15 @@ async function court() {
     await open.waitFor({timeout: 60000});
     await page.waitForTimeout(3000);  // Home's first reads settle before the click is timed
     const flow = page.getByLabel('Workflow canvas', {exact: true});
+    await longTasks();
     const t0 = Date.now();
-    await open.click();
-    await flow.locator('.react-flow__node[data-id="n28"]').waitFor({timeout: 30000});
-    await nextPaint();
+    await profiled('open', async () => {
+      await open.click();
+      await flow.locator('.react-flow__node[data-id="n28"]').waitFor({timeout: 30000});
+      await nextPaint();
+    });
     out.openCanvasMs = Date.now() - t0;
+    out.longTasks = {open: await longTasks()};
     out.arrangedOnOpen = await page.evaluate(() => window.ArchHubAPI.getSnapshot().graph.canvasLayout === 'v48');
     await page.waitForTimeout(2500);
 
@@ -135,18 +152,21 @@ async function court() {
       }, id);
       await page.evaluate(nodeId => {
         const el = document.querySelector('[aria-label="Workflow canvas"] .react-flow__node[data-id="' + nodeId + '"]');
-        window.__sel = {pressed: 0, selected: 0, painted: 0};
-        window.addEventListener('pointerdown', () => { window.__sel.pressed = window.performance.now(); }, {capture: true, once: true});
+        window.__sel = {pressed: 0, selected: 0, painted: 0, frame: 0};
+        window.addEventListener('pointerdown', () => { window.__sel.pressed = window.performance.now(); requestAnimationFrame(() => { window.__sel.frame = window.performance.now(); }); }, {capture: true, once: true});
         const seen = () => { if (!window.__sel.selected && el.classList.contains('selected')) { window.__sel.selected = window.performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => { window.__sel.painted = window.performance.now(); })); } };
         new window.MutationObserver(seen).observe(el, {attributes: true, attributeFilter: ['class']});
       }, id);
       await mouse('mouseMoved', x, y);
-      await mouse('mousePressed', x, y, {button: 'left', buttons: 1, clickCount: 1});
-      await mouse('mouseReleased', x, y, {button: 'left', buttons: 0, clickCount: 1});
-      await page.waitForTimeout(700);
+      await profiled(id === 'n3' ? 'select' : '', async () => {
+        await mouse('mousePressed', x, y, {button: 'left', buttons: 1, clickCount: 1});
+        await mouse('mouseReleased', x, y, {button: 'left', buttons: 0, clickCount: 1});
+        await page.waitForTimeout(700);
+      });
       const sel = await page.evaluate(([px, py]) => ({...window.__sel, hit: document.elementFromPoint(px, py)?.closest('.react-flow__node')?.dataset.id || document.elementFromPoint(px, py)?.className,
         now: [...document.querySelectorAll('[aria-label="Workflow canvas"] .react-flow__node.selected')].map(el => el.dataset.id)}), [x, y]);
-      out.select.push({id, selectedMs: sel.selected ? Math.round(sel.selected - sel.pressed) : null, paintedMs: sel.painted ? Math.round(sel.painted - sel.pressed) : null, hit: sel.hit, selectedNow: sel.now});
+      out.select.push({id, selectedMs: sel.selected ? Math.round(sel.selected - sel.pressed) : null, paintedMs: sel.painted ? Math.round(sel.painted - sel.pressed) : null,
+        sameFrame: !!sel.selected && !!sel.frame && sel.selected <= sel.frame, hit: sel.hit, selectedNow: sel.now});
     }
 
     // Two quick clicks: the second card stays selected (no deferred echo of the first may revert it).
@@ -176,21 +196,25 @@ async function court() {
 
     // Workshop fold and open: click to the control's new state, painted.
     out.workshopToggleMs = [];
+    await longTasks();
     for (const [from, to] of [['Fold Workshop', 'Open Workshop'], ['Open Workshop', 'Fold Workshop']]) {
       const button = page.getByRole('button', {name: from, exact: true}).first();
       await button.waitFor();
       const b = await button.boundingBox();
       await page.evaluate(() => { window.addEventListener('pointerdown', () => { window.__press = window.performance.now(); }, {capture: true, once: true}); });
       await mouse('mouseMoved', b.x + b.width / 2, b.y + b.height / 2);
-      await mouse('mousePressed', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 1, clickCount: 1});
-      await mouse('mouseReleased', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 0, clickCount: 1});
-      const ms = await page.evaluate(label => new Promise(resolve => {
-        const check = () => document.querySelector('[aria-label="' + label + '"]') ? requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(window.performance.now() - window.__press)))) : requestAnimationFrame(check);
-        check();
-      }), to);
+      const ms = await profiled(from === 'Fold Workshop' ? 'fold' : '', async () => {
+        await mouse('mousePressed', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 1, clickCount: 1});
+        await mouse('mouseReleased', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 0, clickCount: 1});
+        return page.evaluate(label => new Promise(resolve => {
+          const check = () => document.querySelector('[aria-label="' + label + '"]') ? requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(window.performance.now() - window.__press)))) : requestAnimationFrame(check);
+          check();
+        }), to);
+      });
       out.workshopToggleMs.push(ms);
       await page.waitForTimeout(600);
     }
+    out.longTasks.fold = await longTasks();
   } catch (error) {
     out.errors.push(error.stack || String(error));
   } finally {

@@ -448,11 +448,22 @@ ASSISTANT_INSTALL_PATHS = {
 _DISCOVER = object()
 
 
+_WHICH = {}  # (program, PATH) -> (monotonic time, which() answer)
+
+
 def find_assistant(executable: str, environ=None) -> Optional[str]:
     """The assistant's program on PATH, else at its known install place; None when absent."""
     import shutil
     env = os.environ if environ is None else environ
-    found = shutil.which(executable, path=env.get("PATH")) if "PATH" in env else shutil.which(executable)
+    # shortcut: a PATH search per provider row per read; cached per (program, PATH) for 60 s, so a program
+    # installed or removed under an unchanged PATH is seen within a minute.
+    key, now = (executable, env.get("PATH")), time.monotonic()
+    held = _WHICH.get(key)
+    if held and now - held[0] < 60:
+        found = held[1]
+    else:
+        found = shutil.which(executable, path=env.get("PATH")) if "PATH" in env else shutil.which(executable)
+        _WHICH[key] = (now, found)
     if found:
         return found
     for variable, *parts in ASSISTANT_INSTALL_PATHS.get(executable, ()):

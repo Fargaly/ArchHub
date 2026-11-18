@@ -11691,7 +11691,8 @@
         "02.TESTS/tests/test_studio_perf_court.py",
         "02.TESTS/tests/test_open_never_writes.py",
         "02.TESTS/tests_js/studio_perf_court.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/model_router.py"
       ]
     },
     "ONELAYOUT": {

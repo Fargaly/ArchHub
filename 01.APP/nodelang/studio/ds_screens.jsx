@@ -721,7 +721,8 @@
       <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
     </>;
   }
-  const nodeTypes = {archhub: FlowNode}, edgeTypes = {archhub: FlowWire};
+  // A card redraws when its data or selection changes; a drag frame only moves it (the engine sets its transform).
+  const nodeTypes = {archhub: React.memo(FlowNode, (a, b) => a.id === b.id && a.data === b.data && a.selected === b.selected)}, edgeTypes = {archhub: FlowWire};
   const {Group: CanvasGroup, Panel: CanvasPanel, Separator: CanvasSeparator} = window.ReactResizablePanels;
   const SOCKET_STYLE = {position: 'relative', inset: 'auto', transform: 'none', display: 'inline-grid', placeItems: 'center', width: 22, height: 22,
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
@@ -729,6 +730,21 @@
   const useLiveView = source => React.useSyncExternalStore(source.subscribe, source.get);
   function LiveZoom({source}) { return Math.round(useLiveView(source).zoom * 100) + '%'; }
   function LiveMap({source, ...props}) { return <window.UI.CanvasMap {...props} view={useLiveView(source)} />; }
+  // A node drag in flight moves only here, so each pointer frame renders the engine, not the whole Canvas.
+  // Every other change, and the drag's last position, goes to the Canvas owner (onNodesChange).
+  function FlowStage({nodes, onNodesChange, children, ...props}) {
+    const [held, setHeld] = React.useState({base: nodes, list: nodes});
+    const list = held.base === nodes ? held.list : nodes;
+    const change = changes => {
+      if (changes.length && changes.every(c => c.type === 'position' && c.dragging)) {
+        setHeld(h => ({base: nodes, list: RF.applyNodeChanges(changes, h.base === nodes ? h.list : nodes)}));
+        return;
+      }
+      const at = new Map(list.map(n => [n.id, n.position]));
+      onNodesChange(changes.map(c => c.type === 'position' && !c.position && at.has(c.id) ? {...c, position: at.get(c.id)} : c));
+    };
+    return <RF.ReactFlow nodes={list} onNodesChange={change} {...props}>{children}</RF.ReactFlow>;
+  }
   function Canvas({
     active = true,
     preview = null,
@@ -1195,12 +1211,14 @@
       }
       return {node:id,port};
     };
+    // Wires are rebuilt only when the graph, scope or wire selection changes, not on every drag or pan frame.
+    const edges = React.useMemo(() => {
     const scopedWires = scopeNodes ? s.graph.wires.map(wire=>{
       const from=scopeEnd(wire.memberFrom?.node??wire.from,wire.memberFrom?.port??wire.fromPort,'outputs');
       const to=scopeEnd(wire.memberTo?.node??wire.to,wire.memberTo?.port??wire.toPort,'inputs');
       return {...wire,from:from.node,fromPort:from.port,to:to.node,toPort:to.port};
     }).filter(wire=>wire.from!==wire.to) : s.graph.wires;
-    const edges = (rejected ? [...scopedWires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : scopedWires)
+    return (rejected ? [...scopedWires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : scopedWires)
       .filter(w => !(foldedOwner(s.graph.nodes.find(n=>n.id===w.from)) && foldedOwner(s.graph.nodes.find(n=>n.id===w.to))))
       .map(w => { const projected={...w}; if(sessionNode)for(const side of ['from','to']){const owner=s.graph.nodes.find(n=>n.id===w[side]);if(foldedOwner(owner)&&owner.id!==sessionNode.id){projected[side]=sessionNode.id;projected[side+'Port']=owner.id+':'+w[side+'Port'];}} return projected; })
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
@@ -1209,6 +1227,7 @@
           data: {color, inferred:w.inferred||w.enabled===false, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint'||w.enabled===false ? .2 : .9}};
       });
+    }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId]);
     const fit = (persist = true) => {
       if (!visible.length || !area.current) return;
       const w = area.current.clientWidth, h = area.current.clientHeight;
@@ -1267,6 +1286,11 @@
         id: n.id
       });
     };
+    // Cards re-render only when what they draw changes, never on a drag or pan frame of the canvas around them.
+    const cards = React.useRef(null);
+    cards.current = {renderNode, renderFrame, openNode};
+    const canvasContext = React.useMemo(() => ({renderNode: (...args) => cards.current.renderNode(...args), renderFrame: (...args) => cards.current.renderFrame(...args),
+      openNode: n => cards.current.openNode(n), preview: !!preview}), [s, u, rejected, preview, parent, layout, selected.join(','), requestState]);
     // COMMANDREGISTRY: expose this active Canvas's existing selection/actions to Ctrl K.
     React.useLayoutEffect(() => {
       if (preview || !active) return;
@@ -1379,8 +1403,8 @@
             canvas:canvasActions(toFlow(e))
           });
         }}>
-    <CanvasContext.Provider value={{renderNode, renderFrame, openNode, preview:!!preview}}>
-     <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
+    <CanvasContext.Provider value={canvasContext}>
+     <FlowStage nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
        defaultViewport={{x: pan.x, y: pan.y, zoom}} onInit={inst => { flow.current = inst; inst.setViewport({x: view.current.pan.x, y: view.current.pan.y, zoom: view.current.zoom}); }}
        onMove={(event,v) => { if (event instanceof window.Event) { view.current = {zoom: v.zoom, pan: {x: v.x, y: v.y}}; viewSource.emit(); } }}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) { setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
@@ -1399,7 +1423,7 @@
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionMode={crossing?'partial':'full'} onSelectionEnd={event=>setSelected(boxSelection(flowNodes.map(f=>({id:f.id,x:f.position.x,y:f.position.y,w:f.measured?.width||0,h:f.measured?.height||0})),boxFrom.current.at,toFlow(event),event.clientX<boxFrom.current.x))}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}</RF.ReactFlow>
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}</FlowStage>
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
     {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).length} more steps →</button>}

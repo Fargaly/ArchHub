@@ -26,6 +26,7 @@ class WindowCommands(QObject):
         self.view, self.window, self.quit_application, self.title_bar = view, window, quit_application, title_bar
         self.origin = QUrl(origin)
         self.companion_home = (None, [])  # the composer box and the busy boxes above it, as the page last reported
+        self.companion_sees = (0, False)  # Home's count of what needs the user, and BABOOM's panel open, likewise
         from .baboom_native_voice import BaboomVoiceInput
         self._voice_input = BaboomVoiceInput()
         self._voice_cancel = threading.Event()
@@ -114,6 +115,13 @@ class WindowCommands(QObject):
             self.companion_home = (_page_box(composer), [box for box in map(_page_box, busy[:64]) if box])
             self.companionHomeChanged.emit()
 
+    @pyqtSlot(int, bool)
+    def companionSees(self, needs, listening):
+        """What BABOOM draws from the page: Home's own count of what needs the user, and whether his panel is open."""
+        if self._in_studio():
+            self.companion_sees = (needs, listening)
+            self.companionHomeChanged.emit()
+
 
 def _page_box(values):
     """One page rectangle (left, top, width, height) the page reported, or None when it is not one."""
@@ -152,7 +160,7 @@ class CompanionFollows(QObject):
                                   max(1, round(box[2] * zoom)), max(1, round(box[3] * zoom)))
         composer, busy = self.commands.companion_home
         self.companion.follow_app(desk(window.geometry()), placed(composer) if composer else None,
-                                  [placed(box) for box in busy], screens)
+                                  [placed(box) for box in busy], screens, *self.commands.companion_sees)
 
     def eventFilter(self, watched, event):
         # WindowActivate: a click into ArchHub brings BABOOM, which no ArchHub window owns, back above it too.
@@ -279,9 +287,14 @@ COMPANION_BRIDGE = """
  // place_baboom_beside_composer picks the spot.
  const controls = "button,a[href],input,select,textarea,label,[role=button],[role=switch],[tabindex]:not([tabindex='-1'])";
  const box = r => [r.left, r.top, r.width, r.height];
- let sent = "", queued = false;
+ let sent = "", queued = false, seen = [], needs = 0, told = "", subscribed = false;
  const report = () => {
   queued = false;
+  if (!subscribed && window.ArchHubAPI?.subscribe) {
+   subscribed = true;
+   window.ArchHubAPI.subscribe(see);
+  }
+  see();
   const composer = [...document.querySelectorAll("[data-design='composer.surface']")].filter(e => e.offsetParent).pop();
   const c = composer ? composer.getBoundingClientRect() : null, busy = new Set();
   const right = Math.min(c ? c.right : innerWidth, innerWidth - 16), floor = c ? c.top - 4 : innerHeight - 16;
@@ -293,6 +306,20 @@ COMPANION_BRIDGE = """
   const layout = [c ? box(c) : [], [...busy].slice(0, 64).map(e => box(e.getBoundingClientRect()))];
   const text = JSON.stringify(layout);
   if (text !== sent) { sent = text; channel.objects.desktopWindow.companionHome(layout[0], layout[1]); }
+ };
+ // His badge is Home's own count of what needs the user (counted again only when the data changes), and his
+ // ground glows cyan while his panel is open.
+ const see = () => {
+  const data = window.ArchHubAPI && window.ArchHubAPI.getSnapshot ? window.ArchHubAPI.getSnapshot() : null;
+  const rows = window.UI && window.UI.homeRows;
+  const inputs = data && [data.tasks, data.approvals, data.graphs, data.agentGraph?.sessions, data.homeLayout];
+  if (rows && inputs && inputs.some((value, index) => value !== seen[index])) {
+   const {sessionRows, sectionOf} = rows(data, data.homeLayout);
+   needs = sessionRows.filter(row => sectionOf(row) === "Needs you").length;
+   seen = inputs;
+  }
+  const open = !!document.querySelector("[aria-label='BABOOM companion']"), now = needs + "/" + open;
+  if (now !== told) { told = now; channel.objects.desktopWindow.companionSees(needs, open); }
  };
  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(report); } };
  new MutationObserver(schedule).observe(document.documentElement, {subtree: true, childList: true, characterData: true});

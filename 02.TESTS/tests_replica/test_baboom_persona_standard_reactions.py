@@ -268,7 +268,7 @@ def test_native_task_changes_the_actual_offscreen_qt_pose_within_one_second(tmp_
             assert window._frame.motion == ('think' if expected == 'thinking' else 'cast')
             assert safe_speech(window._state_bubble.text())
             assert not window.grab().isNull()
-        window._open_interaction()
+        window._details_open = True  # his report is open, as after a line of his menu
         for status, label in [('running', 'A tool is running.'), ('completed', 'A tool completed.'),
                               ('succeeded', 'A tool completed.'), ('failed', 'A tool failed. Open the task for its status.')]:
             window._apply_progress((window._interaction_generation, {'tool': 'proof', 'status': status}))

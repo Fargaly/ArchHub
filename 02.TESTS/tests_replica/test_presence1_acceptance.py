@@ -135,10 +135,13 @@ def test_details_are_explicit_topmost_and_close_to_tray(presence):
     p = presence
     p.window.start_projection()
     assert not p.window.isVisible()
+    # He has no reply box: the tray click asks BABOOM where the one composer is, in ArchHub.
     p.window._tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
     p.app.processEvents()
+    assert p.opened == [True] and not p.window._details_open and not p.window.isVisible()
+    p.window._say("status")                      # a line of his menu: its answer is his explicit report
+    p.app.processEvents()
     assert p.window._details_open and p.window.isVisible()
-    assert p.window._input.isVisible()
     assert p.window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
     assert p.calls[-1][1] is False
     for state in ("reconnecting", "closed"):
@@ -150,14 +153,14 @@ def test_details_are_explicit_topmost_and_close_to_tray(presence):
     assert not p.window.isVisible() and not p.window._details_open
     assert p.window._tray.isVisible()
     p.window._tray_open.trigger()
-    assert p.opened == [True]
+    assert p.opened == [True, True]
     assert not p.window.isVisible()
 
 
 def test_hidden_closes_previously_open_details(presence):
     p = presence
     p.window.start_projection()
-    p.window._tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
+    p.window._say("status")
     assert p.window.isVisible()
     p.refresh("Hidden")
     assert not p.window.isVisible()
@@ -267,8 +270,8 @@ def test_approaching_and_hovering_sprite_does_not_hide_it(presence, monkeypatch)
     _, opaque = _sprite_points(p.window)
     QTest.mouseClick(p.window, Qt.MouseButton.LeftButton, pos=opaque)
     QTest.qWait(p.window._quiet_click.interval() + 50)
-    assert p.window._input.isVisible()
-    assert p.opened == []
+    # The click is taken. He has no reply box, so with no ArchHub window it opens ArchHub, where the composer is.
+    assert p.opened == [True]
 
 
 def test_removed_face_offer_and_floating_button_have_no_widget_state(presence):

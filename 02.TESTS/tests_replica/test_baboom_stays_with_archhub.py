@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QColor, QImage, QMouseEvent, QPainter
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QLineEdit, QPlainTextEdit, QTextEdit, QWidget
 
 import nodelang.baboom_native_companion as native
 from nodelang.baboom_companion_placement import Rect
@@ -54,7 +54,16 @@ def _beside(app):
     return Rect(composer.right - 80, composer.y - 4 - 87, 80, 87)
 
 
-def _with_archhub(tmp_path, *, saved=None, pinned=False, app_rect=APP):
+class _BrainUp(_ScreenTransport):
+    """The app's frame while BABOOM's brain is up, as baboom_nograph.NoGraphTransport reports it."""
+
+    def baboom_native_frame(self, **kwargs):
+        frame = super().baboom_native_frame(**kwargs)
+        frame["context"] = dict(frame["context"], brain={"ok": True, "facts": 1})
+        return frame
+
+
+def _with_archhub(tmp_path, *, saved=None, pinned=False, app_rect=APP, transport=None):
     """The companion as the launcher wires it: standing with an ArchHub window, the real pin setting file."""
     app = QApplication.instance() or QApplication([])
     image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
@@ -67,7 +76,7 @@ def _with_archhub(tmp_path, *, saved=None, pinned=False, app_rect=APP):
     atlas_path = tmp_path / "atlas.png"
     assert image.save(str(atlas_path))
     atlas = BaboomSpriteAtlas(path=atlas_path, width=1536, height=2288, columns=8, rows=11, cell_width=192, cell_height=208)
-    host = BaboomNativeHost(_ScreenTransport(), external_session_id="with-archhub-court",
+    host = BaboomNativeHost(transport or _ScreenTransport(), external_session_id="with-archhub-court",
                             device_credential_provider=lambda challenge: {"proof": "approved"})
     host.connect()
     position_path = tmp_path / "baboom-position.json"
@@ -85,7 +94,7 @@ def _with_archhub(tmp_path, *, saved=None, pinned=False, app_rect=APP):
     # Anything that would take the keyboard from the program he is working in is recorded.
     window.activateWindow = lambda: seen.stolen.append("activate")
     window.raise_ = lambda: seen.stolen.append("raise")
-    window.stand_with(owner, pin, lambda: seen.asked.append("composer"))
+    window.stand_with(owner, pin, lambda words="": seen.asked.append(words or "composer"))
     window.follow_app(app_rect, _composer(app_rect), (), (LEFT, RIGHT))
     window.start_projection()
     app.processEvents()
@@ -239,6 +248,7 @@ def _drag(court, by):
         court.app.sendEvent(window, QMouseEvent(kind, QPointF(point), QPointF(window.mapToGlobal(point)),
                                                 held, held, Qt.KeyboardModifier.NoModifier))
     court.app.processEvents()
+    window._position_jobs.submit(lambda: None).result(timeout=4)
 
 
 def test_a_drag_springs_home_unless_he_unpinned_baboom_from_archhub(tmp_path):
@@ -266,7 +276,8 @@ def test_a_click_points_the_one_composer_at_baboom_and_opens_no_second_input(tmp
         QTest.qWait(window._quiet_click.interval() + 80)
         court.app.processEvents()
         assert court.seen.asked == ["composer"]
-        assert not window._input.isVisible() and not window._report.isVisible(), "no ask box of his own"
+        assert not window.findChildren((QLineEdit, QTextEdit, QPlainTextEdit)), "no input row of his own, shown or hidden"
+        assert not window._report.isVisible()
         assert court.seen.opened == []
         QTest.mouseDClick(window, Qt.MouseButton.LeftButton, pos=opaque)
         QTest.qWait(window._quiet_click.interval() + 80)
@@ -306,18 +317,20 @@ def test_baboom_greets_once_a_visit_and_never_again(tmp_path, monkeypatch):
         _close(court)
 
 
-def test_his_own_box_open_never_lets_a_reshow_take_the_keyboard(tmp_path):
-    """His small ask box turns activation on; ArchHub put away or restored hides and re-shows BABOOM.
+def test_asking_baboom_goes_to_the_one_composer_and_no_reshow_takes_the_keyboard(tmp_path):
+    """Ask BABOOM (the tray line, a line of his menu) goes to ArchHub's composer: he never turns activation on.
 
-    That re-show is for ArchHub's sake, so it must not activate: he may be typing in another program.
+    ArchHub put away or restored hides and re-shows BABOOM. That re-show is for ArchHub's sake, so it must
+    not activate either: he may be typing in another program.
     """
     court = _with_archhub(tmp_path)
     window = court.window
     try:
-        window._open_interaction()                      # the tray's "Ask BABOOM": his own box, activation allowed
+        window._open_interaction()                      # the tray's "Ask BABOOM"
+        window._prefill("remember: ")                   # a line of his menu he finishes in his own words
         court.app.processEvents()
-        assert window._input.isVisible()
-        assert not window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        assert court.seen.asked == ["composer", "remember: "], "the one composer, starting with the line's words"
+        assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         shows = []
         show = window.show
         window.show = lambda: (shows.append(window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)), show())[1]
@@ -326,8 +339,166 @@ def test_his_own_box_open_never_lets_a_reshow_take_the_keyboard(tmp_path):
         window.follow_app(APP, _composer(APP), (), (LEFT, RIGHT))         # and restored
         court.app.processEvents()
         assert shows and all(shows), "every re-show was without activation"
-        assert window.isVisible() and not window._input.isHidden(), "his box is still open"
+        assert window.isVisible()
         assert court.seen.stolen == []
+    finally:
+        _close(court)
+
+
+def _clock(monkeypatch):
+    """The companion's clock, held by the test: his float and pulses are read off it, never off a sleep.
+
+    Windows' "Show animations" reads as on, whatever this machine is set to.
+    """
+    now = [0.0]
+    monkeypatch.setattr("nodelang.baboom_work_presence.windows_show_animations", lambda: True)
+    monkeypatch.setattr(native, "time", SimpleNamespace(
+        monotonic=lambda: now[0], time=native.time.time, localtime=native.time.localtime))
+    return now
+
+
+def _drawn(window, point):
+    """The pixel he is drawn with at this spot of his box right now (the box floats; the spot floats with it)."""
+    window._advance_look()
+    return window.grab().toImage().pixelColor(point + QPoint(0, window._look_phase()["float"]))
+
+
+def _is(colour, token, strength):
+    """This drawn pixel is the THEME colour (black for None) at this strength."""
+    wanted = QColor(native.THEME[token]) if token else QColor(0, 0, 0)
+    return (abs(colour.alphaF() - strength) <= 0.04
+            and all(abs(a - b) <= 6 for a, b in zip(colour.getRgb()[:3], wanted.getRgb()[:3])))
+
+
+def test_the_ground_under_baboom_is_his_state_and_the_badge_is_homes_own_count(tmp_path, monkeypatch):
+    """Design row 20: rest, listening (cyan), working (accent, 1.4 s pulse), needs you (warn, 0.9 s pulse, count).
+
+    Every state is read from the app: the page's own count of what needs him and his open panel (follow_app,
+    as window_commands reports them), and the Workshop rows the companion already reads. None is a constant.
+    """
+    now = _clock(monkeypatch)
+    court = _with_archhub(tmp_path)
+    window, look = court.window, native.LOOK_NODE["params"]
+    badge = window._state_badge
+    ground = lambda: _drawn(window, window._look_rects()[0].center())
+    try:
+        window._greeting = False
+        window.refresh()
+        assert window._look == "rest" and _is(ground(), None, 0.45), "rest: the neutral shadow"
+        assert not badge.isVisible()
+
+        window.follow_app(APP, _composer(APP), (), (LEFT, RIGHT), 0, True)       # the page: his panel is open
+        assert window._look == "listening" and _is(ground(), "cyan", 0.75)
+
+        window.follow_app(APP, _composer(APP), (), (LEFT, RIGHT), 0, False)
+        window._work_rows = lambda: [{"id": "t1", "status": "WIP", "title": "Index the sheets"}]   # an agent works
+        window.refresh()
+        assert window._look == "working" and _is(ground(), "accent", 0.7)
+        now[0] = 0.7                                                             # half of the 1.4 s pulse
+        assert look["pulse_ms"]["working"] == 1400 and _is(ground(), "accent", 0.7 * 0.45)
+
+        now[0] = 0.0
+        window.follow_app(APP, _composer(APP), (), (LEFT, RIGHT), 3, False)      # Home counts three that need him
+        assert window._look == "needs" and _is(ground(), "warn", 0.8), "what needs him outranks the work"
+        now[0] = 0.45                                                            # half of the 0.9 s pulse
+        assert look["pulse_ms"]["needs"] == 900 and _is(ground(), "warn", 0.8 * 0.45)
+        now[0] = 0.0
+        window._advance_look()
+        box, ring = window._sprite_rect, look["badge_ring_px"]
+        assert badge.isVisible() and badge.text() == "3"
+        assert badge.accessibleName() == "BABOOM needs you (3)"
+        assert (badge.width() - 2 * ring, badge.height() - 2 * ring) == (18, 18)
+        assert badge.y() + ring == box.y() + box.height() - 100 + 4, "4 px from the top of his 80 x 100 box"
+        assert badge.x() + badge.width() - ring == box.x() + box.width() - 6, "6 px from its right"
+        assert native.THEME["warn"] in badge.styleSheet()
+
+        window._work_rows = lambda: []
+        window.follow_app(APP, _composer(APP), (), (LEFT, RIGHT), 0, False)
+        assert window._look == "rest" and not badge.isVisible(), "nothing waits: no badge, no glow"
+        assert badge.accessibleName() == "BABOOM needs you"
+        assert _stands(window) == _beside(APP), "he stood where he stands through every state"
+        assert court.seen.stolen == []
+    finally:
+        _close(court)
+
+
+def test_baboom_floats_three_pixels_and_carries_the_live_dot_while_he_can_answer(tmp_path, monkeypatch):
+    """Design row 20: the 8 px cyan live dot with its 2 s pulse, the 3 px 3.6 s float, in the 80 x 100 box."""
+    now = _clock(monkeypatch)
+    court = _with_archhub(tmp_path, transport=_BrainUp())
+    window, look = court.window, native.LOOK_NODE["params"]
+    try:
+        window._greeting = False
+        window.refresh()
+        box, (ground, dot) = window._sprite_rect, window._look_rects()
+        foot = box.y() + box.height()
+        # His box: 80 x 100 with the figure at its foot; the 46 x 9 glow is centred and reaches 2 px under his feet.
+        assert (window.width(), window.height(), box.y()) == (80, 100 + 2, 100 - 87)
+        assert (ground.width(), ground.height(), ground.y() + ground.height()) == (46, 9, foot + 2)
+        assert ground.x() - box.x() == box.x() + box.width() - (ground.x() + ground.width())
+        assert _stands(window) == _beside(APP) and window.geometry().bottom() < _composer(APP).y, "clear of the composer"
+
+        # The live dot: 8 px, cyan, 10 px from the top and 8 px from the right of his box.
+        assert window._dot_shown(), "his brain is up and his panel is closed"
+        centre = dot.center()
+        assert _is(_drawn(window, centre), "cyan", 1.0)
+        image = window.grab().toImage()
+        across = [x for x in range(dot.left(), dot.right() + 1) if image.pixelColor(x, centre.y()).alphaF() > 0.5]
+        assert len(across) == look["dot_px"] == 8
+        assert (across[0], across[-1] + 1) == (box.x() + box.width() - 8 - 8, box.x() + box.width() - 8)
+        down = [y for y in range(dot.top(), dot.bottom() + 1) if image.pixelColor(centre.x(), y).alphaF() > 0.5]
+        assert down[0] == foot - 100 + 10
+        # Its ring grows to 6 px and fades over 70 % of 2 s, then returns.
+        assert look["dot_pulse_ms"] == 2000
+        assert [native.baboom_look_phase(ms, "rest")["ring_px"] for ms in (0, 1400, 2000)] == [0, 6, 0]
+        now[0] = 0.7
+        assert 0.2 < _drawn(window, centre + QPoint(6, 0)).alphaF() < 0.4, "the ring, half grown, half faded"
+
+        # The float: 3 px up and back in 3.6 s, read off the clock; the badge and the dot ride with him.
+        floats = [native.baboom_look_phase(ms, "rest")["float"] for ms in range(0, 3601, 100)]
+        assert (min(floats), max(floats), floats[0], floats[-1], floats[18]) == (-3, 0, 0, 0, -3)
+        column = box.x() + box.width() // 2
+        top = lambda picture: next(y for y in range(picture.height()) if picture.pixelColor(column, y).alpha() == 255)
+        now[0] = 0.0
+        window._advance_look()
+        standing = top(window.grab().toImage())
+        now[0] = 1.8
+        window._advance_look()
+        assert standing - top(window.grab().toImage()) == look["float_px"] == 3
+        assert _stands(window) == _beside(APP), "the float is drawn; where he stands does not change"
+        mask = window.mask()
+        assert mask.contains(ground.center()) and mask.contains(centre) and mask.contains(QPoint(column, standing - 3)), \
+            "the glow, the dot and the reach of his float are inside what the window shows"
+
+        # It runs on the companion's own Qt timer, and not at all when motion is reduced or ArchHub is away.
+        assert window._look_timer.isActive() and window._look_timer.interval() == look["frame_ms"]
+        assert look["frame_ms"] >= 200, "decorative motion needs at most five ticks per second"
+        dirty = []
+        with monkeypatch.context() as motion:
+            motion.setattr(window, "update", lambda *rects: dirty.append(rects))
+            now[0] = 1.81   # same integer sprite position, only the live dot changed
+            window._advance_look()
+        assert dirty == [(dot.translated(0, -3),)]
+        window._reduced_motion = True
+        window.refresh()
+        assert not window._look_timer.isActive() and window._look == "rest"
+        assert window._look_phase()["float"] == 0, "reduced motion: his state, drawn still"
+        window._reduced_motion = None
+        window.follow_app(APP, _composer(APP), (), (LEFT, RIGHT), 0, True)      # his panel is open
+        assert not window._dot_shown(), "the dot hides while his panel is open"
+        window.follow_app(None, None, (), (LEFT, RIGHT))                        # ArchHub put away
+        court.app.processEvents()
+        assert window._look is None and not window._look_timer.isActive()
+        assert (window.width(), window.height()) == (56, 56), "the small desktop glyph is as it was"
+    finally:
+        _close(court)
+
+
+def test_the_dot_stays_off_while_his_brain_is_not_answering(tmp_path):
+    """No brain state in the app's frame: he does not claim he can answer."""
+    court = _with_archhub(tmp_path)
+    try:
+        assert court.window._look == "rest" and not court.window._dot_shown()
     finally:
         _close(court)
 
@@ -387,6 +558,9 @@ def test_the_follower_tells_baboom_of_every_move_hide_and_page_report(tmp_path):
         studio.companionHome([400.0, 600.0, 640.0, 60.0], [[900.0, 500.0, 40.0, 40.0], ["x", 1, 2, 3], [1.0, 2.0, 3.0]])
         assert told[-1][1] == Rect(here.x + 500, here.y + 750, 800, 75), "page pixels times the page zoom, from the window's corner"
         assert told[-1][2] == [Rect(here.x + 1125, here.y + 625, 50, 50)]
+        assert told[-1][4:] == (0, False), "before the page counts: nothing needs him, his panel is closed"
+        studio.companionSees(3, True)
+        assert told[-1][4:] == (3, True), "Home's own count of what needs him and his open panel come along"
         window.move(300, 100)
         app.processEvents()
         assert (told[-1][0].x, told[-1][0].y) == (window.geometry().x(), window.geometry().y()) != (here.x, here.y)
@@ -402,6 +576,7 @@ def test_the_follower_tells_baboom_of_every_move_hide_and_page_report(tmp_path):
         # Another page in the same view cannot move him.
         before = len(told)
         commands("/elsewhere")[1].companionHome([1.0, 1.0, 10.0, 10.0], [])
+        commands("/elsewhere")[1].companionSees(9, True)
         assert len(told) == before
     finally:
         del follows

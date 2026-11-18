@@ -10,6 +10,7 @@ from __future__ import annotations
 from .settings_owner import THEME
 
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import hashlib
 from ctypes import wintypes
@@ -35,11 +36,6 @@ from .baboom_native_visual import (
     baboom_compact_message_size,
     baboom_sprite_source,
     project_baboom_native_visual_frame,
-)
-from .baboom_native_voice import (
-    BaboomVoiceCancelled,
-    BaboomVoiceError,
-    BaboomVoiceInput,
 )
 from .baboom_speech import compose_baboom_speech, plain_count, plain_title
 from .baboom_persona import speech
@@ -391,6 +387,37 @@ GREETING_NODE = {"id": "baboom.greeting", "params": {
     "after_ms": 1200, "for_ms": 8000,
     "text": "Hi, I'm BABOOM. Ask me about ArchHub or your office standard."}}
 
+# How he is drawn while he stands in ArchHub (spec 5: states, live dot, float, badge), as measured on the design
+# prototype: an 80 x 100 box with the figure at its foot, a 46 x 9 ground glow 2 px below it, an 8 px live dot,
+# an 18 px count badge, a 3 px float. A glow is a THEME colour and its strength; rest is the neutral shadow.
+LOOK_NODE = {"id": "baboom.look", "params": {
+    "box_height": 100, "ground": (46, 9), "ground_drop": 2, "rest_alpha": 0.45,
+    "glow": {"working": ("accent", 0.7), "needs": ("warn", 0.8), "listening": ("cyan", 0.75)},
+    "pulse_ms": {"working": 1400, "needs": 900}, "pulse_dim": 0.45, "pulse_squeeze": 0.8,
+    "dot_px": 8, "dot_top": 10, "dot_right": 8, "dot_ring_px": 6, "dot_ring_alpha": 0.6, "dot_ring_turn": 0.7,
+    "dot_pulse_ms": 2000, "float_px": 3, "float_ms": 3600,
+    "badge_px": 18, "badge_top": 4, "badge_right": 6, "badge_pad": 5, "badge_ring_px": 2, "frame_ms": 200}}
+_WORKING_STATES = ("thinking", "editing", "testing")
+
+
+def baboom_ground_state(*, needs: int, working: bool, listening: bool) -> str:
+    """The ground he stands on (spec 5, States): what needs you, then work, then listening, then rest."""
+    return "needs" if needs > 0 else "working" if working else "listening" if listening else "rest"
+
+
+def baboom_look_phase(now_ms: float, state: str) -> dict:
+    """Where each of his motions is at this moment: the float, the glow pulse, the live dot's ring. Pure."""
+    import math
+    look = LOOK_NODE["params"]
+    wave = lambda period: (1 - math.cos(2 * math.pi * (now_ms % period) / period)) / 2   # 0 -> 1 -> 0, eased
+    pulse = wave(look["pulse_ms"][state]) if state in look["pulse_ms"] else 0.0
+    turn, at = look["dot_ring_turn"], (now_ms % look["dot_pulse_ms"]) / look["dot_pulse_ms"]
+    spread = at / turn if at < turn else (1 - at) / (1 - turn)                           # the ring grows, then returns
+    return {"float": -round(look["float_px"] * wave(look["float_ms"])),
+            "glow_alpha": 1 - (1 - look["pulse_dim"]) * pulse, "glow_width": 1 - (1 - look["pulse_squeeze"]) * pulse,
+            "ring_px": look["dot_ring_px"] * spread, "ring_alpha": look["dot_ring_alpha"] * (1 - spread)}
+
+
 # A poll can land a few seconds late on a busy machine; that is not a dead server.
 _FRAME_GRACE_SECONDS = 20.0
 class BaboomNativeCompanionController:
@@ -617,33 +644,6 @@ _MENU_STYLE = _compose_menu_style()
 _MENU_SHADOW_RGBA = (0, 0, 0, 97)
 
 
-def _baboom_mic_icon(colour: str, size: int = 18) -> Any:
-    """The lucide 'mic' glyph (lucide 1.25.0, ISC) as a QIcon in one THEME colour.
-
-    The Talk control is an icon, not a word; its accessible name still carries
-    "Talk". The colour is a THEME token passed in, so no colour is written
-    literally in this module.
-    """
-    from PyQt6.QtCore import QByteArray, Qt
-    from PyQt6.QtGui import QIcon, QPainter, QPixmap
-    from PyQt6.QtSvg import QSvgRenderer
-
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"'
-        ' stroke="%s" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-        '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>'
-        '<path d="M19 10v2a7 7 0 0 1-14 0v-2"/>'
-        '<line x1="12" x2="12" y1="19" y2="22"/></svg>'
-    ) % colour
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    renderer.render(painter)
-    painter.end()
-    return QIcon(pixmap)
-
-
 def _silence_said(seconds: float) -> str:
     minutes = int(seconds // 60)
     span = "under a minute" if minutes < 1 else "%d minute%s" % (minutes, "" if minutes == 1 else "s")
@@ -735,7 +735,6 @@ def create_baboom_native_companion_window(
     controller: BaboomNativeCompanionController,
     *,
     on_response: Callable[[Mapping[str, object]], None] | None = None,
-    voice_input: BaboomVoiceInput | None = None,
     position_path: Path | None = None,
     on_stop: Callable[[], None] | None = None,
     on_open: Callable[[], None] | None = None,
@@ -751,8 +750,6 @@ def create_baboom_native_companion_window(
         raise ValueError("BABOOM native companion response callback is invalid")
     if on_open_task is not None and not callable(on_open_task):
         raise ValueError("BABOOM task callback is invalid")
-    if voice_input is not None and type(voice_input) is not BaboomVoiceInput:
-        raise ValueError("BABOOM native companion voice input is invalid")
     if reduced_motion is not None and type(reduced_motion) is not bool:
         raise ValueError("BABOOM reduced motion parameter is invalid")
     if work_rows is not None and not callable(work_rows):
@@ -763,9 +760,9 @@ def create_baboom_native_companion_window(
         from .baboom_work_presence import read_workshop_task_rows
         work_rows = read_workshop_task_rows
     try:
-        from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
+        from PyQt6.QtCore import QEvent, QIODevice, QObject, QPoint, QRect, QSaveFile, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
         from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QImage, QPainter, QPixmap, QColor
-        from PyQt6.QtWidgets import QLineEdit, QLabel, QMenu, QSystemTrayIcon, QToolButton, QWidget
+        from PyQt6.QtWidgets import QLabel, QMenu, QSystemTrayIcon, QToolButton, QToolTip, QWidget
     except ImportError as exc:  # pragma: no cover - exercised by desktop packaging
         raise RuntimeError("BABOOM native companion requires PyQt6") from exc
 
@@ -791,10 +788,22 @@ def create_baboom_native_companion_window(
             except Exception as refused:  # a Qt slot must not raise; the card shows why
                 self.settled.emit(binding, str(refused))
 
+    class PositionWriter(QObject):
+        failed = pyqtSignal(int)
+
+        def save(self, path, x, y, revision):
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                target = QSaveFile(str(path))
+                data = json.dumps({"x": x, "y": y}).encode("utf-8")
+                if not target.open(QIODevice.OpenModeFlag.WriteOnly) or target.write(data) != len(data) or not target.commit():
+                    raise OSError(target.errorString())
+            except OSError:
+                self.failed.emit(revision)
+
     class CompanionWindow(QWidget):
         response_ready = pyqtSignal(object)
         execution_ready = pyqtSignal(object)
-        voice_ready = pyqtSignal(object)
         progress_ready = pyqtSignal(object)
 
         def __init__(self) -> None:
@@ -852,18 +861,22 @@ def create_baboom_native_companion_window(
             self._sessions_directory = sessions_directory
             self._skill_offer: dict[str, str] | None = None
             self._position_path = position_path
+            self._position_revision = 0
+            self._position_writer = PositionWriter()
+            self._position_writer.failed.connect(self._position_save_failed)
+            self._position_jobs = ThreadPoolExecutor(max_workers=1, thread_name_prefix="baboom-position")
             # With ArchHub (stand_with): its window, the pin setting, the composer door, and where the
             # window, its composer, the busy boxes and the screens are (follow_app).
             self._owner = self._pin = self._on_ask = self._beside = self._stood = self._app_screen = None
             self._pinned = False
             self._greeting = None  # None: not arrived yet; a time: arrived then; False: said or dismissed
-            self._voice_input = voice_input or BaboomVoiceInput()
-            self._voice_cancel: threading.Event | None = None
+            # What the page shows (follow_app): how many rows need him, his panel open; then how he is drawn now.
+            self._needs, self._listening, self._look, self._phase = 0, False, None, None
             self._companion_font = companion_font()
             # Every companion colour comes from the product THEME, resolved once
             # here (lazy, so the renderer never hard-imports the application at
             # module load). No colour is hand-typed in this file. THEME['bg_raised']
-            # is the one companion surface -- report, reply box and act panel -- so
+            # is the one companion surface -- report and act panel -- so
             # nothing behind the words is ever the desktop showing through.
             self._theme = THEME
             self._report = QLabel(self)
@@ -877,44 +890,6 @@ def create_baboom_native_companion_window(
                 "border-radius:0;font-size:13px;line-height:20px;"
                 % (THEME["bg_raised"], THEME["ink"])
             )
-            self._input = QLineEdit(self)
-            self._input.setFont(self._companion_font)
-            self._input.setPlaceholderText("Ask ArchHub…")
-            self._input.setStyleSheet(
-                "background:%s;color:%s;border:0;padding:12px;"
-                "border-radius:0;font-size:13px;"
-                % (THEME["bg_raised"], THEME["ink"])
-            )
-            self._input.returnPressed.connect(self._submit_input)
-            self._input.installEventFilter(self)
-            self._input.hide()
-            # Talk is the lucide mic, not a word: an icon reads at a glance and
-            # the accessible name carries "Talk" for the screen reader. It turns
-            # accent while recording so the founder can see it is listening.
-            from PyQt6.QtCore import QSize
-            self._talk_idle_icon = _baboom_mic_icon(THEME["ink_muted"])
-            self._talk_recording_icon = _baboom_mic_icon(THEME["accent"])
-            self._talk = QToolButton(self)
-            self._talk.setText("")
-            self._talk.setIcon(self._talk_idle_icon)
-            self._talk.setIconSize(QSize(18, 18))
-            self._talk.setToolTip("Speak one BABOOM command")
-            self._talk.setAccessibleName("Talk")
-            self._talk.setStyleSheet(
-                "background:transparent;border:0;padding:0 4px;"
-            )
-            self._talk.clicked.connect(self._toggle_voice_capture)
-            self._talk.hide()
-            self._send = QToolButton(self)
-            self._send.setText("Ask")
-            self._send.setAccessibleName("Ask ArchHub")
-            self._send.setToolTip("Ask ArchHub · Enter")
-            self._send.setStyleSheet("background:%s;color:%s;border:0;padding:0 8px;font-size:13px;font-weight:600;"
-                % (THEME["accent"], THEME["on_fill"]))
-            self._send.clicked.connect(self._submit_input)
-            self._input.textChanged.connect(lambda text: self._send.setEnabled(bool(text.strip()) and not self._busy))
-            self._send.setEnabled(False)
-            self._send.hide()
             self._connection_status = QLabel("", self)
             self._connection_status.setAccessibleName("ArchHub connection status")
             self._connection_status.setStyleSheet("background:%s;border-radius:4px;" % THEME["warn"])
@@ -960,10 +935,14 @@ def create_baboom_native_companion_window(
             self._state_badge = QLabel("!", self)
             self._state_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._state_badge.setAccessibleName("BABOOM needs you")
-            self._state_badge.setStyleSheet(
+            look = LOOK_NODE["params"]
+            self._badge_styles = (
                 "background:%s;color:%s;border:0;border-radius:8px;font-size:11px;font-weight:600;"
-                % (THEME["accent"], THEME["on_fill"])
-            )
+                % (THEME["accent"], THEME["on_fill"]),
+                "background:%s;color:%s;border:%dpx solid %s;border-radius:%dpx;font-size:11px;font-weight:600;"
+                % (THEME["warn"], THEME["on_fill"], look["badge_ring_px"], THEME["bg"],
+                   look["badge_px"] // 2 + look["badge_ring_px"]))
+            self._state_badge.setStyleSheet(self._badge_styles[0])
             self._state_badge.hide()
             self._skill_run = QToolButton(self)
             self._skill_run.setText("Run")
@@ -1002,9 +981,12 @@ def create_baboom_native_companion_window(
             # restless. It breathes, it does not fidget.
             self._animation_timer.setInterval(900)
             self._animation_timer.timeout.connect(self._advance_animation)
-            # A single click opens the reply box. The same interval Windows
+            self._look_timer = QTimer(self)  # his float, glow pulse and live dot: paint only, from the clock
+            self._look_timer.setInterval(LOOK_NODE["params"]["frame_ms"])
+            self._look_timer.timeout.connect(self._advance_look)
+            # A single click asks BABOOM. The same interval Windows
             # uses for a double-click lets that second click open ArchHub
-            # instead, without the box flashing open first.
+            # instead, without the composer taking the caret first.
             from PyQt6.QtWidgets import QApplication
             self._quiet_click = QTimer(self)
             self._quiet_click.setSingleShot(True)
@@ -1016,7 +998,6 @@ def create_baboom_native_companion_window(
             self._quiet_click.timeout.connect(self._open_from_click)
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
-            self.voice_ready.connect(self._apply_voice)
             self.progress_ready.connect(self._apply_progress)
             # The last host seen in front, and when: the right-click that opens
             # the menu activates this window, so the menu cannot ask then.
@@ -1026,7 +1007,7 @@ def create_baboom_native_companion_window(
             self._tray_menu = QMenu(self)
             self._tray_menu.setStyleSheet(_MENU_STYLE)
             self._tray_open = self._tray_menu.addAction("Open ArchHub", self._open_archhub)
-            self._tray_menu.addAction("Ask BABOOM…", self._open_interaction)
+            self._tray_menu.addAction("Ask BABOOM…", lambda: self._open_interaction())
             self._tray_menu.addAction("BABOOM menu…", self._open_menu)
             self._tray_menu.addSeparator()
             self._tray_menu.addAction("Stop BABOOM for this launch", self.stop_baboom)
@@ -1093,12 +1074,16 @@ def create_baboom_native_companion_window(
                 self._projection_timer.stop()
                 self._reaction_timer.stop()
                 self._animation_timer.stop()
+                self._look_timer.stop()
                 return
             self._projection_timer.setInterval(750 if self._timers_active() else 5000)
             if not self._projection_timer.isActive():
                 self._projection_timer.start()
             if not self._reaction_timer.isActive():
                 self._reaction_timer.start()
+            moving = self._look is not None and self.isVisible() and not self.isMinimized() and not self._motion_reduced()
+            if moving != self._look_timer.isActive():
+                self._look_timer.start() if moving else self._look_timer.stop()
             if not self.isVisible() or self.isMinimized() or self._motion_reduced() or not self._timers_active():
                 self._animation_timer.stop()
                 return
@@ -1190,6 +1175,13 @@ def create_baboom_native_companion_window(
                 badge = presence.badge
             self._state_bubble.hide()
             self._state_badge.hide()
+            # In ArchHub he is the designed figure; away from it he stays the small desktop glyph.
+            self._look = baboom_ground_state(
+                needs=self._needs or int(badge), listening=self._listening,
+                working=presence is not None and presence.state in _WORKING_STATES,
+            ) if self._beside is not None and self._beside[0] is not None else None
+            look = LOOK_NODE["params"]
+            head, drop = (look["box_height"] - height, look["ground_drop"]) if self._look is not None else (0, 0)
             bubble_w = bubble_h = 0
             if text:
                 from html import escape
@@ -1223,19 +1215,112 @@ def create_baboom_native_companion_window(
                 origin_x, origin_y = x, y
                 sprite_x = sprite_y = 0
                 win_w, win_h = width, height
-            self.setGeometry(origin_x, origin_y, win_w, win_h)
-            self._sprite_rect = QRect(sprite_x, sprite_y, width, height)
+            # His box has room above him for the live dot and the badge, and below his feet for the ground glow.
+            self.setGeometry(origin_x, origin_y - head, win_w, win_h + head + drop)
+            self._sprite_rect = QRect(sprite_x, sprite_y + head, width, height)
             self._connection_status.setGeometry(
                 self._sprite_rect.right() - 12, self._sprite_rect.bottom() - 12, 8, 8
             )
             if text:
-                self._state_bubble.setGeometry(bubble_x, bubble_y, bubble_w, bubble_h)
+                self._state_bubble.setGeometry(bubble_x, bubble_y + head, bubble_w, bubble_h)
                 self._state_bubble.show()
                 self._state_bubble.raise_()
-            if badge:
+            style = self._badge_styles[self._look is not None]
+            if self._state_badge.styleSheet() != style:
+                self._state_badge.setStyleSheet(style)
+            count = self._needs if self._look is not None else 0
+            badge_text = str(count) if count else "!"
+            if self._state_badge.text() != badge_text:
+                self._state_badge.setText(badge_text)
+                self._state_badge.setAccessibleName(f"BABOOM needs you ({count})" if count else "BABOOM needs you")
+            if self._look is not None:
+                # The number is Home's own count of what needs him; an agent waiting with no row yet keeps the mark.
+                self._float_badge()
+                badge = badge or self._needs > 0
+            elif badge:
                 self._state_badge.setGeometry(self._sprite_rect.right() - 16, self._sprite_rect.top(), 16, 16)
+            if badge:
                 self._state_badge.show()
                 self._state_badge.raise_()
+
+        def _float_badge(self) -> None:
+            """The count badge, top right of his box; it floats with him."""
+            look, box = LOOK_NODE["params"], self._sprite_rect
+            ring, size = look["badge_ring_px"], look["badge_px"]
+            self._state_badge.ensurePolished()
+            width = max(size, self._state_badge.fontMetrics().horizontalAdvance(self._state_badge.text()) + 2 * look["badge_pad"])
+            top = box.y() + box.height() - look["box_height"] + look["badge_top"] + self._look_phase()["float"]
+            self._state_badge.setGeometry(box.x() + box.width() - look["badge_right"] - width - ring, top - ring,
+                                          width + 2 * ring, size + 2 * ring)
+
+        def _look_rects(self) -> list:
+            """What the look paints outside the figure, in window pixels: the ground glow, and the live dot with its ring."""
+            look, box = LOOK_NODE["params"], self._sprite_rect
+            (width, height), reach, size = look["ground"], look["dot_ring_px"], look["dot_px"]
+            foot = box.y() + box.height()
+            return [QRect(box.x() + (box.width() - width) // 2, foot + look["ground_drop"] - height, width, height),
+                    QRect(box.x() + box.width() - look["dot_right"] - size - reach,
+                          foot - look["box_height"] + look["dot_top"] - reach, size + 2 * reach, size + 2 * reach)]
+
+        def _dot_shown(self) -> bool:
+            """The live dot: he can answer (the brain is up) and his panel is closed."""
+            return (self._look is not None and not self._listening
+                    and self._frame is not None and self._frame.brain_state in ("lit", "dim"))
+
+        def _look_phase(self) -> dict:
+            """Where his motions are now; with the look timer stopped (reduced motion) he holds the first frame."""
+            if self._phase is not None and self._look_timer.isActive():
+                return self._phase
+            return baboom_look_phase(0, self._look)
+
+        def _advance_look(self) -> None:
+            """One step of his float, glow pulse and live dot: paint only, from the clock; no read, no layout."""
+            if self._look is None or self._dragged:
+                return
+            phase, shown = baboom_look_phase(time.monotonic() * 1000, self._look), self._phase
+            self._phase = phase
+            ground, dot = self._look_rects()
+            lift = LOOK_NODE["params"]["float_px"]
+            if shown is None or phase["float"] != shown["float"]:
+                self._float_badge()
+                self.update(self._sprite_rect.united(ground).united(dot).adjusted(0, -lift, 0, 0))
+            else:
+                if self._dot_shown():
+                    self.update(dot.translated(0, phase["float"]))
+                if self._look in LOOK_NODE["params"]["pulse_ms"]:
+                    self.update(ground.translated(0, phase["float"]))
+
+        def _paint_look(self, painter) -> None:
+            """Draw him as designed: floating, the live dot at his shoulder, the ground glow of his state under his feet."""
+            from PyQt6.QtCore import QPointF, QRectF
+            from PyQt6.QtGui import QRadialGradient
+            look, phase = LOOK_NODE["params"], self._look_phase()
+            ground, dot = self._look_rects()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.translate(0, phase["float"])
+            painter.drawImage(self._sprite_rect, self._sprite)
+            if self._dot_shown():
+                colour, centre, radius = QColor(THEME["cyan"]), QRectF(dot).center(), look["dot_px"] / 2
+                ring = QColor(colour)
+                ring.setAlphaF(phase["ring_alpha"])
+                painter.setBrush(ring)
+                painter.drawEllipse(centre, radius + phase["ring_px"], radius + phase["ring_px"])
+                painter.setBrush(colour)
+                painter.drawEllipse(centre, radius, radius)
+            # The ground: neutral shadow at rest, his state's colour otherwise, strongest under him, gone at its edge.
+            token, strength = look["glow"].get(self._look, (None, look["rest_alpha"]))
+            core = QColor(THEME[token]) if token else QColor(Qt.GlobalColor.black)
+            core.setAlphaF(strength * phase["glow_alpha"])
+            edge = QColor(core)
+            edge.setAlpha(0)
+            glow = QRadialGradient(0, 0, 1)
+            glow.setColorAt(0.0, core)
+            glow.setColorAt(1.0, edge)
+            painter.translate(ground.x() + ground.width() / 2, ground.y() + ground.height() / 2)
+            painter.scale(ground.width() / 2 * phase["glow_width"], ground.height() / 2)
+            painter.setBrush(glow)
+            painter.drawEllipse(QPointF(0, 0), 1, 1)
 
         def _idle_presence(self, screen, frame) -> None:
             self._stood = sprite = self._home()
@@ -1259,8 +1344,7 @@ def create_baboom_native_companion_window(
             self._sprite = render_baboom_native_sprite(self._atlas, self._frame)
             self._message_rect = None
             for widget in (
-                self._report, self._input, self._talk, self._send,
-                self._confirm, self._cancel, self._skill_run,
+                self._report, self._confirm, self._cancel, self._skill_run,
             ):
                 widget.hide()
             if self._approval is not None:
@@ -1303,14 +1387,13 @@ def create_baboom_native_companion_window(
             self._projection_timer.stop()
             self._reaction_timer.stop()
             self._animation_timer.stop()
+            self._look_timer.stop()
             self._tray.hide()
 
         def hide_until_next_launch(self) -> None:
             """Dismiss the projection without claiming to stop the host."""
             self._dismissed = True
             self.stop_projection()
-            if self._voice_cancel is not None:
-                self._voice_cancel.set()
             self.hide()
 
         def stop_baboom(self) -> None:
@@ -1326,21 +1409,25 @@ def create_baboom_native_companion_window(
             """Belong to the ArchHub window: beside its composer, at its place among the windows.
 
             ``pin`` is the companion setting (its "pinned" is on while BABOOM stays on a spot he
-            dragged it to); ``on_ask`` points ArchHub's one composer at BABOOM.
+            dragged it to); ``on_ask`` points ArchHub's one composer at BABOOM, with the words it is given.
             """
             self._owner, self._pin, self._on_ask = owner, pin, on_ask
             self._pinned = self._pin_on()
             self.winId()
 
-        def follow_app(self, app, composer=None, busy=(), screens=()) -> None:
+        def follow_app(self, app, composer=None, busy=(), screens=(), needs=0, listening=False) -> None:
             """Where ArchHub is now: its window, its composer, the busy boxes above it, the screens.
+
+            ``needs`` is Home's own count of what needs him and ``listening`` is true while BABOOM's
+            panel is open; both are what the page reports, and both are nothing while ArchHub is away.
 
             ``app`` is None while the window is minimised or hidden to the tray. BABOOM stays on
             screen then (F277), small, in the bottom right corner of the screen ArchHub was last
             on, and is home beside the composer when ArchHub is shown again.
             """
-            had = self._beside
+            had, saw = self._beside, (self._needs, self._listening)
             self._beside = (app, composer, tuple(busy), tuple(screens))
+            self._needs, self._listening = (max(0, int(needs)), bool(listening)) if app is not None else (0, False)
             if had is not None and had[0] is None and app is not None and self._pinned:
                 self._pin_here(False)
             if had is None or (had[0] is None) != (app is None):
@@ -1351,7 +1438,8 @@ def create_baboom_native_companion_window(
                 # That hid him; shown again for ArchHub's sake he must not take the keyboard, his own box open or not.
                 self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             before, now = self._stood, self._home()
-            if had is None or (had[0] is None) != (app is None) or (before is None) != (now is None):
+            if (had is None or (had[0] is None) != (app is None) or (before is None) != (now is None)
+                    or saw != (self._needs, self._listening)):
                 self.refresh()
             elif now is not None and self.isVisible() and not self._dragged:
                 # ArchHub moved or resized: go along now, without a whole projection for every step of a drag.
@@ -1559,11 +1647,12 @@ def create_baboom_native_companion_window(
                 return
             self._state_bubble.hide()
             self._state_badge.hide()
+            self._look = None  # with a report open he is drawn plain, beside his words
             if (
                 self._transient_revision is not None
                 and self._transient_revision != frame.revision
                 and self._pending_task_utterance is None
-                and not self._input.isVisible() and not self._busy
+                and not self._busy
                 and not self._result_visible
                 and not (self._approval is not None and self._approval.isVisible())
             ):
@@ -1587,15 +1676,12 @@ def create_baboom_native_companion_window(
             report = self._transient_report if not stale else None
             if stale:
                 self._interaction_requested = False
-                self._input.hide()
                 self._pending_task_utterance = None
                 self._confirm.hide()
                 self._cancel.hide()
                 if self._approval is not None:
                     self._approval.hide()
                 self._approval_binding = ""
-            if report is None and self._interaction_requested:
-                report = "Ask ArchHub…"
             # With ArchHub the report opens beside him inside the ArchHub window, not across the screen.
             layout = self._layout_for_report(frame, screen if home is None else self._beside[0], report)
             self._stood = home
@@ -1629,9 +1715,6 @@ def create_baboom_native_companion_window(
             self._connection_status.raise_()
             if layout.message is None or report is None:
                 self._report.hide()
-                self._input.hide()
-                self._talk.hide()
-                self._send.hide()
                 self._confirm.hide()
                 self._cancel.hide()
                 self._skill_run.hide()
@@ -1654,25 +1737,13 @@ def create_baboom_native_companion_window(
                         message_rect.width(), message_rect.height() + 34,
                     )
                 self._message_rect = message_rect
-                if not self._input.isVisible():
-                    self._report.setText(speech(report))
-                    self._report.setGeometry(panel_rect)
-                    self._report.show()
-                self._input.setGeometry(message_rect)
+                self._report.setText(speech(report))
+                self._report.setGeometry(panel_rect)
+                self._report.show()
                 if self._approval is not None and self._approval.isVisible():
                     self._approval.setGeometry(message_rect)
                     self._report.hide()
                     self._approval.raise_()
-                if self._input.isVisible():
-                    self._input.setTextMargins(0, 0, 94, 0)
-                    self._talk.setGeometry(
-                        message_rect.right() - 94, message_rect.top() + 10, 32, 32
-                    )
-                    self._talk.show()
-                    self._talk.raise_()
-                    self._send.setGeometry(message_rect.right() - 60, message_rect.top() + 10, 52, 32)
-                    self._send.show()
-                    self._send.raise_()
                 if self._confirm.isVisible():
                     band_y = panel_rect.bottom() - 28
                     self._confirm.setGeometry(
@@ -1730,7 +1801,9 @@ def create_baboom_native_companion_window(
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
             painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-            if self._sprite is not None and self._frame is not None:
+            if self._sprite is not None and self._frame is not None and self._look is not None:
+                self._paint_look(painter)
+            elif self._sprite is not None and self._frame is not None:
                 painter.drawImage(self._sprite_rect, self._sprite)
             painter.end()
 
@@ -1766,39 +1839,14 @@ def create_baboom_native_companion_window(
             if event.type() == QEvent.Type.WindowStateChange and not self._dismissed:
                 self._sync_resource_timers()
 
-        def _open_interaction(self) -> None:
-            """Show the ask box: BABOOM is listening."""
-            if self._frame is None or self._layout is None:
-                return
-            if self._busy:
-                return
-            self._details_open = True
-            self._send.setText("Ask")
-            self._input.setAccessibleDescription("")
-            self._input.setToolTip("")
-            self.setWindowTitle("BABOOM")
-            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
-            set_native_click_through(int(self.winId()), False)
-            self._interaction_generation += 1
-            self._result_visible = False
-            if self._approval is not None:
-                self._approval.hide()
-            self._approval_binding = ""
-            self._pending_task_utterance = None
-            self._confirm.hide()
-            self._cancel.hide()
-            self._skill_offer = None
-            self._skill_run.hide()
-            self._transient_report = None
-            self._transient_revision = None
-            self._interaction_requested = True
-            self.refresh()
-            if self._message_rect is None:
-                return
-            self._report.hide()
-            self._input.show()
-            self.refresh()
-            self._input.setFocus()
+        def _open_interaction(self, words: str = "") -> None:
+            """Ask BABOOM. ArchHub has one composer, so this points it at him, with any words to start from
+            (one-BABOOM spec 5b); he has no reply box of his own. With no ArchHub to stand with, it opens ArchHub."""
+            self._greeting = False
+            if self._on_ask is not None:
+                self._on_ask(words)
+            else:
+                self._open_archhub()
 
         def apply_approval(self, binding: str, decision: str) -> None:
             """Apply hook_decision.decide()'s Approve/Deny to the one review on screen."""
@@ -1819,22 +1867,12 @@ def create_baboom_native_companion_window(
             self._interaction_generation += 1
             self._result_visible = False
             self._busy = False
-            if self._voice_cancel is not None:
-                self._voice_cancel.set()
-                self._voice_cancel = None
-                self._talk.setEnabled(True)
-                self._talk.setIcon(self._talk_idle_icon)
             self._approval_binding = ""
             if self._approval is not None:
                 self._approval.hide()
             self._transient_report = None
             self._transient_revision = None
             self._pending_task_utterance = None
-            self._input.clear()
-            self._input.setEnabled(True)
-            self._input.hide()
-            self._talk.hide()
-            self._send.hide()
             self._confirm.hide()
             self._cancel.hide()
             self._skill_offer = None
@@ -1845,25 +1883,14 @@ def create_baboom_native_companion_window(
         def _save_position(self, x: int, y: int) -> None:
             if self._position_path is None:
                 return
-            try:
-                self._position_path.parent.mkdir(parents=True, exist_ok=True)
-                self._position_path.write_text(
-                    json.dumps({"x": int(x), "y": int(y)}), encoding="utf-8"
-                )
-            except OSError:
-                pass
+            self._position_revision += 1
+            self._position_jobs.submit(self._position_writer.save, self._position_path, x, y, self._position_revision)
 
-        def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt callback name
-            # Escape inside the ask box closes it, rather than leaving the
-            # founder with a text field and no way out.
-            if (
-                obj is self._input
-                and event.type() == QEvent.Type.KeyPress
-                and event.key() == Qt.Key.Key_Escape
-            ):
-                self._close_interaction()
-                return True
-            return super().eventFilter(obj, event)
+        @pyqtSlot(int)
+        def _position_save_failed(self, revision: int) -> None:
+            if revision == self._position_revision:
+                QToolTip.showText(self.mapToGlobal(self._sprite_rect.center()),
+                                  "Position couldn't be saved. Drag BABOOM again to retry.", self)
 
         def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             if event.key() == Qt.Key.Key_Escape:
@@ -1875,15 +1902,26 @@ def create_baboom_native_companion_window(
         # utterance the graph already answers or executes; nothing here is a
         # promise the runtime cannot keep.
         def _say(self, utterance: str) -> None:
-            self._open_interaction()
-            self._input.setText(utterance)
-            self._submit_input()
+            """Run one menu line; the answer opens in his report."""
+            if self._frame is None or self._layout is None or self._busy or not utterance.strip():
+                return
+            self._details_open = True
+            self.setWindowTitle("BABOOM")
+            set_native_click_through(int(self.winId()), False)
+            self._interaction_generation += 1
+            if self._approval is not None:
+                self._approval.hide()
+            self._approval_binding = ""
+            self._pending_task_utterance = None
+            self._confirm.hide()
+            self._cancel.hide()
+            self._skill_offer = None
+            self._skill_run.hide()
+            self._submit(utterance.strip())
 
         def _prefill(self, prefix: str) -> None:
-            self._open_interaction()
-            self._input.setText(prefix)
-            self._input.setFocus()
-            self._input.setCursorPosition(len(prefix))
+            """A menu line he finishes in his own words: the one composer, pointed at BABOOM, starting with them."""
+            self._open_interaction(prefix)
 
         def _open_cockpit(self) -> None:
             "Open the cockpit on the app's own session, never on a sign-in page."
@@ -2036,13 +2074,14 @@ def create_baboom_native_companion_window(
             self._projection_timer.stop()
             self._reaction_timer.stop()
             self._animation_timer.stop()
+            self._look_timer.stop()
             try:
                 menu.exec(event.globalPos())
             finally:
                 self._sync_resource_timers()
 
         def _pointer_hits(self, point) -> bool:
-            """A click counts only on the visible sprite or an open reply control."""
+            """A click counts only on the visible sprite or an open report control."""
             mask = self.mask()
             if mask.isEmpty():
                 return False
@@ -2058,28 +2097,28 @@ def create_baboom_native_companion_window(
                 self._sprite, self._sprite_rect.x(), self._sprite_rect.y()
             )
             for widget in (
-                self._report, self._input, self._talk, self._send,
-                self._confirm, self._cancel, self._connection_status,
+                self._report, self._confirm, self._cancel, self._connection_status,
                 self._state_bubble, self._state_badge, self._skill_run,
             ):
                 if widget.isVisible():
                     region = region.united(QRegion(widget.geometry()))
             if self._approval is not None and self._approval.isVisible():
                 region = region.united(QRegion(self._approval.geometry()))
+            if self._look is not None:
+                # A mask clips what it leaves out: the reach of his float, the ground glow and the live dot are his too.
+                reach = LOOK_NODE["params"]["float_px"]
+                region = region.united(region.translated(0, -reach))
+                for rect in self._look_rects()[:1 + self._dot_shown()]:
+                    region = region.united(QRegion(rect.adjusted(0, -reach, 0, 0)))
             if region.isEmpty():
                 return
             self.setMask(region)
 
         def _open_from_click(self) -> None:
-            """A quiet click that was not a double-click opens the reply box."""
+            """A quiet click that was not a double-click asks BABOOM: the one composer points at him."""
             if self._dragged or self._dismissed or self._stopped:
                 return
-            if self._input.isVisible() or self._transient_report is not None:
-                return
-            if self._on_ask is not None:
-                # ArchHub has one composer: the click points it at BABOOM (one-BABOOM spec 5b).
-                self._greeting = False
-                self._on_ask()
+            if self._transient_report is not None:
                 return
             self._open_interaction()
 
@@ -2100,7 +2139,7 @@ def create_baboom_native_companion_window(
             ):
                 delta = event.globalPosition().toPoint() - self._press_global
                 # A few pixels of travel separate a drag from a click, so a
-                # slightly shaky click still opens the ask box.
+                # slightly shaky click still asks BABOOM.
                 if self._dragged or delta.manhattanLength() > 4:
                     self._dragged = True
                     self._quiet_click.stop()
@@ -2121,7 +2160,7 @@ def create_baboom_native_companion_window(
                         controller.pin_sprite_origin(origin.x(), origin.y())
                         self._save_position(origin.x(), origin.y())
                     self.refresh()
-                elif self._input.isVisible() or self._transient_report is not None:
+                elif self._transient_report is not None:
                     self._quiet_click.stop()
                     self._close_interaction()
                 else:
@@ -2157,10 +2196,7 @@ def create_baboom_native_companion_window(
             self._details_open = True
             self._interaction_requested = True
             self._result_visible = False
-            self._input.hide()
             self._confirm.hide()
-            self._talk.hide()
-            self._send.hide()
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
             set_native_click_through(int(self.winId()), False)
             if match is None:
@@ -2194,7 +2230,6 @@ def create_baboom_native_companion_window(
             self._skill_offer = None
             self._skill_run.hide()
             self._cancel.hide()
-            self._input.hide()
             self._transient_report = text
             self._transient_revision = None
             self.refresh()
@@ -2220,10 +2255,7 @@ def create_baboom_native_companion_window(
             if local:
                 self._offer_dropped_file(Path(local))
 
-        def _submit_input(self) -> None:
-            utterance = self._input.text().strip()
-            if not utterance or self._busy:
-                return
+        def _submit(self, utterance: str) -> None:
             self._busy = True
             self._steps = {}
             self._result_visible = False
@@ -2231,13 +2263,11 @@ def create_baboom_native_companion_window(
             owner = id(controller._host._transport)
             self._submitted_utterance = utterance
             self._interaction_requested = False
-            self._input.setEnabled(False)
             self._transient_report = "Asking ArchHub…"
+            self._transient_revision = None
             self._report.setText(speech(self._transient_report))
             self._report.show()
-            self._input.hide()
-            self._talk.hide()
-            self._send.hide()
+            self.refresh()
 
             def resolve() -> None:
                 try:
@@ -2267,62 +2297,6 @@ def create_baboom_native_companion_window(
                                       else host_outcome([step]) or 'A tool completed.')
             self.refresh()
 
-        def _toggle_voice_capture(self) -> None:
-            if self._voice_cancel is not None:
-                self._voice_cancel.set()
-                self._talk.setEnabled(False)
-                return
-            cancel = threading.Event()
-            generation = self._interaction_generation
-            self._voice_cancel = cancel
-            self._input.setEnabled(False)
-            self._input.setPlaceholderText("Listening...")
-            self._talk.setIcon(self._talk_recording_icon)
-            self._talk.setAccessibleName("Stop")
-            self._talk.setToolTip("Stop listening")
-
-            def capture() -> None:
-                try:
-                    result: Mapping[str, object] = {
-                        "text": self._voice_input.capture_once(cancel=cancel)
-                    }
-                except BaboomVoiceCancelled:
-                    result = {"cancelled": True}
-                except BaboomVoiceError as exc:
-                    result = {"error": str(exc)}
-                self.voice_ready.emit({"generation": generation, "payload": result})
-
-            threading.Thread(
-                target=capture, name="baboom-native-voice", daemon=True
-            ).start()
-
-        def _apply_voice(self, result: Mapping[str, object]) -> None:
-            if self._dismissed or self._stopped:
-                return
-            if "generation" in result:
-                if result["generation"] != self._interaction_generation:
-                    return
-                result = result["payload"]
-            self._voice_cancel = None
-            self._talk.setEnabled(True)
-            self._talk.setIcon(self._talk_idle_icon)
-            self._talk.setAccessibleName("Talk")
-            self._talk.setToolTip("Speak one BABOOM command")
-            self._input.setEnabled(True)
-            self._input.setPlaceholderText("Reply or assign a task")
-            text = result.get("text")
-            if isinstance(text, str) and text.strip():
-                self._input.setText(text)
-                self._submit_input()
-                return
-            error = result.get("error")
-            if isinstance(error, str) and error:
-                self._transient_report = error
-                self._transient_revision = (
-                    self._frame.revision if self._frame is not None else None
-                )
-            self.refresh()
-
         def _apply_response(self, result: Mapping[str, object]) -> None:
             if self._dismissed or self._stopped:
                 return
@@ -2338,26 +2312,6 @@ def create_baboom_native_companion_window(
             self._busy = False
             command = result.get("command")
             response = result.get("response")
-            if isinstance(response, Mapping) and response.get("kind") == "unavailable":
-                summary = str(response.get("summary") or "Message was not sent. Try again.")
-                self._result_visible = False
-                self._interaction_requested = True
-                self._transient_report = summary
-                self._input.setText(self._submitted_utterance)
-                self._input.setEnabled(True)
-                self._input.setAccessibleDescription(summary)
-                self._input.setToolTip(summary)
-                self._send.setText("Retry")
-                self._send.setEnabled(bool(self._submitted_utterance))
-                self._report.hide()
-                self._input.setVisible(self._details_open)
-                self.refresh()
-                if on_response is not None:
-                    on_response(result)
-                return
-            self._send.setText("Ask")
-            self._input.setAccessibleDescription("")
-            self._input.setToolTip("")
             if isinstance(response, Mapping) and response.get("kind") != "unavailable":
                 self._response_received_at = time.monotonic()
                 self._response_owner = id(controller._host._transport)
@@ -2423,8 +2377,6 @@ def create_baboom_native_companion_window(
                     self._cancel.show()
             if self._pending_task_utterance is None:
                 self._submitted_utterance = ""
-            self._input.clear()
-            self._input.setEnabled(True)
             self.refresh()
             if on_response is not None:
                 on_response(result)

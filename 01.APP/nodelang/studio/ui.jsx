@@ -157,11 +157,16 @@
   }
   // A click on BABOOM that opens his panel points a composer at him ('' is BABOOM in the To list) and puts the caret in
   // the one on screen. The click that closes the panel changes nothing: a thread's running chat stays its recipient.
-  function useAskBaboom(setTo, field) {
+  // A line of his menu that the user finishes in his own words arrives with those words: they start the composer.
+  function useAskBaboom(setTo, field, setText) {
+    const type = React.useRef(setText);
+    type.current = setText;
     React.useEffect(() => {
-      const askBaboom = () => {
-        if (document.querySelector('[aria-label="BABOOM companion"]')) return;
+      const askBaboom = event => {
+        const words = event.detail?.text;
+        if (!words && document.querySelector('[aria-label="BABOOM companion"]')) return;
         setTo('');
+        if (words && field.current?.offsetParent) type.current(words);
         if (field.current?.offsetParent) field.current.focus();
       };
       window.addEventListener('archhub:ask-baboom', askBaboom);
@@ -181,6 +186,12 @@
     // a new session only when none is selected or he picks New session on the scope chip.
     const [freshPick, setFreshPick] = React.useState(false);
     const toSession = u.route === 'home' && !taskId && !onSent && homeSession && !freshPick ? homeSession : null;
+    const homeThreadId = toSession?.id || null;
+    React.useLayoutEffect(() => {
+      if (u.route !== 'home' || taskId || onSent) return;
+      u.setHomeThreadId(homeThreadId);
+      return () => u.setHomeThreadId(null);
+    }, [u.route, taskId, onSent, homeThreadId, u.setHomeThreadId]);
     const [localDraft,setLocalDraft] = React.useState({text:'',revision:0});
     const draftKey = JSON.stringify([u.route,taskId || '']);
     const {text} = onSent ? localDraft : u.composerDraft[draftKey] || {text:'',revision:0},
@@ -199,7 +210,7 @@
       if (inputRef.current) observer.observe(inputRef.current.closest('form'));
       return () => observer.disconnect();
     }, []);
-    useAskBaboom(setTo, inputRef);
+    useAskBaboom(setTo, inputRef, setText);
     const send = async () => {
       if (!text.trim()) return;
       // DESIGNSYS-050 4.9: the same To-list as the Workshop; a joined agent is @mentioned, a start choice starts that chat agent.

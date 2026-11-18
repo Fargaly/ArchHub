@@ -14,7 +14,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLineEdit, QToolTip
 from PyQt6.QtGui import QColor, QImage, QPainter
 from PyQt6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, Qt, QUrl
 from PyQt6.QtGui import QDropEvent, QMouseEvent
@@ -27,7 +27,6 @@ from nodelang.baboom_native_companion import (
     create_baboom_native_companion_window,
     render_baboom_native_sprite,
 )
-from nodelang.baboom_native_voice import BaboomVoiceInput
 from nodelang.baboom_native_host import BaboomNativeHost
 from nodelang.baboom_native_visual import BaboomNativeVisualFrame
 from nodelang.baboom_visual_assets import BaboomSpriteAtlas
@@ -169,13 +168,6 @@ class _Transport:
         }
 
 
-class _VoiceBackend:
-    def capture_once(self, *, cancel, timeout_seconds):
-        assert not cancel.is_set()
-        assert timeout_seconds == 20.0
-        return "BABOOM, brief me on ArchHub"
-
-
 def test_native_companion_controller_executes_only_the_host_confirmed_task(tmp_path):
     atlas_path = tmp_path / "controller.png"
     image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
@@ -290,8 +282,7 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
     )
     host.connect()
     controller = BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ())
-    voice = BaboomVoiceInput(backend_factory=_VoiceBackend)
-    window = create_baboom_native_companion_window(controller, voice_input=voice)
+    window = create_baboom_native_companion_window(controller)
     try:
         window.start_projection()
         app.processEvents()
@@ -310,24 +301,16 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         assert "border:0" in window._report.styleSheet()
         assert "border-radius:0" in window._report.styleSheet()
         assert window._report.font().family() == "Segoe UI"
-        assert window._input.font().family() == "Segoe UI"
         assert window._message_rect is None
-        window._open_interaction()
+        # He has no reply box (one-BABOOM spec 5b: the one input is ArchHub's composer, which has the
+        # microphone too). A line of his menu still gets its answer in his report.
+        assert window.findChildren(QLineEdit) == []
+        window._say("BABOOM, brief me on ArchHub")
         app.processEvents()
-        assert window._input.isVisible()
-        assert window._talk.isVisible()
-        assert window._input.geometry() == window._message_rect
-        window.refresh()
-        app.processEvents()
-        assert window._input.isVisible()
-        QTest.mouseClick(window._talk, Qt.MouseButton.LeftButton)
-        QTest.qWait(50)
-        app.processEvents()
-        # Talk is the lucide mic icon; its label lives in the accessible name,
-        # which returns to "Talk" once a capture has finished.
-        assert window._talk.accessibleName() == "Talk"
-        assert not window._talk.icon().isNull()
-        assert not window._input.isVisible()
+        assert window._report.isVisible() and window._report.geometry() == window._message_rect
+        deadline = time.monotonic() + 5
+        while window._transient_report != "Ready." and time.monotonic() < deadline:
+            QTest.qWait(20)
         assert window._transient_report == "Ready."
     finally:
         window.stop_projection()
@@ -427,12 +410,13 @@ def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
         app.processEvents()
 
 
-def test_native_companion_click_opens_and_closes_the_ask_box(tmp_path):
-    """A click opens the box, a second click or Escape closes it.
+def test_native_companion_report_closes_on_a_second_click_or_escape(tmp_path):
+    """What he says opens beside him; a click on him or Escape closes it.
 
     His report: "I do not know how to deal with it." There was a press
     handler that only ever opened the input, and no way back -- no second
-    click, no Escape, no drag.
+    click, no Escape, no drag. He has no reply box now (one-BABOOM spec 5b:
+    the one input is ArchHub's composer); the way back from his report stays.
     """
     app = QApplication.instance() or QApplication([])
     atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
@@ -466,25 +450,25 @@ def test_native_companion_click_opens_and_closes_the_ask_box(tmp_path):
         app.processEvents()
         window.refresh()
         app.processEvents()
-        assert not window._input.isVisible()
+        assert window.findChildren(QLineEdit) == [], "no reply box of his own"
+        assert not window._report.isVisible()
 
-        window._open_interaction()
+        window._say("status")
         app.processEvents()
-        assert window._input.isVisible(), "a click must open the ask box"
+        assert window._report.isVisible(), "a line of his menu opens his report"
 
         window._close_interaction()
         app.processEvents()
-        assert not window._input.isVisible(), "a second click must close it"
-        assert not window._talk.isVisible()
+        assert not window._report.isVisible(), "a second click must close it"
         assert not window._confirm.isVisible()
 
-        # Escape, from inside the box, is the same exit.
-        window._open_interaction()
+        # Escape is the same exit.
+        window._say("status")
         app.processEvents()
-        assert window._input.isVisible()
-        QTest.keyClick(window._input, Qt.Key.Key_Escape)
+        assert window._report.isVisible()
+        QTest.keyClick(window, Qt.Key.Key_Escape)
         app.processEvents()
-        assert not window._input.isVisible(), "Escape must close the ask box"
+        assert not window._report.isVisible(), "Escape must close his report"
     finally:
         window.close()
         window.deleteLater()
@@ -543,7 +527,7 @@ def test_native_companion_report_box_fits_the_whole_briefing(tmp_path):
         assert height >= needed.height(), "the briefing does not fit its box"
 
         # And the box the layout actually hands the label is that size.
-        window._open_interaction()
+        window._details_open = True
         window._transient_report = briefing
         window._transient_revision = None
         window.refresh()
@@ -826,19 +810,6 @@ def test_t13_item1_primary_confirm_uses_accent_fill_and_on_fill_text(tmp_path):
         app.processEvents()
 
 
-def test_t13_item3_talk_is_a_labelled_mic_icon(tmp_path):
-    """item 3: Talk is the lucide mic icon with the accessible name 'Talk', not a word."""
-    app, window = _t13_window(tmp_path, "t13-mic.png")
-    try:
-        assert not window._talk.icon().isNull(), "Talk must carry the lucide mic icon"
-        assert window._talk.accessibleName() == "Talk"
-        assert window._talk.text() == "", "Talk is an icon, not a text button"
-    finally:
-        window.close()
-        window.deleteLater()
-        app.processEvents()
-
-
 class _ScreenTransport(_Transport):
     def baboom_native_frame(self, **kwargs):
         frame = super().baboom_native_frame(**kwargs)
@@ -902,8 +873,10 @@ def _sprite_points(window):
     return transparent, opaque
 
 
-def test_transparent_pixel_is_not_accepted_and_sprite_click_opens_the_reply_box(tmp_path, monkeypatch):
-    """A click on empty pixels falls through. A click on the character opens the reply box, not ArchHub."""
+def test_transparent_pixel_is_not_accepted_and_sprite_click_asks_baboom(tmp_path, monkeypatch):
+    """A click on empty pixels falls through. A click on the character asks BABOOM: he has no reply box, so with
+    no ArchHub window to stand with it opens ArchHub, where the one composer is (with one, the composer points at
+    him: test_baboom_stays_with_archhub)."""
     app, window, opened = _screen_companion(tmp_path, monkeypatch, "hit.png")
     try:
         transparent, opaque = _sprite_points(window)
@@ -919,14 +892,13 @@ def test_transparent_pixel_is_not_accepted_and_sprite_click_opens_the_reply_box(
         )
         app.sendEvent(window, press)
         assert not press.isAccepted()
-        assert not window._input.isVisible()
         assert opened == []
 
         QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=opaque)
         QTest.qWait(window._quiet_click.interval() + 80)
         app.processEvents()
-        assert window._input.isVisible()
-        assert opened == []
+        assert window.findChildren(QLineEdit) == [] and not window._report.isVisible()
+        assert opened == ["archhub"]
     finally:
         window.close()
         window.deleteLater()
@@ -935,18 +907,21 @@ def test_transparent_pixel_is_not_accepted_and_sprite_click_opens_the_reply_box(
 
 def test_double_click_opens_archhub_and_a_drag_keeps_the_pinned_corner(tmp_path, monkeypatch):
     """Double-click is the explicit Open ArchHub action. A drag past 4px still pins the sprite."""
+    from threading import Event
+
     app, window, opened = _screen_companion(tmp_path, monkeypatch, "drag.png")
+    started, release = Event(), Event()
     try:
         _transparent, opaque = _sprite_points(window)
         QTest.mouseDClick(window, Qt.MouseButton.LeftButton, pos=opaque)
         QTest.qWait(window._quiet_click.interval() + 80)
         app.processEvents()
         assert opened == ["archhub"]
-        assert not window._input.isVisible()
+        assert not window._report.isVisible()
 
         opened.clear()
         position_path = tmp_path / "baboom-position.json"
-        window._position_path = position_path
+        window._position_path = tmp_path  # A directory cannot hold the position as a file.
         start = window.pos() + window._sprite_rect.topLeft()
         held = Qt.MouseButton.LeftButton
 
@@ -957,15 +932,35 @@ def test_double_click_opens_archhub_and_a_drag_keeps_the_pinned_corner(tmp_path,
             )
             app.sendEvent(window, event)
 
-        send(QEvent.Type.MouseButtonPress, opaque)
-        send(QEvent.Type.MouseMove, opaque + QPoint(12, 0))
-        send(QEvent.Type.MouseButtonRelease, opaque + QPoint(12, 0))
+        def drag():
+            send(QEvent.Type.MouseButtonPress, opaque)
+            send(QEvent.Type.MouseMove, opaque + QPoint(12, 0))
+            send(QEvent.Type.MouseButtonRelease, opaque + QPoint(12, 0))
+            app.processEvents()
+
+        save = window._position_writer.save
+
+        def slow_save(*args):
+            started.set()
+            assert release.wait(4), "disk work blocked the GUI drag handler"
+            save(*args)
+
+        monkeypatch.setattr(window._position_writer, "save", slow_save)
+        drag()
+        assert started.wait(2) and not release.is_set()
+        release.set()
+        window._position_jobs.submit(lambda: None).result(timeout=4)
         app.processEvents()
+        assert QToolTip.isVisible() and "Drag BABOOM again to retry" in QToolTip.text()
+        window._position_path = position_path
+        drag()
+        window._position_jobs.submit(lambda: None).result(timeout=4)
         saved = json.loads(position_path.read_text(encoding="utf-8"))
         assert abs(saved["x"] - start.x()) > 4
         assert opened == []
-        assert not window._input.isVisible()
+        assert not window._report.isVisible()
     finally:
+        release.set()
         window.close()
         window.deleteLater()
         app.processEvents()
@@ -1044,25 +1039,22 @@ def test_state_notice_opens_its_existing_task_without_a_model_call(tmp_path, mon
         app.processEvents()
 
 
-def test_unavailable_reply_preserves_the_draft_and_exposes_retry(tmp_path, monkeypatch):
+def test_an_unavailable_answer_is_said_in_his_report(tmp_path, monkeypatch):
+    """A line of his menu that cannot be answered says why in his report; the next answer replaces it.
+
+    He has no reply box, so there is no draft to keep: the menu line is still there to pick again.
+    """
     app, window, _opened = _screen_companion(tmp_path, monkeypatch, "retry-draft.png")
     try:
-        window._open_interaction()
+        window._details_open = True
         window._submitted_utterance = "Review the selected task"
         window._busy = True
-        window._input.hide()
         window._apply_response({"response": {"kind": "unavailable", "summary": "Connection lost", "data": {}}})
-        assert window._input.text() == "Review the selected task"
-        assert window._input.isVisible() and window._input.isEnabled()
-        assert window._send.text() == "Retry" and window._send.isEnabled()
-        assert "Connection lost" in window._input.accessibleDescription()
+        assert window._transient_report == "Connection lost" and window._report.isVisible()
+        assert not window._busy
         window._apply_response({"response": {"kind": "answer", "summary": "Review is ready", "data": {}}})
-        window._open_interaction()
-        assert window._send.text() == "Ask"
-        assert not window._send.isEnabled()
-        assert window._input.accessibleDescription() == ""
-        window._input.setText("A new request")
-        assert window._send.isEnabled()
+        assert window._transient_report == "Review is ready" and window._report.isVisible()
+        assert window.findChildren(QLineEdit) == []
     finally:
         window.close()
         window.deleteLater()

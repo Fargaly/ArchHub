@@ -616,6 +616,7 @@
   }
   window.UI.Home = Home;
   window.UI.homeShown = () => homeShown;  // the session Home shows selected now (its own optimistic list), '' if none
+  window.UI.homeRows = homeRows;
   window.UI.Sheet = Sheet;
   window.UI.homeListSame = sameList;
   window.UI.homeCommitList = commitList;

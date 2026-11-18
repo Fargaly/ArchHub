@@ -220,7 +220,7 @@
     const [localText, setLocalText] = React.useState(''), [sending, setSending] = React.useState(false);
     const [expanded, setExpanded] = React.useState(false);
     const field = React.useRef(null);
-    window.UI.useAskBaboom(setTo, field);
+    window.UI.useAskBaboom(setTo, field, setDraft || setLocalText);
     const text = draft === undefined ? localText : draft, setText = setDraft || setLocalText;
     const files = s.composerAttachments || [];
     const send = async (body = text) => {

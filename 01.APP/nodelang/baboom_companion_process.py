@@ -290,10 +290,17 @@ def _parent_alive(pid):
         return True
 
 
+def _follow_home(window, where):
+    from .baboom_companion_placement import Rect
+
+    rect = lambda box: Rect(*box) if box else None
+    window.follow_app(rect(where['app']), rect(where['composer']), [rect(b) for b in where['busy'] if b],
+                      [rect(b) for b in where['screens'] if b], *where.get('more', ()), **where.get('fields', {}))
+
+
 def main():
     from PyQt6.QtCore import QObject, pyqtSignal
     from PyQt6.QtWidgets import QApplication
-    from .baboom_companion_placement import Rect
     from .baboom_native_companion import foreground_application_windows
     from .baboom_native_host import BaboomNativeHost
     from .baboom_native_runtime import create_baboom_native_projection, prepare_baboom_native_atlas
@@ -306,14 +313,14 @@ def main():
                             device_credential_provider=lambda _request: {}, emit_steward_signals=False,
                             activity_provider=foreground_application_windows)
     host.connect()
-    ask = lambda do, task_id=None: threading.Thread(target=_call, args=('ui',), kwargs={'do': do, 'task_id': task_id},
-                                                    daemon=True).start()
+    def ask(do, task_id=None, **fields):
+        threading.Thread(target=_call, args=('ui',), kwargs={'do': do, 'task_id': task_id, **fields}, daemon=True).start()
     state = Path(os.environ['ARCHHUB_COMPANION_STATE'])
     window = create_baboom_native_projection(host, atlas=atlas, position_path=state / 'baboom-position.json',
                                              on_stop=lambda: (host.request_stop(), ask('stopped')),
                                              on_open=lambda: ask('home'),
                                              on_open_task=lambda task_id: ask('task', task_id))
-    window.stand_with(_NoOwner(), _Pin(), lambda: ask('ask'))
+    window.stand_with(_NoOwner(), _Pin(), lambda words='': ask('ask', words=words))
 
     class Home(QObject):
         arrived = pyqtSignal(object)
@@ -325,9 +332,7 @@ def main():
             return
         where = reply.get('home')
         if where is not None:
-            rect = lambda box: Rect(*box) if box else None
-            window.follow_app(rect(where['app']), rect(where['composer']), [rect(b) for b in where['busy'] if b],
-                              [rect(b) for b in where['screens'] if b])
+            _follow_home(window, where)
             if where['app'] is not None and window.isVisible():
                 _raise_without_focus(int(window.winId()))
         for command in reply.get('commands') or ():

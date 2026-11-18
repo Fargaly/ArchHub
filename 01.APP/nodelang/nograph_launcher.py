@@ -202,14 +202,16 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         show_home()
         window.statusBar().showMessage(detail)
 
-    def ask_baboom():
-        # A click on BABOOM: ArchHub's one composer, pointed at BABOOM, with the caret in it.
+    def ask_baboom(words=''):
+        # A click on BABOOM: ArchHub's one composer, pointed at BABOOM, with the caret in it. A line of his menu
+        # that the user finishes in his own words (Remember..., Tell an agent...) starts the composer with them.
         if window.isMinimized() or not window.isVisible():
             show_again(window)  # minimised or in the tray: the same restore as the tray's Open ArchHub
         window.raise_()
         window.activateWindow()
         view.setFocus()
-        view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:ask-baboom'))")
+        view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:ask-baboom',{detail:{text:%s}}))"
+                                  % json.dumps(str(words or '')))
 
     def open_launch(arguments):
         return _open_launch(arguments, companion, show_home, show_unavailable)
@@ -301,7 +303,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         if request['do'] == 'home':
             asker.ask.emit(show_home)
         elif request['do'] == 'ask':
-            asker.ask.emit(ask_baboom)
+            asker.ask.emit(lambda: ask_baboom(request.get('words', '')))
         elif request['do'] == 'task':
             asker.ask.emit(lambda: _open_task(window, view, request['task_id']))
         elif request['do'] == 'stopped':

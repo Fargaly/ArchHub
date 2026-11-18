@@ -473,6 +473,11 @@ class NoGraphServer:
                     if method == 'GET' and (path == '/assets/fonts.css' or path.startswith('/assets/fonts/')):
                         owner._font(self, path)
                         return
+                    if method == 'GET' and path == '/assets/baboom/spritesheet.png':
+                        # The one BABOOM atlas, the companion window's own file: his panel header draws him from it.
+                        from .baboom_native_runtime import default_baboom_sprite_atlas_path
+                        owner._send_bytes(self, default_baboom_sprite_atlas_path().read_bytes(), 'image/png')
+                        return
                     if path == '/baboom/turn' and method == 'POST':
                         # The app's BABOOM turn door (loopback, per-boot token): any agent's connector reaches it.
                         from .baboom_nograph import accept_turn

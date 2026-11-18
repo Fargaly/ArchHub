@@ -44,7 +44,8 @@ def _alive(server):
 
 
 def test_the_door_answers_only_its_own_companion_and_hands_clicks_to_the_app(tmp_path):
-    from nodelang.baboom_companion_process import CompanionLink
+    from unittest.mock import Mock
+    from nodelang.baboom_companion_process import CompanionLink, _follow_home
     server = _server(tmp_path)
     asked = []
     link = CompanionLink(tmp_path / 'server', tmp_path, server.public_url, pin=server.files['companion'], ui=asked.append)
@@ -57,6 +58,8 @@ def test_the_door_answers_only_its_own_companion_and_hands_clicks_to_the_app(tmp
         assert _post(server, {'op': 'ui', 'do': 'format the disk'}, link.token)['ok'] is False
         assert _post(server, {'op': 'ui', 'do': 'task', 'task_id': 'x"));alert(1)//'}, link.token)['ok'] is False
         assert asked == [{'do': 'task', 'task_id': 't-1'}]          # a bad task id never reaches the app window
+        assert _post(server, {'op': 'ui', 'do': 'ask', 'words': 'tell codex: '}, link.token)['ok']
+        assert asked[-1] == {'do': 'ask', 'task_id': None, 'words': 'tell codex: '}
         assert _post(server, {'op': 'pin', 'write': {'pinned': True}}, link.token)['result']['pinned'] is True
         assert server.files['companion'].read()['pinned'] is True   # the app's own setting file holds it
         from nodelang.baboom_companion_placement import Rect
@@ -64,10 +67,14 @@ def test_the_door_answers_only_its_own_companion_and_hands_clicks_to_the_app(tmp
         waiter = threading.Thread(target=lambda: replies.append(_post(server, {'op': 'home', 'after': link.revision}, link.token)))
         waiter.start()
         time.sleep(0.2)
-        link.follow_app(Rect(10, 20, 800, 600), Rect(30, 500, 400, 60), (), [Rect(0, 0, 1920, 1080)])
-        link.tell('open')
+        app, composer, screen = Rect(10, 20, 800, 600), Rect(30, 500, 400, 60), Rect(0, 0, 1920, 1080)
+        link.follow_app(app, composer, (), [screen], 3, True)
         waiter.join(10)
-        assert replies[0]['home']['app'] == [10, 20, 800, 600] and replies[0]['commands'] == ['open']
+        window = Mock()
+        _follow_home(window, replies[0]['home'])
+        window.follow_app.assert_called_once_with(app, composer, [], [screen], 3, True)
+        link.tell('open')
+        assert _post(server, {'op': 'home', 'after': replies[0]['revision']}, link.token)['commands'] == ['open']
     finally:
         link.close()
         server.close()

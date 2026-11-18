@@ -46,6 +46,7 @@
       [toast, setToast] = React.useState(''),
       [advanced, setAdvanced] = React.useState(false),
       [companion, setCompanion] = React.useState(false),
+      [homeThreadId, setHomeThreadId] = React.useState(null),
       [libraryOpen, setLibraryOpen] = React.useState(true),  // design v63: the Library sits in its dock by default; he hides it
       [selectedNodeId, setSelectedNodeId] = React.useState(null);
     const [agentLoad, setAgentLoad] = React.useState({status: 'empty'});
@@ -160,7 +161,7 @@
     }, []);
     React.useEffect(() => {
       // A click on BABOOM, who stands beside the composer: his panel opens or closes (the composer points at him, ui.jsx).
-      const askBaboom = () => setCompanion(open => !open);
+      const askBaboom = event => setCompanion(open => !!event.detail?.text || !open);  // words to start from keep it open
       window.addEventListener('archhub:ask-baboom', askBaboom);
       return () => window.removeEventListener('archhub:ask-baboom', askBaboom);
     }, []);
@@ -323,6 +324,7 @@
       setComposerDraft,
       companion,
       setCompanion,
+      setHomeThreadId,
       libraryOpen,
       setLibraryOpen,
       route,
@@ -541,7 +543,7 @@
               flex: 'none'
             }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && route !== 'home' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
-  <window.UI.BaboomSprite open={companion} setOpen={setCompanion} />
+  <window.UI.BaboomSprite open={companion} setOpen={setCompanion} taskId={route === 'home' ? homeThreadId : task} />
   {(s.canvasSaveConflict || toast) && <div role="alert" className="flex" style={{
         position: 'fixed',
         top: 100,

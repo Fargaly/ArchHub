@@ -2,7 +2,6 @@
 from dataclasses import replace
 import os
 from pathlib import Path
-import threading
 import time
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -48,12 +47,11 @@ def test_hidden_companion_stays_hidden_on_refresh_and_late_reply(companion):
     assert not host._stop.is_set(), 'hide is not a host stop'
 
 
-def test_stop_blocks_new_requests_and_cancels_voice_without_replay(companion):
+def test_stop_blocks_new_requests_without_replay(companion):
+    # He records no voice of his own any more: the microphone is the composer's (window_commands.startVoice).
     _, host, window, stopped = companion
-    cancellation = threading.Event()
-    window._voice_cancel = cancellation
     window.stop_baboom()
-    assert cancellation.is_set() and stopped == [True]
+    assert stopped == [True]
     for request in (host.resolve_input, host.respond_input, host.execute_input):
         with pytest.raises(RuntimeError, match='stopped'):
             request('status')

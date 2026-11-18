@@ -11729,6 +11729,19 @@
         "02.TESTS/tests_js/dock_live.cjs",
         "02.TESTS/tests_js/dock_model.test.cjs",
         "02.TESTS/tests_js/dock_one_layout_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/raildoors.test.cjs"
+      ]
+    },
+    "DESIGNFLOW": {
+      "source": "Founder design rows (Canvas design v61/v63, row 3 Flow view and the following Canvas rows): build the designed Canvas views into the live app, unbuilt parts shown inert through UI.Soon.",
+      "scope": [
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_design_canvas.py",
+        "02.TESTS/tests_js/design_canvas_live.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

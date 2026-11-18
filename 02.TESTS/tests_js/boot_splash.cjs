@@ -23,12 +23,20 @@ const {chromium} = require('playwright');
     await page.locator('#studio-boot').waitFor({state: 'detached'});
     assert.equal(answered.length, 0, 'the splash went before the catalogue answered');
     assert.equal(await page.evaluate(() => window.ArchHubAPI.getSnapshot().libraryStatus), 'waiting');
+    // Nothing reads the Library before it arrives: no error notice, no 'Cannot read properties' toast.
+    const quiet = async when => { const seen = await page.evaluate(() => ({notice: window.ArchHubAPI.getSnapshot().connectionNotice || '', text: document.body.innerText}));
+      assert.doesNotMatch(seen.text, /Cannot read properties|see Receipts/, 'no error shows ' + when); assert.ok(!/Cannot read|undefined/.test(seen.notice), 'no error notice ' + when + ': ' + seen.notice); };
+    await quiet('while the Library loads');
     // The Library says it is loading: no blank and no stand-in rows.
     await page.locator('[data-design="home1.open"]').click();
     const library = page.locator('aside.library-shelf');
     await library.locator('[data-library-loading]').waitFor();
     assert.equal(await library.locator('[data-library-category]').count(), 0, 'no categories or rows before the catalogue');
     if (input.shots) await page.screenshot({path: path.join(input.shots, 'boot-library-loading.png')});
+    // The session's canvas shows its nodes before the Library arrives (no projection was lost).
+    const nodes = page.locator('.react-flow__node');
+    await nodes.first().waitFor();
+    const before = await nodes.count();
     console.log('LIBRARY LOADING SHOWN');
     // Then the catalogue arrives and the Library shows its categories (folded by default; each holds its rows).
     await library.locator('[data-library-category]').first().waitFor({timeout: 150000});
@@ -36,6 +44,11 @@ const {chromium} = require('playwright');
     await library.locator('[data-design="library.row"]').first().waitFor();
     assert.equal(await library.locator('[data-library-loading]').count(), 0);
     assert.ok(answered.length >= 1 && answered.every(status => status === 200), JSON.stringify(answered));
+    await quiet('after the Library arrived');
+    assert.ok(await nodes.count() >= before, 'the nodes keep showing once the ports land: ' + (await nodes.count()) + ' of ' + before);
+    // The ports landed and the open file was projected again with them: the same nodes, now read against the Library.
+    const after = await page.evaluate(() => ({ports: window.ArchHubAPI.getSnapshot().libraryPorts.length, nodes: window.ArchHubAPI.getSnapshot().graph.nodes.length}));
+    assert.ok(after.ports > 0 && after.nodes >= before, 'the Library ports reached the open file: ' + JSON.stringify(after));
     assert.deepEqual(errors, [], 'no page errors');
     console.log('OK the splash never waits for the Library');
   } finally {

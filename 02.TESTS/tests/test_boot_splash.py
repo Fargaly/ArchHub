@@ -38,6 +38,8 @@ def test_the_splash_never_waits_for_the_library(tmp_path, monkeypatch):
             task = client.workshop('createTask', 'Sheet check %03d for the issue set' % index)['taskId']
             first = first or task
         assert len(list(session_files.sessions_directory().glob('*.archhub'))) >= SESSIONS
+        # The window reopens on a session's own file (its nodes need their Library ports), as after any earlier use.
+        client.workshop('openTaskGraph', first)
         node = subprocess.Popen(['node', '02.TESTS/tests_js/boot_splash.cjs'], cwd=Path(__file__).resolve().parents[2],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

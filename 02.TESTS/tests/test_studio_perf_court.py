@@ -85,3 +85,28 @@ def test_studio_perf_court(tmp_path, monkeypatch):
     finally:
         client.close()
         server.close()
+
+
+def test_shared_work_column_shows_another_connections_commit_at_once(tmp_path, monkeypatch):
+    """listTasks then listNotifications share one column build, but a commit by any other connection (an agent's
+    process) shows in the very next read: the share is keyed on the store's commit counter, not only a timer."""
+    _isolate(monkeypatch, tmp_path / 'desk')
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.workshop_mailbox import application_history
+    from nodelang.workshop_tasks import create
+
+    state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+    state.mkdir()
+    server = NoGraphServer(state).start()
+    client = _Studio(server)
+    try:
+        client.workshop('createTask', 'Seen first')
+        first = {row['title'] for row in client.workshop('listTasks', True)}
+        assert 'Seen first' in first
+        with application_history() as history:  # another connection, as an agent's process commits
+            create(history, 'Committed elsewhere', 'agent-test')
+        second = {row['title'] for row in client.workshop('listTasks', True)}
+        assert 'Committed elsewhere' in second, second
+    finally:
+        client.close()
+        server.close()

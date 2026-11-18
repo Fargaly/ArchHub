@@ -1686,10 +1686,23 @@ function projectGroups(nodes,wires){
  }
  return {nodes,wires};
 }
+// id -> {stamp, node}: a card whose file record, Library entry and document context did not change keeps its
+// projected object, so the canvas redraws only what changed (a drop moves one card, not all of them).
+let projectedNodes=new Map();
 function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{}, shown=shownLayout?.id===sessionDocument.id&&properties.canvasLayout!=='v48'?shownLayout.positions:null;
- const nodes=sessionDocument.nodes.map(node=>fileNode(shown?.[node.id]?{...node,position:shown[node.id]}:node)), graph={...properties,...(shown?{canvasLayout:'v48'}:{}),id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
+ // Groups, bound values and dataset columns read other nodes (and groups are completed in place below): always fresh.
+ const reuse=!shown&&!sessionDocument.nodes.some(node=>node.children||node.frameMembers||node.parent||node.bind||node.type==='data.field');
+ const context=JSON.stringify([properties.taskContext?.task||'',state.libraryPorts.length]), kept=new Map();
+ const nodes=sessionDocument.nodes.map(node=>{
+  if(!reuse)return fileNode(shown?.[node.id]?{...node,position:shown[node.id]}:node);
+  const stamp=context+JSON.stringify(node), held=projectedNodes.get(node.id);
+  const projected=held&&held.stamp===stamp&&held.ports===state.libraryPorts?held.node:fileNode(node);
+  kept.set(node.id,{stamp,ports:state.libraryPorts,node:projected});return projected;
+ });
+ projectedNodes=kept;
+ const graph={...properties,...(shown?{canvasLayout:'v48'}:{}),id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   ...projectGroups(nodes,sessionDocument.wires.map(w=>projectSessionWire(w,nodes))),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
 }

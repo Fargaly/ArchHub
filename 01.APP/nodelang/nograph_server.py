@@ -23,6 +23,7 @@ import mimetypes
 import os
 import secrets
 import tempfile
+import logging
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -511,9 +512,14 @@ class NoGraphServer:
                         raise Refused('This action needs a POST from the Studio.', 405)
                     query = parse_qs(parsed.query, keep_blank_values=True)
                     body = self.body(SESSION_BODY if path == '/api/session-files' else MAX_BODY) if method == 'POST' else None
-                    if path in ('/api/session-files', '/api/session-model') and isinstance(body, dict) and body.get('action') not in _SESSION_READ_ACTIONS:
-                        _drop_column()  # a session file write can change a task row (its path, plan, messages)
+                    writes = isinstance(body, dict) and (
+                        path in ('/api/session-files', '/api/session-model') and body.get('action') not in _SESSION_READ_ACTIONS
+                        or path == WORKSHOP_PATH and (body.get('action') != 'data-api' or body.get('function') not in _WORKSHOP_READ_FUNCTIONS))
+                    if writes:
+                        _drop_column()  # a write can change a task row (its path, plan, messages, status)
                     result = route[1](owner, SimpleNamespace(method=method, path=path, query=query, body=body, handler=self))
+                    if writes:
+                        _drop_column()  # and a read on another thread during the write must not stay shared
                     self.send_json(200, result if isinstance(result, dict) else {'ok': True, 'result': result})
                 except Refused as refusal:
                     if method == 'POST' and not self._body_read:
@@ -1081,6 +1087,43 @@ def _declarations():
 COLUMN_SHARE_S = 2.0
 _COLUMN = {}
 _COLUMN_LOCK = threading.Lock()
+_COLUMN_GENERATION = [0]  # moves on every drop: a column built across a write is not kept
+# The Workshop owner's kept read-only watcher (F419) tells whether any connection committed since the column was
+# built. Its sqlite connection belongs to the thread that opened it, so one worker thread owns it and answers reads.
+_STORE_VERSION_WORKER = None
+_STORE_WATCH = []
+
+
+def _store_version():
+    """The store's commit counter (PRAGMA data_version on the kept watcher); None when it cannot be read."""
+    global _STORE_VERSION_WORKER
+    from concurrent.futures import ThreadPoolExecutor
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    # The Workshop node's own join budget: a store read slower than that leaves the column unshared, never blocked.
+    budget = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['worker_join_ms'] / 1000
+
+    def read():
+        from .workshop_mailbox import profile_database, store_watch
+        store = str(profile_database())
+        if _STORE_WATCH and _STORE_WATCH[0][0] != store:  # another store (profile switch, a second server): reopen
+            _STORE_WATCH.pop()[1].close()
+        if not _STORE_WATCH:
+            _STORE_WATCH.append((store, store_watch(budget)))
+        try:
+            return (store, _STORE_WATCH[0][1].version())  # a column of another store never matches
+        except Exception:  # noqa: BLE001 - a broken watcher is reopened on the next read
+            _STORE_WATCH.pop()[1].close()
+            raise
+
+    with _COLUMN_LOCK:
+        if _STORE_VERSION_WORKER is None:
+            _STORE_VERSION_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='archhub-store-version')
+        worker = _STORE_VERSION_WORKER
+    try:
+        return worker.submit(read).result(timeout=budget)
+    except Exception as unreadable:  # noqa: BLE001 - unknown version: the column is built fresh
+        logging.getLogger(__name__).debug('Workshop store version unreadable: %s', unreadable)
+        return None
 _SESSION_READ_ACTIONS = frozenset(('head', 'read', 'catalogue', 'initial', 'validate', 'agent-history',  # session-files
                                    'list', 'get', 'links', 'runs', 'setting'))  # session-model
 _WORKSHOP_READ_FUNCTIONS = frozenset(('listTasks', 'listWorkshopMessages', 'listApprovals', 'listNotifications',
@@ -1092,21 +1135,25 @@ def _list_tasks(include_archived=False):
     import copy
     from .workshop_mailbox import application_history
     from .workshop_tasks import column
-    key = include_archived is True
+    key, version = include_archived is True, _store_version()
     with _COLUMN_LOCK:
         held = _COLUMN.get(key)
-        if held and time.monotonic() - held[0] < COLUMN_SHARE_S:
+        # Shared only while no connection committed since it was built, and never longer than the 2 s backstop.
+        if held and version is not None and held[2] == version and time.monotonic() - held[0] < COLUMN_SHARE_S:
             return copy.deepcopy(held[1])
+        generation = _COLUMN_GENERATION[0]
     with application_history() as history:
         rows = column(history, include_archived=key)
     with _COLUMN_LOCK:
-        _COLUMN[key] = (time.monotonic(), copy.deepcopy(rows))
+        if generation == _COLUMN_GENERATION[0] and version is not None:
+            _COLUMN[key] = (time.monotonic(), copy.deepcopy(rows), version)
     return rows
 
 
 def _drop_column():
     with _COLUMN_LOCK:
         _COLUMN.clear()
+        _COLUMN_GENERATION[0] += 1
 
 
 def _open_task_graph(task, path=None):
@@ -1429,8 +1476,6 @@ def r_workshop(s, req):
     action, body = _action(req)
     if action == 'data-api':
         function = body.get('function')
-        if function not in _WORKSHOP_READ_FUNCTIONS:
-            _drop_column()  # a write (or an unknown function) must not be followed by a shared, older column
         if function in OWNER_ACTIONS:
             factory, method = OWNER_ACTIONS[function]
             try:

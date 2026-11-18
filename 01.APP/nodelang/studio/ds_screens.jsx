@@ -823,12 +823,17 @@
         if (!bar || !form || !bar.offsetParent) { setZoomRise(null); return; }
         // Where it rests, computed from its stylesheet offset: no style write and re-read (a forced second layout).
         const host = bar.offsetParent.getBoundingClientRect(), now = bar.getBoundingClientRect(), c = form.getBoundingClientRect();
-        if (restBottom.current === null && !bar.style.bottom) restBottom.current = parseFloat(window.getComputedStyle(bar).bottom) || 0;
+        if (restBottom.current === null) {  // read once, and again after a resize (a media query can move it)
+          const raised = bar.style.bottom;
+          if (raised) bar.style.bottom = '';
+          restBottom.current = parseFloat(window.getComputedStyle(bar).bottom) || 0;
+          if (raised) bar.style.bottom = raised;
+        }
         const rest = host.bottom - (restBottom.current ?? 0), b = {left: now.left, right: now.right, bottom: rest, top: rest - now.height};
         const touches = b.right > c.left - 8 && b.left < c.right + 8 && b.bottom > c.top - 8 && b.top < c.bottom + 8;
         setZoomRise(touches ? Math.round(host.bottom - c.top + 8) : null);
       };
-      const observer = new window.ResizeObserver(place);
+      const observer = new window.ResizeObserver(() => { restBottom.current = null; place(); });
       // The observer reports each element once after its first layout, so the first placement reads a settled layout
       // instead of forcing the whole new canvas to lay out inside this effect (about 70 ms of an Open its Canvas).
       for (const element of [paneBox.current, document.querySelector('.v22g-composer-dock>form')]) if (element) observer.observe(element);
@@ -917,7 +922,15 @@
       const frame = window.requestAnimationFrame(() => u.act(() => api.arrangeGraph(true)));
       return () => window.cancelAnimationFrame(frame);
     }, [active, requestState, scope, s.graph.canvasLayout]);
-    const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
+    // A card keeps its object while its node and its shown place are the same objects (stable props for the engine).
+    const shownCards = React.useRef(new Map());
+    const visible = sourceNodes.map(n => {
+      const place = layout.scope === scope ? layout.positions[n.id] : undefined, held = shownCards.current.get(n.id);
+      if (held && held.n === n && held.place === place) return held.card;
+      const card = {...n, ...(place || {})};
+      shownCards.current.set(n.id, {n, place, card});
+      return card;
+    }),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId),
       inspected = !wire && selected.length === 1 && s.graph.nodes.find(n => n.id === selected[0]);
@@ -1073,8 +1086,11 @@
           // ComfyUI/Grasshopper: a card moves by its title bar; its fields and buttons keep the pointer.
           const groupBounds=expandedGroup(n), picked=selected.includes(n.id);
           // The group header must sit above the pane while member nodes keep their own hit areas.
-          return {id: n.id, type: 'archhub', data: {n}, zIndex:groupBounds?0:picked?2:1, style:groupBounds?{pointerEvents:'none'}:undefined, dragHandle: '.node-header', selected:picked, measured:f?.measured, dragging:f?.dragging,
-            position: f?.dragging ? f.position : held.current?.[n.id] || {x: n.x, y: n.y}};
+          const position = f?.dragging ? f.position : held.current?.[n.id] || {x: n.x, y: n.y}, zIndex = groupBounds ? 0 : picked ? 2 : 1;
+          // The same card, place and selection keep the same engine node, so the engine and the card skip it.
+          if (f && f.data.n === n && f.selected === picked && f.zIndex === zIndex && !groupBounds && f.position.x === position.x && f.position.y === position.y) return f;
+          return {id: n.id, type: 'archhub', data: {n}, zIndex, style:groupBounds?{pointerEvents:'none'}:undefined, dragHandle: '.node-header', selected:picked, measured:f?.measured, dragging:f?.dragging,
+            position};
         });
       });
     }, [s.graph, layout, parent, selected.join(','), requestState, u.canvasTabs?.collapsed]);

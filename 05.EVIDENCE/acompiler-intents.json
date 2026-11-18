@@ -11618,6 +11618,14 @@
         "02.TESTS/tests_js/fixtures/grok_wake_fake.ps1",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CROSSWINDOW": {
+      "source": "Founder SPEC 7.4 and F101: AEC selection, left-to-right window selects what it fully contains, right-to-left crossing window also selects what it touches, at any zoom. Independent check on installed 20261118-1419 found right-to-left selecting only contained nodes.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests_js/studio_boxselection.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -11577,7 +11577,11 @@
         "02.TESTS/tests_replica/test_baboom_nograph.py",
         "01.APP/nodelang/site_export.py",
         "02.TESTS/tests/test_home_reopen_185.py",
-        "02.TESTS/tests_js/home_reopen_185.cjs"
+        "02.TESTS/tests_js/home_reopen_185.cjs",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_js/studio_sessionwork.test.cjs",
+        "02.TESTS/tests/test_boot_splash.py",
+        "02.TESTS/tests_js/boot_splash.cjs"
       ]
     },
     "F419": {

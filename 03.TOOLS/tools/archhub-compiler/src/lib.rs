@@ -128,6 +128,16 @@ pub fn compile_with_entrypoints(sources: &[(String, String)], context: Option<&V
             help: "remove the duplicate source tree".into() })
     }).collect();
     report.extend(collisions);
+    // The "coming soon" allowance belongs to one physical file. The same native identity under another area
+    // (02.TESTS, 03.TOOLS, 06.CLOUD) maps onto it during analysis, so it is refused here, by its physical path.
+    let borrowed = sources.iter().filter(|(file, text)| {
+        source_identity(file) == SHARED_SOON && file.replace('\\', "/") != "01.APP/nodelang/studio/ui.jsx"
+            && text.to_lowercase().contains("coming soon")
+    }).map(|(file, _)| Diagnostic { code: "E0003".into(), file: file.clone(), language: language_name(file).into(),
+        line: 1, column: 1, message: "placeholder reaches runtime source".into(),
+        note: "the coming-soon label is admitted only in 01.APP/nodelang/studio/ui.jsx".into(),
+        help: "use the shared UI.Soon component from the Studio's ui.jsx".into() }).collect();
+    report.extend(borrowed);
     for diagnostic in &mut report.diagnostics {
         if let Some((physical, _)) = sources.iter().find(|(file, _)| source_identity(file) == diagnostic.file) {
             diagnostic.file = physical.clone();
@@ -335,6 +345,59 @@ pub fn source_identity(file: &str) -> String {
         }
     }
     file.into()
+}
+
+/// The one admitted place for the "coming soon" label: the single shared `Soon` component in the Studio's
+/// ui.jsx (founder 2026-11-18: a designed part that is not built is shown and says so). Any other file, text
+/// outside that component, a file that declares `Soon` more than once (in any form), and any other path,
+/// including the same relative path under another area, stay refused.
+const SHARED_SOON: &str = "nodelang/studio/ui.jsx";
+
+pub fn in_shared_soon(file: &str, node: Node<'_>, source: &str) -> bool {
+    // The scan analyses native identities (compile maps 01.APP/x to x); compile refuses the same identity under
+    // any other area, so only the physical 01.APP/nodelang/studio/ui.jsx reaches this allowance.
+    if !matches!(file.replace('\\', "/").as_str(), SHARED_SOON | "01.APP/nodelang/studio/ui.jsx") {
+        return false;
+    }
+    let mut root = node;
+    while let Some(p) = root.parent() {
+        root = p;
+    }
+    let mut declarations = 0;
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        declarations += usize::from(declares_soon(n, source));
+        stack.extend(children(n));
+    }
+    if declarations != 1 {
+        return false;
+    }
+    let mut parent = node.parent();
+    while let Some(p) = parent {
+        if p.kind() == "function_declaration" && declares_soon(p, source) {
+            return true;
+        }
+        parent = p.parent();
+    }
+    false
+}
+
+/// A syntax node that binds the name `Soon`: a function, generator, class or method of that name, a variable,
+/// a named function expression, an assignment to `Soon` or `x.Soon`, or an object property whose value is code.
+fn declares_soon(node: Node<'_>, source: &str) -> bool {
+    let named = |field: &str| node.child_by_field_name(field).is_some_and(|n| text(n, source) == "Soon");
+    match node.kind() {
+        "function_declaration" | "generator_function_declaration" | "class_declaration" | "class"
+        | "function_expression" | "function" | "method_definition" | "variable_declarator" => named("name"),
+        "assignment_expression" => node.child_by_field_name("left").is_some_and(|left| {
+            text(left, source) == "Soon"
+                || left.child_by_field_name("property").is_some_and(|p| text(p, source) == "Soon")
+        }),
+        "pair" => named("key") && node.child_by_field_name("value").is_some_and(|v| {
+            matches!(v.kind(), "arrow_function" | "function_expression" | "function" | "class")
+        }),
+        _ => false,
+    }
 }
 
 pub fn language_name(path: &str) -> &'static str {
@@ -1527,6 +1590,9 @@ impl Extractor<'_> {
                     && ["not available yet", "coming soon", "placeholder"]
                         .iter()
                         .any(|p| {
+                            if *p == "coming soon" && lower.contains(p) && in_shared_soon(self.file, node, self.source) {
+                                return false;
+                            }
                             lower.match_indices(p).any(|(start, matched)| {
                                 let boundary = |c: char| !c.is_alphanumeric() && c != '_';
                                 lower[..start].chars().next_back().is_none_or(boundary)

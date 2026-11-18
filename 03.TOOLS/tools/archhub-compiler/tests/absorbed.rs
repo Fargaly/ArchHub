@@ -340,6 +340,27 @@ fn intent_rules_inspect_source_without_voluntary_vendor_or_panel_flags() {
 }
 
 #[test]
+fn banned_user_text_admits_coming_soon_only_inside_the_one_shared_soon_component() {
+    let soon = "function Soon({children}) {\n  const tip = 'Coming soon: not built yet';\n  return <span title={tip}>{children}<i>Coming soon</i></span>;\n}\nwindow.UI = {Soon, other: 1};\n";
+    let refused = |path: &str, source: &str| {
+        let mut c = context();
+        c["files"] = json!([path]);
+        intent::check(&c, &[(path.into(), source.into())]).iter().any(|d| d.code == "E0102")
+    };
+    assert!(!refused("01.APP/nodelang/studio/ui.jsx", soon));
+    assert!(refused("01.APP/nodelang/studio/ds_library.jsx", soon));
+    for path in ["nodelang/studio/ui.jsx", "06.CLOUD/nodelang/studio/ui.jsx", "02.TESTS/nodelang/studio/ui.jsx"] {
+        assert!(refused(path, soon), "{path}");
+    }
+    for second in ["function Soon () { return null; }\n", "const Soon = () => null;\n", "window.UI.Soon = () => null;\n"] {
+        assert!(refused("01.APP/nodelang/studio/ui.jsx", &format!("{soon}{second}")), "{second}");
+    }
+    assert!(refused("01.APP/nodelang/studio/ui.jsx", &format!("const chip = <b>Coming soon</b>;\n{soon}")));
+    assert!(refused("01.APP/nodelang/studio/ui.jsx", &format!("{soon}function Other() {{\n  function Soon() {{ return 'coming soon'; }}\n  return Soon();\n}}\n")));
+    assert!(refused("01.APP/nodelang/studio/ui.jsx", "function Soon() {\n  return 'Not available yet';\n}\n"));
+}
+
+#[test]
 fn html_intent_rules_use_html_ast_text_attributes_and_tags() {
     let mut c = context();
     c["files"] = json!(["index.html"]);

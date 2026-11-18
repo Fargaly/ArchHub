@@ -94,7 +94,7 @@ finally:
       window.UI = {A:{},D:{Toggle:component},api,
         taskRowReason:()=>'',
         useData:()=>{const [data,setData]=window.React.useState(api.getSnapshot());window.React.useEffect(()=>api.subscribe(()=>setData(api.getSnapshot())),[]);return {...data,...window.homeFixtures};},
-        useApp:()=>app, Btn:component,Empty:component,Av:()=>null,AgentPicker:()=>null,TaskComposer:()=>null};
+        useApp:()=>app, Btn:component,Empty:component,Soon:component,Av:()=>null,AgentPicker:()=>null,TaskComposer:()=>null};
       window.mount = name => window.ReactDOM.render(window.React.createElement(window.UI[name]),document.getElementById('root'));
     });
     for(const script of ['ds_library.jsx','ds_home2.jsx'])
@@ -108,14 +108,21 @@ finally:
     assert.equal(await filter().getByRole('button',{name:label,exact:true}).getAttribute('aria-pressed'),'true');
   }
   await load('LibraryShelf');
+  await page.waitForFunction(()=>{const s=window.ArchHubAPI.getSnapshot();return s.libraryTree?.length>0&&s.catalogue.length>0;});
   await page.getByLabel('Search nodes',{exact:true}).fill('node');
   const catalogue = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().catalogue);
-  const families = [...new Set(catalogue.map(row=>row.family))];
-  assert.deepEqual(await page.locator('.family-chips button').allTextContents(),['All',...families]);
-  for(const family of families.filter(family=>catalogue.some(row=>row.family===family&&`${row.name} ${row.description}`.toLowerCase().includes('node')))) {
-    await page.locator('.family-chips').getByRole('button',{name:family,exact:true}).click();
+  // The owner's tree names the categories; a chip shows the tree label and filters that row's cards.
+  const groups = (await page.evaluate(()=>window.ArchHubAPI.getSnapshot().libraryTree)).filter(group=>catalogue.some(row=>group.categories.includes(row.family)));
+  assert.deepEqual(catalogue.filter(row=>!groups.some(group=>group.categories.includes(row.family))),[],'every card category sits in the tree');
+  assert.deepEqual(await page.locator('.family-chips button').allTextContents(),['All',...groups.map(group=>group.label)]);
+  // Search reads name, summary, program (engine) and tree row; an agent session is never offered as a skill (design row J7).
+  const agentSessions = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().templates.filter(row=>row.kind==='agent-session').map(row=>row.id));
+  assert.equal(agentSessions.length,115);
+  const found = group=>catalogue.filter(row=>group.categories.includes(row.family)&&!agentSessions.includes(row.id)&&`${row.name} ${row.description} ${row.descriptor?.engine||''} ${group.label}`.toLowerCase().includes('node'));
+  for(const group of groups.filter(group=>found(group).length)) {
+    await page.locator('.family-chips').getByRole('button',{name:group.label,exact:true}).click();
     assert.deepEqual(await page.locator('.shelf-node').evaluateAll(rows=>rows.map(row=>row.getAttribute('aria-label'))),
-      catalogue.filter(row=>row.family===family&&`${row.name} ${row.description}`.toLowerCase().includes('node')).map(row=>'Add '+row.name));
+      found(group).map(row=>'Add '+row.name));
   }
   const unavailable = catalogue.find(row=>row.unavailable&&row.reason);
   assert.ok(unavailable,'real owner must expose an unavailable card with a reason');
@@ -126,12 +133,16 @@ finally:
   assert.equal(await card.getByText(unavailable.reason,{exact:true}).count(),1);
   t.diagnostic('item 5 PASS: category chips filter real owner rows; unavailable card is disabled and shows its reason');
   await page.getByLabel('Search nodes',{exact:true}).fill('');
-  const category = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().catalogue.find(row=>row.family==='trigger').family);
-  await page.locator('.shelf-category').filter({hasText:category}).click();
-  await page.waitForFunction(category=>window.ArchHubAPI.getSnapshot().libraryCollapsed.includes(category),category);
+  // A fresh profile starts with the tree closed; the category he opens stays open after a reload.
+  const category = page.locator('[data-library-category="trigger"] > .shelf-category');
+  assert.equal(await category.getAttribute('aria-expanded'),'false');
+  assert.equal(await page.locator('.shelf-node').count(),0);
+  await category.click();
+  await page.waitForFunction(()=>!window.ArchHubAPI.getSnapshot().libraryCollapsed.includes('trigger'));
   await assert.rejects(page.evaluate(()=>window.ArchHubAPI.setLibraryCollapsed(['unknown'])),/Unknown Library category/);
   await load('LibraryShelf');
-  assert.equal(await page.locator('.shelf-category').filter({hasText:category}).getAttribute('aria-expanded'),'false');
+  await page.locator('[data-library-category="trigger"] > .shelf-category[aria-expanded="true"]').waitFor();
+  assert.equal(await page.locator('[data-library-category="host"] > .shelf-category').getAttribute('aria-expanded'),'false');
   const rejected = await page.evaluate(async()=>{
     const response=await fetch('/api/universal/settings-action',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':window.ARCHHUB_BOOT.token,'X-ArchHub-CSRF':window.ARCHHUB_BOOT.csrf},body:JSON.stringify({function:'setLibraryCollapsed',args:[['unknown']]})});return response.status;
   });
@@ -144,7 +155,11 @@ finally:
     }
     return route.continue();
   });
-  await page.getByRole('button',{name:'Sessions',exact:true}).click();
+  // The Library shelf no longer carries a Sessions tab (design: saved work sits under "Workflows and skills").
+  // The saved-document list is the shared SessionList that Home renders; it is mounted alone here.
+  assert.equal(await page.locator('.shelf-tabs').count(),0);
+  const list = (props={})=>page.evaluate(props=>window.ReactDOM.render(window.React.createElement(window.UI.SessionList,{list:'home',...props}),document.getElementById('root')),props);
+  await list();
   await page.getByRole('alert').filter({hasText:'Filter temporarily unavailable'}).waitFor();
   await page.getByRole('button',{name:'Retry',exact:true}).click();
   await filter().waitFor({state:'visible'});
@@ -152,17 +167,17 @@ finally:
   assert.deepEqual(await filter().getByRole('button').allTextContents(),['All','Workflows','Agent sessions']);
   assert.equal(await page.locator('select').count(),0);
   assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graphs.length),146,'owner catalogue must retain all fixtures');
-  await choose('All',146,'.scroll button.listbutton');
-  await page.getByLabel('Search nodes',{exact:true}).fill('no-matching-document');
+  await choose('All',146,'button.listbutton');
+  await list({query:'no-matching-document'});
   await page.getByText('No sessions found.',{exact:true}).waitFor();
-  await page.getByLabel('Search nodes',{exact:true}).fill('');
-  await choose('Workflows',31,'.scroll button.listbutton');
-  await choose('Agent sessions',115,'.scroll button.listbutton');
+  await list();
+  await choose('Workflows',31,'button.listbutton');
+  await choose('Agent sessions',115,'button.listbutton');
   await load('LibraryShelf');
-  await page.getByRole('button',{name:'Sessions',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelectorAll('.scroll button.listbutton').length===115);
+  await list();
+  await page.waitForFunction(()=>document.querySelectorAll('button.listbutton').length===115);
   assert.equal(await filter().getByRole('button',{name:'Agent sessions',exact:true}).getAttribute('aria-pressed'),'true');
-  await choose('Workflows',31,'.scroll button.listbutton');
+  await choose('Workflows',31,'button.listbutton');
   await page.getByRole('button',{name:'Workflow 0',exact:true}).click();
   assert.equal(opens.length,1);
   await load('Home');
@@ -215,7 +230,7 @@ finally:
   await page.evaluate(()=>window.ReactDOM.render(window.React.createElement(window.UI.SessionList,{list:'home',renderRow:()=>null}),document.getElementById('root')));
   await filter().waitFor();
   assert.equal(await page.locator('button.listbutton').count(),0,'null row renderer must not create plain file buttons');
-  t.diagnostic('item 6 PASS: ordered tasks, pins, hidden tasks, fileless task, runtime agent and orphan workflow rows; Library counts 146/31/115');
+  t.diagnostic('item 6 PASS: ordered tasks, pins, hidden tasks, fileless task, runtime agent and orphan workflow rows; saved-document list counts 146/31/115');
   assert.equal(actions.includes('run')||actions.includes('solve'),false);
   assert.deepEqual(errors,[]);
 });

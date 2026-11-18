@@ -140,6 +140,9 @@ test('every existing menu item preserves label, order, state and action calls', 
   console.log('MAPPED existing menu action cases: '+mapped+'; unmapped: 0');
 });
 
+// The doors that left the Library shelf: command id, label, command-list group, and the call the registered action makes.
+const LIBRARY_DOORS=[['palette.mcp_tools','MCP tools','Hosts',['u.show','MCP tools']],['palette.share_session','Share session','Workflows',['u.download','Recipe']]];
+
 test('all old palette sources and every navigation page preserve their actions', async()=>{
   const source=execFileSync('git',['show','60dc0f8e:01.APP/nodelang/studio/app.jsx'],{cwd:root,encoding:'utf8'});
   const start=source.indexOf('      const searchOrder = '),end=source.indexOf('      body = <><input',start);
@@ -149,7 +152,8 @@ test('all old palette sources and every navigation page preserve their actions',
     graphs:[{id:'graph',name:'Workflow'}],hosts:[{name:'Revit',state:'connected'}],pages:['Account','Appearance']};
   const old=runtime('',state),now=runtime(fs.readFileSync(path.join(studio,'compiled/context-menus.js'),'utf8'),state);
   const prior=vm.runInContext(expression,old.sandbox)(state,old.u,old.api,old.sandbox.window.ArchHubRouteNames,'','All');
-  const items=now.sandbox.window.UI.paletteCommands(state,now.u,now.api);
+  // The two doors that left the Library shelf are new rows; the next test proves them. Every old entry stays as it was.
+  const items=now.sandbox.window.UI.paletteCommands(state,now.u,now.api).filter(x=>!LIBRARY_DOORS.some(([id])=>id===x.id));
   assert.deepEqual(plain(items.map(x=>[x.label,x.group])),plain(prior.map(x=>[x.label,x.group])));
   for(let index=0;index<items.length;index++){
     old.calls.length=now.calls.length=0;
@@ -157,6 +161,34 @@ test('all old palette sources and every navigation page preserve their actions',
     assert.deepEqual(plain(now.calls),plain(old.calls),items[index].label);
   }
   console.log('MAPPED existing palette entries: '+items.length+'; unmapped: 0');
+});
+
+test('MCP tools and Share session are command-list doors that run their registered Library actions', async()=>{
+  const state={graph:{nodes:[]},catalogue:[],templates:[],tasks:[],graphs:[],hosts:[],pages:[]};
+  const rig=runtime('',state),handlers={};
+  // The Studio's own action table (ds/index.jsx): ids registered by a screen, run by id.
+  rig.sandbox.window.registerActions=(mapping,held)=>{for(const [id,name] of Object.entries(mapping))handlers[id]=held[name];};
+  rig.sandbox.window.executeAction=(id,context,event)=>handlers[id](context,event);
+  for(const name of ['ds_library.js','context-menus.js'])vm.runInContext(fs.readFileSync(path.join(studio,'compiled',name),'utf8'),rig.sandbox);
+  const registry=rig.sandbox.window.ArchHubCommandRegistry,read=options=>rig.sandbox.window.UI.paletteCommands(state,rig.u,rig.api,options);
+  for(const [id,label,group,call] of LIBRARY_DOORS){
+    const row=registry.commands.find(command=>command.id===id);
+    assert.ok(row&&row.contexts.includes('palette'),id+' is a row of the one registry');
+    assert.equal(typeof handlers[row.action.client],'function',id+' names a registered action: '+row.action.client);
+    const found=read({}).filter(item=>item.id===id);
+    assert.deepEqual(plain(found.map(item=>[item.label,item.group])),[[label,group]]);
+    rig.calls.length=0;
+    await found[0].action();
+    assert.deepEqual(plain(rig.calls),[call],label+' runs its action');
+    assert.deepEqual(plain(read({query:label.toLowerCase()}).map(item=>item.id)),[id],'typing "'+label+'" finds it');
+  }
+  // The flow-file picker that the shelf's "Open session" used is gone; no action is left pointing at it.
+  assert.equal(Object.keys(handlers).some(id=>id.includes('ImportFlow')),false);
+  // A card the catalogue marks not available (coming soon) is not offered as an "Add node" row.
+  // Nor is an agent session: it is a conversation record, not a skill.
+  const offered=rig.sandbox.window.UI.paletteCommands({...state,templates:[{id:'skill:talk',title:'Talk',kind:'agent-session'},{id:'skill:flow',title:'Flow',kind:'workflow'}],
+    catalogue:[{name:'Number'},{name:'Remote tunnel',unavailable:true,soon:true},{id:'skill:talk',name:'Talk'},{id:'skill:flow',name:'Flow'}]},rig.u,rig.api);
+  assert.deepEqual(plain(offered.filter(item=>item.id==='palette.add_node').map(item=>item.label)),['Number','Flow']);
 });
 
 test('compiled Canvas supplies the real selection and callbacks to both readers', async()=>{

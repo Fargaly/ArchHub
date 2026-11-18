@@ -79,10 +79,12 @@ def test_library_collapse_and_list_filters_persist_and_reject_unknown(tmp_path):
         action('setLibraryCollapsed', [['unknown']])
     assert action('readSessionListFilters')['sessionListFilters'] == {}
     action('setSessionListFilter', ['home', 'workflow'])
-    action('setSessionListFilter', ['library', 'agent-session'])
-    assert action('readSessionListFilters')['sessionListFilters'] == {'home': 'workflow', 'library': 'agent-session'}
+    assert action('readSessionListFilters')['sessionListFilters'] == {'home': 'workflow'}
     with pytest.raises(Refused, match='session list and filter'):
-        action('setSessionListFilter', ['library', 'skill'])
+        action('setSessionListFilter', ['home', 'skill'])
+    # The Library shelf has no session list any more; Home is the one saved-document list.
+    with pytest.raises(Refused, match='session list and filter'):
+        action('setSessionListFilter', ['library', 'agent-session'])
 
 
 def test_every_engine_has_one_declared_category_and_unavailable_cards_have_reasons(monkeypatch):

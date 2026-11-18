@@ -2144,6 +2144,60 @@ LIBRARY_PRESENTATION = (
     ('daily work', ()),
 )
 
+# The shelf's category tree in the design's order: (id, plain label, icon, the card categories it shows).
+# A node type keeps the category its own card declares; this only names and orders those categories.
+LIBRARY_TREE = (
+    ("host", "Programs", "canvas", ("host", "connectors", "office")),
+    ("file", "Files", "folder", ("file", "files")),
+    ("skill", "Workflows and skills", "group", ("skill",)),
+    ("trigger", "Starts a run", "clock", ("trigger",)),
+    ("governance", "Checks and standards", "check", ("governance", "enforce")),
+    ("ai", "Agents and AI", "brain", ("ai", "agents", "models")),
+    ("shape", "Lists and data", "library", ("shape",)),
+    ("transform", "Change geometry", "arrange", ("transform",)),
+    ("logic", "Decide and branch", "arrange", ("logic",)),
+    ("input", "Inputs and project data", "settings", ("input", "workspaces")),
+    ("math", "Maths", "code", ("math",)),
+    ("text", "Text", "edit", ("text",)),
+    ("document", "Drawings and media", "docs", ("document", "daily work")),
+    ("watch", "Watch for changes", "eye", ("watch",)),
+    ("output", "Deliver and send", "send", ("output", "workshop")),
+    ("note", "Notes and team", "users", ("note",)),
+    ("settings", "Settings", "settings", ("settings",)),
+)
+
+# Node types the design shows whose engine is not built yet (research res-049 and res-064). Each one declares
+# itself not available: the Library draws it as "Coming soon" and no path can place it. Sockets and
+# parameters are the design's, so the card already says what the node will take and give.
+NOT_BUILT = "Not built yet"
+COMING_NODE_TYPES = (
+    {"id": "remote_tunnel", "cat": "trigger", "title": "Remote tunnel", "available": False,
+     "sub": "Reach this session from outside this PC while it is armed, held to your Settings policy",
+     "engine": "remote.tunnel", "params": {"armed": False, "who_may_connect": "Only me", "ends_after": "1 hour"},
+     "_types": {"who_may_connect": "enum", "ends_after": "enum"},
+     "paramDefs": [{"id": "who_may_connect", "options": ["Only me", "My office", "Anyone with the link"]},
+                   {"id": "ends_after", "options": ["15 minutes", "1 hour", "End of day"]}],
+     "ports": {"source": [{"id": "fire", "type": "any"}, {"id": "connected", "type": "list"}],
+               "target": [{"id": "policy", "type": "string"}]}},
+    {"id": "model_json", "cat": "shape", "title": "Model JSON", "available": False,
+     "sub": "The building as plain data: levels, walls, rooms, doors",
+     "engine": "model.json", "params": {"levels": 1},
+     "ports": {"source": [{"id": "model", "type": "string"}], "target": [{"id": "brief", "type": "string"}]}},
+    {"id": "check_model", "cat": "governance", "title": "Check model", "available": False,
+     "sub": "Checks every field before anything is built; each problem names its field and a suggestion",
+     "engine": "model.check", "params": {"stop_on_problems": True},
+     "ports": {"source": [{"id": "ok", "type": "string"}, {"id": "problems", "type": "list"}],
+               "target": [{"id": "model", "type": "string"}]}},
+    {"id": "place_views_on_sheets", "cat": "document", "title": "Place views on sheets", "available": False,
+     "sub": "Places the views itself so nothing overlaps; you choose the sheet size, the scale and the views",
+     "engine": "sheets.place_views",
+     "params": {"sheet_size": "A1", "scale": "1:100", "views": "Plans, sections, schedules"},
+     "_types": {"sheet_size": "enum", "scale": "enum"},
+     "paramDefs": [{"id": "sheet_size", "options": ["A0", "A1", "A3"]},
+                   {"id": "scale", "options": ["1:50", "1:100", "1:200"]}],
+     "ports": {"source": [{"id": "sheets", "type": "list"}], "target": [{"id": "views", "type": "list"}]}},
+)
+
 
 # Stable placement bindings from the pre-consolidation catalogue. These seed
 # compatibility metadata in Cells; the visible catalogue remains LIBRARY_PRESENTATION.
@@ -2456,7 +2510,10 @@ def _canvas_extra_items():
         "ports": {"source": [{"id": "value", "type": "string"}], "target": []},
     })
     rows.extend(thing_items())
-    rows.extend(dict(item) for item in (CATALOGUE_ITEM, dataset_item, FIELD_ITEM))
+    rows.extend(dict(item) for item in (CATALOGUE_ITEM, dataset_item, FIELD_ITEM, *COMING_NODE_TYPES))
+    for row in rows:
+        if row.get("available") is False:  # its own declaration: designed, not built; every add path refuses noEngine
+            row.update(noEngine=True, reason=NOT_BUILT)
     return rows
 
 

@@ -652,6 +652,7 @@
       <div style={cap}>Output</div>
       {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}
       <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
+      {(s.libraryPorts || []).some(item => item.engine === n.type && item.available === false && item.ports?.source?.some(p => p.id === 'problems')) && <window.UI.CheckProblems />}
     </Tag>;
   }
   // Connection node: the selected wire's own parameters, in the same Inspector. Tokens from design-tokens.json via AH.

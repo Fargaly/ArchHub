@@ -79,7 +79,6 @@
       }
     };
     const talkTimer = React.useRef(),
-      flowInput = React.useRef(),
       fileInput = React.useRef(),
       priorFocus = React.useRef(null),
       menuAnchor = React.useRef({
@@ -314,7 +313,6 @@
       setToast(result.message);
       return result;
     };
-    const pickFlow = () => flowInput.current?.click();
     const pickFile = () => act(async () => { const file = await api.addFile(); if (file) return api.addComposerAttachment(file.id); return null; });
     const value = {
       modal,
@@ -351,7 +349,6 @@
       setAdvanced,
       openSystem,
       pickWorkspace,
-      pickFlow,
       pickFile,
       setToast
     };
@@ -444,24 +441,6 @@
       updates: 'Updates & About'
     }[route] || 'Account'} full />;
     return <Ctx.Provider value={value}>
-  <input className="sr-only" ref={flowInput} aria-label="Import flow file" type="file" accept=".json,.yaml,.yml" onChange={async e => {
-        const f = e.target.files?.[0];
-        if (f) {
-          try {
-            const content = await f.text();
-            const recipe = /\.ya?ml$/i.test(f.name);
-            const flow = recipe ? null : JSON.parse(content);
-            const r = await act(() => recipe ? api.importRecipe(content) : api.importFlow(flow));
-            if (r) {
-              go('canvas');
-              setToast(r.count ? r.count + ' nodes imported' : 'Recipe added as a node');
-            }
-          } catch (error) {
-            setToast('Choose a valid Node-RED or Langflow JSON file.');
-          }
-        }
-        e.target.value = '';
-      }} />
   <input className="sr-only" ref={fileInput} aria-label="Choose project file" type="file" multiple onChange={async e => {
         for (const f of e.target.files || []) {
           const record = await act(() => api.addFile(f.name));

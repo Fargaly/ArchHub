@@ -34,7 +34,10 @@
         more=>u.show('Search',{commandContext:{...context,more}})) || []).flat().map(row=>row.command)
         .filter(row=>(mode==='All'||row.group===mode)&&row.label.toLowerCase().includes(query.toLowerCase()));
     }
-    const bindings = [...s.catalogue.map(c => ({
+    // A card the catalogue marks not available (no engine, or coming soon) cannot be added, so it is not offered here;
+    // an agent session is a conversation record, not a skill, so it is not offered as a node either.
+    const agentSessions = (s.templates || []).filter(t => t.kind === 'agent-session').map(t => t.id);
+    const bindings = [...s.catalogue.filter(c => !c.unavailable && !agentSessions.includes(c.id)).map(c => ({
         label: c.name,
         commandId: 'palette.add_node',
         action: async () => {
@@ -78,7 +81,13 @@
         label,
         commandId: 'page.' + r,
         action: () => u.go(r)
-      }))];
+      })), {
+        commandId: 'palette.mcp_tools',
+        action: () => window.executeAction('projects.ds_library.MCPTools.10', {u})
+      }, {
+        commandId: 'palette.share_session',
+        action: () => window.executeAction('projects.ds_library.ExportRecipe.8', {u})
+      }];
     const registry=window.ArchHubCommandRegistry;
     const held={};
     for(const binding of bindings)(held[binding.commandId] ||= []).push(binding);

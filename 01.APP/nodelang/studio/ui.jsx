@@ -460,7 +460,17 @@
   }
   // The avatar letters come from the real name, else the account email; never from a placeholder.
   const profileInitials = profile => (profile.name ? profile.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2) : (profile.email || '').slice(0, 1)).toUpperCase();
+  // A part the design shows that no engine or owner runs yet: drawn as designed, inert, with one "Coming soon" chip.
+  // It never hides the part and never lets it act; one look everywhere (style.css .soon).
+  // label is required: it names the held part for a screen reader, because the inert part itself is not read out.
+  function Soon({children, block = false, label}) {
+    if (!label) throw Error('UI.Soon needs a label naming the part it holds.');
+    const SOON = 'Coming soon: not built yet';
+    const Tag = block ? 'div' : 'span';
+    return <Tag className="soon" data-soon="" data-block={block ? '' : undefined} role="group" aria-label={label + '. ' + SOON} aria-disabled="true" title={SOON}><Tag className="soon-part" ref={part => part?.setAttribute('inert', '')}>{children}</Tag><span className="soon-chip">Coming soon</span></Tag>;
+  }
   window.UI = {
+    Soon,
     useAskBaboom,
     profileInitials,
     deliveryAttention,

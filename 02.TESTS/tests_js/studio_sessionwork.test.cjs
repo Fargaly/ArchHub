@@ -51,7 +51,7 @@ test('SESSIONWORK: one row per piece of work, lead and member avatars, interrupt
         setActiveSurface: () => {}, supportsAction: () => true,
         readCanvasTabs: async () => ({canvasTabs: {tabs: [], active: '', split: '', collapsed: false}}),
         setCanvasTabs: async () => ({ok: true}),
-        readSessionListFilters: async () => ({sessionListFilters: {home: 'all', library: 'all'}}),
+        readSessionListFilters: async () => ({sessionListFilters: {home: 'all'}}),
         setSessionListFilter: async () => ({ok: true}),
         readHomeLayout: async () => ({homeLayout: {width: 300, collapsed: false, resume: '', order: [], hidden: []}}),
         setHomeLayout: async layout => { if (layout && layout.resume) window.selected.push(layout.resume); return {ok: true}; },

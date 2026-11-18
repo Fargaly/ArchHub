@@ -64,7 +64,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             setActiveSurface: () => {}, supportsAction: () => true,
             readCanvasTabs: async () => ({canvasTabs:{tabs:[],active:'',split:'',collapsed:false}}),
             setCanvasTabs: async () => ({ok:true}),
-            readSessionListFilters: async () => ({sessionListFilters:{home:'all',library:'all'}}),
+            readSessionListFilters: async () => ({sessionListFilters:{home:'all'}}),
             setSessionListFilter: async () => ({ok:true}),
             readHomeLayout: async () => ({homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]}}),
             setHomeLayout: async () => ({ok:true}),

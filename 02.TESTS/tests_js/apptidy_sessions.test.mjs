@@ -27,11 +27,14 @@ try {
   const shelf = page.getByRole('complementary', {name: 'Library shelf'});
   await page.getByRole('button', {name: 'Fold Library', exact: true}).click();
   await page.getByRole('button',{name:'Open Library',exact:true}).click();
-  await shelf.getByRole('button', {name: 'Sessions', exact: true}).click();
-  await shelf.getByRole('group', {name: 'Saved document filter', exact: true}).waitFor();
-  assert.equal(await shelf.getByRole('button', {name: 'Skills', exact: true}).count(), 0);
-  assert.equal(await shelf.getByRole('button', {name: 'Workflows', exact: true}).count(), 1);
-  await shelf.getByRole('button', {name: 'Facade study', exact: true}).click();
+  // The shelf has no Sessions tab (design): a saved session is a card under "Workflows and skills".
+  assert.equal(await shelf.getByRole('button', {name: 'Sessions', exact: true}).count(), 0);
+  assert.equal(await shelf.locator('[data-library-category="skill"] > .shelf-category b').innerText(), 'Workflows and skills');
+  await shelf.getByLabel('Search nodes', {exact: true}).fill('Facade study');
+  await shelf.getByRole('button', {name: 'Add Facade study', exact: true}).waitFor();
+  await shelf.getByLabel('Search nodes', {exact: true}).fill('');
+  // Opening the saved file itself is rendered on Home's list (studio_workflows_categories) and Canvas › Open…; here its owner opens it.
+  await page.evaluate(path => window.ArchHubAPI.openSession(path), input.path);
   await page.waitForFunction(expected => window.ArchHubAPI.getSessionPath() === expected, input.path);
   assert.equal(await page.evaluate(() => window.ArchHubAPI.getSessionDocument().title), 'Facade study');
   const started = await page.evaluate(() => window.ArchHubAPI.startTemplate('skill:' + window.ArchHubAPI.getSessionDocument().id));
@@ -48,7 +51,7 @@ try {
   assert.equal(saved.path, input.saveAs);
   assert.equal(await page.evaluate(() => window.ArchHubAPI.getSessionDocument().title), 'Shared study');
   assert.equal(await page.evaluate(() => window.ArchHubAPI.getGraph().name), 'Shared study');
-  console.log('APPTIDY rendered Library open, Run, Save As and .archhub export PASS');
+  console.log('APPTIDY rendered Library card, open through the owner, Run, Save As and .archhub export PASS');
 } finally {
   await browser.close();
 }

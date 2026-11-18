@@ -1514,20 +1514,23 @@ def r_settings_action(s, req):
         from .settings_owner import dock_layout
         return {'ok': True, 'result': dock_layout(function, args, settings)}
     if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
-        from .library_engines import LIBRARY_PRESENTATION
+        from .library_engines import LIBRARY_PRESENTATION, LIBRARY_TREE
         categories = list(dict.fromkeys(category for category, _ in LIBRARY_PRESENTATION))
+        tree = [{'id': row, 'label': label, 'icon': icon, 'categories': list(shown)}
+                for row, label, icon, shown in LIBRARY_TREE]
         if function == 'setLibraryCollapsed':
             groups = args[0] if args else None
             if (not isinstance(groups, list) or len(groups) > len(categories) or any(
                     group not in categories for group in groups)):
                 raise Refused('Choose valid Library categories.')
             settings.update({'libraryCollapsed': list(dict.fromkeys(groups))})
-        return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', []),
-                                      'libraryCategories': categories}}
+        # Until he opens or closes a category himself, the tree starts closed (the design's first look).
+        return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [row['id'] for row in tree]),
+                                      'libraryCategories': categories, 'libraryTree': tree}}
     if function in ('readSessionListFilters', 'setSessionListFilter'):
         filters = settings.read().get('sessionListFilters', {})
         if function == 'setSessionListFilter':
-            if len(args) != 2 or args[0] not in ('home', 'library') or args[1] not in ('all', 'workflow', 'agent-session'):
+            if len(args) != 2 or args[0] != 'home' or args[1] not in ('all', 'workflow', 'agent-session'):
                 raise Refused('Choose a session list and filter.')
             filters = {**filters, args[0]: args[1]}
             settings.update({'sessionListFilters': filters})

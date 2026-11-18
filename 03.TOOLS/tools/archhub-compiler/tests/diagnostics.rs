@@ -1,4 +1,4 @@
-use archhub_compiler::{analyze, language_name, Report};
+use archhub_compiler::{analyze, compile, language_name, Report};
 
 fn report(path: &str, source: &str) -> Report {
     let (source, runtime) = source
@@ -296,6 +296,41 @@ fn e0010_unknown_never_passes() {
 #[test]
 fn e0011_parse_errors_never_pass() {
     assert!(has(&report("broken.py", "def (:"), "E0011"));
+}
+#[test]
+fn coming_soon_is_admitted_only_inside_the_one_shared_soon_component() {
+    let soon = "function Soon({children}) {\n  const tip = 'Coming soon: not built yet';\n  return <span title={tip}>{children}<i>Coming soon</i></span>;\n}\nwindow.UI = {Soon, other: 1};\n";
+    // Allowed: the single shared component, at exactly 01.APP/nodelang/studio/ui.jsx (the scan's compile path and the
+    // native identity it analyses); exporting it is not a second declaration.
+    let r = compile(&[("01.APP/nodelang/studio/ui.jsx".into(), soon.into())], None);
+    assert!(!has(&r, "E0003"), "{:?}", r.diagnostics);
+    assert!(!has(&report("nodelang/studio/ui.jsx", soon), "E0003"));
+    // Refused: the same relative path under another area, which the scan maps onto the same native identity.
+    for path in ["06.CLOUD/nodelang/studio/ui.jsx", "02.TESTS/nodelang/studio/ui.jsx", "03.TOOLS/nodelang/studio/ui.jsx"] {
+        let r = compile(&[(path.into(), soon.into())], None);
+        assert!(r.diagnostics.iter().any(|d| d.code == "E0003" && d.file == path), "{path}: {:?}", r.diagnostics);
+    }
+    // Refused: any other file.
+    for path in ["01.APP/nodelang/studio/ds_library.jsx", "06.CLOUD/nodelang/studio/ui.jsx", "01.APP/nodelang/studio/other/ui.jsx",
+                 "nodelang/studio/other/ui.jsx", "nodelang/library_engines.jsx"] {
+        assert!(has(&report(path, soon), "E0003"), "{path}");
+        assert!(has(&compile(&[(path.into(), soon.into())], None), "E0003"), "{path}");
+    }
+    // Refused: a second declaration of Soon in any spelling.
+    for second in ["function Soon () { return null; }\n", "const Soon = () => null;\n", "window.UI.Soon = () => null;\n",
+                   "class Soon {}\n", "const parts = {Soon: () => null};\n"] {
+        assert!(has(&report("01.APP/nodelang/studio/ui.jsx", &format!("{soon}{second}")), "E0003"), "{second}");
+    }
+    // Refused: the words outside the component, even in ui.jsx.
+    let outside = format!("const tip = 'Coming soon: not built yet';\n{soon}");
+    assert!(has(&report("01.APP/nodelang/studio/ui.jsx", &outside), "E0003"));
+    // Refused: a second definition of the component.
+    let twice = format!("{soon}function Other() {{\n  function Soon() {{ return 'coming soon'; }}\n  return Soon();\n}}\n");
+    assert!(has(&report("01.APP/nodelang/studio/ui.jsx", &twice), "E0003"));
+    // The other refused words get no allowance, in the component or out of it.
+    let other = "function Soon() {\n  return 'Not available yet';\n}\n";
+    assert!(has(&report("01.APP/nodelang/studio/ui.jsx", other), "E0003"));
+    assert!(has(&report("nodelang/library_engines.py", "REASON = 'Coming soon: not built yet'\n"), "E0003"));
 }
 #[test]
 fn comments_are_not_runtime_readers_or_failures() {

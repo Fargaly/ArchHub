@@ -3,7 +3,6 @@
   function executeAction(...args) { return window.executeAction(...args); }
   const {
     A,
-    D,
     api,
     useData,
     useApp,
@@ -34,37 +33,56 @@
   }) {
     const s = useData(),
       u = useApp();
-    const [tab, setTab] = React.useState('Library'),
-      [query, setQuery] = React.useState(''),
-      [family, setFamily] = React.useState('All');
-    const collapsed = s.libraryCollapsed || [];
+    const [query, setQuery] = React.useState(''),
+      [family, setFamily] = React.useState('All'),
+      [options, setOptions] = React.useState(false);
+    const optionsButton = React.useRef(null), optionsMenu = React.useRef(null);
+    React.useLayoutEffect(() => {if (options) optionsMenu.current?.querySelector('button')?.focus({preventScroll: true});}, [options]);
+    // The owner's tree names and orders the categories. A card category it does not list still shows, under its own name.
+    // An agent session is the record of a conversation, not a skill: the shelf never lists one.
+    const agentSessions = (s.templates || []).filter(t => t.kind === 'agent-session').map(t => t.id);
+    const catalogue = s.catalogue.filter(c => !agentSessions.includes(c.id));
+    const tree = s.libraryTree || [];
+    const listed = tree.flatMap(row => row.categories);
+    const groups = [...tree, ...[...new Set(catalogue.map(c => c.family))].filter(f => !listed.includes(f)).map(f => ({id: f, label: f, icon: 'library', categories: [f]}))]
+      .filter(group => catalogue.some(c => group.categories.includes(c.family)));
+    const collapsed = s.libraryCollapsed || tree.map(row => row.id);
     const toggleSection = name => u.act(()=>api.setLibraryCollapsed(collapsed.includes(name)?collapsed.filter(value=>value!==name):[...collapsed,name]));
-    // Category chips filter the same owner catalogue when searching.
-    const groupOf = c => c.family;
-    const rows = s.catalogue.filter(c => (family === 'All' || groupOf(c) === family) && `${c.name} ${c.description}`.toLowerCase().includes(query.toLowerCase()));
-    const families = [...new Set(s.catalogue.map(c => c.family))];
+    // Search and the category chips filter the same owner catalogue. Both are view state and change no file.
+    // A search reads the card's name and summary, its program (the engine it declares) and the tree row it sits under.
+    const found = (c, group) => `${c.name} ${c.description} ${c.descriptor?.engine || ''} ${group.label}`.toLowerCase().includes(query.toLowerCase());
     const add = async c => {const node=await u.act(()=>api.addNode(c.id));if(node?.id)u.setSelectedNodeId(node.id);return node;};
-    const sections = families.filter(f => (family === 'All' || family === f) && rows.some(c => groupOf(c) === f)).map(f => [f, rows.filter(c => groupOf(c) === f)]);
-    return <aside className="pane library-shelf" data-screen="library" aria-label="Library shelf"><header className="spread"><h2>Library</h2><Btn variant="controls" sm ghost aria-label="Close Library" onClick={event => executeAction("projects.ds_library.CloseLibrary.1", {onClose}, event)}>×</Btn></header><button className="listbutton flex shelf-new-session" onClick={event=>executeAction("projects.ds_library.NewSession.14", {api,u}, event)}><window.AHIcon name="plus" size={16}/>New canvas session</button><div className="shelf-tabs">{['Library', 'Sessions', 'Runs'].map(t => <button key={t} className="tab-button" aria-pressed={t === tab} onClick={event => executeAction("projects.ds_library.SetTabT.2", {setTab,t}, event)}>{t}</button>)}</div><input data-design="library.search" aria-label="Search nodes" placeholder="Search nodes…" value={query} onChange={e => { setQuery(e.target.value); if (!e.target.value.trim()) setFamily('All'); }} />{tab === 'Library' && query.trim() && <div className="family-chips">{['All', ...families].map(f => <button key={f} aria-pressed={family === f} style={family === f ? {background: 'transparent', color: A.ink, borderColor: A.line} : undefined} onClick={event => executeAction("projects.ds_library.SetFamilyF.3", {f,setFamily}, event)}>{f}</button>)}</div>}<div className="scroll fill">{tab === 'Library' ? sections.map(([f, list]) => <section key={f}><button className="spread label shelf-category" aria-expanded={query.trim()?true:!collapsed.includes(f)} onClick={event=>executeAction("projects.ds_library.ToggleSection.13", {f,toggleSection}, event)} style={{
-            padding: '14px 8px 5px'
-          }}><span className="flex"><window.AHIcon name="arrow" size={12} style={{transform:collapsed.includes(f)&&!query.trim()?undefined:'rotate(90deg)'}}/>{f}</span><span>{list.length}</span></button>{(query.trim()||!collapsed.includes(f))&&list.map(c => <button data-design="library.row" className="listbutton shelf-node" key={c.id} disabled={c.unavailable} draggable={!c.unavailable} onDragStart={e => e.dataTransfer.setData('node', c.id)} onClick={event => executeAction("projects.ds_library.AddC.4", {add,c}, event)} title={'Add ' + c.name} aria-label={'Add ' + c.name}><span className="flex"><span className="shelf-node-copy"><b>{c.name}</b><small>{c.reason || c.description}</small></span></span><window.AHIcon name="plus" size={14} /></button>)}</section>) : tab === 'Sessions' ? <><SessionList list="library" query={query}/><div className="label" style={{padding: '14px 8px 5px'}}>Starters</div>{s.templates.filter(t => String(t.id).startsWith('starter:') && t.title.toLowerCase().includes(query.toLowerCase())).map(t => <button className="listbutton" key={t.id} title={t.stops_at} onClick={event => executeAction("projects.ds_library.OpenStarter.12", {api,t,u}, event)}><b>{t.title}</b>{(t.needs || []).length > 0 && <small className="muted"> · Needs {t.needs.join(', ')}</small>}</button>)}</> : s.runs.length ? s.runs.map(r => <button className="listbutton" key={r.id} onClick={event => executeAction("projects.ds_library.UShowRunIdR.7", {r,u}, event)}>{r.title}</button>) : <Empty>No runs yet.</Empty>}</div><footer className="shelf-footer"><button className="listbutton flex" onClick={event => executeAction("projects.ds_library.ExportRecipe.8", {u}, event)}><window.AHIcon name="export" size={16} />Share session</button><button className="listbutton flex" onClick={event => executeAction("projects.ds_library.ImportFlow.9", {u}, event)}><window.AHIcon name="export" size={16} />Open session</button><button className="listbutton flex" onClick={event => executeAction("projects.ds_library.MCPTools.10", {u}, event)}><window.AHIcon name="link" size={16} />MCP tools</button><button className="listbutton flex" onClick={event => executeAction("projects.ds_library.InstallMod.11", {u}, event)}><window.AHIcon name="plus" size={16} />Install mod</button>{s.mods.map(m => <div className="spread row" key={m.id}><span>{m.name}</span><D.Toggle label={m.name + ' enabled'} checked={m.enabled} onCheckedChange={v => u.act(() => api.setModEnabled(m.id, v))} /></div>)}</footer></aside>;
+    const sections = groups.filter(group => family === 'All' || family === group.id).map(group => [group, catalogue.filter(c => group.categories.includes(c.family) && found(c, group))]).filter(([, list]) => list.length);
+    const open = group => Boolean(query.trim()) || !collapsed.includes(group.id);
+    return <aside className="pane library-shelf" data-screen="library" aria-label="Library shelf"><header className="spread"><h2>Library</h2><Btn variant="controls" sm ghost aria-label="Close Library" onClick={event => executeAction("projects.ds_library.CloseLibrary.1", {onClose}, event)}>×</Btn></header><button className="listbutton flex shelf-new-session" onClick={event=>executeAction("projects.ds_library.NewSession.14", {api,u}, event)}><window.AHIcon name="plus" size={16}/>New canvas session</button>
+      <div className="shelf-search"><input data-design="library.search" aria-label="Search nodes" placeholder="Search nodes, tools, skills" value={query} onChange={e => { setQuery(e.target.value); if (!e.target.value.trim()) setFamily('All'); }} /><span className="shelf-options-anchor" onBlur={e => {if (!e.currentTarget.contains(e.relatedTarget)) setOptions(false);}}><button type="button" ref={optionsButton} className="shelf-options" aria-label="Library options" aria-haspopup="menu" aria-expanded={options} title="Library & Mods, Community" onClick={event => executeAction('ui.select', () => setOptions(shown => !shown), event)}><window.AHIcon name="more" size={15} /></button>
+        {options && <section ref={optionsMenu} className="context-menu shelf-options-menu" role="menu" aria-label="Library options" onClick={() => setOptions(false)} onKeyDown={e => {
+          const buttons = [...e.currentTarget.querySelectorAll('button')];
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            buttons[(buttons.indexOf(document.activeElement) + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+          }
+          if (e.key === 'Escape') { e.stopPropagation(); setOptions(false); optionsButton.current?.focus(); }
+        }}><div className="context-group"><button type="button" role="menuitem" onClick={event => executeAction("projects.ds_library.LibraryMods.15", {u}, event)}><window.AHIcon name="library" size={15} /><span>{'Library & Mods'}</span></button><button type="button" role="menuitem" onClick={event => executeAction("projects.ds_library.Community.16", {u}, event)}><window.AHIcon name="users" size={15} /><span>Community</span></button><button type="button" role="menuitem" onClick={event => executeAction("projects.ds_library.InstallMod.11", {u}, event)}><window.AHIcon name="plus" size={15} /><span>Import a node…</span></button></div></section>}</span></div>
+      {query.trim() && <div className="family-chips">{[{id: 'All', label: 'All'}, ...groups].map(group => <button key={group.id} aria-pressed={family === group.id} style={family === group.id ? {background: 'transparent', color: A.ink, borderColor: A.line} : undefined} onClick={event => executeAction("projects.ds_library.SetFamilyF.3", {f:group.id,setFamily}, event)}>{group.label}</button>)}</div>}
+      <div className="scroll fill">{sections.map(([group, list]) => <section key={group.id} className="shelf-group" data-library-category={group.id} data-open={open(group) || undefined}><button className="shelf-category" aria-expanded={open(group)} onClick={event=>executeAction("projects.ds_library.ToggleSection.13", {f:group.id,toggleSection}, event)}><window.AHIcon name="arrow" size={10} style={{transform:open(group)?'rotate(90deg)':undefined}}/><window.AHIcon name={group.icon} size={13}/><b>{group.label}</b><em>{list.length}</em></button>{open(group)&&list.map(c => c.soon ? <window.UI.Soon block key={c.id} label={c.name}><div data-design="library.row" data-soon-card={c.id} className="listbutton shelf-node"><span className="flex"><span className="shelf-node-copy"><b>{c.name}</b><small>{c.description}</small></span></span></div></window.UI.Soon> : <button data-design="library.row" className="listbutton shelf-node" key={c.id} disabled={c.unavailable} draggable={!c.unavailable} onDragStart={e => e.dataTransfer.setData('node', c.id)} onClick={event => executeAction("projects.ds_library.AddC.4", {add,c}, event)} title={'Add ' + c.name} aria-label={'Add ' + c.name}><span className="flex"><span className="shelf-node-copy"><b>{c.name}</b><small>{c.reason || c.description}</small></span></span><window.AHIcon name="plus" size={14} /></button>)}</section>)}{query.trim() && !sections.length && <Empty>Nothing matches.</Empty>}</div></aside>;
   }
   window.UI.LibraryShelf = LibraryShelf;
+  // Design row 8 (res-064): a check's problems list. No engine reports problems by field path yet, so the area is drawn
+  // as designed and held as Coming soon. The line shown is the design's own example, not a result.
+  function CheckProblems() {
+    return <window.UI.Soon block label="Problems list"><section className="prob-card" data-check-problems="" aria-label="Problems"><span className="prob-eyebrow">Problems</span><p>Each problem names its field, says what is wrong and suggests a fix.</p><ul className="probs"><li><code>$.walls[0].thikness</code><span>unknown field</span><em>Did you mean <b>thickness</b>?</em><span className="prob-acts"><span>Go to field</span><span>Use thickness</span></span></li></ul></section></window.UI.Soon>;
+  }
+  window.UI.CheckProblems = CheckProblems;
 
 // WIRE-projects: each rendered callback is registered with its executable owner.
 function projectsdslibraryjsxToggleSection13({f,toggleSection}) {return toggleSection(f);}
 async function projectsdslibraryjsxNewSession14({api,u}) {const result=await u.act(api.newSession);if(result)u.go('canvas');}
 
-function projectsdslibraryjsxOpenStarter12({api,t,u}, event) {
-  const handler = () => u.act(() => api.openStarter(t.id));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
+function projectsdslibraryjsxLibraryMods15({u}) {return u.go('settings/Library & Mods');}
+function projectsdslibraryjsxCommunity16({u}) {return u.go('community');}
 function projectsdslibraryjsxCloseLibrary1({onClose}, event) {
   const handler = onClose;
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdslibraryjsxSetTabT2({setTab,t}, event) {
-  const handler = () => setTab(t);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdslibraryjsxSetFamilyF3({f,setFamily}, event) {
@@ -83,18 +101,8 @@ function projectsdslibraryjsxUShowSkillIdT6({api,t,u}, event) {
   const handler = () => u.act(() => api.openSession(t.path));
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdslibraryjsxUShowRunIdR7({r,u}, event) {
-  const handler = () => u.show('Run', {
-          id: r.id
-        });
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
 function projectsdslibraryjsxExportRecipe8({u}, event) {
   const handler = () => u.download('Recipe');
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdslibraryjsxImportFlow9({u}, event) {
-  const handler = u.pickFlow;
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdslibraryjsxMCPTools10({u}, event) {
@@ -107,19 +115,17 @@ function projectsdslibraryjsxInstallMod11({u}, event) {
 }
 const PROJECT_ACTIONS = {
   "projects.ds_library.CloseLibrary.1": "projectsdslibraryjsxCloseLibrary1",
-  "projects.ds_library.SetTabT.2": "projectsdslibraryjsxSetTabT2",
   "projects.ds_library.SetFamilyF.3": "projectsdslibraryjsxSetFamilyF3",
   "projects.ds_library.AddC.4": "projectsdslibraryjsxAddC4",
   "projects.ds_library.OnClose.5": "projectsdslibraryjsxOnClose5",
   "projects.ds_library.UShowSkillIdT.6": "projectsdslibraryjsxUShowSkillIdT6",
-  "projects.ds_library.UShowRunIdR.7": "projectsdslibraryjsxUShowRunIdR7",
   "projects.ds_library.ExportRecipe.8": "projectsdslibraryjsxExportRecipe8",
-  "projects.ds_library.ImportFlow.9": "projectsdslibraryjsxImportFlow9",
   "projects.ds_library.MCPTools.10": "projectsdslibraryjsxMCPTools10",
   "projects.ds_library.InstallMod.11": "projectsdslibraryjsxInstallMod11",
-"projects.ds_library.OpenStarter.12": "projectsdslibraryjsxOpenStarter12",
 "projects.ds_library.ToggleSection.13":"projectsdslibraryjsxToggleSection13",
-"projects.ds_library.NewSession.14":"projectsdslibraryjsxNewSession14"
+"projects.ds_library.NewSession.14":"projectsdslibraryjsxNewSession14",
+"projects.ds_library.LibraryMods.15":"projectsdslibraryjsxLibraryMods15",
+"projects.ds_library.Community.16":"projectsdslibraryjsxCommunity16"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsdslibraryjsxToggleSection13,projectsdslibraryjsxNewSession14,projectsdslibraryjsxOpenStarter12,projectsdslibraryjsxCloseLibrary1,projectsdslibraryjsxSetTabT2,projectsdslibraryjsxSetFamilyF3,projectsdslibraryjsxAddC4,projectsdslibraryjsxOnClose5,projectsdslibraryjsxUShowSkillIdT6,projectsdslibraryjsxUShowRunIdR7,projectsdslibraryjsxExportRecipe8,projectsdslibraryjsxImportFlow9,projectsdslibraryjsxMCPTools10,projectsdslibraryjsxInstallMod11});
+window.registerActions(PROJECT_ACTIONS, {projectsdslibraryjsxToggleSection13,projectsdslibraryjsxNewSession14,projectsdslibraryjsxLibraryMods15,projectsdslibraryjsxCommunity16,projectsdslibraryjsxCloseLibrary1,projectsdslibraryjsxSetFamilyF3,projectsdslibraryjsxAddC4,projectsdslibraryjsxOnClose5,projectsdslibraryjsxUShowSkillIdT6,projectsdslibraryjsxExportRecipe8,projectsdslibraryjsxMCPTools10,projectsdslibraryjsxInstallMod11});
 })();

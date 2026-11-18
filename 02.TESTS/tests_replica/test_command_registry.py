@@ -164,3 +164,18 @@ def test_group_context_keeps_every_former_frame_command():
     assert all('frame' not in row['contexts'] for row in data['commands'])
     assert expected <= {row['id'] for row in commands_for_context('group')}
     assert len({row['id'] for row in data['commands']}) == len(data['commands'])
+
+
+def test_the_doors_that_left_the_library_shelf_are_command_list_rows():
+    """MCP tools and Share session: one row each, naming the Studio action it runs (run in command_registry.test.cjs)."""
+    from nodelang.command_registry import commands_for_context
+    rows = {row['id']: row for row in commands_for_context('palette')}
+    tools, share = rows['palette.mcp_tools'], rows['palette.share_session']
+    assert (tools['label'], tools['action'], tools['paletteGroup']) == (
+        'MCP tools', {'client': 'projects.ds_library.MCPTools.10'}, 'Hosts')
+    assert (share['label'], share['action'], share['paletteGroup']) == (
+        'Share session', {'client': 'projects.ds_library.ExportRecipe.8'}, 'Workflows')
+    assert tools['enabled'] and share['enabled']
+    # Looking is allowed in a read-only selection; writing a copy of the session is not.
+    read_only = {row['id'] for row in commands_for_context('palette', {'readOnly': True})}
+    assert 'palette.mcp_tools' in read_only and 'palette.share_session' not in read_only

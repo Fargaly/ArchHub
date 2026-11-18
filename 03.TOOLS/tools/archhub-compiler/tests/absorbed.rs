@@ -381,6 +381,21 @@ fn banned_user_text_admits_coming_soon_only_inside_the_sites_one_soon_chip_helpe
     // Refused: a second binding of the helper, however it is spelled.
     assert!(refused(site, &format!("{chip}def  soon_chip ():\n    return 'coming soon'\n")));
     assert!(refused(site, &format!("{chip}soon_chip = lambda: 'coming soon'\n")));
+    // Refused: the name bound any other way besides the one def.
+    for extra in ["import x as soon_chip\n", "for soon_chip in []:\n    pass\n", "a, soon_chip = 1, 2\n",
+                  "if (soon_chip := 1):\n    pass\n", "def f():\n    global soon_chip\n", "def f(soon_chip=1):\n    return soon_chip\n"] {
+        assert!(refused(site, &format!("{chip}{extra}")), "{extra}");
+    }
+    // Refused: a lambda-only binding, a class of that name, a nested def, a decorated def, decorator text.
+    assert!(refused(site, "soon_chip = lambda: 'Coming soon'\n"));
+    assert!(refused(site, "class soon_chip:\n    label = 'Coming soon'\n"));
+    assert!(refused(site, "def outer():\n    def soon_chip():\n        return 'Coming soon'\n    return soon_chip()\n"));
+    assert!(refused(site, "@wraps('Coming soon')\ndef soon_chip():\n    return 'x'\n"));
+    assert!(refused(site, "@cache\ndef soon_chip():\n    return 'Coming soon'\n"));
+    // Admitted: calls to the helper elsewhere in the file are not bindings.
+    assert!(!refused(site, &format!("{chip}def page():\n    return soon_chip() + soon_chip()\n")));
+    // Refused: a mixed phrase that carries the withdrawn wording inside the helper.
+    assert!(refused(site, "def soon_chip():\n    return 'Coming soon (not live yet)'\n"));
     // Refused: the withdrawn wording, inside the helper or out of it, on the site or in the app.
     assert!(refused(site, "def soon_chip():\n    return 'Not live yet'\n"));
     assert!(refused("01.APP/nodelang/studio/ui.jsx", "function Soon() {\n  return 'Not live yet';\n}\n"));

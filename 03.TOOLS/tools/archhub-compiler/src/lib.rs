@@ -390,27 +390,31 @@ pub fn in_site_soon_chip(file: &str, node: Node<'_>, source: &str) -> bool {
     if file.replace('\\', "/") != SITE_SOON {
         return false;
     }
-    let binds = |n: Node<'_>| match n.kind() {
-        "function_definition" | "class_definition" => n.child_by_field_name("name").is_some_and(|x| text(x, source) == "soon_chip"),
-        "assignment" | "augmented_assignment" => n.child_by_field_name("left").is_some_and(|x| text(x, source) == "soon_chip"),
-        _ => false,
-    };
     let mut root = node;
     while let Some(p) = root.parent() {
         root = p;
     }
-    let (mut count, mut stack) = (0, vec![root]);
+    // Every appearance of the name binds it except a plain call `soon_chip(...)`: a def, class, assignment,
+    // lambda, import alias, for or with target, tuple, walrus, global or parameter all count. Exactly one is
+    // admitted, and it must be the name of an undecorated top-level def.
+    let (mut uses, mut stack) = (0, vec![root]);
     while let Some(n) = stack.pop() {
-        count += usize::from(binds(n));
+        if n.kind() == "identifier" && text(n, source) == "soon_chip" {
+            let called = n.parent().is_some_and(|p| {
+                p.kind() == "call" && p.child_by_field_name("function").is_some_and(|f| f.id() == n.id())
+            });
+            uses += usize::from(!called);
+        }
         stack.extend(children(n));
     }
-    if count != 1 {
+    if uses != 1 {
         return false;
     }
     let mut parent = node.parent();
     while let Some(p) = parent {
-        if p.kind() == "function_definition" && binds(p) {
-            return true;
+        if p.kind() == "function_definition" {
+            return p.child_by_field_name("name").is_some_and(|x| text(x, source) == "soon_chip")
+                && p.parent().is_some_and(|m| m.kind() == "module");
         }
         parent = p.parent();
     }

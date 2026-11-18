@@ -67,7 +67,7 @@ def measure(root, sources=None):
             c["model_routers"] += 1
         if re.search(r"class \w*(Memory|Profile)\w*Store\b", t):
             c["memory_stores"] += 1
-        c["placeholder_strings"] += len(re.findall(r"(?i)not available yet|coming soon|\bplaceholder\b", t))
+        c["placeholder_strings"] += len(re.findall(r"(?i)not\s+available\s+yet|coming\s+soon|not\s+live\s+yet|\bplaceholder\b", t))
     # unimported modules
     names = {p.stem: p for p in files if p.parent == root / "nodelang" and p.stem not in ("__init__", "__main__")}
     corpus = "\n".join(texts.values())

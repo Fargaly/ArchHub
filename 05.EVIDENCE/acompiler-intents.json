@@ -11553,7 +11553,9 @@
       "source": "Founder 2026-11-18: he asked to see why the program is slow. Measured on his PC: ArchHub's per-session Workshop connectors burn most of a core each (15 hot at once, whole-PC CPU at 91 percent). Cause read from a live stack sample: delivery_events filters on reply_to and the declared workshop_reply_to index is never created, so every poll of every agent walks every delivery receipt. The declared index is created when the store opens; no write lock once it exists.",
       "scope": [
         "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/native_agent_mcp.py",
         "02.TESTS/tests_replica/test_workshop_reply_index.py",
+        "02.TESTS/tests_replica/test_workshop_poll_cost.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

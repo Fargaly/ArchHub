@@ -11581,7 +11581,8 @@
         "01.APP/nodelang/studio/api.js",
         "02.TESTS/tests_js/studio_sessionwork.test.cjs",
         "02.TESTS/tests/test_boot_splash.py",
-        "02.TESTS/tests_js/boot_splash.cjs"
+        "02.TESTS/tests_js/boot_splash.cjs",
+        "01.APP/nodelang/workshop_mailbox.py"
       ]
     },
     "F419": {

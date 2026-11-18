@@ -11,6 +11,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from hashlib import sha256
 from uuid import uuid4
 
@@ -407,6 +408,7 @@ def archive(history, task, revision=None):
     return won
 
 
+@lru_cache(maxsize=4096)  # pure: every Work column read matched each task against every declaration
 def _declared_id(owner):
     """The id older builds gave one agent's declared row. Kept to read those rows; new work never uses it."""
     return "declared-" + sha256(("agent\0" + owner).encode()).hexdigest()[:32]
@@ -660,31 +662,24 @@ def short_title(text, limit=60):
     return title if len(title) <= limit else title[:limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:.-") + "…"
 
 
-def _thread_result(history, task):
-    """The last Workshop message whose refs name this task. Empty when none was recorded."""
-    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
-        return ""
-    from .workshop_mailbox import ROOM
-    found = history._db.execute(
-        "SELECT content FROM messages WHERE conversation_id=? "
-        "AND EXISTS (SELECT 1 FROM json_each(refs) WHERE value=?) ORDER BY sequence",
-        (ROOM, task)).fetchall()
-    return str(found[-1][0] or "").strip() if found else ""
-
-
-def recorded_result(history, row):
-    """The result the task stored, or the final reply that names it. Never a stand-in."""
+def recorded_result(row, last):
+    """The result the task stored, or the final reply that names it (last: _task_threads). Never a stand-in."""
     stored = row.get("result")
     if isinstance(stored, str) and stored.strip():
         return stored
     if row.get("status") != "done":
         return stored
-    text = _thread_result(history, row["id"])
+    text = str(last.get(row["id"]) or "").strip()
     return text if text else (stored if isinstance(stored, str) else "")
 
 
 def _declaration_task_id(declaration):
-    return "declared-" + sha256((declaration["root"] + "\0" + declaration["request_id"]).encode()).hexdigest()[:32]
+    return _root_task_id(declaration["root"], declaration["request_id"])
+
+
+@lru_cache(maxsize=4096)
+def _root_task_id(root, request_id):
+    return "declared-" + sha256((root + "\0" + request_id).encode()).hexdigest()[:32]
 
 
 def _session_context(path):
@@ -719,6 +714,23 @@ def _bound_messages(history, task):
         "SELECT id, author, content FROM messages WHERE conversation_id=? AND author!=? AND category!=? "
         "AND EXISTS (SELECT 1 FROM json_each(refs) WHERE value=?) ORDER BY sequence",
         (ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, task))]
+
+
+def _task_threads(history):
+    """Every task's bound messages (as _bound_messages) and its last naming message, in ONE pass over the room.
+    A per-task json_each scan cost tasks x messages on every Work column read."""
+    from .workshop_mailbox import DELIVERY_AUTHOR, DELIVERY_CATEGORY, ROOM
+    bound, last = {}, {}
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
+        return bound, last
+    for message, author, content, category, task in history._db.execute(
+            "SELECT m.id, m.author, m.content, m.category, r.value FROM messages m, json_each(m.refs) r "
+            "WHERE m.conversation_id=? AND json_valid(m.refs) ORDER BY m.sequence", (ROOM,)):
+        last[task] = content
+        thread = bound.setdefault(task, [])
+        if author != DELIVERY_AUTHOR and category != DELIVERY_CATEGORY and not (thread and thread[-1]["id"] == message):
+            thread.append({"id": message, "who": author, "text": _without_header(content)})
+    return bound, last
 
 
 def _is_stale(row, declarations, hours):
@@ -803,6 +815,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
         return "PLANNED"
     current = _current_session()
     built = []
+    threads, last = _task_threads(history)
     listed = rows(history, include_archived=include_archived)
     working = {m["owner"] for row in listed if not row["id"].startswith("declared-") and row["status"] != "done"
                and not row.get("archived") for m in _live(row.get("members") or [])}
@@ -815,10 +828,10 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
         session = _session_context(row.get("session_path"))
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
         shown = "ARCHIVED" if row.get("archived") else state(row)
-        result = recorded_result(history, row)
+        result = recorded_result(row, last)
         waiting = "limit reached" if row.get("capacity") == "LIMIT_REACHED" and shown == "PLANNED" else (
             row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else "")
-        bound = _bound_messages(history, row["id"])
+        bound = threads.get(row["id"], [])
         owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
         agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
         label = owner or ((declaration or {}).get("agent") if declaration else None)

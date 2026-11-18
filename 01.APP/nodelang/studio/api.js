@@ -2013,7 +2013,8 @@ const arrangeDocument=d=>{
  while(pending.size){let changed=false;for(const id of pending){const sources=incoming.get(id);if(sources.every(key=>rank.has(key))){rank.set(id,Math.max(session&&id!==session.id?1:0,...sources.map(key=>rank.get(key)+1)));pending.delete(id);changed=true;}}if(!changed){for(const id of pending)rank.set(id,session&&id!==session.id?1:0);break;}}
  const columns=[];
  for(const n of nodes.filter(n=>!left.includes(n))){const r=rank.get(n.id);(columns[r]||=[]).push(n);}
- const size=n=>{const el=[...(document.querySelectorAll?.('[data-graph-node]') || [])].find(el=>el.dataset.graphNode===n.id);return {w:el?.offsetWidth||300,h:el?.offsetHeight||160};};
+ const rendered=new Map([...(document.querySelectorAll?.('[data-graph-node]') || [])].map(el=>[el.dataset.graphNode,{w:el.offsetWidth||300,h:el.offsetHeight||160}]));
+ const size=n=>rendered.get(n.id)||{w:300,h:160};
  const grid=v=>Math.round(v/8)*8,y0=grid(session?.position.y||0);let x=grid(session?.position.x||0);
  if(left.length){let y=y0;const width=Math.max(...left.map(n=>size(n).w));for(const n of left){n.position={x:grid(x-width-96),y:grid(y)};y+=size(n).h+32;}}
  for(const column of columns){if(!column)continue;column.sort((a,b)=>{const source=n=>incoming.get(n.id).reduce((sum,id)=>sum+nodes.find(n=>n.id===id).position.y,0)/Math.max(1,incoming.get(n.id).length);return source(a)-source(b)||order.get(a.id)-order.get(b.id);});let y=y0;for(const n of column){n.position={x:grid(x),y:grid(y)};y+=size(n).h+32;}x+=Math.max(...column.map(n=>size(n).w))+96;}

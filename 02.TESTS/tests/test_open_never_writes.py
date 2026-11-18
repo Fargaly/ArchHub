@@ -27,7 +27,8 @@ def test_opening_the_canvas_keeps_the_file_and_his_tidy_up_saves(tmp_path, monke
         items = {row['id']: row for row in catalogue()}
         nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                   'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
-                 for key, item, x in [('list', 'n_list', 800), ('slice', 's_slice', 1140), ('count', 's_count', 1480)]]
+                 # Cards on top of each other: a file without places of its own gets the tidy first view (saved places are shown as saved).
+                 for key, item, x in [('list', 'n_list', 800), ('slice', 's_slice', 860), ('count', 's_count', 920)]]
         view = client.workshop('openTaskGraph', task)
         opened = client.files('read', path=view['path'], id=view['id'])
         opened['document']['nodes'] = [*opened['document']['nodes'], *nodes]

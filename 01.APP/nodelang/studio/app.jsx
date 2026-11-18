@@ -120,6 +120,9 @@
     // WIRE-agents end.
     const theme = s.settings.find(r => r.id === 'Appearance.Theme')?.value || 'Dark',
       accent = s.settings.find(r => r.id === 'Appearance.Accent colour')?.value || '#d97757';
+    // The document theme is rewritten only when an appearance value changes. Keyed on every store revision, it
+    // reset root CSS variables (a whole-document style recalculation) on every refresh, drag drop and fold.
+    const appearanceKey = JSON.stringify(s.settings.filter(r => String(r.id).startsWith('Appearance.')).map(r => [r.id, r.value]));
     const originalColours = React.useRef({
       accent: A.accent,
       accentHi: A.accentHi,
@@ -148,7 +151,7 @@
         else document.documentElement.style.setProperty(token, accent);
       }
       return () => preference.removeEventListener('change', applyTheme);
-    }, [theme, s.revision]);
+    }, [theme, accent, appearanceKey]);
     React.useEffect(() => {
       const notice = event => setToast(event.detail.message);
       window.addEventListener("archhub:notice", notice);

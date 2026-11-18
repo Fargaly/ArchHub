@@ -724,6 +724,10 @@
   // A card redraws when its data or selection changes; a drag frame only moves it (the engine sets its transform).
   const nodeTypes = {archhub: React.memo(FlowNode, (a, b) => a.id === b.id && a.data === b.data && a.selected === b.selected)}, edgeTypes = {archhub: FlowWire};
   const {Group: CanvasGroup, Panel: CanvasPanel, Separator: CanvasSeparator} = window.ReactResizablePanels;
+  // Docked in Home with the Inspector outside, the canvas is the only pane: a plain flex box instead of a resizable
+  // group of one, whose mount measured every panel (about 80 ms of an Open its Canvas).
+  const SinglePanes = ({className, children}) => <div className={className} data-single-pane="" style={{display: 'flex', height: '100%', width: '100%'}}>{children}</div>;
+  const SingleWork = ({children}) => <div style={{flex: '1 1 auto', minWidth: 0, minHeight: 0, overflow: 'hidden', height: '100%'}}>{children}</div>;
   const SOCKET_STYLE = {position: 'relative', inset: 'auto', transform: 'none', display: 'inline-grid', placeItems: 'center', width: 22, height: 22,
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
   // The live view during a pan or zoom: the engine moves the view itself; only these read it each frame.
@@ -743,7 +747,18 @@
       const at = new Map(list.map(n => [n.id, n.position]));
       onNodesChange(changes.map(c => c.type === 'position' && !c.position && at.has(c.id) ? {...c, position: at.get(c.id)} : c));
     };
-    return <RF.ReactFlow nodes={list} onNodesChange={change} {...props}>{children}</RF.ReactFlow>;
+    // A plain press on a card selects it in the frame of the press (the engine selects only on the click that follows).
+    const press = event => {
+      if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey) return;
+      const card = event.target.closest?.('.react-flow__node');
+      if (!card || event.target.closest('input, textarea, select, [contenteditable="true"], .react-flow__handle')) return;
+      const node = list.find(n => n.id === card.dataset.id);
+      if (!node || node.selected || node.selectable === false) return;
+      change([...list.filter(n => n.selected).map(n => ({id: n.id, type: 'select', selected: false})), {id: node.id, type: 'select', selected: true}]);
+      const wires = (props.edges || []).filter(e => e.selected).map(e => ({id: e.id, type: 'select', selected: false}));
+      if (wires.length) props.onEdgesChange?.(wires);
+    };
+    return <RF.ReactFlow nodes={list} onNodesChange={change} onPointerDownCapture={press} {...props}>{children}</RF.ReactFlow>;
   }
   function Canvas({
     active = true,
@@ -801,21 +816,22 @@
     }, [requestState]);
     // Zoom rule (design): the zoom control rests 36px above the canvas bottom; where it would touch the composer it rises
     // so its bottom is the composer's top less 8px. Checked again on every resize and dock change.
-    const zoomBar = React.useRef(null), [zoomRise, setZoomRise] = React.useState(null);
+    const zoomBar = React.useRef(null), restBottom = React.useRef(null), [zoomRise, setZoomRise] = React.useState(null);
     React.useLayoutEffect(() => {
       const place = () => {
         const bar = zoomBar.current, form = document.querySelector('.v22g-composer-dock>form');
         if (!bar || !form || !bar.offsetParent) { setZoomRise(null); return; }
-        const raised = bar.style.bottom;
-        bar.style.bottom = '';  // measured where it rests
-        const b = bar.getBoundingClientRect(), c = form.getBoundingClientRect();
-        bar.style.bottom = raised;
+        // Where it rests, computed from its stylesheet offset: no style write and re-read (a forced second layout).
+        const host = bar.offsetParent.getBoundingClientRect(), now = bar.getBoundingClientRect(), c = form.getBoundingClientRect();
+        if (restBottom.current === null && !bar.style.bottom) restBottom.current = parseFloat(window.getComputedStyle(bar).bottom) || 0;
+        const rest = host.bottom - (restBottom.current ?? 0), b = {left: now.left, right: now.right, bottom: rest, top: rest - now.height};
         const touches = b.right > c.left - 8 && b.left < c.right + 8 && b.bottom > c.top - 8 && b.top < c.bottom + 8;
-        setZoomRise(touches ? Math.round(bar.offsetParent.getBoundingClientRect().bottom - c.top + 8) : null);
+        setZoomRise(touches ? Math.round(host.bottom - c.top + 8) : null);
       };
       const observer = new window.ResizeObserver(place);
+      // The observer reports each element once after its first layout, so the first placement reads a settled layout
+      // instead of forcing the whole new canvas to lay out inside this effect (about 70 ms of an Open its Canvas).
       for (const element of [paneBox.current, document.querySelector('.v22g-composer-dock>form')]) if (element) observer.observe(element);
-      place();
       return () => observer.disconnect();
     }, [requestState]);
     const zoomSetting = zoomRow?.value;
@@ -956,12 +972,13 @@
       for (const n of sourceNodes) {
         const point = JSON.stringify([n.x,n.y]);points.set(point,(points.get(point)||0)+1);
       }
+      // Card sizes come from the engine's measurements, not a layout read of every card on each graph change (a drop).
+      const measured = new Map(flowNodes.map(f => [f.id, f.measured]));
       const boxes = sourceNodes.map(n => {
-        const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y,
-          el = area.current.querySelector('[data-graph-node="' + n.id + '"]');
+        const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y, size = measured.get(n.id);
         return {id:n.id,x:unchanged ? previous.x : n.x,y:unchanged ? previous.y : n.y,sourceX:n.x,sourceY:n.y,
-          w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
-          h:(el?.offsetHeight || el?.getBoundingClientRect().height / view.current.zoom || 160) + (isGroup(n) ? 10 : 0),
+          w:(size?.width || 224) + (isGroup(n) ? 10 : 0),
+          h:(size?.height || 160) + (isGroup(n) ? 10 : 0),
           stacked:points.get(JSON.stringify([n.x,n.y])) > 1};
       }), occupied = boxes.filter(box => !box.stacked);
       for (const box of boxes) {
@@ -1342,6 +1359,7 @@
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
           ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>} </>;
+    const single = docked && externalInspector, Panes = single ? SinglePanes : CanvasGroup, WorkPanel = single ? SingleWork : CanvasPanel;
     const body = <div ref={paneBox} data-screen="canvas" style={{
       display: 'grid',
       gridTemplateRows: 'minmax(0,1fr)',
@@ -1373,11 +1391,11 @@
         <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
 </div></div>}
   {actionsMenu}
-  <CanvasGroup className="canvas-panes" orientation="horizontal">
+  <Panes className="canvas-panes" orientation="horizontal">
     {u.libraryOpen && !docked && <><CanvasPanel id="canvas-library" panelRef={libraryPanel} collapsible collapsedSize={48} minSize={200} maxSize={360} defaultSize={248} groupResizeBehavior="preserve-pixel-size" onResize={size=>setLibraryRail(size.inPixels<=49)}>
       {libraryRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Library" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='library'?'':'library')},event)}>Library</button> : <window.UI.LibraryShelf onClose={()=>u.setLibraryOpen(false)} />}
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
-    <CanvasPanel id="canvas-work" minSize={240}>
+    <WorkPanel id="canvas-work" minSize={240}>
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         onPointerDownCapture={event=>{stopAutoFrame();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
         onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
@@ -1430,11 +1448,11 @@
     <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
 
    </div>
-   </CanvasPanel>
+   </WorkPanel>
    {!externalInspector && (inspected || wire) && <><CanvasSeparator className="pane-splitter" aria-label="Resize Inspector" /><CanvasPanel id="canvas-inspection" panelRef={inspectionPanel} collapsible collapsedSize={48} minSize={280} maxSize={480} defaultSize={320} groupResizeBehavior="preserve-pixel-size" onResize={size=>setInspectionRail(size.inPixels<=49)}>
      {inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
    </CanvasPanel></>}
-  </CanvasGroup>
+  </Panes>
   {mapHost && window.ReactDOM.createPortal(<LiveMap source={viewSource} nodes={visible} sizes={new Map(flowNodes.map(f => [f.id, f.measured]))} area={area} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}
   {peek==='library'&&u.libraryOpen&&!docked&&<div className="canvas-pane-peek" data-side="library"><window.UI.LibraryShelf onClose={()=>setPeek('')} /></div>}
   {peek==='inspector'&&!externalInspector&&(inspected||wire)&&<div className="canvas-pane-peek" data-side="inspector"><button type="button" className="dx-quiet" aria-label="Close Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek('')},event)}>×</button>{inspected?<NodeInspector n={inspected} s={s} u={u}/>:<WireInspector wire={wire} s={s} u={u} onClose={()=>setPeek('')} />}</div>}

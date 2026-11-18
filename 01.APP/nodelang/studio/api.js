@@ -1723,8 +1723,14 @@ function acknowledgeSave(sent,saved){
  // After every acknowledged save, adopt the owner's document for every field not changed locally since the sent snapshot.
  const current=portableDocument(),same=(a,b)=>JSON.stringify(a)===JSON.stringify(b),viewUnchanged=same(current.viewport,sent.viewport)&&same(current.properties?.viewportSaved,sent.properties?.viewportSaved);
  if(same(current,sent)){
+  // The owner's copy usually differs only in its own bookkeeping (revision, history): the canvas already shows it,
+  // so only the saved state is published, not a whole new graph (a full re-render after every autosave).
+  const shown=document=>({...document,properties:Object.fromEntries(Object.entries(document.properties||{}).filter(([key])=>!['revision','history','checkpoints'].includes(key)))});
+  const unchanged=same(shown(saved.document),shown(sent));
   sessionDocument=copy(saved.document);sessionRevision=saved.revision??saved.document.properties?.revision??0;
-  localDirty=false;projectFile();return;
+  localDirty=false;
+  if(unchanged)publish({sessionFile:sessionPath,sessionDirty:!sessionPath});else projectFile();
+  return;
  }
  for(const key of new Set([...Object.keys(sent),...Object.keys(saved.document)])){
   if(key==='properties'||key==='viewport'&&!viewUnchanged)continue;

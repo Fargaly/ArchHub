@@ -121,6 +121,8 @@ def _remembered_stage(state_dir):
 
     try:
         data = _read_stage_marker(Path(state_dir) / "updates")
+    except FileNotFoundError:
+        return {"staged": False, "build_id": "", "status": "none", "reason": "nothing staged"}
     except (OSError, ValueError) as error:
         return {"staged": False, "status": "failed",
                 "reason": "Update marker could not be read (" + type(error).__name__ + ")."}

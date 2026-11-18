@@ -126,3 +126,22 @@ def test_installed_status_suppresses_only_an_older_rollback(
     assert ui.status()["state"] == expected
     assert ui.status()["available_build"] is None
     assert marker.read_bytes() == original
+
+
+def test_fresh_profile_has_no_failed_update_before_or_after_check(tmp_path, monkeypatch):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "BUILD_ID").write_text(INSTALLED)
+    state = tmp_path / "fresh-install"
+    state.mkdir()
+    ui = ApplicationUpdate(state, app, request_restart=None, policy=lambda: {"channel": "stable"})
+    assert ui.status()["state"] == "idle"
+    assert not list(state.iterdir())
+
+    monkeypatch.setattr(qu, "read_latest_release", lambda *args: {"build_id": INSTALLED})
+    ui.check()
+    ui._worker.join(timeout=10)
+    assert not ui._worker.is_alive()
+    assert ui.status()["state"] == "idle"
+    assert ui.status()["available_build"] is None
+    assert not (state / "updates" / "staged.json").exists()

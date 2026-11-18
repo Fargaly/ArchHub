@@ -80,11 +80,40 @@ def test_the_page_is_the_admin_panel_and_the_system_graph_moved(client):
     founder = _auth(FOUNDER)
     page = client.get("/founder", headers=founder)
     assert page.status_code == 200 and "text/html" in page.headers["content-type"]
+    assert "Find a person, company or action" in page.text and 'id="root"' not in page.text   # the panel, not the map
     graph = client.get("/founder/map", headers=founder)
-    assert graph.status_code == 200 and "/founder/map-assets/" in graph.text
-    assert graph.text != page.text
+    assert graph.status_code == 200 and graph.text != page.text
     assert 'href="/founder"' in graph.text and "/founder/admin" not in graph.text   # the map links to the panel itself
     assert client.get("/founder/admin", headers=founder, follow_redirects=False).status_code == 404   # the old address is gone
+
+
+def test_signing_in_lands_on_the_admin_panel(client):
+    import db
+    claim = client.post("/founder/api/browser-code", headers=_auth(FOUNDER)).json()["claim_url"]
+    landed = client.get("/founder/claim?code=" + claim.split("code=", 1)[1], follow_redirects=False)
+    assert landed.status_code == 303 and landed.headers["location"] == "/founder"
+    assert db.get_user_by_email(FOUNDER) is not None
+
+
+def test_the_system_map_says_the_app_no_longer_sends_it_and_asks_for_nothing(client):
+    import founder_cockpit
+    founder = _auth(FOUNDER)
+    served = client.get("/founder/map", headers=founder).text
+    assert "The app no longer sends this map. It returns as the System graph inside ArchHub." in served
+    # none of the old page's dead controls or its instruction to open the app
+    for dead in ("NO LIVE PUSH", "No map yet", "OFFER", "admin →", "compiled/", "<script", "cmdbar", "open ArchHub"):
+        assert dead not in served, dead
+    # the panel reaches it from System only, marked, and its account menu no longer lists it
+    panel = client.get("/founder", headers=founder).text
+    assert panel.count("/founder/map'") == 1 and "href=\"${SYSTEM_MAP}\"" in panel and "System map" in panel and "System graph" not in panel
+    # archived, not deleted: the old page, its assets and the publish route are still there
+    assert (founder_cockpit._COCKPIT_ASSETS / "map.html").is_file()
+    kept = client.get("/founder/map-assets/map.html", headers=founder)        # the old page, as a file
+    assert kept.status_code == 200 and "compiled/atlas-cockpit.js" in kept.text
+    assert "map-assets/map.html" not in panel and "map-assets/map.html" not in served        # linked from nowhere
+    assert client.get("/founder/map-assets/compiled/atlas-cockpit.js", headers=founder).status_code == 200
+    import main
+    assert "/founder/map-state" in {route.path for route in main.app.routes}
 
 
 def test_a_stranger_reaches_none_of_the_new_routes(client):

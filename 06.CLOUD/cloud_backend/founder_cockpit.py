@@ -2223,8 +2223,12 @@ def cockpit_asset(asset: str,
 
 @router.get("/map", response_class=HTMLResponse)
 def cockpit_map(_founder: dict = Depends(require_founder)) -> HTMLResponse:
-    """The system graph (atlas) the founder's application publishes."""
-    return HTMLResponse((_COCKPIT_ASSETS / "map.html").read_text(encoding="utf-8"))
+    """The System map's honest state. The page that drew the app's pushed projection
+    (cockpit_assets/map.html, kept and still served as a file by /map-assets, with the /map-state route) can never
+    fill: the app stopped sending that projection when the universal graph was retired
+    (D-014 NOGRAPH; the app's relay starts with no map source). So this says that, and
+    asks the founder to do nothing."""
+    return HTMLResponse((_COCKPIT_ASSETS / "map-retired.html").read_text(encoding="utf-8"))
 
 
 @router.get("", response_class=HTMLResponse)

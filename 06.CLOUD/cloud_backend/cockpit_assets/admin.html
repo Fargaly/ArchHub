@@ -374,6 +374,7 @@ function counts(){
  if (o) { c.users = o.users.total_incl_test; c.companies = o.subscriptions.companies; }
  return c;
 }
+const SYSTEM_MAP = '/founder/map';   // the one link to the System map, from System
 const HOT = new Set(['inbox','billing','community','feedback','system']);
 function side(){
  const c = counts();
@@ -510,7 +511,7 @@ PAGES.system = () => {
  const o = S.overview, sys = o ? o.system : null, us = o ? o.usage : null, R = S.relay, T = S.tasks;
  const box = (dot, k, v, sub) => `<div class="sysc"><span class="dot ${dot}"></span><span style="min-width:0"><span class="k">${esc(k)}</span><small>${esc(sub)}</small></span><span class="v">${esc(v)}</span></div>`;
  const ch = sys ? sys.healthz.checks : {}, fly = sys ? sys.fly.machines : {};
- return `<div class="ph"><div><h1>System</h1><p>Whether everything runs: the server, its errors, the relay to your app, agent tasks and model spend.</p></div><div class="acts"><a class="btn" href="/founder/map">${I('ext',14)}System graph</a><button class="btn dng" data-a="drain">Drain the relay</button></div></div>
+ return `<div class="ph"><div><h1>System</h1><p>Whether everything runs: the server, its errors, the relay to your app, agent tasks and model spend.</p></div><div class="acts"><a class="btn" href="${SYSTEM_MAP}" title="The app no longer sends this map">System map</a><button class="btn dng" data-a="drain">Drain the relay</button></div></div>
  ${S.err.overview ? failed('The system status', 'overview') : !sys ? '<div class="sys"><div class="sysc"><span class="sk"></span></div></div>' : `<div class="sys">
   ${box(ch.database && ch.database.ok ? 'ok' : 'err', 'Database', ch.database && ch.database.ok ? ch.database.round_trip_ms+' ms' : 'failed', ch.database && ch.database.ok ? num(Math.round(ch.database.bytes / 1024))+' KB on disk' : (ch.database || {}).reason || '')}
   ${box(ch.data_volume && ch.data_volume.ok ? 'ok' : 'err', 'Data volume', ch.data_volume && ch.data_volume.free_bytes != null ? (ch.data_volume.free_bytes / 1073741824).toFixed(1)+' GB free' : 'failed', 'Needs 256 MB free')}
@@ -727,7 +728,7 @@ function menuFor(spec){ const [kind, k] = spec.split(':');
   return [['lab', u.email], ['Open', 'user:'+k], ['Email', 'email:'+k], ['hr'], ['lab', 'Plan'], ...Object.keys(PLAN).filter(p => p !== u.plan).map(p => ['Set to '+PLAN[p], 'setplan:'+k+':'+p]), ['hr'],
    ...(u.devices ? [['Disconnect every device', 'discall:'+k]] : []), ...(u.suspended_at ? [['Restore', 'restore:'+k]] : u.founder ? [] : [['Suspend', 'suspend:'+k, 'dng']])]; }
  if (kind === 'pay') { const p = S.stripe.live.payments[+k]; return [['lab', p.payment_intent], ['Refund', 'refund:'+k, 'dng'], ...(p.email ? [['Open the person', 'user:'+p.email]] : [])]; }
- if (kind === 'acct') return [['lab', 'Founder account'], ['a', 'System graph', '/founder/map'], ['Settings & audit', 'goto:settings'], ['hr'], ['a', 'Sign out', '/founder/logout']];
+ if (kind === 'acct') return [['lab', 'Founder account'], ['Settings & audit', 'goto:settings'], ['hr'], ['a', 'Sign out', '/founder/logout']];
  return [];
 }
 function openMenu(spec, x, y){ closeMenu(); const items = menuFor(spec); if (!items.length) return; const m = document.createElement('div'); m.className = 'menu'; m.id = 'menu';

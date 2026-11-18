@@ -11626,6 +11626,16 @@
         "02.TESTS/tests_js/studio_boxselection.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "COCKPITDOOR": {
+      "source": "Founder 2026-11-18 opened his Cockpit (api.archhub.io/founder) and landed on the old Grand Map that the app no longer feeds: 'this work is nice but needs more study and development; and what is this? fix it for me.' The admin panel is the Cockpit; the old map says plainly that the app no longer sends it, with a way back, and the panel stops linking a dead page. Nothing is deleted.",
+      "scope": [
+        "06.CLOUD/cloud_backend/cockpit_assets/admin.html",
+        "06.CLOUD/cloud_backend/cockpit_assets/map-retired.html",
+        "06.CLOUD/cloud_backend/founder_cockpit.py",
+        "06.CLOUD/cloud_backend/tests/test_cockpit_admin_panel.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

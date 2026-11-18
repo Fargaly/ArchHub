@@ -30,6 +30,12 @@
     const zoom = Math.max(zoomMin, Math.min(zoomMax, zoomFitMax, (width - 60) / Math.max(1, spanW), (height - 60) / Math.max(1, spanH)));
     return {zoom, pan: {x: (width - spanW * zoom) / 2 - minX * zoom, y: (height - spanH * zoom) / 2 - minY * zoom}};
   }
+  // SPEC 7.4: a window dragged left to right keeps the nodes wholly inside it; right to left takes every node it touches.
+  // Flow coordinates, so zoom does not change the result.
+  function boxSelection(boxes, a, b, crossing) {
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    return boxes.filter(n => crossing ? n.x < x1 && n.x + n.w > x0 && n.y < y1 && n.y + n.h > y0 : n.x >= x0 && n.x + n.w <= x1 && n.y >= y0 && n.y + n.h <= y1).map(n => n.id);
+  }
   const typeColor = t => ({
     elements: A.accent,
     text: A.inkSoft,
@@ -759,6 +765,8 @@
     const canvasTouched = React.useRef(false);
     React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
     const stopAutoFrame = () => { canvasTouched.current = true; };
+    // Where the pointer went down: a selection window is measured from it, and its direction picks containing or crossing.
+    const boxFrom = React.useRef({x: 0, at: {x: 0, y: 0}}), [crossing, setCrossing] = React.useState(false);
     const paneBox = React.useRef(null), libraryPanel = React.useRef(null), inspectionPanel = React.useRef(null);
     const [paneWidth, setPaneWidth] = React.useState(window.innerWidth - 64), [libraryRail, setLibraryRail] = React.useState(false), [inspectionRail, setInspectionRail] = React.useState(false), [peek, setPeek] = React.useState('');
     const {zoom, pan} = viewport;
@@ -1329,7 +1337,7 @@
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <CanvasPanel id="canvas-work" minSize={240}>
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
-        onPointerDownCapture={stopAutoFrame} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
+        onPointerDownCapture={event=>{stopAutoFrame();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
         onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
@@ -1370,6 +1378,7 @@
        }}
        onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); onInspect?.({nodeId:null,wireId:edge.id}); } }}
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
+       selectionMode={crossing?'partial':'full'} onSelectionEnd={event=>setSelected(boxSelection(flowNodes.map(f=>({id:f.id,x:f.position.x,y:f.position.y,w:f.measured?.width||0,h:f.measured?.height||0})),boxFrom.current.at,toFlow(event),event.clientX<boxFrom.current.x))}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}</RF.ReactFlow>
     </CanvasContext.Provider>
@@ -1434,6 +1443,7 @@
   window.UI.NodeInspector = NodeInspector;
   window.UI.WireInspector = WireInspector;
   window.UI.fitCanvasViewport = fitCanvasViewport;
+  window.UI.boxSelection = boxSelection;
   window.UI.SystemGraph = SystemGraph;
 
   function AgentsCanvas() {

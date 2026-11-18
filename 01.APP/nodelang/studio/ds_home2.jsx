@@ -64,7 +64,7 @@
   const taskMessages = task => [...new Map([...taskNotes(task && task.fileMessages), ...taskNotes(task && task.agentLog), ...taskNotes(task && task.messages)].map((item, index) => [item.id || 'file-' + index, item])).values()];
   // A Workshop card's Show asks for the cursor in that thread's composer. The ask outlives the screen's remount when the
   // thread opens, and ends on the first composer render that shows that thread (focused) or another thread (dropped).
-  let focusAsk = null;
+  let focusAsk = null, homeShown = '';
   const homeDestination = route => {
     if (route === 'workshop' || route === 'canvas') return {route: 'home', face: route, library: false};
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
@@ -234,13 +234,20 @@
     const inspectorWidth = inspectorSetting?.value ?? 320;
     // Show / Hide Library and Add node keep working: they show or fold the Library panel of the dock.
     // Only his own Show / Hide moves the dock; the dock's state flowing back into libraryOpen moves nothing (opening never writes the layout).
-    const libraryOpenWas = React.useRef(u.libraryOpen);
+    // The dock owns whether the Library shows; libraryOpen mirrors it and carries his asks. One effect handles both ways, so a value
+    // it mirrored is never read back as an ask (two effects did, and a session opening with its thread looped: React error 185).
+    const libraryOpenWas = React.useRef(u.libraryOpen), [libraryShown, setLibraryShown] = React.useState(null), libraryShownWas = React.useRef(null);
     React.useLayoutEffect(() => {
-      const changed = libraryOpenWas.current !== u.libraryOpen;
+      const asked = libraryOpenWas.current !== u.libraryOpen, moved = libraryShownWas.current !== libraryShown;
       libraryOpenWas.current = u.libraryOpen;
-      if (!fileWorkspace || !changed || !dockRef.current || dockRef.current.visible('library') === u.libraryOpen) return;
-      if (u.libraryOpen) dockRef.current.show('library'); else dockRef.current.hide('library');
-    }, [u.libraryOpen, fileWorkspace]);
+      libraryShownWas.current = libraryShown;
+      if (asked && fileWorkspace && dockRef.current && dockRef.current.visible('library') !== u.libraryOpen) {
+        if (u.libraryOpen) dockRef.current.show('library'); else dockRef.current.hide('library');
+      } else if (!asked && moved && libraryShown !== null && libraryShown !== u.libraryOpen) {
+        libraryOpenWas.current = libraryShown;
+        u.setLibraryOpen(libraryShown);
+      }
+    }, [u.libraryOpen, libraryShown, fileWorkspace]);
     const [inspection, setInspection] = React.useState({nodeId: null, wireId: null});
     const [propertyTab, setPropertyTab] = React.useState('Task');
     const inspectedNode = s.graph.nodes.find(node => node.id === inspection.nodeId);
@@ -294,6 +301,7 @@
     const toggleSection=name=>saveHome({sections:collapsedSections.includes(name)?collapsedSections.filter(value=>value!==name):[...collapsedSections,name]});
     const focus = homeLayout.resume || u.task || s.focusedTask;
     const task = fileWorkspace ? tasks.find(t => t.id === u.task) : list.find(t => t.id === focus) || list.find(t=>t.homePinned) || list[0];
+    React.useEffect(() => { if (!fileWorkspace) homeShown = task?.id || ''; }, [fileWorkspace, task?.id]);  // what the rail's Canvas opens from Home
     React.useEffect(()=>{
       if(!fileWorkspace&&request!=='waiting'&&request!=='error')setRequest(tasks.length?'loaded':'empty');
     },[fileWorkspace,tasks.length,request]);
@@ -360,10 +368,7 @@
       // A Workshop card's Show of a thread: the one composer now has that task as its context; put the cursor in it.
       focusAsk = {task: target.id, from: target.id === task?.id ? '' : task?.id || ''};   // settled by placeComposer below
     };
-    const syncDock = layout => {
-      const shown = window.UI.dockModel.visible(layout, 'library');
-      if (shown !== u.libraryOpen) u.setLibraryOpen(shown);
-    };
+    const syncDock = layout => setLibraryShown(window.UI.dockModel.visible(layout, 'library'));  // a report only; the effect above mirrors it
     const saveSession = patch => {
       if (!task) return Promise.resolve(false);
       setRequest('waiting');
@@ -610,6 +615,7 @@
     </div>;
   }
   window.UI.Home = Home;
+  window.UI.homeShown = () => homeShown;  // the session Home shows selected now (its own optimistic list), '' if none
   window.UI.Sheet = Sheet;
   window.UI.homeListSame = sameList;
   window.UI.homeCommitList = commitList;

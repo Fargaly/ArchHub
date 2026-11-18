@@ -189,7 +189,8 @@
       if (home) {
         if (home.library) setLibraryOpen(true);
         const selected = taskId ? s.tasks.find(t => t.id === taskId || t.sessionPath === taskId)
-          : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask);
+          : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask)
+            || (route === 'home' && r === 'canvas' ? s.tasks.find(t => t.id === window.UI.homeShown?.()) : undefined);  // the open session wins; from Home, Canvas opens the session Home shows selected
         if (selected) return openTaskFile(selected.id, home.face);
         setTask('');
         setToast('Pick a task on Home.');

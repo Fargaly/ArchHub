@@ -122,7 +122,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
     worker = None
     failures = set()
     retry_at, retry_delay = {}, {}
-    watch, versions, handed, senders, read_at = [], {}, {}, {}, {}
+    watch, versions, handed, senders, read_at, named = [], {}, {}, {}, {}, {}
     server._mailbox_pages = pages
     server._mailbox_seen = lambda ids, context: background_call("seen", {"message_ids":ids, "channel":"connector tool result"}, context)
     server._mailbox_stop = lambda: (stopped.set(), wake.set())
@@ -213,6 +213,10 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         try:
             with lock:
                 epoch = epochs.get(key, 0)
+                body = declarations.get(key)
+            if named.get(key, body) is not body:
+                versions.pop(key, None)  # declared under a new name: its notes are matched afresh at once
+            named[key] = body
             # A declaration change is a commit but not a room row: the unconditional poll (backing off to the recovery
             # cap) sees it. With no commit at all since the last read, that poll has nothing to see either.
             # shortcut: another agent's process ending is not a commit; it is seen after the next commit by anyone.
@@ -226,7 +230,8 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
                     newest = watch[0].newest()
                 except Exception:
                     version = None  # no room number: this poll still runs, and the next one reads the store too
-            page = background_call("pending", {}, context)
+            # The kept store answers the poll; opening the store for each poll was a third of its cost.
+            page = watch[0].pending(context) if version is not None and watch else background_call("pending", {}, context)
             failures.discard((key, "pending"))
             with lock:
                 if epochs.get(key, 0) == epoch:
@@ -253,23 +258,31 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         # tool call, then after 1, 2 and 4 s, kept every agent session at 30-58% of a core; "the app is very slow".)
         recovery = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds']
         interval, looked, due = budget, time.monotonic() - budget, time.monotonic()
-        while not stopped.is_set():
-            woken = wake.wait(budget)
-            if woken and stopped.wait(max(looked + budget - time.monotonic(), 0)):
-                return
-            wake.clear()
-            with lock:
-                pending = list(contexts.values())
-            version, looked = store_version(), time.monotonic()
-            turn = looked >= due or (version is None and woken)   # no readable store number: a tool call polls, as before
-            new = False
-            for context in pending:
-                if stopped.is_set():
+        import random
+        # After an install every agent's connector starts at once: their first polls spread over the short budget.
+        if stopped.wait(random.uniform(0, budget)):
+            return
+        try:
+            while not stopped.is_set():
+                woken = wake.wait(budget)
+                if woken and stopped.wait(max(looked + budget - time.monotonic(), 0)):
                     return
-                new = refresh(context, version, turn) or new
-            if new or turn:
-                interval = budget if new else min(interval * 2, recovery)
-                due = time.monotonic() + interval
+                wake.clear()
+                with lock:
+                    pending = list(contexts.values())
+                version, looked = store_version(), time.monotonic()
+                turn = looked >= due or (version is None and woken)   # no readable store number: a tool call polls, as before
+                new = False
+                for context in pending:
+                    if stopped.is_set():
+                        return
+                    new = refresh(context, version, turn) or new
+                if new or turn:
+                    interval = budget if new else min(interval * 2, recovery)
+                    due = time.monotonic() + interval
+        finally:
+            while watch:
+                watch.pop().close()  # the kept store closes with the connector, not only after an error
     def start(context, *, startup=False):
         nonlocal worker
         with lock:

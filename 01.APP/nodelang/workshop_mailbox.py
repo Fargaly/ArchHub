@@ -689,7 +689,7 @@ def news_for(connection, sender_key, after):
     declaration change are not rows; the connector's unconditional poll sees those."""
     last = (connection.execute("SELECT last_sequence FROM conversations WHERE id=?", (ROOM,)).fetchone() or (0,))[0]
     store = connection.execute("PRAGMA database_list").fetchone()[2]
-    held = next((value for place, value in _ROUTED.items() if place[0] == store and place[2] == sender_key), None)
+    held = next((value for place, value in list(_ROUTED.items()) if place[0] == store and place[2] == sender_key), None)
     if held is None or after is None or after > last:
         return last, True
     return last, connection.execute(held[4][0], (ROOM, after, *held[4][1])).fetchone() is not None
@@ -703,7 +703,8 @@ class _StoreWatch:
 
     def __init__(self, timeout_seconds):
         self._held = application_history(read_only=True, busy_timeout_seconds=timeout_seconds)
-        self._db = self._held.__enter__()._db
+        self._history = self._held.__enter__()
+        self._db = self._history._db
 
     def version(self):
         """Moves whenever any other connection commits to the Workshop store."""
@@ -718,18 +719,29 @@ class _StoreWatch:
     def close(self):
         self._held.__exit__(None, None, None)
 
+    def pending(self, context):
+        """call('pending', {}, context) on this kept store: one poll without opening the store again."""
+        identity, runtime, _peer = _identity(context, None)
+        version = self.version()
+        if getattr(self, '_records', (None,))[0] != version:
+            # The declarations change only with a commit: parsed once per commit counter, never on a timer.
+            table = self._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone()
+            self._records = (version, [json.loads(row[0]) for row in self._db.execute(
+                "SELECT record FROM workshop_declarations ORDER BY root")] if table else None)
+        return _pending(self._history, identity, runtime, self._records[1])
+
 
 def store_watch(timeout_seconds):
     """A watcher an agent connector keeps between polls; only this owner opens the Workshop file."""
     return _StoreWatch(timeout_seconds)
 
 
-def _pending(history, identity, runtime):
+def _pending(history, identity, runtime, records=None):
     snapshot = not history._db.in_transaction
     if snapshot:
         history._db.execute("BEGIN")  # one read snapshot: the name match and the page see the same rows
     try:
-        return _pending_page(history, identity, runtime)
+        return _pending_page(history, identity, runtime, records)
     finally:
         if snapshot:
             history._db.execute("ROLLBACK")
@@ -744,8 +756,8 @@ class _Known(list):
             self.by_session.setdefault(row.get("session"), row)
 
 
-def _pending_page(history, identity, runtime):
-    known = _Known(read_declarations(history._db, include_archived=True))
+def _pending_page(history, identity, runtime, records=None):
+    known = _Known(read_declarations(history._db, include_archived=True, records=records))
     declaration = _declaration(history, identity, runtime, known)
     declarations = [row for row in known if row["current"]]
     mine = recipient_identity(declaration, known)
@@ -784,9 +796,12 @@ def _pending_page(history, identity, runtime):
         "messages.conversation_id AND parent.id=messages.reply_to) LIKE ?))")
     named_by = (CATEGORY, *aliases, *("," + value + "," for value in aliases), *("/" + value + "," for value in tokens),
                 "% [" + identity["sender_key"] + "]")
-    if last > matched:
+    if last > max(matched, since):
+        # Only rows after this session's read cursor can be handed over (the page below asks sequence>since), so the
+        # match starts there: a session that has read the room never rematches the whole history on a new process.
         named |= {row[0] for row in history._db.execute(
-            "SELECT id FROM messages WHERE conversation_id=? AND sequence>? AND " + naming, (ROOM, matched, *named_by))}
+            "SELECT id FROM messages WHERE conversation_id=? AND sequence>? AND " + naming,
+            (ROOM, max(matched, since), *named_by))}
     # The same two tests over only the rows after a given sequence: news_for's question between polls.
     news = ("SELECT 1 FROM messages WHERE conversation_id=? AND sequence>? AND ((" + naming + ") OR (author=? AND category=? "
             "AND json_extract(content,'$.event')='addressed' AND (json_extract(content,'$.recipient') IN ("
@@ -1248,10 +1263,12 @@ def _exact_session_alias(alias, row):
             or _session_tag(alias) != "" or re.fullmatch(r"[0-9a-f]{12}", alias.casefold()) is not None)
 
 
-def read_declarations(connection, *, include_archived=False):
+def read_declarations(connection, *, include_archived=False, records=None):
+    """records: the table's rows already parsed by a caller that keeps them per commit (F419); liveness is read fresh."""
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         return []
-    rows = [json.loads(row[0]) for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")]
+    rows = ([json.loads(row[0]) for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")]
+            if records is None else [{**row, **({'aliases': list(row['aliases'])} if 'aliases' in row else {})} for row in records])
     for row in rows:
         row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
         row["process_alive"] = _session_alive(row)

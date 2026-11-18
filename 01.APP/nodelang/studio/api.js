@@ -1715,6 +1715,8 @@ function acknowledgeSave(sent,saved){
   if(key==='viewportSaved'?!viewUnchanged:!same(current.properties?.[key],sent.properties?.[key]))continue;
   if(Object.hasOwn(saved.document.properties||{},key))sessionDocument.properties[key]=copy(saved.document.properties[key]);else delete sessionDocument.properties[key];
  }
+ // The owner now holds saved.revision: the next save builds on it, whatever changed here while this save was in flight.
+ sessionRevision=saved.revision??saved.document.properties?.revision??sessionRevision;
  localDirty=!same(sessionDocument,saved.document);projectFile();
 }
 let saveConflict=null, resolvingSaveConflict=false, savedConflictDraft=null;

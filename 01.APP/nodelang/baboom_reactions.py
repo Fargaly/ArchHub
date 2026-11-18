@@ -11,9 +11,10 @@ import time
 from .baboom_persona import speech
 from .user_paths import state_directory
 
-REACTIONS = {'thinking': ('think', 'Thinking.'), 'editing': ('cast', 'Editing.'),
-             'testing': ('ponder', 'Testing.'), 'waiting': ('ponder', 'Waiting for your decision.'),
-             'success': ('cast', 'The agent turn ended.'), 'error': ('ponder', 'The agent reported a failure.')}
+# Each line says who is doing what, from the agent's own event; the log keeps no agent name, so it is "an agent".
+REACTIONS = {'thinking': ('think', 'An agent is working on a request.'), 'editing': ('cast', 'An agent is editing a file.'),
+             'testing': ('ponder', 'An agent is running tests.'), 'waiting': ('ponder', 'An agent is waiting for your decision.'),
+             'success': ('cast', 'An agent finished its turn.'), 'error': ('ponder', 'An agent reported a failure.')}
 _EVENTS = {'UserPromptSubmit': 'thinking', 'beforeSubmitPrompt': 'thinking', 'task_started': 'thinking',
            'PermissionRequest': 'waiting', 'Stop': 'success', 'stop': 'success', 'task_complete': 'success',
            'StopFailure': 'error', 'PostToolUseFailure': 'error', 'failure': 'error', 'turn_aborted': 'error'}

@@ -117,6 +117,39 @@
       <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setRows(current => [...current, '']))}>{choices ? '+ Add agent' : '+ Add'}</button>
     </details>;
   }
+  // A session label is "agent / project folder / session id": people read the first two; the id stays in Workshop Inspect.
+  const humanLabel = label => String(label || '').split(' / ').slice(0, 2).join(' · ');
+  // The Home list's rows: every session row and the section it sits in.
+  const homeRows = (s, layout) => {
+    const hidden = layout?.hidden || [], order = layout?.order || [];
+    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').flatMap(c => [c.taskId,c.task_id,c.work,...(c.taskIds||[])]));
+    const rank=id=>{const index=order.indexOf(id);return index<0?order.length:index;};
+    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
+    const sessionRows = [
+      ...(s.tasks||[]).filter(t=>!hidden.includes(t.id)).sort((a,b)=>tasks.indexOf(a)-tasks.indexOf(b)).map(t=>({...t,kind:(s.graphs||[]).find(row=>row.path===t.sessionPath)?.kind||'agent-session'})),
+      ...(s.graphs||[]).filter(row=>row.kind==='workflow'&&!(s.tasks||[]).some(t=>t.sessionPath===row.path)).map(row=>({...row,id:row.path,title:row.title||row.name,sessionPath:row.path,fileOnly:true}))
+    ];
+    // One row per piece of work: a further live agent on it is an avatar on that row, never a second row.
+    for(const agent of (s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working')){
+      const row=sessionRows.find(row=>row.id===agent.task);
+      if(row){row.workingNow=true;if(agent.name&&!(row.members||[]).some(member=>member.name===agent.name))row.members=[...(row.members||[]),{name:agent.name,live:true}];}
+      else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
+    }
+    // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
+    const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
+    // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
+    const interruptedWork=row=>pieceOfWork(row)&&(row.outcome==='interrupted'||row.outcome==='unknown'||!!row.stale);
+    const sectionOf=row=>{
+      if(row.workingNow)return 'Working now';
+      if(pieceOfWork(row)&&waiting.has(row.id))return 'Needs you';
+      if(interruptedWork(row)&&!row.stale)return 'Needs you';
+      if(row.status==='ARCHIVED'||row.stale||row.status==='stale'||['interrupted','unknown'].includes(row.outcome)||window.UI.taskRowReason(row)==='interrupted')return 'Older / archived';
+      if(waiting.has(row.id)||row.status==='IN REVIEW')return 'Needs you';
+      const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);
+      return date>=today?'Today':'Older / archived';
+    };
+    return {waiting, tasks, sessionRows, interruptedWork, sectionOf};
+  };
   function Home({fileWorkspace = false} = {}) {
     const s = useData(), u = useApp();
     const [preview, setPreview] = React.useState(null), [previewError, setPreviewError] = React.useState('');
@@ -242,43 +275,18 @@
     React.useEffect(() => {
       if (!fileWorkspace) {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
     }, [fileWorkspace]);
-    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').flatMap(c => [c.taskId,c.task_id,c.work,...(c.taskIds||[])]));
-    const rank=id=>{const index=homeLayout.order.indexOf(id);return index<0?homeLayout.order.length:index;};
-    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
+    const {waiting, tasks, sessionRows, interruptedWork, sectionOf} = homeRows(s, homeLayout);
     const list = tasks.filter(t => !homeLayout.hidden.includes(t.id));
-    const sessionRows = [
-      ...(s.tasks||[]).filter(t=>!homeLayout.hidden.includes(t.id)).sort((a,b)=>tasks.indexOf(a)-tasks.indexOf(b)).map(t=>({...t,kind:(s.graphs||[]).find(row=>row.path===t.sessionPath)?.kind||'agent-session'})),
-      ...(s.graphs||[]).filter(row=>row.kind==='workflow'&&!(s.tasks||[]).some(t=>t.sessionPath===row.path)).map(row=>({...row,id:row.path,title:row.title||row.name,sessionPath:row.path,fileOnly:true}))
-    ];
-    const liveWorking=(s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working');
-    const liveIds=new Set();
-    // One row per piece of work: a further live agent on it is an avatar on that row, never a second row.
-    for(const agent of liveWorking){
-      const row=sessionRows.find(row=>row.id===agent.task);
-      if(row){row.workingNow=true;liveIds.add(row.id);if(agent.name&&!(row.members||[]).some(member=>member.name===agent.name))row.members=[...(row.members||[]),{name:agent.name,live:true}];}
-      else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
-    }
-    // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
-    const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
-    // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
-    const interruptedWork=row=>pieceOfWork(row)&&(row.outcome==='interrupted'||row.outcome==='unknown'||!!row.stale);
-    const sectionOf=row=>{
-      if(row.workingNow)return 'Working now';
-      if(pieceOfWork(row)&&waiting.has(row.id))return 'Needs you';
-      if(interruptedWork(row)&&!row.stale)return 'Needs you';
-      if(row.status==='ARCHIVED'||row.stale||row.status==='stale'||['interrupted','unknown'].includes(row.outcome)||window.UI.taskRowReason(row)==='interrupted')return 'Older / archived';
-      if(waiting.has(row.id)||row.status==='IN REVIEW')return 'Needs you';
-      const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);
-      return date>=today?'Today':'Older / archived';
-    };
     const collapsedSections=homeLayout.sections||['Older / archived'];
     const vendorLabel=/^[^/\n]{1,40} \/ [^/\n]+ \/ /;
-    // The row names the work; an agent label is never the title.
+    // What a live session declared it is doing (its Workshop declaration), else the first line of what it last said.
+    const liveDoing=agent=>agent?people.whoIs(agent.name).detail||agent.message?.text||'':'';
+    // The row names the work; an agent label is never the title. With nothing said yet it is the agent and its project folder.
     const workTitle=t=>{
       const title=String(t.title||'');
       if(title&&!vendorLabel.test(title)&&!vendorLabel.test(String(t.description||'')))return title;
-      const text=[t.scope,(t.declarations||[])[0]?.task,...taskMessages(t).map(message=>message.text),t.runtimeAgent?.status_text].map(value=>String(value||'').split('\n')[0].trim()).find(value=>value&&!vendorLabel.test(value));
-      return text?(text.length>60?text.slice(0,59).trimEnd()+'\u2026':text):'Untitled session';
+      const text=[t.scope,(t.declarations||[])[0]?.task,...taskMessages(t).map(message=>message.text),liveDoing(t.runtimeAgent)].map(value=>String(value||'').split('\n')[0].trim()).find(value=>value&&!vendorLabel.test(value));
+      return text?(text.length>60?text.slice(0,59).trimEnd()+'\u2026':text):humanLabel(t.runtimeAgent?.name||title)||'Untitled session';
     };
     const toggleSection=name=>saveHome({sections:collapsedSections.includes(name)?collapsedSections.filter(value=>value!==name):[...collapsedSections,name]});
     const focus = homeLayout.resume || u.task || s.focusedTask;
@@ -405,7 +413,8 @@
     };
     const toneOf = t => t.status === 'IN REVIEW' || waiting.has(t.id) ? 'review' : t.status === 'WIP' ? 'working' : t.status === 'STOPPED' ? 'stopped' : t.status === 'PLANNED' ? 'planned' : 'done';
     const lastUpdate = t => {
-      const event = (t.activity || []).at(-1), text = (event && describe(event.output || event.text)) || reasonOf(t);
+      const event = (t.activity || []).at(-1), said = (event && describe(event.output || event.text)) || reasonOf(t);
+      const text = said.length > 90 ? said.slice(0, 90).replace(/\s+\S*$/, '') + '…' : said;  // the row line wraps; a long result ends on a whole word
       if (!text) return '';
       const stamp = Date.parse(event?.at || event?.created_at || t.updated_at || '');
       if (!Number.isFinite(stamp)) return text;
@@ -493,7 +502,10 @@
     });
     const heldIndex=approvalSteps.find(row=>row.index>=0)?.index??-1;
     const currentStep=heldIndex>=0?heldIndex:Math.max(0,resumeSteps.findIndex(step=>step.state.kind!=='done'));
-    const stepLine=resumeSteps.length?resumeSteps.every(step=>step.state.kind==='done')?'All '+resumeSteps.length+' steps done':'Step '+(currentStep+1)+' of '+resumeSteps.length+': '+resumeSteps[currentStep].title+(heldIndex>=0?', waits for you':approvalSteps.length?', session waits for you':''):statusText(task?.status);
+    // A step named like the session says nothing its title does not: the title shows once, with the session's state under it.
+    const heading=String(task?.sessionTitle||task?.title||'').trim().toLowerCase();
+    const repeats=step=>String(step.title||'').trim().toLowerCase()===heading;
+    const stepLine=resumeSteps.length?resumeSteps.every(step=>step.state.kind==='done')?'All '+resumeSteps.length+' steps done':(repeats(resumeSteps[currentStep])?statusText(task?.status):'Step '+(currentStep+1)+' of '+resumeSteps.length+': '+resumeSteps[currentStep].title)+(heldIndex>=0?', waits for you':approvalSteps.length?', session waits for you':''):statusText(task?.status);
     const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
       <header className="shared-properties-head">
         <span className="properties-eyebrow">{propertyTab === 'Selection' ? 'PROPERTIES' : propertyTab === 'Automate' ? 'AUTOMATE' : 'THIS TASK'}</span>
@@ -516,7 +528,7 @@
         {!fileWorkspace ? <Group id="home-context" className={'dx-home-landing dx-split resume-home'+(sessionsRail&&!sessionsPeek?' sessions-rail':'')} orientation="horizontal" onLayoutChanged={(_,meta)=>{if(meta?.isUserInteraction&&sessionsRef.current){const size=sessionsRef.current.getSize().inPixels;saveHome({collapsed:size<=57,width:size<=57?homeLayout.width:Math.max(240,Math.min(440,Math.round(size)))});}}}>
           <Column id="sessions" panelRef={sessionsRef} collapsible collapsedSize={56} minSize={240} maxSize={440} defaultSize={initialSessionsSize.current} groupResizeBehavior="preserve-pixel-size" onResize={size=>setSessionsRail(size.inPixels<=57)}>
             <aside data-design="home1.list" className="resume-sessions" data-peek={sessionsRail&&sessionsPeek||undefined} aria-label="Sessions"><header><h2>Sessions</h2><button type="button" className="dx-quiet" data-design="home1.fold" aria-label={sessionsRail&&!sessionsPeek?'Open the list':'Fold the list to avatars'} onClick={()=>executeAction('ui.select',()=>{if(window.innerWidth<1100){setSessionsPeek(!sessionsPeek);return undefined;}return saveHome({collapsed:!sessionsRail});})}>{sessionsRail?'›':'‹'}</button></header>
-              <div className="resume-session-scroll"><window.UI.SessionList list="home" rows={sessionRows} sectionOf={sectionOf} collapsedSections={collapsedSections} toggleSection={toggleSection} renderRow={row=>row.runtimeAgent?<div className="dx-task-row resume-row" key={row.id}><button type="button" className="resume-avatar" aria-label={'Open agent '+row.title} onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><window.UI.Av id={row.runtimeAgent.name} size={28}/></button><button type="button" className="dx-task" onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><b>{workTitle(row)}</b><span>{String(row.runtimeAgent.name||'').split(' / ').at(-1)} · {row.runtimeAgent.status}</span></button></div>:taskRow(row)}/></div>
+              <div className="resume-session-scroll"><window.UI.SessionList list="home" rows={sessionRows} sectionOf={sectionOf} collapsedSections={collapsedSections} toggleSection={toggleSection} renderRow={row=>row.runtimeAgent?<div className="dx-task-row resume-row" key={row.id}><button type="button" className="resume-avatar" aria-label={'Open agent '+humanLabel(row.runtimeAgent.name)} onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><window.UI.Av id={humanLabel(row.runtimeAgent.name)} size={28}/></button><button type="button" className="dx-task" onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><b>{workTitle(row)}</b><span>{[humanLabel(row.runtimeAgent.name),row.runtimeAgent.status].filter(part=>part&&part!==workTitle(row)).join(' · ')}</span></button></div>:taskRow(row)}/></div>
               {!!homeLayout.hidden.length&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>saveHome({hidden:[]}))}>+ {homeLayout.hidden.length} hidden</button>}
               {homeUndo&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{const previous=homeUndo;setHomeUndo(null);return saveHome(previous);})}>Undo Home change</button>}
             </aside>
@@ -525,10 +537,12 @@
           <Column id="resume" minSize={320}>
             <main className="resume-main"><div className="resume-home-controls"><button type="button" data-design="home1.reset" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({width:300,collapsed:false,resume:'',order:[],hidden:[]});})}>Reset Home</button></div>
               {task?<section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1>{task.sessionTitle||task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
-                {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=><article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-made={step.output?'':undefined} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.output&&<div className="v48-step-preview resume-made"><window.UI.ResultPreview value={step.value??step.preview}/></div>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
+                {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=>repeats(step)&&!step.output&&!approvalSteps.some(row=>row.index===index)?null:<article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-made={step.output?'':undefined} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.output&&<div className="v48-step-preview resume-made"><window.UI.ResultPreview value={step.value??step.preview}/></div>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
                 {approvalSteps.filter(row=>row.index<0).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}
                 {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
               </section>:request === 'empty'?<section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>:null}
+              {/* The composer belongs to the work column: beside the Sessions list at every width, never over it. */}
+              <div className="global-composer"><window.UI.Composer compact /></div>
             </main>
           </Column>
         </Group> :

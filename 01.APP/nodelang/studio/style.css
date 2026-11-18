@@ -1170,7 +1170,7 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .v48-task-progress i[data-state=awaiting]{background:var(--color-warn)}
 
 /* Home 1: a floating single row; extra actions remain in its context menu. */
-.screen-with-composer:has([data-home-page])>.global-composer form{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"scope message tools";align-items:center;min-height:48px;padding:8px 10px!important;gap:10px}
+.screen-with-composer:has([data-home-page]) .global-composer form{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"scope message tools";align-items:center;min-height:48px;padding:8px 10px!important;gap:10px}
 .screen-with-composer:has([data-home-page]) .composer-scope{margin:0!important;max-width:none}
 .screen-with-composer:has([data-home-page]) .composer-scope>button+button,.screen-with-composer:has([data-home-page]) .composer-tools>button:not([aria-label="Add context"]):not([type="submit"]){display:none}
 .screen-with-composer:has([data-home-page]) .composer-input{min-height:28px;height:28px;resize:none;padding:4px 0}
@@ -1180,7 +1180,10 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .resume-session-scroll>.shelf-tabs button{white-space:nowrap;padding:5px 7px;font-size:11px;flex:none}
 .sessions-rail .resume-session-scroll>.shelf-tabs,.sessions-rail .home-section-heading,.sessions-rail .resume-continue,.sessions-rail .resume-members{display:none}
 .agent-avatar{position:relative;display:inline-flex;flex:none}.agent-avatar>small{position:absolute;right:-4px;bottom:-3px;min-width:13px;padding:0 2px;border-radius:4px;background:var(--color-bg-panel);color:var(--color-ink);font:11px/13px var(--type-family-ui);border:1px solid var(--color-line)}
-.resume-row .dx-task span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The second line of a session row wraps on whole words; it is never cut mid-word. */
+.resume-row .dx-task span{white-space:normal;overflow-wrap:break-word}
+/* Home: the composer is a child of the work column, centred in it and inside it at every width (never over the Sessions list). */
+.resume-main>.global-composer{position:absolute!important;left:50%!important;width:min(760px,calc(100% - 32px))!important;min-width:0}
 .resume-step>p:empty{display:none}.resume-summary p{color:var(--color-ink-soft);font-size:13px}
 .header-status>button{max-width:none;overflow:visible;text-overflow:clip;flex:none}
 @media(max-width:1450px){.header-status>button:first-of-type{display:none}}

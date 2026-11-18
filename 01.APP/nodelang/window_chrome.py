@@ -115,6 +115,8 @@ def install_one_title_bar(window, view):
             self.caption, self.holes, self.buttons = clean_layout(caption, holes, buttons)
 
         def press(self, code):
+            # The window leaves the pointer (hidden, minimised, resized): no button stays lit until the next real move.
+            self.hover(None)
             if code == HTMINBUTTON:
                 window.showMinimized()
             elif code == HTMAXBUTTON:
@@ -148,6 +150,8 @@ def install_one_title_bar(window, view):
         def eventFilter(self, watched, event):
             if watched is window and event.type() == QEvent.Type.WindowStateChange:
                 self._push()
+            elif watched is window and event.type() == QEvent.Type.Hide:
+                self.hover(None)  # closed to the tray any other way (Alt+F4, taskbar): it comes back with no button lit
             elif watched is window and event.type() == QEvent.Type.WinIdChange and window.testAttribute(Qt.WidgetAttribute.WA_WState_Created):
                 self.frame()
             return False

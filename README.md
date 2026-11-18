@@ -1,16 +1,28 @@
 # ArchHub
 
-One visual workspace for architecture, engineering and construction.
-The desktop app brings Studio, Workshop, Brain, connectors and BABOOM together.
-BABOOM is the companion; supported AI providers are engines it can route work to.
+ArchHub is a visual node app: blocks wired on a canvas, saved as `.archhub` files. It works with any agent installed on the PC. Nothing runs until you press Run, unless you set an explicit trigger.
+
+## Links
+
+<!-- PUBLIC LINKS:BEGIN -->
+| Surface | Link |
+| --- | --- |
+| repo | [GitHub repository](https://github.com/Fargaly/ArchHub) |
+| release | [Latest release](https://github.com/Fargaly/ArchHub/releases/latest) |
+| site | [Website](https://archhub.io) |
+| docs | [Getting started](https://archhub.io/docs/getting-started/) |
+| community | [Community](https://archhub.io/community/) |
+| baboom | [BABOOM](https://baboom.archhub.io) |
+| issues | [Report a problem](https://github.com/Fargaly/ArchHub/issues) |
+| discuss | [GitHub Discussions](https://github.com/Fargaly/ArchHub/discussions) |
+| font-license | [Font licence](https://openfontlicense.org) |
+| font-source | [JetBrains Mono source](https://github.com/JetBrains/JetBrainsMono) |
+<!-- PUBLIC LINKS:END -->
 
 | Find | Open |
 | --- | --- |
-| Install the Windows app | [Latest release](https://github.com/Fargaly/ArchHub/releases/latest) |
-| Website | [archhub.io](https://archhub.io/) |
-| Documentation | [Getting started](https://archhub.io/04.DOCS/getting-started/) |
 | Desktop source | [nodelang](01.APP/nodelang/) |
-| Website source and exporter | [public_site](06.CLOUD/public_site/) · [site_export.py](01.APP/nodelang/site_export.py) |
+| Website source and exporter | [build_site.py](03.TOOLS/packaging/website/build_site.py) · [publish instructions](03.TOOLS/packaging/README.md) |
 | Cockpit and cloud source | [cloud_backend](06.CLOUD/cloud_backend/) |
 | Tests | [02.TESTS](02.TESTS/) |
 | Build, installer and compiler tools | [03.TOOLS](03.TOOLS/) |

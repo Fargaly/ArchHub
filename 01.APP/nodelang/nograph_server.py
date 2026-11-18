@@ -511,6 +511,8 @@ class NoGraphServer:
                         raise Refused('This action needs a POST from the Studio.', 405)
                     query = parse_qs(parsed.query, keep_blank_values=True)
                     body = self.body(SESSION_BODY if path == '/api/session-files' else MAX_BODY) if method == 'POST' else None
+                    if path in ('/api/session-files', '/api/session-model') and isinstance(body, dict) and body.get('action') not in _SESSION_READ_ACTIONS:
+                        _drop_column()  # a session file write can change a task row (its path, plan, messages)
                     result = route[1](owner, SimpleNamespace(method=method, path=path, query=query, body=body, handler=self))
                     self.send_json(200, result if isinstance(result, dict) else {'ok': True, 'result': result})
                 except Refused as refusal:
@@ -1074,12 +1076,37 @@ def _declarations():
         return read_declarations(history._db, include_archived=True)
 
 
+# One Studio poll asks listTasks and then listNotifications, which needs the same column: built once, shared for
+# COLUMN_SHARE_S. Any Workshop write through this server drops it; another process's write shows on the next poll.
+COLUMN_SHARE_S = 2.0
+_COLUMN = {}
+_COLUMN_LOCK = threading.Lock()
+_SESSION_READ_ACTIONS = frozenset(('head', 'read', 'catalogue', 'initial', 'validate', 'agent-history',  # session-files
+                                   'list', 'get', 'links', 'runs', 'setting'))  # session-model
+_WORKSHOP_READ_FUNCTIONS = frozenset(('listTasks', 'listWorkshopMessages', 'listApprovals', 'listNotifications',
+                                      'listLiveAgents', 'listAgentsWorking', 'readWatcher', 'readDesktop', 'readHostSkills'))
+
+
 def _list_tasks(include_archived=False):
     """The Work column: the Workshop tasks table (claimed atomically by agents with task.claim)."""
+    import copy
     from .workshop_mailbox import application_history
     from .workshop_tasks import column
+    key = include_archived is True
+    with _COLUMN_LOCK:
+        held = _COLUMN.get(key)
+        if held and time.monotonic() - held[0] < COLUMN_SHARE_S:
+            return copy.deepcopy(held[1])
     with application_history() as history:
-        return column(history, include_archived=include_archived is True)
+        rows = column(history, include_archived=key)
+    with _COLUMN_LOCK:
+        _COLUMN[key] = (time.monotonic(), copy.deepcopy(rows))
+    return rows
+
+
+def _drop_column():
+    with _COLUMN_LOCK:
+        _COLUMN.clear()
 
 
 def _open_task_graph(task, path=None):
@@ -1402,6 +1429,8 @@ def r_workshop(s, req):
     action, body = _action(req)
     if action == 'data-api':
         function = body.get('function')
+        if function not in _WORKSHOP_READ_FUNCTIONS:
+            _drop_column()  # a write (or an unknown function) must not be followed by a shared, older column
         if function in OWNER_ACTIONS:
             factory, method = OWNER_ACTIONS[function]
             try:
@@ -1433,12 +1462,27 @@ def r_native_agents(s, req):
     return {'ok': True, 'agents': _list_agents()}
 
 
+# (runtime, native id) -> (time looked, path or None). Finding a transcript walks ~/.codex/sessions (rglob) or
+# ~/.claude/projects for every declared agent on every 5 s poll; a found file is kept while it exists, a miss for 60 s.
+_TRANSCRIPTS = {}
+
+
+def _has_transcript(runtime, native_id):
+    from .agent_status import transcript_path
+    key, now = (runtime, native_id), time.monotonic()
+    held = _TRANSCRIPTS.get(key)
+    if held and (held[1] is not None and held[1].is_file() or held[1] is None and now - held[0] < 60):
+        return held[1] is not None
+    found = transcript_path(runtime, native_id)
+    _TRANSCRIPTS[key] = (now, found)
+    return found is not None
+
+
 def r_agents_canvas(s, req):
     """A read-only System view of the existing roster, task bindings and Workshop messages."""
     from .workshop_mailbox import application_history, read_declarations, ROOM
     from .workshop_tasks import rows, _declared_id
     from .session_files import read_document
-    from .agent_status import transcript_path
     roster = _list_agents()
     sessions, tasks, wires = [], {}, []
     with application_history(read_only=True) as history:
@@ -1453,7 +1497,7 @@ def r_agents_canvas(s, req):
                        'vendor': row.get('runtime') or row.get('app') or '', 'status': row['status'],
                        'task': task['id'] if task else None, 'taskTitle': task['title'] if task else '',
                        'message': {'id': message[0], 'text': message[1].partition('\n')[2] or message[1], 'at': message[2]} if message else None,
-                       'hasTranscript': transcript_path(row.get('runtime'), row.get('native_session_id')) is not None}
+                       'hasTranscript': _has_transcript(row.get('runtime'), row.get('native_session_id'))}
             sessions.append(session)
             if task and task['id'] not in tasks:
                 path = task.get('session_path')

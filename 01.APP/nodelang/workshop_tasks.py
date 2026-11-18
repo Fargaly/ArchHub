@@ -783,8 +783,31 @@ def _summary(title, status, result):
     return "\n".join((short_title(title) or "Untitled task", state, latest[:200], nxt))
 
 
-def _declaration_for(row, declarations):
-    """The declaration this task row projects: the old root id, or this agent's current purpose."""
+def _declaration_index(declarations):
+    """Candidates by the ids a declaration can match, built once per read: every row searched every declaration."""
+    by_id, by_session = {}, {}
+    for position, item in enumerate(declarations):
+        keys = {item.get("work")}
+        if item.get("root") and item.get("request_id"):
+            keys.add(_declaration_task_id(item))
+        if item.get("session"):
+            keys.add(_declared_id(item["session"]))
+            if not item.get("work"):
+                by_session.setdefault(item["session"], []).append(position)
+        for key in keys - {None, ""}:
+            by_id.setdefault(key, []).append(position)
+    return declarations, by_id, by_session
+
+
+def _declaration_for(row, declarations, index=None):
+    """The declaration this task row projects: the old root id, or this agent's current purpose.
+    index (_declaration_index): only the declarations that can match this row are tested, in their original order."""
+    if index is not None:
+        _, by_id, by_session = index
+        positions = set(by_id.get(row["id"], ()))
+        if row["id"].startswith(SESSION_PREFIX):
+            positions.update(by_session.get(row.get("owner"), ()))
+        declarations = [declarations[position] for position in sorted(positions)]
     matched = []
     for item in declarations:
         if item.get("work") == row["id"]:
@@ -831,6 +854,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
     built = []
     threads, last = _task_threads(history)
     listed = rows(history, include_archived=include_archived)
+    index = _declaration_index(declarations)
     working = {m["owner"] for row in listed if not row["id"].startswith("declared-") and row["status"] != "done"
                and not row.get("archived") for m in _live(row.get("members") or [])}
     for row in listed:
@@ -838,7 +862,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
             continue
         if row["id"].startswith("declared-") and row.get("owner") in working:
             continue
-        declaration = _declaration_for(row, declarations)
+        declaration = _declaration_for(row, declarations, index)
         session = _session_context(row.get("session_path"))
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
         shown = "ARCHIVED" if row.get("archived") else state(row)

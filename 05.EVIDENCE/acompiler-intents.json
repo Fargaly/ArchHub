@@ -11502,7 +11502,9 @@
         "02.TESTS/tests_js/onebaboom_click.test.cjs",
         "02.TESTS/tests_replica/test_baboom_companion_placement.py",
         "02.TESTS/tests_replica/test_baboom_stays_with_archhub.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/baboom_companion_process.py",
+        "02.TESTS/tests_replica/test_baboom_companion_process.py"
       ]
     },
     "UPDATERANCESTOR": {

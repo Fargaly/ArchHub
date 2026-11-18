@@ -180,3 +180,45 @@ def test_task_callback_focuses_same_window_and_dispatches_one_id():
             _open_task(window, view, invalid)
     assert calls == ['show', 'raise', 'activate']
     assert len(scripts) == 1
+
+
+def test_declared_codex_agents_without_a_transcript_do_not_walk_the_sessions_folder_every_tick(tmp_path, monkeypatch):
+    # The installed launcher burned ~96% of a core: BABOOM asks ten times a second, and every ask walked all of
+    # ~/.codex/sessions (rglob) for each declared Codex agent that has no transcript yet; a miss was never kept.
+    import json, sqlite3, time
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from nodelang import agent_status, baboom_reactions
+    from nodelang.user_paths import state_directory
+    monkeypatch.setenv('ARCHHUB_AGENT_PROFILE', str(tmp_path / 'home'))
+    sessions = tmp_path / 'home' / '.codex' / 'sessions' / '2026' / '11' / '18'
+    sessions.mkdir(parents=True)
+    for index in range(200):                                    # other agents' rollouts the walk has to pass
+        (sessions / ('rollout-other-%d.jsonl' % index)).write_text('{}\n', encoding='utf-8')
+    state = state_directory() / 'workshop'
+    state.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(state / 'messages.sqlite3') as db:
+        db.execute('CREATE TABLE workshop_declarations(record TEXT)')
+        for index in range(6):
+            db.execute('INSERT INTO workshop_declarations VALUES(?)',
+                       (json.dumps({'runtime': 'codex', 'native_session_id': 'no-transcript-%d' % index}),))
+    walks = []
+    real = Path.rglob
+    monkeypatch.setattr(Path, 'rglob', lambda self, pattern: walks.append(pattern) or real(self, pattern))
+    agent_status._REACTION_FILES.clear()
+    baboom_reactions.latest()
+    first = len(walks)
+    started = time.process_time()
+    for _ in range(50):                                         # five seconds of BABOOM polls
+        baboom_reactions.latest()
+    print('\nBABOOM transcript walks: first tick %d, next 50 ticks %d; CPU %.3f s'
+          % (first, len(walks) - first, time.process_time() - started))
+    assert first == 6 and len(walks) == first                   # it was 6 more walks on every tick
+    log = sessions / 'rollout-2026-11-18T19-00-00-no-transcript-0.jsonl'
+    log.write_text(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started'},
+                               'timestamp': datetime.now(timezone.utc).isoformat()}) + '\n', encoding='utf-8')
+    later = time.monotonic() - baboom_reactions.REACTION_NODE['params']['active_seconds'] - 1
+    agent_status._REACTION_FILES.update({key: (None, None, later) for key, value in agent_status._REACTION_FILES.items()
+                                         if value[0] is None})   # the active window has passed
+    baboom_reactions.latest()
+    assert any(value[0] == log for value in agent_status._REACTION_FILES.values())   # a transcript that appears is found

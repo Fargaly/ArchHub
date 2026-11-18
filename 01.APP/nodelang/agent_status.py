@@ -149,13 +149,22 @@ def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
     """Project the latest native event only; retain no prompt, path or code in Workshop."""
     import hashlib
     import time
-    from .baboom_reactions import emit, reaction_kind
+    from .baboom_reactions import REACTION_NODE, emit, reaction_kind
     from .user_paths import state_directory
     key = (runtime, native_id, str(state_directory(environment)))
     cached = _REACTION_FILES.get(key)
+    if path is None and cached and cached[0] is None:
+        # A session with no transcript yet is looked for again only after a reaction's active window: the lookup
+        # walks all of ~/.codex/sessions, and BABOOM asks for every declared agent ten times a second (a core).
+        if time.monotonic() - cached[2] < REACTION_NODE['params']['active_seconds']:
+            return
+        cached = None
     path = path or (cached[0] if cached else (transcript_path(runtime, native_id) if environment is None
                                            else transcript_path(runtime, native_id, environment=environment)))
     if path is None:
+        if len(_REACTION_FILES) >= 64:
+            _REACTION_FILES.clear()
+        _REACTION_FILES[key] = (None, None, time.monotonic())
         return
     try:
         stat = path.stat()
@@ -165,7 +174,7 @@ def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
             return
         if len(_REACTION_FILES) >= 64:
             _REACTION_FILES.clear()
-        _REACTION_FILES[key] = (path, stamp)
+        _REACTION_FILES[key] = (path, stamp, time.monotonic())
         for row in reversed(_tail_rows(path)):
             if not isinstance(row, dict) or row.get('isSidechain'):
                 continue
@@ -192,4 +201,5 @@ def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
                 emit({**event, 'session_id': native_id}, runtime, event_id=identity, environment=environment)
                 return
     except (OSError, ValueError):
+        _REACTION_FILES.pop(key, None)  # a moved or deleted transcript is looked up afresh next time
         return

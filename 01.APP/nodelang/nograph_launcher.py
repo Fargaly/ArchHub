@@ -32,21 +32,18 @@ def _open_launch(arguments, companion, show_home, show_unavailable):
         show_home()
         return None
     try:
-        window = companion.get('window')
-        if isinstance(window, Exception):
-            raise window
-        if window is None:
+        link = companion.get('link')
+        if link is None:
             from .baboom_nograph import reason
             raise RuntimeError(companion.get('error') or reason())
-        if window._stopped:
+        if companion.get('stopped'):
             raise RuntimeError('BABOOM is stopped for this launch.')
-        if window._shows_as == 'Hidden':
+        from .baboom_nograph import shows_as_choice
+        if shows_as_choice(link.state_dir) == 'Hidden':
             raise RuntimeError('BABOOM is hidden in Settings.')
-        window.start_projection()
-        window._open_interaction()
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        if not link.running():
+            raise RuntimeError('BABOOM is starting.')
+        link.tell('open')  # its own process opens its box
         return None
     except Exception as refusal:  # noqa: BLE001 - a launch must give a visible result
         detail = 'BABOOM unavailable: %s' % refusal
@@ -169,14 +166,19 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
         except Exception:  # noqa: BLE001 - priority is a courtesy; BABOOM still starts
             print('  BABOOM     : running at normal priority', flush=True)
-        from .baboom_nograph import companion_host, start
+        from .baboom_nograph import start
         if start(Path(state_dir), Path(__file__).resolve().parents[1], server.public_url) is None:
             return
         try:
-            from .baboom_native_runtime import prepare_baboom_native_atlas
-            # Pure-Python decode of the whole sprite sheet (~7 s): on the GUI thread it hung the window at start.
-            companion['atlas'] = prepare_baboom_native_atlas()
-            companion['host'] = companion_host()  # set last: land_companion lands once the host appears
+            # The companion window runs in its own process (founder: "why isn't it running outside the program?"):
+            # nothing it draws, reads or waits on can slow or freeze this window. The app keeps the brain.
+            from .baboom_companion_process import CompanionLink
+            link = CompanionLink(Path(state_dir), Path(__file__).resolve().parents[1], server.public_url,
+                                 pin=server.files['companion'])
+            if os.environ.get('ARCHHUB_TEST_NO_OPEN'):
+                companion['link'] = link
+                return
+            companion['link'] = link.supervise()  # set last: land_companion binds it once it appears
         except Exception as refused:  # noqa: BLE001 - the Studio stays; the face says why it is missing
             companion['error'] = str(refused)
             print('  BABOOM     : companion unavailable (%s)' % refused, flush=True)
@@ -291,32 +293,34 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     downloads = install_studio_downloads(view.page().profile(), view.page(), server.public_url, parent=window,
                                          on_status=lambda status: window.statusBar().showMessage(status['detail']))
     app.aboutToQuit.connect(downloads.close)
-    from .baboom_reactions import stop_soon
-    app.aboutToQuit.connect(stop_soon)  # the companion's reaction worker ends with the app
+    app.aboutToQuit.connect(lambda: companion.get('link') and companion['link'].close())  # the companion process ends with the app
     view.load(QUrl(server.public_url + '/studio?bootstrap=' + server.browser_bootstrap_token))
 
+    def companion_asks(request):
+        # A click on BABOOM in its own process: ArchHub's window answers it here, on its GUI thread.
+        if request['do'] == 'home':
+            asker.ask.emit(show_home)
+        elif request['do'] == 'ask':
+            asker.ask.emit(ask_baboom)
+        elif request['do'] == 'task':
+            asker.ask.emit(lambda: _open_task(window, view, request['task_id']))
+        elif request['do'] == 'stopped':
+            companion['stopped'] = True
+
     def land_companion():
-        host = companion.get('host')
-        if host is None or companion.get('window') is not None:
+        link = companion.get('link')
+        if link is None or companion.get('follows') is not None:
             return
         try:
-            from .baboom_native_runtime import create_baboom_native_projection
-            window_ = create_baboom_native_projection(host, atlas=companion['atlas'], position_path=Path(state_dir) / 'baboom-position.json',
-                                                      on_stop=host.request_stop, on_open=show_home,
-                                                      on_open_task=lambda task_id: _open_task(window, view, task_id))
+            link.ui = companion_asks
             # BABOOM belongs to ArchHub: beside its composer, wherever the window goes, never left on another screen.
-            window_.stand_with(window, server.files['companion'], ask_baboom)
-            companion['follows'] = CompanionFollows(window, view, window_commands, window_)
-            window_.show()
-            window_.start_projection()
-            host.start()
-            companion['window'] = window_
+            companion['follows'] = CompanionFollows(window, view, window_commands, link)
             if '--baboom' in sys.argv[1:]:
                 open_launch(['--baboom'])
-            print('  BABOOM     : companion window shown', flush=True)
+            print('  BABOOM     : companion process started', flush=True)
         except Exception as refused:  # noqa: BLE001 - the Studio stays open without the face
-            companion['window'] = refused
-            print('  BABOOM     : companion window unavailable (%s)' % refused, flush=True)
+            companion['error'] = str(refused)
+            print('  BABOOM     : companion unavailable (%s)' % refused, flush=True)
         landing.stop()
     landing = QTimer()
     landing.timeout.connect(land_companion)

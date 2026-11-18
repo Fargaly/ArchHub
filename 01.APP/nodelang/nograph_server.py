@@ -479,6 +479,11 @@ class NoGraphServer:
                         turn = self.body()
                         self.send_json(200, accept_turn(self.headers.get('X-ArchHub-BABOOM'), turn.get('text'), turn.get('message_id')))
                         return
+                    if path == '/baboom/companion' and method == 'POST':
+                        # BABOOM's own companion process (loopback, per-boot token it was started with).
+                        from .baboom_companion_process import HEADER, door
+                        self.send_json(200, door(self.headers.get(HEADER), self.body()))
+                        return
                     if path == '/api/universal/session' and method == 'POST':
                         owner._sign_in(self)
                         return

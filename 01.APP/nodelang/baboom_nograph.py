@@ -319,14 +319,3 @@ class NoGraphTransport:
 
 def _turn(utterance):
     return ask(utterance)
-
-
-def companion_host():
-    """The existing BaboomNativeHost over the no-graph transport; connected, not yet started."""
-    from .baboom_native_companion import foreground_application_windows
-    from .baboom_native_host import BaboomNativeHost
-    host = BaboomNativeHost(NoGraphTransport(), external_session_id='founder-desktop-baboom',
-                            device_credential_provider=lambda _request: {}, emit_steward_signals=False,
-                            activity_provider=foreground_application_windows)
-    host.connect()
-    return host

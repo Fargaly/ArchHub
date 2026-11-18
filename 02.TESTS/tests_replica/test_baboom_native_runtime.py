@@ -72,8 +72,6 @@ def test_projection_passes_open_callback_to_existing_companion(tmp_path):
         window._work_presence = presence
         assert opened == ['home', 'task-123']
         assert not host.running
-        _open_launch(['--baboom'], {'window': window}, lambda: opened.append('unexpected'), opened.append)
-        assert window.isVisible()
     finally:
         window.close()
 
@@ -88,21 +86,15 @@ def _launch_functions():
 
 def test_second_launch_opens_existing_companion_and_plain_launch_opens_home(tmp_path):
     from PyQt6.QtCore import QObject, pyqtSignal
-    from PyQt6.QtWidgets import QApplication, QWidget
+    from PyQt6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
-    class Companion(QWidget):
-        _stopped = False
-        _shows_as = 'Tray'
-        def start_projection(self):
-            pass
-        def _open_interaction(self):
-            pass
-    window = Companion()
+    told = []    # BABOOM runs in its own process: a second launch with --baboom tells it to open its box
+    link = SimpleNamespace(state_dir=tmp_path, running=lambda: True, tell=told.append)
     home, errors = [], []
     class Launch(QObject):
         requested = pyqtSignal(list)
     launch = Launch()
-    launch.requested.connect(lambda args: _open_launch(args, {'window': window},
+    launch.requested.connect(lambda args: _open_launch(args, {'link': link},
         lambda: home.append('home'), errors.append))
     listener = socket.socket()
     listener.bind(('127.0.0.1', 0))
@@ -131,25 +123,28 @@ def test_second_launch_opens_existing_companion_and_plain_launch_opens_home(tmp_
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
                 app.processEvents()
-                if (home if not arguments else window.isVisible()):
+                if (home if not arguments else told):
                     break
                 time.sleep(.01)
-            assert window.isVisible()
+            assert told == ['open']
         assert home == ['home']
         assert errors == []
     finally:
         listener.close()
         worker.join(timeout=4)
-        window.close()
     assert not worker.is_alive()
 
 
-def test_unavailable_companion_reports_reason_and_plain_launch_still_opens_home():
+def test_unavailable_companion_reports_reason_and_plain_launch_still_opens_home(tmp_path):
     home, errors = [], []
+    hidden = tmp_path / 'hidden'
+    (hidden / 'settings').mkdir(parents=True)
+    (hidden / 'settings' / 'baboom.json').write_text('{"shows_as": "Hidden"}', encoding='utf-8')
+    link = lambda state, running=True: SimpleNamespace(state_dir=state, running=lambda: running, tell=lambda name: None)
     for companion, reason in (({'error': 'turned off'}, 'turned off'),
-                              ({'window': RuntimeError('atlas missing')}, 'atlas missing'),
-                              ({'window': SimpleNamespace(_stopped=True)}, 'BABOOM is stopped for this launch.'),
-                              ({'window': SimpleNamespace(_stopped=False, _shows_as='Hidden')}, 'BABOOM is hidden in Settings.')):
+                              ({'link': link(tmp_path), 'stopped': True}, 'BABOOM is stopped for this launch.'),
+                              ({'link': link(hidden)}, 'BABOOM is hidden in Settings.'),
+                              ({'link': link(tmp_path, running=False)}, 'BABOOM is starting.')):
         result = _open_launch(['--baboom'], companion, lambda: home.append('home'), errors.append)
         assert result == 'BABOOM unavailable: ' + reason
         assert errors[-1] == result
@@ -206,6 +201,7 @@ def test_declared_codex_agents_without_a_transcript_do_not_walk_the_sessions_fol
     real = Path.rglob
     monkeypatch.setattr(Path, 'rglob', lambda self, pattern: walks.append(pattern) or real(self, pattern))
     agent_status._REACTION_FILES.clear()
+    agent_status._TRANSCRIPT_INDEX.clear()
     baboom_reactions.latest()
     first = len(walks)
     started = time.process_time()
@@ -213,12 +209,13 @@ def test_declared_codex_agents_without_a_transcript_do_not_walk_the_sessions_fol
         baboom_reactions.latest()
     print('\nBABOOM transcript walks: first tick %d, next 50 ticks %d; CPU %.3f s'
           % (first, len(walks) - first, time.process_time() - started))
-    assert first == 6 and len(walks) == first                   # it was 6 more walks on every tick
+    assert first == 1 and len(walks) == first                   # one walk serves all six; it was 6 more on every tick
     log = sessions / 'rollout-2026-11-18T19-00-00-no-transcript-0.jsonl'
     log.write_text(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started'},
                                'timestamp': datetime.now(timezone.utc).isoformat()}) + '\n', encoding='utf-8')
     later = time.monotonic() - baboom_reactions.REACTION_NODE['params']['active_seconds'] - 1
-    agent_status._REACTION_FILES.update({key: (None, None, later) for key, value in agent_status._REACTION_FILES.items()
-                                         if value[0] is None})   # the active window has passed
-    baboom_reactions.latest()
+    agent_status._TRANSCRIPT_INDEX.update({key: (later, files) for key, (_at, files) in agent_status._TRANSCRIPT_INDEX.items()})
+    baboom_reactions.latest()                                   # the active window has passed: one walk again
+    assert len(walks) == first + 1
     assert any(value[0] == log for value in agent_status._REACTION_FILES.values())   # a transcript that appears is found
+    assert agent_status.indexed_transcript('codex', 'no-transcript-0') == log        # the Workshop's status reads it too

@@ -36,22 +36,29 @@ def brain(monkeypatch):
     monkeypatch.setattr(baboom_nograph, 'own_session', lambda state_dir=None: 'session-baboom')
     return Brain
 
-
-def test_companion_host_connects_and_projects_a_live_quiet_frame(brain, monkeypatch):
+def _host():
+    """The companion's host over the app's transport, as its own process builds it (door answers come from this)."""
     from nodelang import baboom_nograph
-    monkeypatch.setattr('nodelang.baboom_native_companion.foreground_application_windows', lambda: None)
-    host = baboom_nograph.companion_host()
+    from nodelang.baboom_native_host import BaboomNativeHost
+    host = BaboomNativeHost(baboom_nograph.NoGraphTransport(), external_session_id='founder-desktop-baboom',
+                            device_credential_provider=lambda _request: {}, emit_steward_signals=False,
+                            activity_provider=lambda: None)
+    host.connect()
+    return host
+
+
+def test_companion_host_connects_and_projects_a_live_quiet_frame(brain):
+    host = _host()
     snapshot = host.latest_snapshot
     assert host.connection_state == 'live' and snapshot.directive['motion'] == 'idle'
     assert snapshot.context['brain'] == {'ok': True, 'facts': 1} and snapshot.report is None
     assert host.poll().revision == snapshot.revision + 1
 
 
-def test_companion_ask_and_act_reach_the_goose_brain(brain, monkeypatch):
+def test_companion_ask_and_act_reach_the_goose_brain(brain):
     from nodelang import baboom_nograph
     from nodelang.baboom_native_companion import compact_baboom_response_report
-    monkeypatch.setattr('nodelang.baboom_native_companion.foreground_application_windows', lambda: None)
-    host = baboom_nograph.companion_host()
+    host = _host()
     answer = host.respond_input('which programs are connected?')
     assert compact_baboom_response_report(answer['response']) == 'Revit is connected.'
     assert host.execute_input('check Revit')['summary'] == 'Revit is connected.'

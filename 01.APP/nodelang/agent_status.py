@@ -113,7 +113,7 @@ def read_transcript(runtime, native_id):
 
 
 def _codex(native_id):
-    path = transcript_path('codex', native_id)
+    path = indexed_transcript('codex', native_id)
     if path is None:
         return None
     project_baboom_reaction('codex', native_id, path)
@@ -127,7 +127,7 @@ def _codex(native_id):
 
 
 def _claude(native_id):
-    path = transcript_path('claude', native_id)
+    path = indexed_transcript('claude', native_id)
     if path is None:
         return None
     project_baboom_reaction('claude', native_id, path)
@@ -143,6 +143,48 @@ def _claude(native_id):
 
 
 _REACTION_FILES = {}
+_TRANSCRIPT_INDEX = {}   # (runtime, folder) -> (built at, [(file stem, path)])
+_MISSED = set()          # (runtime, id) already logged as having no transcript
+
+
+def indexed_transcript(runtime, native_id, environment=None):
+    """transcript_path for the polls that ask every few seconds (BABOOM's reactions, the Workshop's agent status).
+
+    One walk of the provider's folder serves every agent for a reaction window: a lookup per agent walked all
+    of ~/.codex/sessions, and with a dozen declared agents that kept a thread at 18-96% of a core (F419).
+    The hooks keep transcript_path, which looks afresh every time.
+    """
+    import logging
+    import time
+    from .baboom_reactions import REACTION_NODE
+    if not isinstance(native_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', native_id):
+        return None
+    if runtime == 'codex':
+        root, pattern, named = _home(environment) / '.codex' / 'sessions', 'rollout-*.jsonl', lambda stem: stem.endswith('-' + native_id)
+    elif runtime == 'claude':
+        root, pattern, named = _home(environment) / '.claude' / 'projects', '*/*.jsonl', lambda stem: stem == native_id
+    else:
+        return None
+    key = (runtime, str(root))
+    built = _TRANSCRIPT_INDEX.get(key)
+    if built is None or time.monotonic() - built[0] >= REACTION_NODE['params']['active_seconds']:
+        files = (root.rglob(pattern) if runtime == 'codex' else root.glob(pattern)) if root.is_dir() else ()
+        built = _TRANSCRIPT_INDEX[key] = (time.monotonic(), [(path.stem, path) for path in files])
+    try:
+        found = max((path for stem, path in built[1] if named(stem) and path.is_file()
+                     and path.resolve().is_relative_to(root.resolve())), key=lambda path: path.stat().st_mtime, default=None)
+    except OSError:
+        found = None
+    if found is None and (runtime, native_id) not in _MISSED:
+        _MISSED.add((runtime, native_id))
+        logging.getLogger(__name__).info('No %s transcript yet for session %s; looked up from the shared index.', runtime, native_id)
+    return found
+
+
+def _remember(key, value):
+    if key not in _REACTION_FILES and len(_REACTION_FILES) >= 64:
+        _REACTION_FILES.pop(next(iter(_REACTION_FILES)))   # the oldest one, never all of them at once
+    _REACTION_FILES[key] = value
 
 
 def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
@@ -153,18 +195,9 @@ def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
     from .user_paths import state_directory
     key = (runtime, native_id, str(state_directory(environment)))
     cached = _REACTION_FILES.get(key)
-    if path is None and cached and cached[0] is None:
-        # A session with no transcript yet is looked for again only after a reaction's active window: the lookup
-        # walks all of ~/.codex/sessions, and BABOOM asks for every declared agent ten times a second (a core).
-        if time.monotonic() - cached[2] < REACTION_NODE['params']['active_seconds']:
-            return
-        cached = None
-    path = path or (cached[0] if cached else (transcript_path(runtime, native_id) if environment is None
-                                           else transcript_path(runtime, native_id, environment=environment)))
+    path = path or (cached[0] if cached else (indexed_transcript(runtime, native_id) if environment is None
+                                           else indexed_transcript(runtime, native_id, environment)))
     if path is None:
-        if len(_REACTION_FILES) >= 64:
-            _REACTION_FILES.clear()
-        _REACTION_FILES[key] = (None, None, time.monotonic())
         return
     try:
         stat = path.stat()
@@ -172,9 +205,7 @@ def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
         stamp = (stat.st_mtime_ns, stat.st_size)
         if cached and cached[1] == stamp:
             return
-        if len(_REACTION_FILES) >= 64:
-            _REACTION_FILES.clear()
-        _REACTION_FILES[key] = (path, stamp, time.monotonic())
+        _remember(key, (path, stamp))
         for row in reversed(_tail_rows(path)):
             if not isinstance(row, dict) or row.get('isSidechain'):
                 continue
@@ -195,7 +226,8 @@ def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
             if reaction_kind(event):
                 from .baboom_work_presence import _parsed_time
                 recorded = _parsed_time(row.get('timestamp'))
-                if time.time() - (recorded.timestamp() if recorded else stat.st_mtime) > 10:
+                # A new transcript is found up to one window after its first event (the shared index): still react to it.
+                if time.time() - (recorded.timestamp() if recorded else stat.st_mtime) > 2 * REACTION_NODE['params']['active_seconds']:
                     return
                 identity = hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
                 emit({**event, 'session_id': native_id}, runtime, event_id=identity, environment=environment)

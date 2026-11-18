@@ -238,7 +238,7 @@ def test_native_task_changes_the_actual_offscreen_qt_pose_within_one_second(tmp_
     window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
     transcript = tmp_path / 'native.jsonl'
     native_id = 'task-proof-' + vendor
-    monkeypatch.setattr(agent_status, 'transcript_path', lambda runtime, identity: transcript)
+    monkeypatch.setattr(agent_status, 'indexed_transcript', lambda runtime, identity: transcript)
     state = state_directory() / 'workshop'
     state.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(state / 'messages.sqlite3') as db:

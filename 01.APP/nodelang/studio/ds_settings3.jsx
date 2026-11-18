@@ -256,6 +256,33 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       gap: 12
     }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
+  // The one update card: current build, update state and Check for updates (api.checkForUpdates).
+  function UpdateCard({runAction}) {
+    const s = useData();
+    return <Card style={{
+            padding: 16
+          }}><div className="spread"><div><h2>ArchHub</h2><p className="muted">{s.update.installed || 'Installed build unavailable'}</p></div>{s.update.available ? <Btn p onClick={event => runAction('settings.ds_settings3.SettingsAction8', event)}>Update</Btn> : <Chip c={s.update.state === 'idle' ? A.ok : A.warn}>{s.update.state === 'idle' ? s.update.detail : s.update.detail || 'Update status unavailable'}</Chip>}</div>
+          {s.update.restartRefusal && <p role="alert">{s.update.restartRefusal}</p>}
+          {s.update.updatedTo && <div role="status" className="spread"><span>Updated {s.update.updatedFrom || 'ArchHub'} → {s.update.updatedTo}</span><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction9', event)}>Dismiss update confirmation</Btn></div>}
+          <div className="flex" style={{
+              marginTop: 12,
+              flexWrap: 'wrap'
+            }}><Btn sm disabled={s.update.state === 'checking' || s.update.state === 'restarting'} onClick={event => runAction('settings.ds_settings3.SettingsAction10', event)}>Check for updates</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction11', event)}>What’s new</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction12', event)}>First run</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction13', event)}>Docs</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction14', event)}>Feedback</Btn></div></Card>;
+  }
+  // Settings → System → Updates: the update card with its own action owner, so its failure shows here.
+  function UpdatesPage() {
+    const u = useApp();
+    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {
+      SettingsAction8: () => u.show('Update'),
+      SettingsAction9: () => u.act(api.acknowledgeUpdate),
+      SettingsAction10: () => u.act(api.checkForUpdates),
+      SettingsAction11: () => u.show('What’s new'),
+      SettingsAction12: () => u.go('first-run'),
+      SettingsAction13: () => u.go('docs'),
+      SettingsAction14: () => u.go('feedback')
+    });
+    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><UpdateCard runAction={runAction} /></>;
+  }
   function AdvancedSettings({
     page = 'Account',
     full = false
@@ -370,14 +397,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     {actual === 'Dependencies' && <Card style={{
             padding: 22
           }}><div className="spread"><div><h2>Managed tools</h2><p className="muted">Versions, health, resources and the features that use each tool.</p></div><Btn p onClick={event => runAction('settings.ds_settings3.SettingsAction7', event)}>Open dependencies</Btn></div><div className="dependency-mini">{s.dependencies.slice(0, 5).map(d => <div className="row spread" key={d.id}><span>{d.name}</span><Chip c={d.state === 'Ready' ? A.ok : A.warn}>{d.state}</Chip></div>)}</div></Card>}
-{actual === 'Updates & About' && <Card style={{
-            padding: 16
-          }}><div className="spread"><div><h2>ArchHub</h2><p className="muted">{s.update.installed || 'Installed build unavailable'}</p></div>{s.update.available ? <Btn p onClick={event => runAction('settings.ds_settings3.SettingsAction8', event)}>Update</Btn> : <Chip c={s.update.state === 'idle' ? A.ok : A.warn}>{s.update.state === 'idle' ? s.update.detail : s.update.detail || 'Update status unavailable'}</Chip>}</div>
-          {s.update.restartRefusal && <p role="alert">{s.update.restartRefusal}</p>}
-          {s.update.updatedTo && <div role="status" className="spread"><span>Updated {s.update.updatedFrom || 'ArchHub'} → {s.update.updatedTo}</span><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction9', event)}>Dismiss update confirmation</Btn></div>}
-          <div className="flex" style={{
-              marginTop: 12
-            }}><Btn sm disabled={s.update.state === 'checking' || s.update.state === 'restarting'} onClick={event => runAction('settings.ds_settings3.SettingsAction10', event)}>Check for updates</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction11', event)}>What’s new</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction12', event)}>First run</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction13', event)}>Docs</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction14', event)}>Feedback</Btn></div></Card>}
+{actual === 'Updates & About' && <UpdateCard runAction={runAction} />}
     <div className="settings-grid">{groups.map(group => <Card key={group} style={{
               padding: '10px 14px 8px'
             }}><h3 style={{
@@ -411,7 +431,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
   function Settings({page='Account',full=false}) {
     const s=useData(),u=useApp();
     const group=sections.find(section=>section.name===page || section.pages.includes(page)) || sections[0];
-    const deep=page==='Advanced' || (page!=='Hooks' && group.pages.includes(page) && page!==group.pages[0]);
+    const deep=page==='Advanced' || (page!=='Hooks' && page!=='Updates & About' && group.pages.includes(page) && page!==group.pages[0]);
     const [advancedOpen,setAdvancedOpen]=React.useState(deep);
     const [query,setQuery]=React.useState('');
     const [changedOnly,setChangedOnly]=React.useState(false);
@@ -467,7 +487,8 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       {group.name==='Automation & Brain'&&<><section><h2>Models</h2><p>{router?.catalogue_error||"Free models first. Changes apply on the next message."}</p><div className="sheet-fields sheet-models"><SheetField label="Default model">{router?<select aria-label="Default model" title={router.default_model} value={router.default_model} onChange={event=>act(()=>api.setRouterSettings({default_model:event.target.value})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:<span role="status">{load.status==='error'?load.message:'Reading models…'}</span>}</SheetField><SheetField label="Fallback order" value={router?(router.fallback_models.join(' → ')||'None'):undefined} /><SheetField label="Prefer free models">{router?<D.Toggle label="Prefer free models" checked={router.free_first} onCheckedChange={value=>act(()=>api.setRouterSettings({free_first:value})).then(result=>{if(result)setRouter(result);})}/>:<span>Reading…</span>}</SheetField></div><p className="sheet-session-summary">{status||'No agent sessions reported.'}</p></section>{(follow.length>0||knowledge.length>0)&&<section>{follow.length>0&&<><h2>Follow through</h2><div className="sheet-fields">{follow}</div></>}{knowledge.length>0&&<><h2 className="sheet-knowledge">Knowledge</h2><div className="sheet-fields">{knowledge}</div><p>Digest conversations into knowledge, then remove them.</p></>}</section>}</>}
       {group.name==='Interface'&&<>{interfaceRows.length>0&&<section className="sheet-interface"><h2>Interface</h2><div className="sheet-fields">{interfaceRows}</div></section>}{canvasRows.length>0&&<section className="sheet-canvas-defaults"><h2>Canvas</h2><div className="sheet-fields">{canvasRows}</div></section>}{!interfaceRows.length&&!canvasRows.length&&<p>{changedOnly?'Nothing changed from the defaults.':'No appearance settings reported.'}</p>}<button type="button" className="sheet-action secondary sheet-reset-appearance" onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(()=>api.resetPage('Appearance'))},event)}>Reset Appearance</button></>}
       {page==='Hooks'&&<section className='sheet-canvas-defaults'><Permissions /></section>}
-      {group.name==='System'&&page!=='Hooks'&&<><section><h2>Live wiring</h2><p>Drawn from the running app. These are not stored records.</p><div className="sheet-wiring"><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Agents')},event)}><b>Agents</b><small>{status||'No sessions reported'}</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Agents')},event)}><b>Router</b><small>{router?.default_model||'Reading router…'}</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}><b>Workshop</b><small>Session Link</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Connections')},event)}><b>Programs</b><small>{connected.map(host=>host.name).join(' · ')||'No programs connected'}</small></button></div>{preference('Keep running in tray')}</section><section><h2>Tools &amp; diagnostics</h2><div className="sheet-tools">{[['Dependencies','dependencies'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','receipts']].map(([label,route])=><Btn key={label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go(route)},event)}>{label}</Btn>)}</div><p className="sheet-diagnostics">Loading, failed and stopped states stay local to the affected tool.</p></section></>}
+      {page==='Updates & About'&&<section className='sheet-canvas-defaults'><UpdatesPage /></section>}
+      {group.name==='System'&&page!=='Hooks'&&page!=='Updates & About'&&<><section><h2>Live wiring</h2><p>Drawn from the running app. These are not stored records.</p><div className="sheet-wiring"><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Agents')},event)}><b>Agents</b><small>{status||'No sessions reported'}</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Agents')},event)}><b>Router</b><small>{router?.default_model||'Reading router…'}</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}><b>Workshop</b><small>Session Link</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Connections')},event)}><b>Programs</b><small>{connected.map(host=>host.name).join(' · ')||'No programs connected'}</small></button></div>{preference('Keep running in tray')}</section><section><h2>Tools &amp; diagnostics</h2><div className="sheet-tools">{[['Dependencies','dependencies'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','receipts']].map(([label,route])=><Btn key={label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go(route)},event)}>{label}</Btn>)}</div><p className="sheet-diagnostics">Loading, failed and stopped states stay local to the affected tool.</p></section></>}
       </div>{advancedOpen&&!needle&&<section className="sheet-advanced-inline" aria-label={"Advanced · "+group.name}><div className="sheet-advanced-rows">{rawRows.map(row=><SettingControl key={row.id} row={row} raw />)}{!rawRows.length&&<p>No raw parameters for this section.</p>}</div>{group.name==='Automation & Brain'&&<RouterSettings />}{page==='Brain'&&<window.UI.MemoryRules />}{page==='Automations'&&<window.UI.Automations embedded />}{page==='Library & Mods'&&<window.UI.HostSkills />}{page==='BABOOM'&&<Providers />}{page==='System graph'&&<window.UI.SystemGraph />}</section>}</div></div></section></div>;
   }
   window.UI.Settings = Settings;

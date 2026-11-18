@@ -877,8 +877,9 @@
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId),
       inspected = !wire && selected.length === 1 && s.graph.nodes.find(n => n.id === selected[0]);
-    React.useLayoutEffect(() => {
-      onInspect?.({nodeId: inspected?.id || null, wireId: wire?.id || null});
+    // The Inspector and the app-wide selection follow after the selected card is painted (same-frame feedback).
+    React.useEffect(() => {
+      React.startTransition(() => onInspect?.({nodeId: inspected?.id || null, wireId: wire?.id || null}));
     }, [inspected?.id, wire?.id]);
     React.useLayoutEffect(() => {
       if (!active || preview) return;
@@ -1008,8 +1009,10 @@
       window.addEventListener('keydown', listener);
       return () => window.removeEventListener('keydown', listener);
     });
-    React.useLayoutEffect(() => {if(!preview&&active)u.setSelectedNodeId(selected.at(-1) || null);}, [selected.join(','),active]);
-    React.useLayoutEffect(()=>{if(!preview&&active&&u.selectedNodeId&&!selected.includes(u.selectedNodeId)&&s.graph.nodes.some(n=>n.id===u.selectedNodeId))setSelected([u.selectedNodeId]);},[u.selectedNodeId,active]);
+    // pushed: the id this canvas last published, so its own (deferred) echo never reverts a newer click.
+    const pushed = React.useRef(undefined);
+    React.useEffect(() => {if(!preview&&active){const id=selected.at(-1) || null;pushed.current=id;React.startTransition(() => u.setSelectedNodeId(id));}}, [selected.join(','),active]);
+    React.useLayoutEffect(()=>{if(!preview&&active&&u.selectedNodeId&&u.selectedNodeId!==pushed.current&&!selected.includes(u.selectedNodeId)&&s.graph.nodes.some(n=>n.id===u.selectedNodeId))setSelected([u.selectedNodeId]);},[u.selectedNodeId,active]);
     React.useLayoutEffect(()=>{
       const nodes=new Set(s.graph.nodes.map(n=>n.id)),wires=new Set(s.graph.wires.map(w=>w.id));
       setSelected(old=>old.some(id=>!nodes.has(id))?old.filter(id=>nodes.has(id)):old);
@@ -1368,7 +1371,7 @@
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
        viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
-       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
+       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
        onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}

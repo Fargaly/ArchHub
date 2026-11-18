@@ -253,8 +253,8 @@
     const inspectedNode = s.graph.nodes.find(node => node.id === inspection.nodeId);
     const inspectedWire = s.graph.wires.find(wire => wire.id === inspection.wireId);
     const inspect = value => {
-      if(!value.nodeId&&!value.wireId&&!inspection.nodeId&&!inspection.wireId)return;
-      setInspection(value);
+      // Decided on the latest inspection, not this render's: a deferred select then clear must end cleared.
+      setInspection(old => !value.nodeId&&!value.wireId&&!old.nodeId&&!old.wireId ? old : value);
       if(value.nodeId || value.wireId)dockRef.current?.show('insp');  // the Inspector is a dock panel
       setPropertyTab(value.nodeId || value.wireId ? 'Selection' : 'Task');
     };

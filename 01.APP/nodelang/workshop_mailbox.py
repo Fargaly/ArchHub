@@ -89,6 +89,14 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
                 if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
                     selected.ensure_conversation(ROOM)
                 selected._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
+                # F419: no index held reply_to, so delivery_events walked every receipt for each message of every
+                # agent's poll (15 connectors at a core each). The declared index; once it exists this takes no write lock.
+                from .conversation_history import WORKSHOP_SEND_INDEXES
+                try:
+                    selected._db.execute(next(s for s in WORKSHOP_SEND_INDEXES if " workshop_reply_to " in s)
+                                         .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1))
+                except sqlite3.OperationalError as busy:  # a busy writer: the next open adds it; an index never fails an open
+                    logging.getLogger(__name__).warning("Workshop reply index deferred: %s", busy)
             if not read_only and _SESSION_MIGRATION_LOCK.acquire(blocking=False):
                 try:
                     key = str(path.resolve())

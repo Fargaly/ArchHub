@@ -1273,6 +1273,8 @@
       more: () => setMore(value => !value),
       arrange: () => u.act(() => api.arrangeGraph())
     }));
+    // One click shows or hides the whole Library (the bar button and More › Show Library).
+    const toggleLibrary = () => { setPeek(''); u.setLibraryOpen(open => !open); };
     const stateCounts=new Map();
     for(const node of visible){const state=nodeState(node,false)[0].split(' · ')[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
     React.useLayoutEffect(() => {
@@ -1290,7 +1292,7 @@
             ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
             ...(embedded ? [['Thread', () => u.setTaskFace(u.taskFace==='split'?'canvas':'split')]] : []),
             ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
-            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ...(onResetDock ? [['Reset panel layout', onResetDock]] : []), ['Group · Ctrl G', group, selected.length < 2],
+            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', toggleLibrary], ...(onResetDock ? [['Reset panel layout', onResetDock]] : []), ['Group · Ctrl G', group, selected.length < 2],
             ['Run all again', () => executeAction('projects.ds_screens.Run.15', {api,u,again:true})],
             ...(selected.length===1&&s.graph.nodes.find(n=>n.id===selected[0])?.status==='Unconfirmed' ? [
               ['Check result',()=>u.act(()=>api.recoverRun(selected[0],'check')),s.graph.nodes.find(n=>n.id===selected[0])?.type!=='thing.file.write'],
@@ -1327,7 +1329,8 @@
         {(s.sessionBreadcrumbs||[]).length>0 && <button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}
         {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
         {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
-      <div className="flex" style={{position:'relative',flexShrink:0}}> <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
+      <div className="flex" style={{position:'relative',flexShrink:0}}> <Btn variant="controls" sm ghost data-design="canvas.library" aria-pressed={u.libraryOpen} aria-label={u.libraryOpen ? 'Hide Library' : 'Show Library'} onClick={event => executeAction('projects.controls.activate', {handler: toggleLibrary}, event)}>Library</Btn>
+         <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
         <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
 </div></div>}
   {actionsMenu}

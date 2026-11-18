@@ -46,7 +46,7 @@
       [toast, setToast] = React.useState(''),
       [advanced, setAdvanced] = React.useState(false),
       [companion, setCompanion] = React.useState(false),
-      [libraryOpen, setLibraryOpen] = React.useState(false),
+      [libraryOpen, setLibraryOpen] = React.useState(true),  // design v63: the Library sits in its dock by default; he hides it
       [selectedNodeId, setSelectedNodeId] = React.useState(null);
     const [agentLoad, setAgentLoad] = React.useState({status: 'empty'});
     const [canvasTabs, setCanvasTabs] = React.useState({tabs: [], active: '', split: '', collapsed: false});

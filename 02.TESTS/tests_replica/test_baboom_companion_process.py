@@ -166,3 +166,33 @@ def test_the_companion_never_sends_its_credential_to_a_redirect_or_a_proxy_or_of
         for server in (elsewhere, door):
             server.shutdown()
             server.server_close()
+
+
+def test_a_click_into_archhub_tells_baboom_to_come_back_above_it():
+    # BABOOM runs in its own process and no ArchHub window owns it: activating ArchHub (a click into it, Alt+Tab)
+    # must tell it where ArchHub is again, so it raises itself above the window without taking the keyboard.
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from types import SimpleNamespace
+    from PyQt6.QtCore import QEvent, QObject, QUrl
+    from PyQt6.QtWidgets import QApplication, QWidget
+    from nodelang.window_commands import CompanionFollows, WindowCommands
+    app = QApplication.instance() or QApplication([])
+    window = QWidget()
+    window.setGeometry(100, 100, 800, 600)
+    window.show()
+    app.processEvents()
+    page = QObject()
+    view = SimpleNamespace(page=lambda: page, url=lambda: QUrl('http://127.0.0.1:1234/studio'),
+                           urlChanged=SimpleNamespace(connect=lambda _f: None), mapToGlobal=window.mapToGlobal,
+                           zoomFactor=lambda: 1.0)
+    told = []
+    companion = SimpleNamespace(follow_app=lambda *state: told.append(state), isVisible=lambda: False)
+    follows = CompanionFollows(window, view, WindowCommands(view, window, lambda: None, 'http://127.0.0.1:1234'), companion)
+    try:
+        before = len(told)
+        app.sendEvent(window, QEvent(QEvent.Type.WindowActivate))
+        assert len(told) == before + 1 and told[-1][0] is not None   # told again, with the window's place
+    finally:
+        del follows
+        window.close()

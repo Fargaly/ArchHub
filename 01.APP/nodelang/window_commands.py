@@ -155,8 +155,10 @@ class CompanionFollows(QObject):
                                   [placed(box) for box in busy], screens)
 
     def eventFilter(self, watched, event):
+        # WindowActivate: a click into ArchHub brings BABOOM, which no ArchHub window owns, back above it too.
         if watched is self.window and event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show,
-                                                       QEvent.Type.Hide, QEvent.Type.WindowStateChange):
+                                                       QEvent.Type.Hide, QEvent.Type.WindowStateChange,
+                                                       QEvent.Type.WindowActivate):
             self.tell()
         elif watched is self.window and event.type() == QEvent.Type.WinIdChange and self.companion.isVisible():
             self.companion._disown()  # Qt rebuilt the ArchHub window: BABOOM belongs to the new one

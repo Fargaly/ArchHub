@@ -11601,6 +11601,7 @@
         "02.TESTS/tests_replica/test_command_registry.py",
         "02.TESTS/tests_replica/test_one_library_catalogue.py",
         "02.TESTS/tests_replica/test_session_files.py",
+        "03.TOOLS/tools/archhub-compiler/rules.json",
         "03.TOOLS/tools/archhub-compiler/src/intent.rs",
         "03.TOOLS/tools/archhub-compiler/src/lib.rs",
         "03.TOOLS/tools/archhub-compiler/tests/absorbed.rs",

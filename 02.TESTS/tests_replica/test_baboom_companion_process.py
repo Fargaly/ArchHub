@@ -75,6 +75,16 @@ def test_the_door_answers_only_its_own_companion_and_hands_clicks_to_the_app(tmp
         window.follow_app.assert_called_once_with(app, composer, [], [screen], 3, True)
         link.tell('open')
         assert _post(server, {'op': 'home', 'after': replies[0]['revision']}, link.token)['commands'] == ['open']
+        # A BABOOM setting written in Settings reaches the companion at once (it re-reads its cached pin).
+        after = link.revision
+        settings = urllib.request.Request(server.public_url + '/api/universal/settings-action', method='POST',
+            data=json.dumps({'function': 'setCompanionState', 'args': [{'pinned': False}]}).encode(),
+            headers={'Content-Type': 'application/json', 'X-ArchHub-Session': server.browser_session_token,
+                     'X-ArchHub-CSRF': server.browser_csrf_token})
+        with urllib.request.urlopen(settings, timeout=10) as response:
+            assert json.load(response)['ok']
+        told = _post(server, {'op': 'home', 'after': after}, link.token)
+        assert told['commands'] == ['settings'] and server.files['companion'].read()['pinned'] is False
     finally:
         link.close()
         server.close()

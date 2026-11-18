@@ -1580,7 +1580,10 @@ def r_settings_action(s, req):
             raise Refused(str(refused)) from refused
         return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES)}}
     if function == 'setCompanionState':
-        return {'ok': True, 'result': {'companion': companion.write({**companion.read(), **(args[0] if args else {})})}}
+        written = companion.write({**companion.read(), **(args[0] if args else {})})
+        from .baboom_companion_process import settings_changed
+        settings_changed()  # BABOOM, in its own process, applies the change now
+        return {'ok': True, 'result': {'companion': written}}
     if function == 'setProviderModel':
         return {'ok': True, 'result': SettingsOwner(None, dependencies=object()).setProviderModel(*args)}
     if function == 'disconnectSecret':

@@ -188,6 +188,13 @@ class CompanionLink:
             _LINK['current'] = None
 
 
+def settings_changed():
+    """A BABOOM setting was written (Settings): the companion re-reads it now, not at the window's next move."""
+    link = _LINK['current']
+    if link is not None:
+        link.tell('settings')
+
+
 def door(token, body):
     """/baboom/companion on the app's local server: the running link's answer, token-checked."""
     import hmac
@@ -204,14 +211,26 @@ def door(token, body):
 
 # ----------------------------------------------------------------------------- companion side
 
+_OPENER = []
+
+
 def _door_opener():
     """Loopback only, never a proxy, never a redirect: urllib copies headers (the per-boot credential) to a
-    redirect target and sends them through any proxy in the environment."""
+    redirect target and sends them through any proxy in the environment.
+
+    Built once and with plain HTTP only: build_opener() adds an HTTPS handler whose SSL context reloads the
+    Windows certificate store on every call (27% of a core in the companion, two calls every two seconds)."""
 
     class Refuse(url_request.HTTPRedirectHandler):
         def redirect_request(self, request, response, code, message, headers, target):
             raise url_error.HTTPError(request.full_url, code, 'BABOOM companion door refuses redirects', headers, None)
-    return url_request.build_opener(url_request.ProxyHandler({}), Refuse())
+    if not _OPENER:
+        opener = url_request.OpenerDirector()
+        for handler in (url_request.ProxyHandler({}), url_request.HTTPHandler(), url_request.HTTPDefaultErrorHandler(),
+                        Refuse(), url_request.HTTPErrorProcessor()):
+            opener.add_handler(handler)
+        _OPENER.append(opener)
+    return _OPENER[0]
 
 
 def _call(op, **fields):
@@ -263,13 +282,25 @@ class DoorTransport:
 
 
 class _Pin:
-    """The companion setting (pinned spot), read and written through the app, which owns the file."""
+    """The companion setting (pinned spot), read and written through the app, which owns the file.
+
+    Kept between reads: BABOOM asks on every redraw. A write here updates it; each word from the app about where
+    ArchHub is (the home wait) forgets it, so a change made in Settings is seen at the next move of the window."""
+
+    def __init__(self):
+        self.held = None
 
     def read(self):
-        return _call('pin')['result']
+        if self.held is None:
+            self.held = _call('pin')['result']
+        return self.held
 
     def update(self, values):
-        return _call('pin', write=values)['result']
+        self.held = _call('pin', write=values)['result']
+        return self.held
+
+    def forget(self):
+        self.held = None
 
 
 class _NoOwner:
@@ -320,7 +351,8 @@ def main():
                                              on_stop=lambda: (host.request_stop(), ask('stopped')),
                                              on_open=lambda: ask('home'),
                                              on_open_task=lambda task_id: ask('task', task_id))
-    window.stand_with(_NoOwner(), _Pin(), lambda words='': ask('ask', words=words))
+    pin = _Pin()
+    window.stand_with(_NoOwner(), pin, lambda words='': ask('ask', words=words))
 
     class Home(QObject):
         arrived = pyqtSignal(object)
@@ -331,11 +363,14 @@ def main():
             app.quit()
             return
         where = reply.get('home')
+        pin.forget()
         if where is not None:
             _follow_home(window, where)
             if where['app'] is not None and window.isVisible():
                 _raise_without_focus(int(window.winId()))
         for command in reply.get('commands') or ():
+            if command == 'settings':
+                window.refresh()   # the pinned setting was forgotten above; this redraw reads it again
             if command == 'open' and not window._stopped:
                 window.start_projection()
                 window._open_interaction()

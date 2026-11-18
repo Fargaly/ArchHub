@@ -11696,7 +11696,10 @@
         "02.TESTS/tests_js/studio_perf_court.cjs",
         "05.EVIDENCE/acompiler-intents.json",
         "01.APP/nodelang/model_router.py",
-        "01.APP/nodelang/studio/ds_home2.jsx"
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/command_registry.py",
+        "03.TOOLS/installer/build_release.ps1",
+        "03.TOOLS/installer/ArchHub.iss"
       ]
     },
     "ONELAYOUT": {

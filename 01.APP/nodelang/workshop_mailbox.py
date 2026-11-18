@@ -167,8 +167,21 @@ ACTIVITY_SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_activity(sequence INTEGE
 ACTIVITY_ROWS = 100000
 # Stall recovery (Paperclip typed recovery at 60/120/240/480 s): re-push, then escalate to the coordinator.
 WATCH_NODE = {"id":"workshop.watch", "params":{"retry_seconds":(60, 120, 240, 480), "check_seconds":10,
-    "scan_rows":2000, "budget_cache_seconds":10}}
+    "scan_rows":2000, "budget_cache_seconds":10, "escalation_batch":8}}
+# One dispatch claim per escalation note, whichever coordinator seat a watcher sees: the selected seat is recorded on it.
+_ESCALATION_CLAIM = {"session":"workshop-escalation"}
+# Notes written by this protocol carry their own key prefix, set in the transaction that writes the note: only these
+# are recovered. Older notes (no dispatch claim, push recorded only after the effect) are never replayed.
+_ESCALATION_KEY = "workshop-escalation:v2:"
 WATCH_STEPS = ("reminder", "reminder:2", "reminder:3", "escalated")
+# One durable claim per (message, recipient identity, step), taken before the effect by every send path. A claim with
+# no outcome is in flight while younger than the bound (above every transport timeout: 10 s pushes, the sender's
+# wait) and uncertain after it: the sender died mid-send or the transport never answered. Uncertain is held and
+# shown, never replayed automatically (the caller-owned model).
+CLAIM_NODE = {"id":"workshop.claim", "params":{"uncertain_after_seconds":120}}
+CLAIM_SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_claims(message_id TEXT NOT NULL, recipient TEXT NOT NULL, "
+    "step TEXT NOT NULL, holder TEXT NOT NULL, label TEXT, claimed_at TEXT NOT NULL, outcome TEXT, reason TEXT, "
+    "outcome_at TEXT, PRIMARY KEY (message_id, recipient, step))")
 
 
 def record_activity(history, actor, action, target=None, **detail):
@@ -597,6 +610,111 @@ def receipts(history, message, declarations):
     return groups, owner
 
 
+# Three outcomes of one delivery step, never two. delivered: the door confirmed it. refused: verified that nothing
+# was sent (no live door, recipient gone, an explicit not-sent answer). uncertain: anything that cannot prove
+# either (a timeout, an exception during or after the call, an unknown status).
+# Explicit queue and ambiguity evidence outranks every label. queued is its own outcome: the recipient's door holds it
+# for its next turn (Cursor's hook), so it is never re-pushed and never escalated, and reads delivered once the
+# recipient's receipt arrives. A held or unconfirmed answer, a refusal label after a started dispatch, or a success
+# label without one is uncertain.
+_AMBIGUOUS = frozenset({"held", "sent_unconfirmed", "uncertain", "cancelled_wait", "recovery_required"})
+_DELIVERED = frozenset({"injected", "ok", "delivered", "replied"})
+_REFUSED = frozenset({"not_sent", "not-pushed", "refused", "failed", "unavailable", "offline", "unreachable"})
+
+
+def delivery_outcome(status, dispatch_attempted=None):
+    """The one mapping from a door's answer to delivered / queued / refused / uncertain."""
+    if status == "queued":
+        return "queued"
+    if status in _AMBIGUOUS:
+        return "uncertain"
+    if status in _DELIVERED:
+        return "uncertain" if dispatch_attempted is False else "delivered"
+    if dispatch_attempted is True:
+        return "uncertain"
+    if status in _REFUSED or dispatch_attempted is False:
+        return "refused"
+    return "uncertain"
+
+
+def claim_state(row, now=None):
+    """The recorded outcome; with none, in-flight while fresh and uncertain once older than the bound."""
+    if row["outcome"]:
+        return row["outcome"]
+    age = (time.time() if now is None else now) - datetime.fromisoformat(row["claimed_at"]).timestamp()
+    return "in-flight" if age < CLAIM_NODE["params"]["uncertain_after_seconds"] else "uncertain"
+
+
+def _find_claim(history, message_id, identity, step, declarations):
+    """This identity's claim on a step, whatever form it was stored under: a claim taken under a plain declaration key
+    belongs to the native session that key is bound to now."""
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_claims'").fetchone():
+        return None
+    for row in history._db.execute("SELECT * FROM workshop_claims WHERE message_id=? AND step=?", (message_id, step)):
+        stored = tuple(json.loads(row["recipient"]))
+        if (recipient_identity({"session": stored[1]}, declarations) if stored[0] == "session" else stored) == identity:
+            return row
+    return None
+
+
+def legacy_state(events, step):
+    """The truthful state of a step from receipts written before claims existed; None when nothing was recorded.
+    Answered or delivered on any sibling is delivered; an outcome is read by its status; an attempt alone, or any
+    combination that proves neither, is uncertain. A step name is never returned as a state."""
+    if "answered" in events or "delivered" in events:
+        return "delivered"
+    if step == "initial":
+        if "initial-outcome" in events:
+            outcome = events["initial-outcome"]
+            return delivery_outcome(outcome.get("status"), outcome.get("dispatch_attempted"))
+        return "uncertain" if "attempt" in events else None
+    return delivery_outcome(events[step].get("status"), events[step].get("dispatch_attempted")) if step in events else None
+
+
+def claim_delivery(history, message, recipient, step, holder, *, now=None):
+    """F320: the one arbitration before a Workshop delivery effect, shared by the sender push, the app's loop and the
+    stall watcher. recipient is the resolved target (its native id already known). An atomic insert keyed on (message
+    id, recipient_identity, step): the inserter wins and may dispatch; everyone else gets the step's state and does
+    nothing. Receipts from before claims count as a taken step by their actual status (legacy_state), as does a
+    delivered live push to this identity. The winner of an initial step also writes the attempt receipt the stall
+    watcher scans, so a sender-only delivery enters the retry chain. Returns (won, state)."""
+    declarations = read_declarations(history._db, include_archived=True)
+    identity = recipient_identity(recipient, declarations)
+    at = time.time() if now is None else now
+    with history._transaction(write=True):
+        history._db.execute(CLAIM_SCHEMA)
+        row = _find_claim(history, message["id"], identity, step, declarations)
+        if row is not None:
+            return False, claim_state(row, now)
+        taken = legacy_state(receipts(history, message, declarations)[0].get(identity, {}), step)
+        if taken is None and history._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='workshop_live_deliveries'").fetchone():
+            seat = identity[1:] if identity[0] == "native" else ("", "")
+            if history._db.execute("SELECT 1 FROM workshop_live_deliveries WHERE message_id=? AND state='delivered' "
+                    "AND (recipient=? OR (app=? AND native_session_id=? AND native_session_id!=''))",
+                    (message["id"], recipient.get("session") or "", *seat)).fetchone():
+                taken = "delivered"
+        if taken is not None:
+            return False, taken
+        history._db.execute("INSERT INTO workshop_claims(message_id, recipient, step, holder, label, claimed_at) "
+            "VALUES (?,?,?,?,?,?)", (message["id"], json.dumps(list(identity)), step, holder, recipient.get("agent"),
+            datetime.fromtimestamp(at, timezone.utc).isoformat()))
+        if step == "initial" and message.get("sequence") is not None:
+            _delivery_receipt(history, message, recipient, "attempt", now=at, holder=holder,
+                runtime=recipient.get("runtime"), native_session_id=recipient.get("native_session_id"))
+    return True, "in-flight"
+
+
+def record_claim_outcome(history, message_id, recipient, step, outcome, reason=""):
+    """The winner's result on its claim, one of delivered / refused / uncertain; never overwritten."""
+    identity = recipient_identity(recipient, read_declarations(history._db, include_archived=True))
+    with history._transaction(write=True):
+        history._db.execute(CLAIM_SCHEMA)
+        history._db.execute("UPDATE workshop_claims SET outcome=?, reason=?, outcome_at=? WHERE message_id=? "
+            "AND recipient=? AND step=? AND outcome IS NULL", (outcome, reason, datetime.now(timezone.utc).isoformat(),
+            message_id, json.dumps(list(identity)), step))
+
+
 def _routed_to(history, message, declaration, declarations):
     """A stored addressed receipt names this addressee, under any of its declaration keys."""
     return "addressed" in receipts(history, message, declarations)[0].get(
@@ -900,9 +1018,24 @@ class WorkshopInjection:
         params = WATCH_NODE["params"]
         if now - self._watched_at < params["check_seconds"]:
             return False
-        self._watched_at = now
+        self._watched_at, self._pass_seats = now, None   # coordinator discovery at most once per pass
         retry = params["retry_seconds"]
         cutoff = datetime.fromtimestamp(now - retry[-1] - 600, timezone.utc).isoformat()
+        # A committed escalation note whose dispatch was never claimed (a stop after the commit, discovery failed, or
+        # the coordinator was away) stays eligible for as long as the note itself is in the store, and is pushed under
+        # the one claim per note; a claimed dispatch is never replayed. The unique idempotency index bounds the scan.
+        with history._transaction():
+            claims = history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_claims'").fetchone()
+            unclaimed = [row["id"] for row in history._db.execute(
+                "SELECT id FROM messages m WHERE conversation_id=? AND idempotency_key>=? AND idempotency_key<? "
+                "AND author=?" + (
+                " AND NOT EXISTS (SELECT 1 FROM workshop_claims c WHERE c.message_id=m.id AND c.step='escalation')"
+                if claims else "") + " ORDER BY sequence LIMIT ?",
+                (ROOM, _ESCALATION_KEY, _ESCALATION_KEY[:-1] + ";", DELIVERY_AUTHOR, params["escalation_batch"]))]
+        for note_id in unclaimed:
+            note = history.get(ROOM, note_id, principal=DELIVERY_AUTHOR)
+            if note is not None and self._push_escalation(history, note, declarations, now):
+                return True   # one effect per pass
         with history._transaction():
             rows = history._db.execute("SELECT reply_to, content, created_at FROM messages WHERE conversation_id=? "
                 "AND author=? AND category=? ORDER BY sequence DESC LIMIT ?",
@@ -930,21 +1063,49 @@ class WorkshopInjection:
             if not events or "answered" in events:
                 continue
             asks = _asks_for_reply(message)
-            pushed = events.get("initial-outcome", {}).get("status") in ("injected", "ok", "delivered")
-            if not asks and ("delivered" in events or pushed):
+            addressed, attempt = events.get("addressed", {}), events["attempt"]
+            runtime = addressed.get("runtime") or attempt.get("runtime")
+            native_id = addressed.get("native_session_id") or attempt.get("native_session_id")
+            target = {"session":session, "runtime":runtime, "native_session_id":native_id}
+            # The latest claimed or recorded delivery step decides what happens next, not the initial one alone.
+            identity, order = recipient_identity(target, declarations), ("initial",) + WATCH_STEPS[:-1]
+            with history._transaction():
+                claims = {name: _find_claim(history, message_id, identity, name, declarations) for name in order}
+            claim = claims["initial"]
+            initial = claim_state(claim, now) if claim is not None else legacy_state(events, "initial")
+            latest, latest_state = "initial", initial
+            for name in order[1:]:
+                found = claims[name]
+                state = (claim_state(found, now) if found is not None else delivery_outcome(
+                    events[name].get("status"), events[name].get("dispatch_attempted")) if name in events else None)
+                if state is not None:
+                    latest, latest_state = name, state
+            if latest_state in ("in-flight", "queued"):
+                continue   # not answered yet, or held by the recipient's own door for its next turn: nothing to do
+            # A sender push that landed is done: no follow-up, no escalation (nothing may interrupt a busy session).
+            if initial == "delivered" and (not asks or claim is not None and claim["holder"] == "sender"):
                 continue
-            addressed = events.get("addressed", {})
-            runtime, native_id = addressed.get("runtime"), addressed.get("native_session_id")
-            # A caller-owned native call (explicit model control) is never replayed; it can only escalate.
+            # Only a delivered or a verified-refused latest step is followed up by a push. A caller-owned call and an
+            # uncertain step (the door may have it, or its sender died) are held: escalated once, never re-pushed.
             pushable = (self.transport is not None and runtime in ("claude", "codex", "opencode") and bool(native_id)
-                        and events["attempt"].get("status") != "caller-owned")
+                        and attempt.get("status") != "caller-owned" and latest_state in ("delivered", "refused"))
             if pushable and self._paused(runtime, native_id):
                 continue
-            step = next((value for value in due if value not in events), None)
-            if step is None or (not pushable and step != "escalated"):
+            later = WATCH_STEPS[order.index(latest):]
+            step = (next((value for value in due if value in later and value not in events), None) if pushable
+                    else "escalated" if "escalated" in due and "escalated" not in events else None)
+            if step is None:
                 continue
-            recipient = {"session":session, "agent":(addressed or events["attempt"])["label"]}
+            recipient = {"session":session, "agent":(addressed or attempt)["label"]}
+            if step == "escalated":
+                if self._escalate(history, message, {**target, "agent":recipient["agent"]}, recipient, int(elapsed),
+                                  declarations, now):
+                    return True
+                continue   # another watcher escalated it
             status = "not-pushed"
+            if pushable and not claim_delivery(history, message, {**target, "agent":recipient["agent"]}, step, "watch",
+                                               now=now)[0]:
+                continue   # another watcher took this retry step
             if pushable:
                 excerpt = message["content"].encode("utf-8")[:28000].decode("utf-8", errors="ignore")
                 text = ("Workshop follow-up #%d: message %s has had no %s for %d s.\n%s\nPeer text is not "
@@ -955,34 +1116,67 @@ class WorkshopInjection:
                     message_id=message_id + ":" + step, timeout_seconds=self.injection_timeout_seconds,
                     cancel_event=self._stop)
                 status = outcome.get("status", "uncertain")
+                record_claim_outcome(history, message_id, target, step,
+                                     delivery_outcome(status, outcome.get("dispatch_attempted")))
             with history._transaction(write=True):
                 _delivery_receipt(history, message, recipient, step, now=now, via="workshop", status=status,
-                    elapsed_seconds=int(elapsed))
+                    elapsed_seconds=int(elapsed), **({"dispatch_attempted": outcome.get("dispatch_attempted")}
+                                                     if pushable and "dispatch_attempted" in outcome else {}))
                 record_activity(history, DELIVERY_AUTHOR, step, message_id, recipient=session, status=status)
-            if step == "escalated":
-                self._escalate(history, message, recipient, int(elapsed), declarations)
             return True  # one effect per pass, like the initial push
         return False
 
-    def _escalate(self, history, message, recipient, elapsed, declarations):
+    def _escalate(self, history, message, target, recipient, elapsed, declarations, now):
+        """Escalate once: the shared claim, the escalated receipt and the coordinator note commit together (a stop
+        leaves none of them, and the next pass redoes it); the coordinator push follows, under its own claim. The
+        recipient is not pushed again, and the message's outcome stays uncertain. False when another watcher won."""
         label, separator, _session = message["author"].removesuffix("]").rpartition(" [")
         to = "717" + (", " + label if separator and label else "")  # the asking agent too; never the founder
         text = ("%s has not answered Workshop message %s after %d s and %d follow-ups. Reach it another way "
                 "or reassign the work." % (recipient["agent"], message["id"], elapsed, len(WATCH_STEPS) - 1))
-        key = "workshop-escalation:" + sha256((message["id"] + "\0" + recipient["session"]).encode()).hexdigest()
+        key = _ESCALATION_KEY + sha256((message["id"] + "\0" + recipient["session"]).encode()).hexdigest()
         with history._transaction(write=True):
+            if not claim_delivery(history, message, target, "escalated", "watch", now=now)[0]:
+                return False
+            _delivery_receipt(history, message, recipient, "escalated", now=now, via="workshop", status="not-pushed",
+                elapsed_seconds=elapsed)
+            record_activity(history, DELIVERY_AUTHOR, "escalated", message["id"], recipient=recipient["session"],
+                status="not-pushed")
             # The escalation prefix keeps this note out of the injection queue; it is pushed below instead.
             note = history.append(ROOM, author=DELIVERY_AUTHOR, content="To " + to + ":\n" + text, category=CATEGORY,
                 refs=(recipient["session"],), reply_to=message["id"], idempotency_key=key)
-        for row in self._coordinator(declarations):
-            if self.transport is not None and row.get("native_session_id"):
-                outcome = self.transport.inject({"app":"claude", "id":row["native_session_id"]},
-                    "Workshop escalation " + note["id"] + "\n" + text + "\nNo reply needed.",
-                    message_id=note["id"] + ":escalation", timeout_seconds=self.injection_timeout_seconds,
-                    cancel_event=self._stop)
-                with history._transaction(write=True):
-                    record_activity(history, DELIVERY_AUTHOR, "escalation-push", note["id"],
-                        recipient=row["session"], status=outcome.get("status", "uncertain"))
+            record_claim_outcome(history, message["id"], target, "escalated", "uncertain")
+        self._push_escalation(history, note, declarations, now)
+        return True
+
+    def _seats(self, declarations):
+        """The coordinator's seats, discovered at most once per watcher pass."""
+        if getattr(self, "_pass_seats", None) is None:
+            self._pass_seats = [row for row in self._coordinator(declarations)
+                                if self.transport is not None and row.get("native_session_id")]
+        return self._pass_seats
+
+    def _push_escalation(self, history, note, declarations, now):
+        """Push a committed escalation note to one coordinator seat under the note's one dispatch claim (the seat is
+        recorded on the claim); True when this watcher dispatched it."""
+        seats = self._seats(declarations)
+        if not seats:
+            return False   # no coordinator now: the note stays unclaimed for a later pass
+        row = seats[0]
+        if not claim_delivery(history, note, {**_ESCALATION_CLAIM, "agent":json.dumps(
+                {"session":row["session"], "native_session_id":row["native_session_id"]})}, "escalation", "watch",
+                now=now)[0]:
+            return False   # another watcher, whatever seat it saw, holds this note's dispatch
+        outcome = self.transport.inject({"app":"claude", "id":row["native_session_id"]},
+            "Workshop escalation " + note["id"] + "\n" + note["content"].partition("\n")[2] + "\nNo reply needed.",
+            message_id=note["id"] + ":escalation", timeout_seconds=self.injection_timeout_seconds,
+            cancel_event=self._stop)
+        record_claim_outcome(history, note["id"], _ESCALATION_CLAIM, "escalation",
+                             delivery_outcome(outcome.get("status", "uncertain"), outcome.get("dispatch_attempted")))
+        with history._transaction(write=True):
+            record_activity(history, DELIVERY_AUTHOR, "escalation-push", note["id"],
+                recipient=row["session"], status=outcome.get("status", "uncertain"))
+        return True
 
     def start(self):
         if self._thread is None:
@@ -1174,11 +1368,14 @@ class WorkshopInjection:
                                 recipient=recipient["session"])
                         settled = False
                         continue  # held, not dropped: pushed once the agent is under its cap again
-                    _delivery_receipt(history, message, recipient, "attempt", now=now)
+                    native_id, runtime = recipient.get("native_session_id"), recipient.get("runtime")
+                    dispatch = self.transport is not None and runtime in ("claude", "codex", "opencode") and bool(native_id)
+                    if dispatch and not claim_delivery(history, message, recipient, "initial", "background", now=now)[0]:
+                        continue   # the sender push or another loop holds this step
+                    if not dispatch:
+                        _delivery_receipt(history, message, recipient, "attempt", now=now)
                 settled = False
-                native_id = recipient.get("native_session_id")
-                runtime = recipient["runtime"]
-                if self.transport is None or runtime not in ("claude", "codex", "opencode") or not native_id:
+                if not dispatch:
                     continue
                 excerpt = message["content"].encode("utf-8")[:28000].decode("utf-8", errors="ignore")
                 if len(excerpt) < len(message["content"]):
@@ -1197,6 +1394,9 @@ class WorkshopInjection:
                         dispatch_attempted=outcome.get("dispatch_attempted") is True)
                     record_activity(history, DELIVERY_AUTHOR, "inject", message["id"],
                         recipient=recipient["session"], status=outcome.get("status", "uncertain"))
+                record_claim_outcome(history, message["id"], recipient, "initial",
+                    delivery_outcome(outcome.get("status", "uncertain"), outcome.get("dispatch_attempted")),
+                    public_delivery_reason(outcome.get("delivery_reason", "")))
                 if not direct:
                     return  # The app yields between effects; a direct send completes its own recipients.
             if settled:

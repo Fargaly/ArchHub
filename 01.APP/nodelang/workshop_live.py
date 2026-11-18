@@ -16,6 +16,7 @@ it as the next turn. This module only records the rows.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -57,15 +58,19 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
     if app == 'codex' and not recipient.get('desktop') and codex_remote(pids):
         recipient['remote'] = codex_remote(pids)   # its TUI runs on this App Server (--remote), not the shared daemon
     transport = _local_transport(env)
+    from .workshop_mailbox import delivery_outcome
     try:
         result = transport.inject(recipient, text, message_id=message_id, timeout_seconds=timeout, permission_mode=permission_mode)
-    except Exception as error:  # noqa: BLE001 - the reason is the answer
-        return 'failed', 'workshop', str(error)[:300]
+    except Exception as error:  # noqa: BLE001 - the transport may have accepted it before failing: uncertain
+        return 'uncertain', 'workshop', str(error)[:300]
     finally:
         getattr(transport, 'close', lambda: None)()
-    if result.get('status') in ('injected', 'ok', 'delivered'):
+    outcome = delivery_outcome(result.get('status'), result.get('dispatch_attempted'))
+    if outcome == 'delivered':
         return 'delivered', 'workshop', result.get('note', '')
-    return 'failed', 'workshop', public_delivery_reason(result.get('reason') or result.get('error') or result.get('status'))
+    # 'failed' only when the door verified nothing was sent; anything else may have landed.
+    return ('failed' if outcome == 'refused' else 'uncertain'), 'workshop', public_delivery_reason(
+        result.get('reason') or result.get('error') or result.get('status'))
 
 
 def opencode_session(pids):
@@ -135,8 +140,10 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
     mid-turn instead of holding it for approval (Claude Code permission-mode parity)."""
     if not recipients:
         return []
-    from .workshop_mailbox import recipient_identity
+    from .workshop_mailbox import (DELIVERY_AUTHOR, ROOM, claim_delivery, delivery_outcome, record_claim_outcome,
+                                   recipient_identity)
     history._db.execute(SCHEMA)
+    stored = history.get(ROOM, message, principal=DELIVERY_AUTHOR)
     rows = []
     for row in recipients:
         key = row.get('session') or row.get('native_session_id')
@@ -151,18 +158,28 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
             rows.append({'recipient': key, 'agent': row.get('agent'), 'state': done[0], 'channel': done[1], 'reason': done[2],
                          'at': done[3], 'ms': done[4], 'repeat': True})
             continue
-        started = time.perf_counter()
+        # Resolve the actual recipient first (OpenCode gives its MCP connector no session id), then claim under that
+        # identity, dispatch to exactly it and settle under it: the one claim shared with the app's loop.
         runtime, native = row.get('runtime') or row.get('app'), row.get('native_session_id')
         if runtime == 'opencode' and not native:
-            native = opencode_session(_seat_pids(history, key))   # OpenCode gives its MCP connector no session id
+            native = opencode_session(_seat_pids(history, key))
+        target = {**row, 'runtime': runtime, 'native_session_id': native or None}
+        won, claimed = claim_delivery(history, stored or {'id': message}, target, 'initial', 'sender')
+        if not won:
+            rows.append({'recipient': key, 'agent': row.get('agent'), 'state': claimed, 'channel': 'workshop',
+                         'reason': 'claimed by another delivery path', 'at': None, 'ms': 0, 'repeat': True})
+            continue
+        started = time.perf_counter()
         state, channel, reason = push(runtime, native,
-                                      envelope(message, sender, text), message, pids=_seat_pids(history, key),
+                                      envelope(message, sender, text), message + ':initial', pids=_seat_pids(history, key),
                                       permission_mode=permission_mode)
         ms = int((time.perf_counter() - started) * 1000)
         at = datetime.now(timezone.utc).isoformat()
+        outcome = delivery_outcome(state)
+        state = state if outcome == 'delivered' else outcome   # the live row says refused or uncertain, never 'failed'
         history._db.execute('INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)',
-                            (message, key, row.get('agent'), row.get('runtime') or row.get('app'), row.get('native_session_id'),
-                             channel, state, reason, at, ms))
+                            (message, key, row.get('agent'), runtime, native or None, channel, state, reason, at, ms))
+        record_claim_outcome(history, message, target, 'initial', outcome, reason)
         rows.append({'recipient': key, 'agent': row.get('display_name') or row.get('agent'), 'state': state, 'channel': channel,
                      'reason': reason, 'at': at, 'ms': ms})
     return rows
@@ -196,6 +213,15 @@ def deliveries(history, message_ids):
                                    'WHERE message_id IN (%s)' % marks, list(message_ids)):
         out.setdefault(row[0], []).append({'agent': row[1], 'app': row[2], 'channel': row[3], 'state': row[4],
                                            'reason': row[5], 'at': row[6], 'ms': row[7]})
+    # A claim whose winner never recorded an outcome reads uncertain: neither delivered nor failed.
+    from .workshop_mailbox import claim_state
+    if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_claims'").fetchone():
+        for row in history._db.execute('SELECT * FROM workshop_claims WHERE outcome IS NULL AND step=? '
+                                       'AND message_id IN (%s)' % marks, ['initial', *message_ids]):
+            if claim_state(row) == 'uncertain':
+                out.setdefault(row['message_id'], []).append({'agent': row['label'], 'app': json.loads(row['recipient'])[1],
+                    'channel': 'workshop', 'state': 'uncertain', 'reason': 'claimed at %s; no outcome was recorded'
+                    % row['claimed_at'], 'at': row['claimed_at'], 'ms': 0})
     return out
 
 

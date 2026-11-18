@@ -99,12 +99,30 @@ export function peerKeyPath(pid, socket) {
  * pid -> the start time a live probe last confirmed for that peer's key. The
  * probe spawns PowerShell on Windows and can outrun its timeout under load;
  * an empty answer means "unknown", not "changed". On Windows the inbox is a
- * random pipe name a reused pid cannot own, so an identity this process has
+ * random pipe name a reused pid cannot own, so an identity a sender has
  * already confirmed is accepted while the probe is unavailable. A probe that
  * answers with a different start time is always refused, and on POSIX, where
  * the socket path is derived from the pid, an unknown identity stays refused.
+ * Every Workshop push runs in a fresh worker process, so the confirmations are
+ * kept in one small file for all senders of this user: a per-process memory
+ * never helped them, and concurrent pushes were refused before sending.
  */
-const verifiedIdentities = new Map();
+const verifiedIdentities = durableIdentities(path.join(os.tmpdir(), "archhub-peer-identities.json"));
+
+function durableIdentities(file) {
+  const read = () => { try { return JSON.parse(fs.readFileSync(file, "utf8")) ?? {}; } catch { return {}; } };
+  const write = (all) => {
+    // false when the write is lost (a busy file): a later send then probes again
+    try { const temporary = `${file}.${process.pid}.tmp`; fs.writeFileSync(temporary, JSON.stringify(all)); fs.renameSync(temporary, file); return true; }
+    catch { return false; }
+  };
+  return {
+    get: (pid) => read()[pid],
+    set: (pid, identity) => { const all = read(); all[pid] = identity; write(all); },
+    delete: (pid) => { const all = read(); if (pid in all) { delete all[pid]; write(all); } },
+    keys: () => Object.keys(read()).map(Number),
+  };
+}
 
 /**
  * A confirmation belongs to a live inbox. When the pid is no longer listed, or
@@ -136,7 +154,8 @@ function readPeerToken(socket) {
     const key = JSON.parse(fs.readFileSync(peerKeyPath(candidates[0].pid, socket), "utf8"));
     if (typeof key.peerToken !== "string" || !/^[0-9a-f]{32}$/i.test(key.peerToken)) throw new Error("Invalid peer key");
     const identity = IS_WINDOWS ? key.procStartFt : key.procStart;
-    if (identity) {
+    // On Windows a confirmed identity stands while the peer is listed with it: no PowerShell spawn per send.
+    if (identity && !(IS_WINDOWS && verifiedIdentities.get(candidates[0].pid) === identity)) {
       const pid = candidates[0].pid;
       const live = readProcessStart(pid);
       if (live) {
@@ -175,11 +194,14 @@ function readProcessStart(pid) {
   return start;
 }
 
+// PowerShell starts slowly when several pushes probe at once; a probe that runs out of time refuses the push.
+const PEER_NODE = { id: "workshop.peer", params: { identity_probe_ms: 8000 } };
+
 function probeProcessStart(pid) {
   try {
     if (IS_WINDOWS) {
       const shell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-      return execFileSync(shell, ["-NoProfile", "-NonInteractive", "-Command", `[System.Diagnostics.Process]::GetProcessById(${Number(pid)}).StartTime.ToUniversalTime().ToFileTimeUtc().ToString()`], { timeout: 3000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+      return execFileSync(shell, ["-NoProfile", "-NonInteractive", "-Command", `[System.Diagnostics.Process]::GetProcessById(${Number(pid)}).StartTime.ToUniversalTime().ToFileTimeUtc().ToString()`], { timeout: PEER_NODE.params.identity_probe_ms, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
     }
     return execFileSync(PS_BIN, ["-o", "lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, timeout: 3000 }).toString().trim();
   } catch {

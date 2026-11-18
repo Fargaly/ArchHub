@@ -11471,7 +11471,9 @@
       "source": "Founder F415 (T0), 2026-11-18: the header of installed 20261117-2144 shows Update failed. The app's own updater could not apply 2144 from 2008 on 2026-11-17 22:32: its process stop ended the in-folder redirector that owns the update worker, so it exited before Setup and the build was installed by direct Setup instead. The updater keeps the exact process chain its own worker depends on, refuses before Setup when a process it must stop cannot be stopped, confirms a rolled_back or applying marker only against Setup's own inventory and receipt, and counts a failed relaunch as failed. Hidden and isolated tests only; the live update marker is not touched.",
       "scope": [
         "01.APP/nodelang/quiet_update.py",
+        "01.APP/nodelang/application_update.py",
         "02.TESTS/tests_replica/test_update_release_path.py",
+        "02.TESTS/tests_replica/test_installed_update_feed.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

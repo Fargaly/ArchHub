@@ -46,15 +46,13 @@ def describe_agent_tools(tools):
 
 
 def _catalogue_key():
-    """The MCP package version and the bytes of these sources decide the catalogue; any change rebuilds it.
-    Content, not mtimes: an update rewrites every file's time but an identical file keeps its key."""
+    """The bytes of these sources decide the catalogue; any change rebuilds it. Content, not mtimes: an update
+    rewrites every file's time but an identical file keeps its key. The rows come only from tool names, our
+    docstrings and our tables (describe_agent_tools), so the MCP version is not an input: the build Python saw
+    mcp 1.27.0 while the installed .venv has 1.30.0, and keying on it made the baked copy unusable (build 7)."""
     from hashlib import sha256
-    from importlib.metadata import PackageNotFoundError, version
     from pathlib import Path
-    try:
-        digest = sha256(version('mcp').encode())
-    except PackageNotFoundError:
-        digest = sha256(b'')
+    digest = sha256()
     for path in sorted(Path(__file__).parent.glob('*.py')):
         digest.update(path.name.encode() + b'|' + path.read_bytes())
     return digest.hexdigest()

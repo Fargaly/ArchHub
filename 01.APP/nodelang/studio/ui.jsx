@@ -225,7 +225,7 @@
           const sent = await u.act(() => agent === 'BABOOM' ? api.sendToBaboom(message, {taskId: toSession.id, scope: s.graph.id}) : api.sendChatTurn(turn, undefined, toSession.id));
           if (!sent) { setDraft(current => current.text ? current : {text,revision:current.revision+1}); return; }
           await api.listTasks?.();
-          u.setToast('Sent to ' + (toSession.sessionTitle || toSession.title) + '. It is in that session’s thread.');
+          u.setToast({text: 'Sent to ' + (toSession.sessionTitle || toSession.title) + '. It is in that session’s thread.', open: () => u.openTaskFile(toSession.id)});  // Home stays; Open goes in
           return;
         }
         const t = await u.act(() => {

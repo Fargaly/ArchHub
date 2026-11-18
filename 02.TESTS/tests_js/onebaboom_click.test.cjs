@@ -151,7 +151,7 @@ test('the click that opens BABOOM points the composer at him; the click that clo
       if(!saved.messages?.some(message=>message.text===text))throw Error('Reply was not saved to the test session');
       return taskId;
     },title);
-    await page.locator('.dx-task').filter({hasText:title}).click();
+    await page.locator('[data-design="home.card"]').filter({hasText:title}).locator('.home-card-head').click();  // Home is the map: a card selects its session
     await page.waitForFunction(id=>window.UI.homeShown()===id,selectedId);
     if(title==='Door review')await click();
     await panel.getByText(title+' reply',{exact:true}).waitFor();

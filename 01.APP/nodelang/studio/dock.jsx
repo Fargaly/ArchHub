@@ -92,14 +92,18 @@
   if (typeof React === 'undefined') return;  // the layout rules above also load alone, without a page
 
   const api = window.ArchHubAPI, {executeAction} = api, Icon = window.AHIcon, portal = window.ReactDOM.createPortal;
+  // "Claude Code / 00.ARCHUB / session-62fdf0706b09" reads "Claude Code · 62fdf0": two sessions of one app are told apart, no raw id.
+  const shortName = name => { const [app, , id] = String(name || '').split(' / '); return id ? app + ' \u00b7 ' + id.replace(/^session-/, '').slice(0, 6) : String(name || ''); };
   const onResize = notify => { window.addEventListener('resize', notify); return () => window.removeEventListener('resize', notify); };  // the window width as a React store
-  const projectKey = value => String(value || '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 128);
 
   // onSave(session, project, layout | null) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
-  function Dock({session, project, face, rightWidth, onRightWidth, onSave, onLayout, panels, controls, onMapHost, children}) {
+  function Dock({face, rightWidth, onRightWidth, onSave, onLayout, panels, controls, onMapHost, children}) {
     const {useData} = window.UI, s = useData();
-    const sessionId = projectKey(session), projectId = projectKey(project);
-    const record = (s.dockLayout?.sessions || {})[sessionId] || (s.dockLayout?.projects || {})[projectId] || null;
+    // The layout is one user setting (founder 2026-11-18): Home and every session show the same docks, widths and folds.
+    const sessionId = 'all', projectId = '';
+    // Before the one layout was saved, his arrangement lived per session: the most recently saved one (the owner keeps them in save order) is his layout.
+    const kept = s.dockLayout?.sessions || {};
+    const record = kept[sessionId] || Object.values(kept).at(-1) || Object.values(s.dockLayout?.projects || {}).at(-1) || null;
     // The user's edits show at once; the owner's record is adopted for a session until the first edit there.
     const [local, setLocal] = React.useState(null);
     // The default follows the window: crossing 1280 px folds or opens a right dock he has not arranged.
@@ -320,7 +324,7 @@
         {!failed.length && <p className="hint">Nothing failed.</p>}</section>
       <section className="wssec" aria-label="Working now"><span className="eyebrow"><Icon name="users" size={12} />Working now · {working.length}</span>
         {working.map(({key, name, task}) => { const step = (task?.activity || []).find(row => row.status === 'Running'); return <button type="button" className="wsl" key={key} data-ws-working={key}
-          onClick={event => executeAction('ui.select', () => task ? onShow({task}) : u.go('settings/Agents'), event)}><Av id={name} size={22} /><span><b>{name}</b>{task ? ' · ' + task.title : ''}<em>{step ? 'On: ' + stepTitle(task, step.id) : 'Working'}</em></span><i className="wsd" /></button>; })}
+          onClick={event => executeAction('ui.select', () => task ? onShow({task}) : u.go('settings/Agents'), event)} title={name}><Av id={shortName(name)} size={22} /><span><b>{shortName(name)}</b>{task ? ' · ' + task.title : ''}<em>{step ? 'On: ' + stepTitle(task, step.id) : 'Working'}</em></span><i className="wsd" /></button>; })}
         {!working.length && <p className="hint">No one is working right now.</p>}</section>
     </div>;
   }

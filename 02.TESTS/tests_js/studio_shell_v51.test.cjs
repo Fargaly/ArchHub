@@ -81,15 +81,14 @@ test('BABOOM opens from the tray and its panel and Home avatars stay in bounds',
       await page.setViewportSize({width,height:900});
       const rail=page.getByRole('navigation',{name:'Main navigation'});
       const railPet=rail.getByRole('button',{name:'BABOOM',exact:true});
-      const session=page.locator('.resume-row').filter({hasText:'Review drawing changes'});
-      const peek=page.getByRole('button',{name:'Open the list',exact:true});
-      if(await peek.isVisible())await peek.click();
-      await session.locator('.resume-members').waitFor({state:'visible'});
+      // Home is the map: the session is a card; the other agents on it are small avatars on that card.
+      const session=page.locator('[data-home-map] [data-design="home.card"]').filter({hasText:'Review drawing changes'});
+      await session.locator('.home-card-members').waitFor({state:'visible'});
       const row=await session.evaluate(element=>{
         const box=element.getBoundingClientRect();
-        const pane=element.closest('.resume-session-scroll').getBoundingClientRect();
-        const chips=[...element.querySelectorAll('.resume-members>*')].map(chip=>chip.getBoundingClientRect());
-        const controls=[...element.querySelectorAll('.resume-pin,.resume-hide')].map(button=>button.getBoundingClientRect());
+        const pane=element.closest('[data-home-canvas]').getBoundingClientRect();
+        const chips=[...element.querySelectorAll('.home-card-members>*')].map(chip=>chip.getBoundingClientRect());
+        const controls=[...element.querySelectorAll('.home-card-state,.home-card-head b')].map(button=>button.getBoundingClientRect());
         return {count:chips.length,clipped:chips.some(chip=>chip.left<Math.max(box.left,pane.left)-1||
           chip.right>Math.min(box.right,pane.right)+1||chip.bottom>box.bottom+1),
           overlap:chips.some((chip,index)=>controls.concat(chips.slice(index+1)).some(button=>chip.left<button.right&&chip.right>button.left&&

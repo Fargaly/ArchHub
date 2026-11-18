@@ -180,20 +180,24 @@ finally:
   await choose('Workflows',31,'button.listbutton');
   await page.getByRole('button',{name:'Workflow 0',exact:true}).click();
   assert.equal(opens.length,1);
-  await load('Home');
-  await choose('All',31,'.resume-session-scroll .dx-task');
-  await choose('Agent sessions',0,'.resume-session-scroll .dx-task');
-  await choose('Workflows',31,'.resume-session-scroll .dx-task');
-  await page.locator('.dx-task').filter({hasText:'Workflow 1'}).first().click();
-  await page.waitForFunction(()=>window.routes.includes('canvas'));
-  assert.equal(opens.length,2);
-  await load('Home');
-  await page.waitForFunction(()=>document.querySelectorAll('.resume-session-scroll .dx-task').length===31);
-  assert.equal(await filter().getByRole('button',{name:'Workflows',exact:true}).getAttribute('aria-pressed'),'true');
+  // Home is the map of the work (design v61): its All / Agent sessions / Workflows filter is the same owner value, read here
+  // through the map's own function on the real owner's rows (Home's Dock and canvas are proved by the rendered Home tests).
+  const mapTitles = (kind, fixtures) => page.evaluate(({kind, fixtures}) => {
+    const s = {...window.ArchHubAPI.getSnapshot(), ...(fixtures || {})}, layout = s.homeLayout;
+    const params = {group: 'Project', order: 'Needs you first', card: 'Steps and state', density: 'Comfortable', done: 'Show', filter: 'All'};
+    const chart = window.UI.homeMap({listed: {groups: []}, rows: window.UI.homeRows(s, layout), params, hidden: layout.hidden || [],
+      titleOf: row => row.title || row.name, kind, order: layout.order || [], olderOpen: true});  // old files sit in the Older section: unfolded to count them
+    return chart.nodes.filter(node => !node.group).map(node => node.title);
+  }, {kind, fixtures});
+  assert.equal((await mapTitles('all', null)).length, 31, 'the workflow files are cards');
+  assert.equal((await mapTitles('agent-session', null)).length, 0);
+  assert.equal((await mapTitles('workflow', null)).length, 31);
+  await filter().getByRole('button',{name:'Workflows',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().sessionListFilters?.home),'workflow','the filter is the one owner value Home reads');
   const homeFixtures = await page.evaluate(async()=>{
     const graphs=window.ArchHubAPI.getSnapshot().graphs;
     const file = title=>graphs.find(row=>row.title===title).path;
-    window.homeFixtures={tasks:[
+    const fixtures={tasks:[
       {id:'a',title:'Task workflow A',sessionPath:file('Workflow 0'),status:'PLANNED'},
       {id:'b',title:'Task workflow B',sessionPath:file('Workflow 1'),status:'PLANNED'},
       {id:'p',title:'Pinned workflow',sessionPath:file('Workflow 2'),status:'PLANNED',homePinned:true},
@@ -203,30 +207,25 @@ finally:
       {id:'q',title:'Pinned agent',sessionPath:file('Agent 33'),status:'PLANNED',homePinned:true},
       {id:'i',title:'Hidden agent',sessionPath:file('Agent 34'),status:'PLANNED'},
       {id:'n',title:'Task without file',status:'PLANNED'}
-    ],agents:[{id:'runtime',name:'Unassigned runtime',runtime:'codex',status:'idle'}]};
+    ]};
     await window.ArchHubAPI.setHomeLayout({width:300,collapsed:false,resume:'',order:['b','a','d','c','n'],hidden:['h','i']});
-    window.mount('LibraryShelf');window.mount('Home');
-    return window.homeFixtures;
+    await window.ArchHubAPI.readHomeLayout();
+    return fixtures;
   });
-  const titles=()=>page.locator('.resume-session-scroll .dx-task b').allTextContents();
-  const orphanWorkflows=Array.from({length:27},(_,i)=>i+4).sort((a,b)=>(a+'.archhub').localeCompare(b+'.archhub')).map(i=>'Workflow '+i);
-  for(const [label,expected] of [
-    ['All',['Pinned workflow','Pinned agent','Task workflow B','Task workflow A','Task agent D','Task agent C','Task without file','Unassigned runtime',...orphanWorkflows]],
-    ['Workflows',['Pinned workflow','Task workflow B','Task workflow A',...orphanWorkflows]],
-    ['Agent sessions',['Pinned agent','Task agent D','Task agent C','Task without file','Unassigned runtime']]
+  const orphanWorkflows=Array.from({length:27},(_,i)=>'Workflow '+(i+4));
+  for(const [kind,expected] of [
+    ['all',['Pinned workflow','Pinned agent','Task workflow B','Task workflow A','Task agent D','Task agent C','Task without file',...orphanWorkflows]],
+    ['workflow',['Pinned workflow','Task workflow B','Task workflow A',...orphanWorkflows]],
+    ['agent-session',['Pinned agent','Task agent D','Task agent C','Task without file']]
   ]) {
-    await choose(label,expected.length,'.resume-session-scroll .dx-task');
-    assert.deepEqual(await titles(),expected,label+' preserves ordered tasks, pins, hiding and appended workflows');
-    assert.equal(await page.locator('.resume-session-scroll').getByText(/^Hidden /).count(),0);
-    assert.equal(await page.locator('.resume-session-scroll button.listbutton').count(),0,'no plain-file fallback');
-    assert.equal(await page.getByRole('button',{name:'Unpin Pinned '+(label==='Agent sessions'?'agent':'workflow'),exact:true}).getAttribute('aria-pressed'),'true');
+    const shown = await mapTitles(kind, homeFixtures);
+    assert.deepEqual([...shown].sort(), [...expected].sort(), kind+': tasks, pins and appended workflow files; hidden ones are not drawn');
+    const at = title => shown.indexOf(title);
+    for (const [first, then] of [['Task workflow B','Task workflow A'],['Task agent D','Task agent C']])
+      if (at(first) >= 0) assert.ok(at(first) < at(then), kind+': his order arranges the cards ('+first+' before '+then+')');
   }
-  await choose('All',35,'.resume-session-scroll .dx-task');
-  await page.getByRole('button',{name:'Hide Task without file from Home',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelectorAll('.resume-session-scroll .dx-task').length===34);
-  await load('Home',homeFixtures);
-  await choose('Agent sessions',4,'.resume-session-scroll .dx-task');
-  assert.equal(await page.getByText('Task without file',{exact:true}).count(),0);
+  await page.evaluate(async()=>{const held=(await window.ArchHubAPI.readHomeLayout()).homeLayout;await window.ArchHubAPI.setHomeLayout({...held,hidden:[...held.hidden,'n']});await window.ArchHubAPI.readHomeLayout();});
+  assert.equal((await mapTitles('agent-session', homeFixtures)).includes('Task without file'), false, 'a hidden session is no card');
   await page.evaluate(()=>window.ReactDOM.render(window.React.createElement(window.UI.SessionList,{list:'home',renderRow:()=>null}),document.getElementById('root')));
   await filter().waitFor();
   assert.equal(await page.locator('button.listbutton').count(),0,'null row renderer must not create plain file buttons');

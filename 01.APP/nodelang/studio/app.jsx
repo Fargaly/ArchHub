@@ -475,19 +475,17 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{route.startsWith("settings/") ? <span className="header-phrase">{(pending => agentLoad.status === 'error' ? <span role="alert" className="header-error"><span className="header-error-text" title={agentLoad.message}>{agentLoad.message}</span><Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>
+          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? "Home" : routeNames[route]) || route.split('/').at(-1)}</button>{route === "task-file" && <><span className="muted">›</span><span className="header-page header-here" title="This session">{s.tasks.find(t => t.id === task)?.title || s.graph.name}</span></>}<span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{route.startsWith("settings/") ? <span className="header-phrase">{(pending => agentLoad.status === 'error' ? <span role="alert" className="header-error"><span className="header-error-text" title={agentLoad.message}>{agentLoad.message}</span><Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>
             : s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" title={s.connectionNotice} onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice</button>
-            : pending ? <button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {go}, event)}>{pending + ' wait for you'}</button>
-            : <span>{s.profile.signedIn ? 'Signed in' : 'Local session'}</span>)(s.approvals.filter(c => c.status === 'pending').length)}</span> : <>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
+            : pending ? <button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go}, event)}>{pending + ' wait for you'}</button>
+            : <span>{s.profile.signedIn ? 'Signed in' : 'Local session'}</span>)(window.UI.homeRows(s, s.homeLayout).needsYou)}</span> : <>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : s.connectionNotice ? <span>{s.connectionNotice}</span> : null}
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
           {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
           {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
-          <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
+          <button data-design="header.pc" className="button-reset muted header-pc" title="This PC and its programs: Settings › Connections" onClick={event => executeAction("appShell.Control.13", {
             go
-            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
-            go
-          }, event)}>{s.agentSummary||'Checking running agents…'} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c => c.status === 'pending').length)}</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+            }, event)}>On this PC · {(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || (s.hostsProbing?'checking programs…':'no program connected')}</button>{(rows => [['Running', rows.running, 'running', 'Nothing running', s.agentSummary], ['Needs you', rows.needsYou, 'need you', 'Nothing needs you', 'Sessions that wait for you']].map(([filter, count, word, none, title]) => <button key={filter} data-design={'header.' + word.replace(' ', '-')} className="button-reset muted" title={title + ' · show them on Home'} onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go, filter}, event)}>{count ? count + ' ' + word : none}</button>))(window.UI.homeRows(s, s.homeLayout))}<span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
           }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
@@ -569,7 +567,7 @@
           <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>api.resolveSaveConflict(false),event)}>Discard my changes and reload</Btn>
           <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>{api.dismissSaveConflict();setToast('');},event)}>Dismiss</Btn>
         </div>
-      </> : <><span>{toast}</span><Btn sm ghost style={{pointerEvents:'auto'}} onClick={event => executeAction("appShell.Dismiss.17", {
+      </> : <><span>{toast.text || toast}</span>{toast.open && <Btn sm style={{pointerEvents:'auto'}} onClick={event => executeAction('ui.select', () => { setToast(''); return toast.open(); }, event)}>{toast.label || 'Open'}</Btn>}<Btn sm ghost style={{pointerEvents:'auto'}} onClick={event => executeAction("appShell.Dismiss.17", {
           setToast
         }, event)}>Dismiss</Btn></>}</div>}
   {modal && <Dialog key={modal.kind + ':' + (modal.id || '')} modal={modal} close={close} />}
@@ -1092,13 +1090,21 @@
   function appShellControl13({
     go
   }, event) {
-    const handler = () => go('watcher');
+    const handler = () => go('settings/Connections');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellRunningWaitForYou14({
-    go
+    act,
+    api,
+    go,
+    filter = 'Needs you'
   }, event) {
-    const handler = () => go('agents');
+    // A count is a filter of Home's map: the filter is a parameter in the Home owner record, then Home opens.
+    const handler = () => act(async () => {
+      const {homeLayout} = await api.readHomeLayout();
+      await api.setHomeLayout({...homeLayout, map: {...(homeLayout.map || {}), filter}});
+      go('home');
+    });
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellCtrlK15({

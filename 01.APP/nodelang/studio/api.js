@@ -1167,6 +1167,7 @@ const refreshBeforeSocialConnections=api.refreshSocialState;
 api.refreshSocialState=async()=>{const result=await refreshBeforeSocialConnections();await refreshSocialConnections();return result;};
 // WIRE-social end
 // WIRE-settings
+const CONTROL_KEYS=['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','libraryTree','sessionListFilters','homeLayout','dockLayout'];
 async function settingsAction(functionName, args=[]) {
  const identity=state.profile.id;
  const graph=state.graph.id;
@@ -1175,7 +1176,15 @@ async function settingsAction(functionName, args=[]) {
  const result=response.result;
  if(identity!==state.profile.id)throw Error('Your account changed while this action ran. Refresh the page before retrying.');
  if(!result||typeof result!=='object'||Array.isArray(result)||result.ok===false)throw Error(result?.error||result?.message||'Settings owner did not confirm the action. Refresh and retry.');
- if(functionName==='readControls'&&generation!==controlsGeneration)return result;
+ // A newer write answered for what it changed; what nothing has loaded yet (the dock layout at boot, say) still comes from this read,
+ // or a write during the boot read would leave that owner unread and its screen on defaults until the next restart.
+ if(functionName==='readControls'&&generation!==controlsGeneration){
+  const missing=Object.fromEntries(CONTROL_KEYS.filter(key=>Object.hasOwn(result,key)&&state[key]===undefined).map(key=>[key,result[key]]));
+  const unread=Array.isArray(result.appearanceSettings)?result.appearanceSettings.filter(row=>!state.settings.some(held=>held.id===row.id)):[];
+  if(unread.length)missing.settings=[...state.settings,...unread];  // a setting no write has answered for yet (the Inspector width, say)
+  if(Object.keys(missing).length)publish(missing);
+  return result;
+ }
  if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
  if(Array.isArray(result.appearanceSettings)){
@@ -1185,7 +1194,7 @@ async function settingsAction(functionName, args=[]) {
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','libraryTree','sessionListFilters','homeLayout','dockLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of CONTROL_KEYS)if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];

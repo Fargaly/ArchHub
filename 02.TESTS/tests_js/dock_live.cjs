@@ -27,14 +27,14 @@ const {chromium} = require('playwright');
     const folded = side => ws.locator('.dock.' + side).evaluate(dock => dock.classList.contains('col'));
     const settle = () => page.waitForTimeout(450);  // the dock's own 240 ms easing, then the owner write
     const openCanvas = async () => {
-      await page.locator('.dx-task, [data-dock-workspace]').first().waitFor({state: 'attached'});
-      if (!await ws.count()) {
-        // On a narrow window Home folds its task list to icons; the selected session's Open its Canvas is still there.
-        const row = page.locator('.dx-task').filter({hasText: 'Drawing set review'}).first();
-        if (await row.isVisible()) await row.click();
-        await page.getByRole('button', {name: 'Open its Canvas', exact: true}).click();
+      await ws.first().waitFor({state: 'attached'});
+      if (await page.locator('[data-home-map]').count()) {
+        // Home is the map of the work at every width: a double-click on the session's card opens its Canvas.
+        const card = page.locator('[data-home-map] .react-flow__node').filter({hasText: 'Drawing set review'}).first();
+        await card.waitFor();
+        await card.locator('.home-card-head').dblclick();
       }
-      await ws.waitFor();
+      await page.locator('.dx-home-root[data-screen="task-file"] [data-dock-workspace]').waitFor();
       await page.getByLabel('Workflow canvas', {exact: true}).locator('.react-flow__node[data-id="slice"]').waitFor();
       await ws.locator('[data-dock-workshop]').waitFor({state: 'attached'});  // it may sit behind another tab of a kept layout
       await settle();
@@ -96,7 +96,8 @@ const {chromium} = require('playwright');
       assert.deepEqual(await slots('right'), ['map* (collapsed)', 'insp*']);
       await shot('dock-collapsed-' + width);
 
-      // The layout is the owner's record: it is still there after a reload.
+      // The layout is the owner's record: it is still there after a reload (the write is back in the owner before the reload).
+      await page.waitForFunction(() => (window.ArchHubAPI.getSnapshot().dockLayout?.sessions?.all?.right?.st || []).some(slot => slot.p.includes('map') && slot.c));
       await page.reload();
       await openCanvas();
       assert.deepEqual(await slots('right'), ['map* (collapsed)', 'insp*'], width + ': the layout survives a reload');

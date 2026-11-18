@@ -718,7 +718,7 @@
     const d = wirePath({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route);
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
       <WirePath id={id} state={data.state} route={data.route} d={d} color={data.color} dash={data.inferred?'6 4':undefined} opacity={data.opacity} />
-      <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
+      <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={data.label || 'Inspect wire ' + id}>{data.label && <title>{data.label}</title>}</path>
     </>;
   }
   // A card redraws when its data or selection changes; a drag frame only moves it (the engine sets its transform).
@@ -1497,6 +1497,80 @@
       </div></section>)}</div>}
     </div>;
   }
+  // Home's map of the work (window.UI.homeMap): a read-only lens drawn with the Canvas engine (xyflow), the Canvas card (D.Node),
+  // its sockets and its wires. Nothing here edits a file: a card opens its session, a group folds, the view pans and zooms.
+  const HomeMapContext = React.createContext(null);
+  function HomeMapNode({id, data, selected}) {
+    const c = React.useContext(HomeMapContext), n = data.n;
+    // One handle each side at the card's vertical middle: a wire joins card edge to card edge (this session feeds that one).
+    const edges = <><RF.Handle type="target" position={RF.Position.Left} id="in" isConnectable={false} className="home-card-edge" /><RF.Handle type="source" position={RF.Position.Right} id="out" isConnectable={false} className="home-card-edge" /></>;
+    if (n.group && !n.collapsed) return <div data-graph-node={id} data-design="group.frame"><div className="v22g-group-frame" style={{width:n.w,height:n.h}}><header className="node-header"><b data-design="group.title">{n.title}</b><span>{n.count} session{n.count === 1 ? '' : 's'}</span>
+      <button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label={'Collapse ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>−</button></header></div></div>;
+    if (n.group) return <div data-graph-node={id} data-design="group.node" className="home-card">{edges}<header className="home-card-head"><span className="home-card-noagent"><window.AHIcon name="group" size={13}/></span>
+      <div><b data-design="group.title">{n.title}</b><small>{n.count} session{n.count === 1 ? '' : 's'}</small></div><button type="button" className="dx-link nodrag" aria-label={'Expand ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>Expand</button></header></div>;
+    // A session card is one whole session, never a tool node: who works on it, its state, where it stands, and what it needs from him.
+    return <div data-graph-node={id} data-design="home.card" data-home-state={n.state} data-home-task={n.task || undefined} className={'home-card' + (selected ? ' sel' : '')}>{edges}
+      <header className="home-card-head">{n.agent ? <window.UI.Av id={n.agent} size={28}/> : <span className="home-card-noagent"><window.AHIcon name="users" size={13}/></span>}
+        <div><b>{n.title}</b><small>{n.agent || 'No agent yet'}</small></div>{n.members?.length > 0 && <span className="home-card-members" title={'Also on this work: ' + n.members.join(', ')}>{n.members.slice(0, 3).map(name => <window.UI.Av key={name} id={name} size={18}/>)}</span>}<span className="home-card-state" data-state={n.state}>{n.state}</span></header>
+      {c.detail && <><p className="home-card-now">{n.now}</p><div className="home-card-bar" role="progressbar" aria-label={n.done + ' of ' + n.steps.length + ' steps done'} aria-valuemin={0} aria-valuemax={n.steps.length || 1} aria-valuenow={n.done}>{n.steps.map((step, index) => <i key={index} data-state={step.kind} title={step.title} />)}</div></>}
+      {n.need && <div className={'home-card-need' + (n.need.failed ? ' err' : '')}><span>{n.need.text}</span><button type="button" className={(n.need.failed ? 'dx-link' : 'dx-quiet') + ' nodrag'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>n.need.failed ? c.onOpen(n) : n.need.resume ? c.onPick(n) : c.onReview(n)},event)}>{n.need.failed ? 'Open' : n.need.resume ? 'Continue' : 'Review'}</button></div>}
+    </div>;
+  }
+  const homeNodeTypes = {home: HomeMapNode};
+  // The model is the source; xyflow keeps only what it measured. A synchronous copy of the chart, no request.
+  function useHomeFlow(chart, picked) {
+    const [flow, setFlow] = React.useState([]);
+    React.useEffect(() => {
+      setFlow(old => { const prior = new Map(old.map(f => [f.id, f])); return chart.nodes.map(n => { const frame = n.group && !n.collapsed;
+        return {id: n.id, type: 'home', data: {n}, position: {x: n.x, y: n.y}, draggable: !n.group, zIndex: frame ? 0 : 1, style: frame ? {pointerEvents: 'none'} : undefined, selected: n.id === picked, measured: prior.get(n.id)?.measured}; }); });
+    }, [chart.signature, picked]);
+    return [flow, setFlow];
+  }
+  function HomeMap({chart, picked, onPick, onOpen, onReview, onCollapse, mapHost, onRoom, onArrange}) {
+    const s = useData(), area = React.useRef(null), [flow, setFlow] = useHomeFlow(chart, picked), [view, setView] = React.useState({zoom: 1, pan: {x: 0, y: 0}}), seen = React.useRef(view), touched = React.useRef(false);
+    const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
+    seen.current = view;
+    const fit = () => {
+      if (!area.current || !chart.nodes.length) return;
+      const fitted = fitCanvasViewport(chart.nodes.map(n => ({x: n.x, y: n.y, w: n.w, h: n.h})), area.current.clientWidth, area.current.clientHeight, zoomMin, zoomMax, 1);
+      if (fitted) { touched.current = false; setView(fitted); }
+    };
+    const zoomAt = value => {
+      if (!area.current) return;
+      touched.current = true;
+      const old = seen.current, zoom = Math.max(zoomMin, Math.min(zoomMax, value)), x = area.current.clientWidth / 2, y = area.current.clientHeight / 2;
+      setView({zoom, pan: {x: x - (x - old.pan.x) * zoom / old.zoom, y: y - (y - old.pan.y) * zoom / old.zoom}});
+    };
+    // The whole map fits its room when it is drawn and when its arrangement changes. When the room changes (a dock dragged, folded or
+    // opened; the window) only a view he has not touched re-fits: his own zoom and pan are kept.
+    React.useLayoutEffect(() => {
+      fit();
+      const observer = new window.ResizeObserver(() => { if (area.current) onRoom?.(area.current.clientWidth, area.current.clientHeight); if (!touched.current) fit(); });
+      if (area.current) observer.observe(area.current);
+      return () => observer.disconnect();
+    }, [chart.layout]);
+    const edges = chart.wires.map(w => ({id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: false, focusable: false,
+      data: {color: typeColor(w.type), state: 'compatible', opacity: .9, label: w.label}}));
+    return <div className="v22g-canvas home-map-canvas" data-design="canvas.stage" data-home-canvas="">
+      <div ref={area} className="node-canvas" tabIndex={0} aria-label="Map of the work" title="Drag to pan · Wheel to zoom · Double-click to fit" style={{position:'absolute',inset:0,'--xy-background-color':'transparent'}}
+        onDoubleClick={event => { if (event.target.classList?.contains('react-flow__pane')) fit(); }}>
+        <HomeMapContext.Provider value={{onOpen, onReview, onCollapse, onPick, detail: chart.params.card !== 'State only'}}>
+          <RF.ReactFlow nodes={flow} edges={edges} nodeTypes={homeNodeTypes} edgeTypes={edgeTypes} nodesDraggable nodesConnectable={false} elevateNodesOnSelect={false}
+            viewport={{x: view.pan.x, y: view.pan.y, zoom: view.zoom}} onMove={(event, v) => { if (event instanceof window.Event) { touched.current = true; setView({zoom: v.zoom, pan: {x: v.x, y: v.y}}); } }} minZoom={zoomMin} maxZoom={zoomMax}
+            onNodesChange={changes => setFlow(nodes => RF.applyNodeChanges(changes.filter(change => change.type === 'dimensions' || change.type === 'position'), nodes))}
+            onNodeDragStop={(event, node) => onArrange?.(flow.filter(f => !f.data.n.group).map(f => f.id === node.id ? {...f, position: node.position} : f).sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x).map(f => f.data.n))}
+            onNodeClick={(event, node) => { if (!node.data.n.group) onPick(node.data.n); }} onNodeDoubleClick={(event, node) => { if (!node.data.n.group) onOpen(node.data.n); }} onPaneClick={() => onPick(null)}
+            zoomOnDoubleClick={false} deleteKeyCode={null} proOptions={{hideAttribution: true}} />
+        </HomeMapContext.Provider>
+        <div data-canvas-overlay="" className="canvas-toolbar"><button type="button" className="button-reset" title="Reset zoom" onClick={event => executeAction('projects.controls.activate', {handler: () => zoomAt(1)}, event)}>{Math.round(view.zoom * 100)}%</button>
+          <button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction('projects.controls.activate', {handler: fit}, event)}>Fit</button></div>
+      </div>
+      {mapHost && window.ReactDOM.createPortal(<window.UI.CanvasMap nodes={chart.nodes.filter(n => !n.group || n.collapsed).map(n => ({id: n.id, x: n.x, y: n.y, type: 'home', status: n.state === 'Needs you' ? 'approval' : ''}))}
+        sizes={new Map(chart.nodes.map(n => [n.id, {width: n.w, height: n.h}]))}
+        area={area} view={view} onView={next => { touched.current = true; setView(next); }} onZoom={zoomAt} />, mapHost)}
+    </div>;
+  }
+  window.UI.HomeMap = HomeMap;
   window.UI.RunModeChip = RunModeChip;
   window.UI.Canvas = Canvas;
   window.UI.ResultPreview = ResultPreview;

@@ -66,8 +66,8 @@ const {chromium} = require('playwright');
         if (await to.getAttribute('aria-pressed') === 'false') await to.click();
         assert.equal((await to.innerText()).trim(), 'New session'); };
       // Open the Home chat's session: double-click its row, or (narrow window, rows folded) Open its Canvas on the selected one.
-      const openChat = async () => { const row = page.locator('.dx-task').filter({hasText: 'how many sheets?'}).first(); await row.waitFor({state: 'attached'});
-        if (await row.isVisible()) await row.dblclick(); else await page.getByRole('button', {name: 'Open its Canvas', exact: true}).click(); };
+      const openChat = async () => { const row = page.locator('[data-design="home.card"]').filter({hasText: 'how many sheets?'}).first(); await row.waitFor({state: 'attached'});
+        await row.waitFor(); await row.locator('.home-card-head').dblclick(); };  // a new card is drawn once measured; a double-click enters it
       const toast = pattern => page.getByText(pattern).first().waitFor({timeout: 30000}).catch(async error => { await shot('failed'); throw error; });
       await page.goto(input.url);
       const home = page.locator('.global-composer'), canvas = page.locator('.dx-composer').first();
@@ -82,7 +82,7 @@ const {chromium} = require('playwright');
         await toast(/still has tools that act/);
         await page.waitForTimeout(800);
         assert.equal(await home.getByLabel('Message', {exact: true}).inputValue(), 'how many sheets?', 'the typed text is kept');
-        assert.equal(await page.locator('.dx-task').filter({hasText: 'how many sheets?'}).count(), 0, 'no session card remains');
+        assert.equal(await page.locator('[data-design="home.card"]').filter({hasText: 'how many sheets?'}).count(), 0, 'no session card remains');
         assert.equal(await home.locator('.composer-answer').count(), 0, 'no "Claude Code · starting…" line is left under the composer');
         await shot('refused');
       } else if (input.phase === 'chat' && width === 1009) {

@@ -1168,7 +1168,7 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .v22g-canvas .canvas-toolbar{left:16px;right:auto;top:auto;bottom:36px}.v22g-library-rail{width:38px!important;flex:none}.v22g-library-rail>button{writing-mode:horizontal-tb!important;transform:none!important;display:grid!important;place-items:center!important;width:30px;height:32px!important;padding:0!important}.v22g-library-rail>button>span{display:none}
 .v48-toolbar{gap:8px}.v48-toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px}.v48-toolbar-agents{display:flex;gap:2px;margin-right:8px}.v48-save{display:flex;position:relative;border-radius:5px;background:var(--color-bg-panel)}.v48-save>button{border-right:1px solid var(--color-line)!important;border-radius:5px 0 0 5px}.v48-save summary{list-style:none;cursor:pointer;width:26px;height:28px;display:grid;place-items:center;color:var(--color-ink-soft)}.v48-save-menu{position:absolute;top:32px;right:0;min-width:160px;z-index:30;background:var(--color-bg-raised);padding:6px;border:1px solid var(--color-line);border-radius:6px;display:grid}.v48-save-menu button{border:0;background:none;text-align:left;justify-content:start;color:var(--color-ink);padding:6px 8px}
 .v22g-strip .v22g-tabs{flex:1;min-width:0}.v48-toolbar{flex:none}
-@container (max-width:1100px){.v48-toolbar button:is([aria-label='Undo'],[aria-label='Redo'],[aria-label='Tidy up']){display:none}}
+@container (max-width:1100px){.v48-toolbar:not(.home-map-bar) button:is([aria-label='Undo'],[aria-label='Redo'],[aria-label='Tidy up']){display:none}}
 .shared-properties{background:var(--color-bg-panel)}.shared-properties-head{padding:28px 16px 12px}.shared-properties-head h2{font-size:20px!important;font-weight:600!important;margin:6px 0 12px}.shared-properties-head .properties-eyebrow{font-size:11px;letter-spacing:.04em;color:var(--color-ink-soft)}.shared-properties-head [role=tablist]{display:flex;padding:2px;background:var(--color-bg);border-radius:6px}.shared-properties-head [role=tab]{flex:1;font-size:12px;height:30px}.shared-properties-task{padding:0 16px 16px}.shared-properties-task>label{font-size:12px;color:var(--color-ink-soft);gap:10px}.shared-properties-task textarea{font:12px/1.5 var(--type-family-ui);padding:10px;min-height:126px;resize:vertical;background:var(--color-bg-panel);border:1px solid var(--color-line);border-radius:6px;color:var(--color-ink)}
 .v48-task-progress{display:flex;gap:4px;height:5px}.v48-task-progress i{height:5px;border-radius:2px;flex:1;background:var(--color-bg-soft)}.v48-task-progress i[data-state=done]{background:var(--color-ok)}.v48-task-progress i[data-state=working]{background:var(--color-accent)}.v48-progress-line{font-size:12px;color:var(--color-ink-soft);margin:6px 0 20px}.v48-made{display:grid;gap:6px;margin-top:28px}.v48-made h3{font-size:11px;text-transform:uppercase;color:var(--color-ink-soft);letter-spacing:.04em;font-weight:500;margin:0 0 4px}.v48-made>button{display:flex;gap:12px;padding:8px;background:var(--color-bg-soft);border:0;border-radius:6px;text-align:left;align-items:center;color:var(--color-ink)}.v48-made>button>span{width:92px;max-height:60px;overflow:hidden;font-size:10px;white-space:pre-wrap}.v48-made>button>div{min-width:0;display:grid;gap:4px;font-size:12px}.v48-made small{color:var(--color-ink-soft)}
 .v22g-composer-dock{bottom:36px!important;width:min(620px,calc(100vw - 64px - 48px))!important;max-width:620px!important}.v48-composer{display:flex!important;gap:8px;padding:8px!important;max-width:620px;border-radius:10px!important;align-items:center!important;background:var(--color-bg-panel)!important;border:1px solid var(--color-line)!important;min-height:50px}.v48-composer textarea{flex:1;min-width:0!important;height:32px!important;min-height:32px!important;padding:6px 4px!important;font:400 14px/1.45 var(--type-family-ui)!important}.v48-composer [data-design='composer.to'],.v48-composer [data-design='thread.to']{flex:none;max-width:240px}.v48-composer .ws-to>.ws-link{display:inline-flex;align-items:center;gap:6px;height:32px;max-width:240px;padding:0 9px 0 5px;border-radius:999px;border:1px solid var(--color-line);background:var(--color-bg-soft);font:500 12.5px var(--type-family-ui);color:var(--color-ink)}.v48-composer .recipient-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.v48-composer [data-design='composer.send']{height:28px;flex:none;padding:0 10px;font-size:12px}.v48-composer>.dx-quiet{flex:none}
@@ -1205,8 +1205,46 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .agent-avatar{position:relative;display:inline-flex;flex:none}.agent-avatar>small{position:absolute;right:-4px;bottom:-3px;min-width:13px;padding:0 2px;border-radius:4px;background:var(--color-bg-panel);color:var(--color-ink);font:11px/13px var(--type-family-ui);border:1px solid var(--color-line)}
 /* The second line of a session row wraps on whole words; it is never cut mid-word. */
 .resume-row .dx-task span{white-space:normal;overflow-wrap:break-word}
-/* Home: the composer is a child of the work column, centred in it and inside it at every width (never over the Sessions list). */
-.resume-main>.global-composer{position:absolute!important;left:50%!important;width:min(760px,calc(100% - 32px))!important;min-width:0}
+/* Home is the map of the work: the Canvas stage between the Canvas docks. The composer is a child of the map's own column,
+   centred in it and inside it at every width (never over a dock). */
+.home-map-stage{position:relative;min-width:0;min-height:0;overflow:hidden}
+.home-map-canvas{position:absolute;inset:0}
+.home-map-stage>.resume-main{position:absolute;inset:0;padding-bottom:104px}
+.home-map-stage>.global-composer{position:absolute!important;left:50%!important;width:min(760px,calc(100% - 32px))!important;min-width:0}
+.home-map-bar>button[aria-pressed=true]{background:var(--v22g-accent-soft);color:var(--color-ink)}
+.home-map-bar>button:disabled{opacity:.4}
+.home-map-kind{display:flex;gap:2px}.home-map-kind>button{width:auto;padding:0 10px;white-space:nowrap}.home-map-kind>button[aria-pressed=true]{background:var(--v22g-accent-soft);color:var(--color-ink)}
+/* The map bar's words are buttons with their own width (the Canvas toolbar's 30 px icon buttons would stack them). */
+.home-map-bar{padding-left:12px}.home-map-bar>button:is([data-home-filter],[data-home-pause]){width:auto;padding:0 10px;white-space:nowrap}
+/* Home's session card (design v56): one whole session, never a tool node. 300 wide, radius 12, raised, no socket rows. */
+.home-card{position:relative;width:300px;border-radius:12px;background:var(--color-bg-raised);border:1px solid var(--color-line);box-shadow:0 1px 2px rgba(0,0,0,.3);cursor:pointer;color:var(--color-ink);font-family:var(--type-family-ui),Inter,sans-serif}
+.home-card.sel{outline:2px solid var(--color-accent);outline-offset:3px}
+.home-card-head{display:flex;align-items:center;gap:10px;padding:12px 14px 8px}
+.home-card-head>div{flex:1;min-width:0;display:grid}
+.home-card-head b{font-size:calc(15px * var(--text-scale,1));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-card-head small{font-size:12px;color:var(--color-ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-card-noagent{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--color-bg-soft);color:var(--color-ink-muted);flex:none}
+.home-card-state{font-size:12px;font-weight:600;white-space:nowrap;align-self:flex-start;margin-top:2px;color:var(--color-ink-soft)}
+.home-card-state[data-state="Needs you"]{color:var(--color-warn)}
+.home-card-state[data-state=Failed]{color:var(--color-err)}
+.home-card-state[data-state=Working]{color:var(--color-accent)}
+.home-card-now{margin:0;padding:0 14px;font-size:12.5px;color:var(--color-ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-card-bar{display:flex;gap:3px;padding:8px 14px 13px;min-height:4px}
+.home-card-bar i{flex:1;height:4px;border-radius:2px;background:var(--color-line)}
+.home-card-bar i[data-state=done]{background:var(--color-ok)}
+.home-card-bar i[data-state=working]{background:var(--color-accent)}
+.home-card-bar i[data-state=awaiting]{background:var(--color-warn)}
+.home-card-bar i[data-state=error]{background:var(--color-err)}
+.home-card-need{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-4px 10px 10px;padding:6px 6px 6px 10px;border-radius:8px;background:color-mix(in srgb,var(--color-warn) 12%,transparent);font-size:12px}
+.home-card-need.err{background:color-mix(in srgb,var(--color-err) 12%,transparent)}
+.home-card-members{display:flex;flex:none;gap:2px;margin-right:2px}
+.home-card-need span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A wire meets the card at its edge, at the vertical middle: the handle anchors it and is not drawn. */
+.home-card .home-card-edge{width:22px;height:22px;min-width:0;min-height:0;background:transparent;border:0;pointer-events:none}
+/* The path: Home, then the session he is inside. */
+.app-header .header-here{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-ink)}
+/* The header's "On this PC" chip: a green dot while this PC answers. */
+.header-status .header-pc::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;background:var(--color-ok)}
 .resume-step>p:empty{display:none}.resume-summary p{color:var(--color-ink-soft);font-size:13px}
 .header-status>button{max-width:none;overflow:visible;text-overflow:clip;flex:none}
 @media(max-width:1450px){.header-status>button:first-of-type{display:none}}

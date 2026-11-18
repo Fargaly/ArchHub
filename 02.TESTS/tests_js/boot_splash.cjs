@@ -34,7 +34,7 @@ const {chromium} = require('playwright');
     assert.equal(await library.locator('[data-library-category]').count(), 0, 'no categories or rows before the catalogue');
     if (input.shots) await page.screenshot({path: path.join(input.shots, 'boot-library-loading.png')});
     // The session's canvas shows its nodes before the Library arrives (no projection was lost).
-    const nodes = page.locator('.react-flow__node');
+    const nodes = page.getByLabel('Workflow canvas', {exact: true}).locator('.react-flow__node');  // the session's canvas (Home's map uses the same engine)
     await nodes.first().waitFor();
     const before = await nodes.count();
     console.log('LIBRARY LOADING SHOWN');

@@ -9,7 +9,7 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'ds_screens.jsx', 'ds_library.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
@@ -66,7 +66,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             setCanvasTabs: async () => ({ok:true}),
             readSessionListFilters: async () => ({sessionListFilters:{home:'all'}}),
             setSessionListFilter: async () => ({ok:true}),
-            readHomeLayout: async () => ({homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]}}),
+            readHomeLayout: async () => ({homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]},
+              homeMap:{group:['Project'],order:['Needs you first'],card:['Steps and state'],density:['Comfortable'],done:['Show'],filter:['All']}}),
             setHomeLayout: async () => ({ok:true}),
             setInspectorWidth: async value => { s.settings.find(row=>row.id==='Appearance.Inspector width').value=value; return {ok:true}; },
             refreshAgentSurface: async () => null, apiRouterChat: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
@@ -116,16 +117,17 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         continue;
       }
       if (mode === 'uxflow') {
-        // Interrupted rows sit under the collapsed Older heading and appear when it is expanded.
-        const older = page.locator('.home-section-heading').filter({hasText: 'Older'});
-        assert.equal(await older.getAttribute('aria-expanded'), 'false');
-        assert.equal(await page.locator('.dx-task').filter({has: page.locator('b', {hasText: 'State interrupted'})}).count(), 0);
-        await older.click();
-        assert.equal(await older.getAttribute('aria-expanded'), 'true');
+        // Interrupted sessions sit in the map's folded Older section and appear as cards when it is unfolded.
+        const map = page.locator('[data-home-map]'), card = state => map.locator('[data-design="home.card"]').filter({has: page.locator('.home-card-head b', {hasText: 'State ' + state})});
+        const older = map.locator('[data-design="group.node"]').filter({hasText: 'Older / archived'});
+        await older.waitFor();
+        assert.equal(await card('interrupted').count(), 0);
+        await older.getByRole('button', {name: 'Expand Older / archived', exact: true}).click();
+        await map.locator('[data-design="group.frame"]').filter({hasText: 'Older / archived'}).waitFor();
         for (const [state, label] of [['interrupted', 'interrupted'], ['limit reached', 'limit reached'], ['LIMIT_REACHED', 'limit reached']]) {
-          const row = page.locator('.dx-task').filter({has: page.locator('b', {hasText: 'State ' + state})});
-          assert.match(await row.innerText(), new RegExp(label));
-          assert.equal(await row.getAttribute('aria-selected'), 'false');
+          await card(state).first().waitFor();
+          assert.match(await card(state).first().innerText(), new RegExp(label));
+          assert.equal(await card(state).first().evaluate(element => element.classList.contains('sel')), false);
         }
         assert.equal(await page.locator('[data-task-row-state^="blocked"]').count(), 0);
         // The same owner renders Workshop task rows; unsupported dependency data stays hidden.
@@ -141,8 +143,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         console.log('PASS task reasons: Home + Workshop interrupted / limit reached; generic status retained; blocked-by hidden');
         const open = async title => {
           await nav.getByRole('button', {name: 'Home', exact: true}).click();
-          if(page.viewportSize().width<1100) await page.getByRole('button',{name:'Open the list',exact:true}).click();
-          await page.locator('.dx-task').filter({hasText: title}).dblclick();
+          await page.locator('[data-design="home.card"]').filter({hasText: title}).dblclick();
           const thread = page.getByRole('button', {name: 'Thread', exact: true, includeHidden:true});
           if(await thread.getAttribute('aria-pressed') !== 'true') {
             if(await thread.isVisible()) await thread.click();
@@ -226,7 +227,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.close(); continue;
       }
       if (mode === 'clicked') {
-        await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
+        await page.locator('[data-design="home.card"]').filter({hasText: 'Selected task'}).dblclick();
         await page.getByRole('tab', {name:'Selected task',exact:true}).waitFor();
       }
       const boxes = [];
@@ -257,16 +258,16 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       }
       if (mode === 'selected') {
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
-        await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
+        await page.locator('[data-design="home.card"]').filter({hasText: 'Recent task'}).dblclick();
         await page.getByRole('tab', {name:'Recent task',exact:true}).waitFor();
         await nav.getByRole('button', {name: 'Canvas', exact: true}).click();
         await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
-        await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
+        await page.locator('[data-design="home.card"]').filter({hasText: 'Selected task'}).dblclick();
         await page.getByRole('tab', {name:'Selected task',exact:true}).waitFor();
         await page.getByRole('region', {name:'Conversation',exact:true}).waitFor();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
-        await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
+        await page.locator('[data-design="home.card"]').filter({hasText: 'Recent task'}).dblclick();
         await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         console.log('PASS per-task faces: new task Workshop; selected Workshop; recent Canvas');
         await nav.getByRole('button', {name: 'Home', exact: true}).click();

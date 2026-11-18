@@ -19,7 +19,7 @@ const {chromium} = require('playwright');
     const writes = [];
     page.on('request', request => { const body = request.postData() || ''; if (/"action":\s*"(autosave|save)"/.test(body)) writes.push(JSON.parse(body).action); });
     await page.goto(input.url);
-    await page.locator('.dx-task').filter({hasText: 'Drawing set review'}).first().click();
+    await page.locator('[data-design="home.card"]').filter({hasText: 'Drawing set review'}).first().click();
     await page.getByRole('button', {name: 'Open its Canvas', exact: true}).click();
     await page.getByLabel('Workflow canvas', {exact: true}).locator('.react-flow__node[data-id="slice"]').waitFor();
     const read = () => page.evaluate(() => ({

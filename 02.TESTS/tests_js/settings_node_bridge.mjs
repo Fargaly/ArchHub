@@ -17,7 +17,7 @@ try {
  const open=async()=>{
   await page.waitForFunction(()=>window.ArchHubAPI);
   await page.evaluate(()=>window.ArchHubAPI.ready);
-  await page.locator('.dx-task').filter({hasText:'Settings bridge test'}).click();
+  await page.locator('[data-design="home.card"]').filter({hasText:'Settings bridge test'}).click();
   await page.getByRole('region',{name:'Resumed session'}).getByRole('button',{name:'Open its Canvas',exact:true}).click();
  };
  await open();

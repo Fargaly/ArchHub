@@ -119,10 +119,13 @@
   }
   // A session label is "agent / project folder / session id": people read the first two; the id stays in Workshop Inspect.
   const humanLabel = label => String(label || '').split(' / ').slice(0, 2).join(' · ');
-  // The Home list's rows: every session row and the section it sits in.
+  // One owner for the Home list and the header's count: every session row and the section it sits in.
   const homeRows = (s, layout) => {
     const hidden = layout?.hidden || [], order = layout?.order || [];
-    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').flatMap(c => [c.taskId,c.task_id,c.work,...(c.taskIds||[])]));
+    // A held run names its session by task id or by the session file it runs in.
+    const held = (s.approvals || []).filter(c => c.status === 'pending');
+    const namesOf = c => [c.taskId,c.task_id,c.work,...(c.taskIds||[]),c.path,...(c.canvasNodes||[]).flatMap(ref=>[ref.taskId,ref.path])].filter(Boolean);
+    const waiting = new Set(held.flatMap(namesOf).flatMap(name => [name,...(s.tasks||[]).filter(t=>t.sessionPath===name).map(t=>t.id)]));
     const rank=id=>{const index=order.indexOf(id);return index<0?order.length:index;};
     const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
     const sessionRows = [
@@ -135,20 +138,118 @@
       if(row){row.workingNow=true;if(agent.name&&!(row.members||[]).some(member=>member.name===agent.name))row.members=[...(row.members||[]),{name:agent.name,live:true}];}
       else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
     }
+    // A held run that belongs to no listed session is a row too: it needs him, so it is shown and counted.
+    for(const card of held.filter((card,index)=>held.findIndex(other=>(other.input_digest||other.id)===(card.input_digest||card.id))===index))
+      if(!namesOf(card).some(name=>sessionRows.some(row=>row.id===name||row.sessionPath===name)))
+        sessionRows.unshift({id:'approval:'+card.id,title:card.title||'A run waits for your approval',kind:'agent-session',approval:card.id,who:card.who||''});
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
     // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
     const interruptedWork=row=>pieceOfWork(row)&&(row.outcome==='interrupted'||row.outcome==='unknown'||!!row.stale);
     const sectionOf=row=>{
+      if(row.approval||waiting.has(row.id))return 'Needs you';  // a held run needs him, whoever is working
       if(row.workingNow)return 'Working now';
-      if(pieceOfWork(row)&&waiting.has(row.id))return 'Needs you';
       if(interruptedWork(row)&&!row.stale)return 'Needs you';
       if(row.status==='ARCHIVED'||row.stale||row.status==='stale'||['interrupted','unknown'].includes(row.outcome)||window.UI.taskRowReason(row)==='interrupted')return 'Older / archived';
-      if(waiting.has(row.id)||row.status==='IN REVIEW')return 'Needs you';
+      if(row.status==='IN REVIEW')return 'Needs you';
       const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);
       return date>=today?'Today':'Older / archived';
     };
-    return {waiting, tasks, sessionRows, interruptedWork, sectionOf};
+    const list = tasks.filter(t => !hidden.includes(t.id));
+    // The session Home shows selected: the one asked for, else the pinned one, else the first listed (the Canvas rail opens the same one).
+    const resumed = focus => list.find(t => t.id === focus) || list.find(t=>t.homePinned) || list[0];
+    // The header, the map's bar and its cards read these: what needs him, and what an agent works on now that does not.
+    const needs = row => sectionOf(row) === 'Needs you', working = row => sectionOf(row) === 'Working now';
+    // The held run of a row, when it has one (the card's "needs your approval" line opens it).
+    const heldOf = row => held.find(card => namesOf(card).some(name => name === row.id || name === row.sessionPath));
+    return {waiting, tasks, list, resumed, sessionRows, sectionOf, needs, working, heldOf, interruptedWork,
+      needsYou: sessionRows.filter(needs).length, running: sessionRows.filter(working).length};
+  };
+  // Home's map of the work: every session as a card in its group, wired by its input links. Sessions come from the session
+  // files (/api/session-model); a row with no file yet (a live agent, a task) is a card too, so the map shows what the header counts.
+  const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Idle'];
+  const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
+  // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
+  // kind: All / Agent sessions / Workflows (the list's filter); olderOpen: the Older section unfolded; order: his own arrangement (task ids).
+  const homeMap = ({listed, rows, params, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = []}) => {
+    const p = {...params, collapsed: params.collapsed || []};
+    // What a card says comes from the session's own row: its steps and their states, its held run or its failed step.
+    const facts = (row, filePlan) => {
+      const work = (row?.workflow || []).filter(node => node.type !== 'thing.session' && !['fixed-agent', 'fixed-you', 'fixed-workshop', 'start'].includes(node.id));
+      const plan = row && Array.isArray(row.plan) && !row.planInferred ? row.plan : filePlan || [];
+      const ran = id => String((row?.activity || []).find(item => item.id === id)?.status || '');
+      const steps = work.length ? work.map(node => ({title: node.title || node.id, kind: /running/i.test(ran(node.id)) ? 'working' : stepOf(node, {[node.id]: ran(node.id)}).kind}))
+        : plan.map(step => ({title: stepTitle(step), kind: stepOf(step, row?.progress).kind}));
+      const held = row ? rows.heldOf(row) : null, failed = steps.find(step => step.kind === 'error');
+      const at = steps.findIndex(step => ['working', 'awaiting', 'error'].includes(step.kind)), done = steps.filter(step => step.kind === 'done').length;
+      return {steps, done, finished: steps.length > 0 && done === steps.length,
+        now: at >= 0 ? 'Step ' + (at + 1) + ' of ' + steps.length + ' · ' + steps[at].title : steps.length ? done + ' of ' + steps.length + ' steps done'
+          : row && window.UI.taskRowReason?.(row) ? 'Stopped: ' + window.UI.taskRowReason(row) : 'No steps yet',
+        // Work that lost its agent (F337) stays open with Continue: any agent picks it up on the same graph and thread.
+        need: held ? {text: (held.title || 'A run') + ' needs your approval', approval: held.id} : failed ? {text: failed.title + ' failed', failed: true}
+          : row && rows.interruptedWork(row) && !row.stale ? {text: 'Interrupted · waiting for an agent', resume: true} : null,
+        // The lead is the card's agent; everyone else on this piece of work is a small avatar on the same card, never a second card.
+        members: [...new Set((row?.members || []).map(member => member.name).filter(Boolean))].slice(1),
+        state: row && rows.needs(row) ? 'Needs you' : failed ? 'Failed' : row && rows.working(row) ? 'Working' : 'Idle'};
+    };
+    const files = (listed?.groups || []).flatMap(group => group.sessions).filter(session => session.state !== 'archived' && !hidden.includes(session.task)).map(session => {
+      const row = rows.sessionRows.find(item => item.id === session.task), fact = facts(row, session.context?.plan);
+      return {id: session.id, path: session.path, task: session.task || '', title: session.title, project: session.project?.label || 'No project',
+        kind: row?.kind || session.kind || 'agent-session', older: !!row && rows.sectionOf(row) === 'Older / archived',
+        agent: humanLabel((session.members || [])[0]?.name || row?.owner || ''), pinned: !!session.pinned, ...fact,
+        finished: fact.finished || session.state === 'done' || row?.status === 'DONE', armed: (session.automation || []).filter(trigger => trigger.armed).length, links: session.inputLinks || []};
+    });
+    const filed = new Set(files.flatMap(card => [card.task, card.path]).filter(Boolean));
+    // An archived row (a refused start the owner archived, an old run) is not work on the map.
+    const loose = rows.sessionRows.filter(row => row.status !== 'ARCHIVED' && !filed.has(row.id) && !filed.has(row.sessionPath || row.path || '')).map(row => ({id: row.approval ? row.id : 'row:' + row.id, path: row.sessionPath || '',
+      task: row.runtimeAgent ? row.runtimeAgent.task || '' : row.fileOnly || row.approval ? '' : row.id, title: row.approval ? row.title : titleOf(row),
+      project: row.runtimeAgent ? String(row.runtimeAgent.name || '').split(' / ')[1] || 'No project' : row.workspace || row.project || 'No project',
+      agent: humanLabel(row.runtimeAgent?.name || (row.members || [])[0]?.name || row.owner || row.who || ''), pinned: !!row.homePinned, ...facts(row, null), armed: 0, links: [],
+      kind: row.kind || 'agent-session', older: !row.approval && rows.sectionOf(row) === 'Older / archived',
+      ...(row.approval ? {need: {text: row.title + ' needs your approval', approval: row.approval}} : {}), ...(row.status === 'DONE' ? {finished: true} : {})}));
+    const every = [...files, ...loose];
+    const cards = every.filter(card => (p.done === 'Show' || !card.finished || card.pinned) && (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you'))
+      && (kind === 'all' || card.kind === kind));
+    // Old runs keep their own section, folded until he opens it (the list's Older / archived), whatever the grouping.
+    const keyOf = card => card.older ? 'Older / archived' : p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state : card.project;
+    const rank = card => { const at = order.indexOf(card.task || card.id); return at < 0 ? order.length : at; };  // his drag order, then the rest
+    cards.sort((a, b) => (p.order === 'Name' ? 0 : MAP_STATES.indexOf(a.state) - MAP_STATES.indexOf(b.state)) || (p.order === 'Name' ? 0 : rank(a) - rank(b)) || a.title.localeCompare(b.title));
+    const keys = [...new Set(cards.map(keyOf))].sort((a, b) => Number(a === 'Older / archived') - Number(b === 'Older / archived') || (p.group === 'State' ? MAP_STATES.indexOf(a) - MAP_STATES.indexOf(b) : a.localeCompare(b)));
+    const folded = key => key === 'Older / archived' ? !olderOpen : p.collapsed.includes(key);
+    // An input link is one wire, card edge to card edge: this session feeds that one. The session model holds no socket type
+    // for a link, so the wire shows the design's default (files, a list); its hover says what the link really carries.
+    const links = cards.flatMap(card => card.links.map((link, index) => ({id: card.id + ':' + index, from: link.source.id, to: card.id, fromPort: 'out', toPort: 'in',
+      type: 'file', list: true, label: link.output + ' → ' + link.input}))).filter(wire => cards.some(card => card.id === wire.from));
+    const wide = 300, plain = p.card === 'State only', gapX = p.density === 'Compact' ? 36 : 56, gapY = p.density === 'Compact' ? 14 : 24;
+    const nodes = [], groups = [], inside = new Map();
+    let x = 0, y = 0, band = 0;
+    const laid = keys.map(key => {
+      const members = cards.filter(card => keyOf(card) === key), ids = new Set(members.map(card => card.id)), level = new Map();
+      const depth = (id, trail = []) => level.has(id) ? level.get(id) : trail.includes(id) ? 0 : (level.set(id, Math.max(0, ...links.filter(wire => wire.to === id && ids.has(wire.from)).map(wire => depth(wire.from, [...trail, id]) + 1))), level.get(id));
+      const linked = members.filter(card => links.some(wire => ids.has(wire.from) && ids.has(wire.to) && (wire.from === card.id || wire.to === card.id))).sort((a, b) => depth(a.id) - depth(b.id));
+      const rest = members.filter(card => !linked.includes(card)), chain = linked.length ? Math.max(...linked.map(card => depth(card.id))) + 1 : 0, narrow = !!room && room < 1, side = Math.min(narrow ? 1 : 2, rest.length), used = {};
+      const cells = [...linked.map(card => { const column = depth(card.id); used[column] = (used[column] || 0) + 1; return {card, column, row: used[column] - 1}; }),
+        // A narrow room puts the unlinked sessions under the chain, not beside it.
+        ...rest.map((card, index) => ({card, column: (narrow ? 0 : chain) + index % Math.max(1, side), row: (narrow ? Math.max(0, ...Object.values(used)) : 0) + Math.floor(index / Math.max(1, side))}))];
+      const tall = 58 + (plain ? 0 : 46) + (members.some(card => card.need) ? 40 : 0), columns = narrow ? Math.max(chain, side) : chain + side, lines = Math.max(1, ...cells.map(cell => cell.row + 1));
+      return {key, members, cells, tall, collapsed: folded(key), w: folded(key) ? wide : 48 + columns * wide + (columns - 1) * gapX, h: folded(key) ? 64 : 58 + lines * (tall + gapY)};
+    });
+    const limit = Math.max(room ? wide + 48 : 1200, Math.sqrt(laid.reduce((sum, group) => sum + group.w * group.h, 0) * (room || 1.6)) * 1.05);
+    for (const group of laid) {
+      const id = 'group:' + group.key;
+      if (room && x > 0 && x + group.w > limit) { x = 0; y += band + 40; band = 0; }  // in a measured room a group that would cross the edge starts the next row
+      groups.push({key: group.key, count: group.members.length, collapsed: group.collapsed});
+      for (const card of group.members) inside.set(card.id, group.collapsed ? id : card.id);
+      nodes.push({id, group: true, collapsed: group.collapsed, title: group.key, count: group.members.length, x, y, w: group.w, h: group.h});
+      if (!group.collapsed) for (const {card, column, row} of group.cells) nodes.push({...card, x: x + 24 + column * (wide + gapX), y: y + 46 + row * (group.tall + gapY), w: wide, h: group.tall});
+      x += group.w + 40; band = Math.max(band, group.h);
+      if (x > limit) { x = 0; y += band + 40; band = 0; }
+    }
+    // A collapsed group stands in for its members on every wire that crosses its edge.
+    const wires = links.map(wire => ({...wire, from: inside.get(wire.from), to: inside.get(wire.to)})).filter(wire => wire.from !== wire.to);
+    const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
+    return {params: p, nodes, wires, groups, total: every.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
+      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.now, node.steps, node.need]), wires, p.card])};
   };
   function Home({fileWorkspace = false} = {}) {
     const s = useData(), u = useApp();
@@ -163,9 +264,11 @@
       return()=>{live=false;};
     },[beside,s.tasks]);
     const [homeLayout, setHomeLayout] = React.useState({width:300,collapsed:false,resume:'',order:[],hidden:[]});
-    const homeRef = React.useRef(homeLayout), homeWrites = React.useRef(Promise.resolve()), sessionsRef = React.useRef(null);
-    const initialSessionsSize = React.useRef(window.innerWidth<1100?56:300);
-    const [sessionsRail, setSessionsRail] = React.useState(false), [sessionsPeek, setSessionsPeek] = React.useState(false), [homeUndo, setHomeUndo] = React.useState(null);
+    const homeRef = React.useRef(homeLayout), homeWrites = React.useRef(Promise.resolve());
+    // The map: the sessions read from their owner, the picked card, and the Home changes Undo and Redo step through.
+    const [listing, setListing] = React.useState({status: 'waiting', groups: null, error: ''}), [attempt, setAttempt] = React.useState(0), [mapChoices, setMapChoices] = React.useState(null);
+    const [room, setRoom] = React.useState(null);  // the map's aspect in quarter steps (view state, never saved)
+    const [picked, setPicked] = React.useState(''), [pauseBusy, setPauseBusy] = React.useState(false), [, redraw] = React.useState(0), mapHistory = React.useRef({past: [], future: []});
     const saveHome = patch => {
       const value = {...homeRef.current,...patch};
       homeRef.current = value; setHomeLayout(value);
@@ -178,7 +281,7 @@
       let active=true;
       const read=()=>{
         setRequest('waiting');
-        return api.readHomeLayout().then(result=>{if(active){homeRef.current=result.homeLayout;setHomeLayout(result.homeLayout);setRequest(s.tasks?.length?'loaded':'empty');}}).catch(error=>{if(active){setFailure(error.message);setRequest('error');retrySave.current=read;}});
+        return api.readHomeLayout().then(result=>{if(active){homeRef.current=result.homeLayout;setHomeLayout(result.homeLayout);setMapChoices(result.homeMap);setRequest(s.tasks?.length?'loaded':'empty');}}).catch(error=>{if(active){setFailure(error.message);setRequest('error');retrySave.current=read;}});
       };
       read();
       return()=>{active=false;};
@@ -200,14 +303,6 @@
     const [viewsWidth,setViewsWidth]=React.useState(0),[threadWidth,setThreadWidth]=React.useState(0),[besideShown,setBesideShown]=React.useState(false);
     const singleCanvas=Boolean(beside)&&viewsWidth-(face==='split'?Math.max(300,threadWidth)+6:0)<646;
     const [shellWidth, setShellWidth] = React.useState(window.innerWidth - 64), [tabsWidth, setTabsWidth] = React.useState(600);
-    React.useLayoutEffect(()=>{
-      if(fileWorkspace)return undefined;
-      const frame=window.requestAnimationFrame(()=>{
-        if(homeLayout.collapsed||window.innerWidth<1100)sessionsRef.current?.collapse();
-        else sessionsRef.current?.resize(homeLayout.width);
-      });
-      return()=>window.cancelAnimationFrame(frame);
-    },[fileWorkspace,homeLayout.collapsed,homeLayout.width,window.innerWidth<1100]);
     const threadRef = React.useRef(null), [threadRail, setThreadRail] = React.useState(false), [threadPeek, setThreadPeek] = React.useState(false);
     React.useLayoutEffect(() => {
       const frame = window.requestAnimationFrame(() => {
@@ -282,9 +377,7 @@
     React.useEffect(() => {
       if (!fileWorkspace) {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
     }, [fileWorkspace]);
-    const {waiting, tasks, sessionRows, interruptedWork, sectionOf} = homeRows(s, homeLayout);
-    const list = tasks.filter(t => !homeLayout.hidden.includes(t.id));
-    const collapsedSections=homeLayout.sections||['Older / archived'];
+    const rows = homeRows(s, homeLayout), {tasks, resumed} = rows;
     const vendorLabel=/^[^/\n]{1,40} \/ [^/\n]+ \/ /;
     // What a live session declared it is doing (its Workshop declaration), else the first line of what it last said.
     const liveDoing=agent=>agent?people.whoIs(agent.name).detail||agent.message?.text||'':'';
@@ -295,13 +388,11 @@
       const text=[t.scope,(t.declarations||[])[0]?.task,...taskMessages(t).map(message=>message.text),liveDoing(t.runtimeAgent)].map(value=>String(value||'').split('\n')[0].trim()).find(value=>value&&!vendorLabel.test(value));
       return text?(text.length>60?text.slice(0,59).trimEnd()+'\u2026':text):humanLabel(t.runtimeAgent?.name||title)||'Untitled session';
     };
-    // A live agent folded to its avatar: what it declared it is doing, else agent \u00b7 folder \u00b7 a short id (two sessions of one app in one folder differ).
+    // A live agent with no task (design v61 C2): what it declared it is doing, else the agent and a short id (its folder is the group it sits in).
     const liveName=row=>{const name=String(row.runtimeAgent.name||''),title=workTitle(row);
-      return title!==humanLabel(name)?title+' \u00b7 '+humanLabel(name):[humanLabel(name),name.split(' / ')[2]?.replace(/^session-/,'').slice(0,6)].filter(Boolean).join(' \u00b7 ');};
-    const toggleSection=name=>saveHome({sections:collapsedSections.includes(name)?collapsedSections.filter(value=>value!==name):[...collapsedSections,name]});
-    const focus = homeLayout.resume || u.task || s.focusedTask;
-    const task = fileWorkspace ? tasks.find(t => t.id === u.task) : list.find(t => t.id === focus) || list.find(t=>t.homePinned) || list[0];
-    React.useEffect(() => { if (!fileWorkspace) homeShown = task?.id || ''; }, [fileWorkspace, task?.id]);  // what the rail's Canvas opens from Home
+      return title!==humanLabel(name)?title:[name.split(' / ')[0],name.split(' / ')[2]?.replace(/^session-/,'').slice(0,6)].filter(Boolean).join(' · ');};
+    const focus = u.task || homeLayout.resume || s.focusedTask;  // the session he came up from (its card is selected) before Home's saved selection
+    const task = fileWorkspace ? tasks.find(t => t.id === u.task) : resumed(focus);
     React.useEffect(()=>{
       if(!fileWorkspace&&request!=='waiting'&&request!=='error')setRequest(tasks.length?'loaded':'empty');
     },[fileWorkspace,tasks.length,request]);
@@ -422,32 +513,10 @@
       const reason = typeof text === 'string' && text.trim() ? text.trim().split('\n')[0] : summary.find(line => line && line !== t.title && !['In progress', 'Planned, not started', 'Done', 'Needs you', 'No result yet', 'Keep going', 'Nothing further', 'Not started', 'Waiting for a decision'].includes(line)) || '';
       return /^[A-Z_]+$/.test(reason) ? reason.toLowerCase().replace(/_/g, ' ') : reason;
     };
-    const toneOf = t => t.status === 'IN REVIEW' || waiting.has(t.id) ? 'review' : t.status === 'WIP' ? 'working' : t.status === 'STOPPED' ? 'stopped' : t.status === 'PLANNED' ? 'planned' : 'done';
-    const lastUpdate = t => {
-      const event = (t.activity || []).at(-1), said = (event && describe(event.output || event.text)) || reasonOf(t);
-      const text = said.length > 90 ? said.slice(0, 90).replace(/\s+\S*$/, '') + '…' : said;  // the row line wraps; a long result ends on a whole word
-      if (!text) return '';
-      const stamp = Date.parse(event?.at || event?.created_at || t.updated_at || '');
-      if (!Number.isFinite(stamp)) return text;
-      const minutes = Math.max(0, Math.floor((Date.now() - stamp) / 60000));
-      return text + ' · ' + (minutes < 1 ? 'now' : minutes < 60 ? minutes + 'm' : minutes < 1440 ? Math.floor(minutes / 60) + 'h' : Math.floor(minutes / 1440) + 'd');
-    };
-    const selectResume = t => {if(t.fileOnly)return u.act(()=>api.openSession(t.sessionPath)).then(opened=>{if(opened&&!opened.cancelled)u.go('canvas');});u.setTask(t.id);return saveHome({resume:t.id});};
     const openOwner = (t, name=ownerOf(t)) => {
       const agent=[...(s.agents||[]),...(s.providers||[])].find(a=>a.id===name||a.name===name||!name&&a.id===t.owner);
       if(agent)u.show('Agent',{id:agent.id});else u.go('settings/Agents');
     };
-    const taskRow = t => <div key={t.id} data-design="home1.row" className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable={!t.fileOnly} onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(t.fileOnly||!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
-      {(()=>{const lead=(t.members||[])[0]?.name||ownerOf(t);
-        // Folded to avatars (design v61): the avatar is the row, so it names the session and selects it; open, it opens the agent.
-        if(sessionsRail&&!sessionsPeek){const name=workTitle(t)+(lead?' · '+humanLabel(lead):'');return <button type="button" className="resume-avatar" aria-label={name} aria-current={task?.id===t.id} title={name} onClick={()=>executeAction('ui.select',()=>selectResume(t))}>{lead?<window.UI.Av id={lead} size={28}/>:<Icon name="canvas" size={18}/>}</button>;}
-        return <button type="button" className="resume-avatar" aria-label={lead?'Open agent '+lead:'Resume '+t.title} title={lead||t.title} onClick={()=>executeAction('ui.select',()=>lead?openOwner(t,lead):selectResume(t))}>{lead?<window.UI.Av id={lead} size={28}/>:<Icon name="canvas" size={18}/>}</button>;})()}
-      <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>t.fileOnly?undefined:openTask(t))}><b>{workTitle(t)}</b><span>{interruptedWork(t)?'Interrupted · waiting for an agent':(waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status))+(lastUpdate(t)?' · '+lastUpdate(t):'')}</span></button>
-      {interruptedWork(t)&&<button type="button" className="dx-link resume-continue" title="Pick any agent; it continues on the same graph and the same thread" onClick={()=>executeAction('ui.select',()=>selectResume(t))}>Continue</button>}
-      {(t.members||[]).length>1&&<span className="resume-members" title={'Also on this work: '+t.members.slice(1).map(m=>m.name).join(', ')}>{t.members.slice(1,4).map(m=><window.UI.Av key={m.name} id={m.name} size={18}/>)}</span>}
-      {!t.fileOnly&&<><button type="button" className="resume-pin" aria-label={(t.homePinned?'Unpin ':'Pin ')+t.title} aria-pressed={!!t.homePinned} onClick={()=>executeAction('ui.select',()=>u.act(()=>api.setTaskSession(t.id,{homePinned:!t.homePinned})))}><Icon name="pin" size={13}/></button>
-      <button type="button" className="resume-hide" aria-label={'Hide '+t.title+' from Home'} onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({hidden:[...homeLayout.hidden,t.id],resume:task?.id===t.id?'':homeLayout.resume});})}>×</button></>}
-    </div>;
     const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
     const fileKeys = event => {
@@ -533,33 +602,129 @@
       </div>}
       <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u}>{inspectedNode.fixed && inspectedNode.type === 'thing.workshop' && <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />}</window.UI.NodeInspector> : task ? <>{taskParameters}<window.UI.GraphProperties g={s.graph} s={s} u={u}/></> : <p>Select a node or wire.</p>}</div>
     </aside>;
+    // The sessions are read from their owner when Home opens and when the set of sessions or a state changes: never on a timer.
+    const sessionsStamp = fileWorkspace ? '' : (s.tasks || []).map(t => t.id + ':' + t.status + ':' + (t.sessionPath || '')).join('|') + '#' + (s.graphs || []).length;
+    React.useEffect(() => {
+      if (fileWorkspace) return undefined;
+      let live = true;
+      api.listSessionModel().then(result => { if (live) setListing({status: 'loaded', groups: result.groups, error: ''}); })
+        .catch(error => { if (live) setListing(current => ({...current, status: 'error', error: error.message})); });
+      return () => { live = false; };
+    }, [fileWorkspace, attempt, sessionsStamp]);
+    // Every map value is a parameter in the Home owner record (settings_owner.home_layout); its choices and defaults come from that owner.
+    // A change made elsewhere (the header's counts set the filter) reaches this open Home through the owner's published record.
+    const published = fileWorkspace || !Array.isArray(s.homeLayout?.hidden) ? '' : JSON.stringify(s.homeLayout);
+    React.useEffect(() => {
+      if (published && published !== JSON.stringify(homeRef.current)) { homeRef.current = JSON.parse(published); setHomeLayout(homeRef.current); }
+    }, [published]);
+    const heldMap = homeLayout.map || {};
+    const sessionKind = s.sessionListFilters?.home || 'all', olderOpen = !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
+    const chart = homeMap({listed: listing, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: row => row.runtimeAgent ? liveName(row) : workTitle(row),
+      params: {...Object.fromEntries(Object.entries(mapChoices || {}).map(([key, options]) => [key, options[0]])), ...heldMap}});
+    const writeMap = (next, from, to) => {
+      const held = mapHistory.current;
+      mapHistory.current = from ? {...held, [from]: held[from].slice(0, -1), [to]: [...held[to], heldMap]} : {past: [...held.past, heldMap], future: []};
+      redraw(count => count + 1);
+      return saveHome({map: next});
+    };
+    const changeMap = patch => writeMap(patch ? {...heldMap, ...patch} : {}, '', '');
+    const stepMap = (from, to) => mapHistory.current[from].length ? writeMap(mapHistory.current[from].at(-1), from, to) : undefined;
+    // The Older section's fold is the list's own record (homeLayout.sections); every other group's is a map parameter.
+    const toggleGroup = key => key === 'Older / archived' ? saveHome({sections: olderOpen ? [...(homeLayout.sections || []), key] : (homeLayout.sections || ['Older / archived']).filter(item => item !== key)}) : changeMap({collapsed: chart.params.collapsed.includes(key) ? chart.params.collapsed.filter(item => item !== key) : [...chart.params.collapsed, key]});
+    // A card's session: its task, else the task whose session file it is (one file, however its path is spelled).
+    const samePath = (a, b) => !!a && !!b && String(a).split('\\').join('/').toLowerCase() === String(b).split('\\').join('/').toLowerCase();
+    const cardTask = card => card ? tasks.find(t => card.task && t.id === card.task) || tasks.find(t => samePath(t.sessionPath, card.path)) || null : null;
+    // Selection belongs to the Home owner (its resume record and the open session); the layout is never touched by it.
+    // Only a card with no task (a live agent, a held run) is held here; 'none' is an explicit empty pick (the pane).
+    const pick = card => {
+      const id = card ? card.task || cardTask(card)?.id : '';
+      setPicked(card ? (id ? '' : card.id) : 'none');
+      if (card && !id) return undefined;
+      u.setTask(id);
+      return saveHome({resume: id});
+    };
+    const openCard = card => {
+      // The card's own task id opens it: never the current selection, and never waiting for the task list to catch up with the map.
+      const id = card.task || cardTask(card)?.id;
+      if (card.approval) return u.show('Approve', {id: card.approval});
+      if (id) return u.openTaskFile(id);
+      if (card.path) return u.act(() => api.openSession(card.path)).then(opened => { if (opened && !opened.cancelled) u.go('canvas'); });
+      return u.go('settings/Agents');
+    };
+    // The Library on Home: a node starts a new session named after it, with that node as its first step; never added into the last open session.
+    const startSessionWith = item => u.act(async () => {
+      const title = item.title || item.name || item.id, created = await api.createTask(title);
+      await api.openTaskGraph(created.taskId);
+      await api.addNode(item.id);
+      await api.listTasks?.();
+      setPicked(''); u.setTask(created.taskId);
+      u.setToast('New session ' + title + '. Double-click it to work inside.');
+      return created;
+    });
+    const paused = s.desktop?.automationsPaused;
+    // Coming up from a session (the path's Home, Esc or the rail) its card is the selected one: the same owner record.
+    const pickedCard = picked === 'none' ? null : chart.nodes.find(node => !node.group && (picked ? node.id === picked : !!node.task && node.task === focus)) || null, pickedTask = pickedCard && task && task.id === pickedCard.task;
+    React.useEffect(() => { if (!fileWorkspace) homeShown = cardTask(pickedCard)?.id || ''; }, [fileWorkspace, pickedCard?.id]);  // what the rail's Canvas opens from Home
+    const resumeView = task ? <section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1>{task.sessionTitle||task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
+                {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=>repeats(step)&&!step.output&&!approvalSteps.some(row=>row.index===index)?null:<article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-made={step.output?'':undefined} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.output&&<div className="v48-step-preview resume-made"><window.UI.ResultPreview value={step.value??step.preview}/></div>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
+                {approvalSteps.filter(row=>row.index<0).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}
+                {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
+              </section> : null;
+    // No session yet: three starts for the composer.
+    const zeroState = <section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>;
+    // Hiding and Reset Home are one step each that Undo (the toast's button) takes back exactly.
+    const undoable = (text, patch) => { const before = homeRef.current; u.setToast({text, label: 'Undo', open: () => saveHome(before)}); return saveHome(patch); };
+    const hideFromHome = t => { setPicked('none'); return undoable((t.sessionTitle || t.title) + ' is hidden from Home. It is still in its file.', {hidden: [...homeLayout.hidden, t.id], resume: ''}); };
+    const resetHome = () => { mapHistory.current = {past: [...mapHistory.current.past, heldMap], future: []}; return undoable('Home is back as it was first.', {map: {}, hidden: [], order: [], sections: ['Older / archived'], resume: ''}); };
+    // A card dragged on the map: the cards in their dropped order (top to bottom, left to right) are his order of the work.
+    const arrange = placed => saveHome({order: [...new Set(placed.map(card => card.task || card.id).filter(id => /^[A-Za-z0-9_-]{1,128}$/.test(id)))]});  // the owner keeps ids only
+    const fieldLabels = {group: 'Group by', order: 'Order', card: 'Card', density: 'Density', done: 'Finished sessions', filter: 'Show'};
+    const mapInspector = <aside className="shared-properties" data-properties-pane="" data-home-inspector="" aria-label="Properties">
+      {pickedCard ? <>
+        <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || 'No agent yet'].join(' · ')}</p></header>
+        <div className="shared-properties-task">{pickedTask ? resumeView : <Btn sm p onClick={event => executeAction('ui.select', () => openCard(pickedCard), event)}>Open</Btn>}
+          {pickedTask && <div className="dx-preview-actions">
+            <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
+            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
+          </div>}</div>
+      </> : <>
+        <header className="shared-properties-head"><span className="properties-eyebrow">HOME</span><h2>Map of the work</h2><p className="muted">Every value here is a parameter of Home. Change one and the map re-arranges. Select a session for its own properties.</p></header>
+        <div className="shared-properties-task">
+          {Object.entries(mapChoices || {}).map(([key, options]) => <label className="dx-fact" key={key}><span>{fieldLabels[key] || key}</span><select aria-label={fieldLabels[key] || key} value={chart.params[key]} onChange={event => { const value = event.target.value; return executeAction('ui.select', () => changeMap({[key]: value})); }}>{options.map(option => <option key={option}>{option}</option>)}</select></label>)}
+          <h3>{chart.params.group === 'Agent' ? 'Agents' : chart.params.group === 'State' ? 'States' : 'Projects'}</h3>
+          {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.count}</span><button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></div>)}
+          {!!homeLayout.hidden.length && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
+          <button type="button" data-design="home1.reset" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>
+        </div>
+      </>}
+    </aside>;
     if (!Array.isArray(s.tasks)) return <div className="dx-home-root dx-loading-layout" data-home-loading="" aria-busy="true" aria-label="Loading tasks"><div>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</div><aside>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</aside></div>;
     return <div ref={shellRef} className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
       {request === 'waiting' ? <p role="status">{fileWorkspace?'Saving':'Loading sessions…'}</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
       {request === 'loaded' ? <span data-home-ready="" /> : null}
       <div className="dx-home">
-        {!fileWorkspace ? <Group id="home-context" className={'dx-home-landing dx-split resume-home'+(sessionsRail&&!sessionsPeek?' sessions-rail':'')} orientation="horizontal" onLayoutChanged={(_,meta)=>{if(meta?.isUserInteraction&&sessionsRef.current){const size=sessionsRef.current.getSize().inPixels;saveHome({collapsed:size<=57,width:size<=57?homeLayout.width:Math.max(240,Math.min(440,Math.round(size)))});}}}>
-          <Column id="sessions" panelRef={sessionsRef} collapsible collapsedSize={56} minSize={240} maxSize={440} defaultSize={initialSessionsSize.current} groupResizeBehavior="preserve-pixel-size" onResize={size=>setSessionsRail(size.inPixels<=57)}>
-            <aside data-design="home1.list" className="resume-sessions" data-peek={sessionsRail&&sessionsPeek||undefined} aria-label="Sessions"><header><h2>Sessions</h2><button type="button" className="dx-quiet" data-design="home1.fold" aria-label={sessionsRail&&!sessionsPeek?'Open the list':'Fold the list to avatars'} onClick={()=>executeAction('ui.select',()=>{if(window.innerWidth<1100){setSessionsPeek(!sessionsPeek);return undefined;}return saveHome({collapsed:!sessionsRail});})}>{sessionsRail?'›':'‹'}</button></header>
-              <div className="resume-session-scroll"><window.UI.SessionList list="home" rows={sessionRows} sectionOf={sectionOf} collapsedSections={collapsedSections} toggleSection={toggleSection} renderRow={row=>row.runtimeAgent?<div className="dx-task-row resume-row" key={row.id}>{sessionsRail&&!sessionsPeek?<button type="button" className="resume-avatar" aria-label={liveName(row)} title={liveName(row)} onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><window.UI.Av id={humanLabel(row.runtimeAgent.name)} size={28}/></button>:<button type="button" className="resume-avatar" aria-label={'Open agent '+humanLabel(row.runtimeAgent.name)} onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><window.UI.Av id={humanLabel(row.runtimeAgent.name)} size={28}/></button>}<button type="button" className="dx-task" onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><b>{workTitle(row)}</b><span>{[humanLabel(row.runtimeAgent.name),row.runtimeAgent.status].filter(part=>part&&part!==workTitle(row)).join(' · ')}</span></button></div>:taskRow(row)}/></div>
-              {!!homeLayout.hidden.length&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>saveHome({hidden:[]}))}>+ {homeLayout.hidden.length} hidden</button>}
-              {homeUndo&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{const previous=homeUndo;setHomeUndo(null);return saveHome(previous);})}>Undo Home change</button>}
-            </aside>
-          </Column>
-          <Separator className="pane-splitter" aria-label="Resize the session list" />
-          <Column id="resume" minSize={320}>
-            <main className="resume-main"><div className="resume-home-controls"><button type="button" data-design="home1.reset" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({width:300,collapsed:false,resume:'',order:[],hidden:[]});})}>Reset Home</button></div>
-              {task?<section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1>{task.sessionTitle||task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
-                {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=>repeats(step)&&!step.output&&!approvalSteps.some(row=>row.index===index)?null:<article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-made={step.output?'':undefined} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.output&&<div className="v48-step-preview resume-made"><window.UI.ResultPreview value={step.value??step.preview}/></div>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
-                {approvalSteps.filter(row=>row.index<0).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}
-                {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
-              </section>:request === 'empty'?<section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>:null}
-              {/* The composer belongs to the work column: beside the Sessions list at every width, never over it. */}
-              <div className="global-composer"><window.UI.Composer compact homeSession={list.find(t => t.id === focus)} key={focus || ''} /></div>
-            </main>
-          </Column>
-        </Group> :
+        {!fileWorkspace ? <div className="dx-workspace home-map" data-dx="workspace" data-home-map="" data-task-face="canvas">
+            <div className="v22g-strip"><div className="v22g-toolbar v48-toolbar home-map-bar" role="toolbar" aria-label="Map of the work">
+              {[['Running', rows.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
+              {chart.armed > 0 && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {chart.armed} automation{chart.armed === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
+              <span className="fill" />
+              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ['workflow', 'Workflows'], ['agent-session', 'Agent sessions']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => u.act(() => api.setSessionListFilter('home', value)), event)}>{label}</button>)}</div>
+              {[['Undo', 'undo', 'past', 'future'], ['Redo', 'redo', 'future', 'past']].map(([label, icon, from, to]) => <button key={label} type="button" className="dx-quiet" aria-label={label} title={label + ' the last Home change'} disabled={!mapHistory.current[from].length} onClick={event => executeAction('ui.select', () => stepMap(from, to), event)}><Icon name={icon} size={14} /></button>)}
+            </div></div>
+            <window.UI.Dock face="canvas" rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
+              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} onAdd={startSessionWith} />, insp: mapInspector}}>
+              <div className="dx-col dx-task-column home-map-stage">
+                {listing.status === 'error' ? <p role="alert">{listing.error} <button type="button" onClick={() => executeAction('ui.select', () => setAttempt(attempt + 1))}>Retry</button></p> : null}
+                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
+                  : request === 'empty' ? <main className="resume-main">{zeroState}</main>
+                  : mapChoices && listing.status === 'loaded' ? <main className="resume-main">{chart.total ? <section className="resume-zero"><h1>No session matches</h1><button type="button" onClick={event => executeAction('ui.select', () => changeMap({filter: 'All', done: 'Show'}), event)}>Show every session</button></section> : zeroState}</main> : null}
+                {/* The composer belongs to the map's own column: between the docks at every width, never over them. */}
+                {/* The picked card's session is the composer's recipient (design v61 C1-C3, the Composer's homeSession); none picked: a new session. */}
+                <div className="global-composer"><window.UI.Composer compact homeSession={cardTask(pickedCard) || undefined} key={cardTask(pickedCard)?.id || ''} /></div>
+              </div>
+            </window.UI.Dock>
+          </div> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
             <div className="v22g-strip">
               <div ref={tabsRef} className="v22g-tabs" role="tablist" aria-label="Open tasks">{visibleTabs.map(tab => <div key={tab.id} className="v22g-tab" data-design={tab.id === task?.id ? 'tab.active' : undefined} data-active={tab.id === task?.id} draggable onDragStart={e => {e.dataTransfer.setData('text/archhub-tab', tab.id);e.dataTransfer.setData('task',tab.id);}} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault();const from=e.dataTransfer.getData('text/archhub-tab'),held=u.canvasTabs;const moved=held.tabs.find(t=>t.id===from);if(!moved||from===tab.id)return;const tabs=held.tabs.filter(t=>t.id!==from);tabs.splice(tabs.findIndex(t=>t.id===tab.id),0,moved);u.act(()=>u.saveCanvasTabs({...held,tabs}));}} onContextMenu={e => {e.preventDefault();u.show('Task tab menu',{id:tab.id});}}>
@@ -568,7 +733,7 @@
               </div>)}{hiddenTabs.length>0&&<details className="v22g-tab-overflow"><summary>{hiddenTabs.length} more</summary><div role="menu" aria-label="More open tasks">{hiddenTabs.map(tab=><button key={tab.id} type="button" role="menuitem" onClick={event=>executeAction("ui.select",()=>{event.currentTarget.closest("details").open=false;return u.openTaskFile(tab.id);})}>{tasks.find(t=>t.id===tab.id)?.title || "Task unavailable"}</button>)}</div></details>}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open tasks" onClick={() => u.show('Open tasks')}>+</button></div>
               <div className="v22g-toolbar v48-toolbar"><div className="v48-toolbar-agents">{agents.slice(0,3).map(name=><button type="button" className="button-reset" key={name} title={name} aria-label={'Open agent '+name} onClick={event=>executeAction('ui.select',()=>openOwner(task,name),event)}><window.UI.Av id={name} size={28}/></button>)}{agents.length>3 && <button type="button" className="dx-quiet" aria-label="All session agents" onClick={event=>executeAction('ui.select',()=>u.show('Task details',{id:task.id}),event)}>+{agents.length-3}</button>}</div><div className="v48-save"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>saveFile(false),event)}><Icon name="export" size={13}/>Save</button><details><summary aria-label="Save menu">↓</summary><div className="v48-save-menu">{[['Save as…',()=>saveFile(true)],['Save as skill…',()=>u.show('Save skill')]].map(([label,run])=><button type="button" key={label} onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return run();},event)}>{label}</button>)}</div></details></div><button type="button" className="dx-quiet v48-secondary" onClick={event=>executeAction('ui.select',()=>{setPropertyTab('Automate');dockRef.current?.show('insp');},event)}><Icon name="clock" size={13}/>Automate</button><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" disabled={singleCanvas&&besideShown} onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run all</button>{[['Undo','undo',()=>u.act(api.undo)],['Redo','redo',()=>u.act(api.redo)],['Tidy up','arrange',()=>canvasRef.current?.arrange()]].map(([label,icon,run])=><button key={label} type="button" className="dx-quiet v48-secondary" aria-label={label} title={label} onClick={event=>executeAction('ui.select',run,event)}><Icon name={icon} size={14}/></button>)}<button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
             </div>
-            <window.UI.Dock session={task?.id} project={task?.workspace || task?.project} face={face} rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
+            <window.UI.Dock face={face} rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
               panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane}}>
               <div className="dx-col dx-task-column">
                 <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={{done:resumeSteps.filter(step=>step.state.kind==='done').length,total:resumeSteps.length}} planned={work.length?null:resumeSteps.map(step=>({title:step.title,kind:step.state.kind,label:step.state.label}))} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={() => dockRef.current?.reset()} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
@@ -617,6 +782,7 @@
   window.UI.Home = Home;
   window.UI.homeShown = () => homeShown;  // the session Home shows selected now (its own optimistic list), '' if none
   window.UI.homeRows = homeRows;
+  window.UI.homeMap = homeMap;
   window.UI.Sheet = Sheet;
   window.UI.homeListSame = sameList;
   window.UI.homeCommitList = commitList;

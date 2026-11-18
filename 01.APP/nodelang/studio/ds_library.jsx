@@ -29,7 +29,8 @@
   }
   window.UI.SessionList = SessionList;
   function LibraryShelf({
-    onClose
+    onClose,
+    onAdd
   }) {
     const s = useData(),
       u = useApp();
@@ -51,7 +52,8 @@
     // Search and the category chips filter the same owner catalogue. Both are view state and change no file.
     // A search reads the card's name and summary, its program (the engine it declares) and the tree row it sits under.
     const found = (c, group) => `${c.name} ${c.description} ${c.descriptor?.engine || ''} ${group.label}`.toLowerCase().includes(query.toLowerCase());
-    const add = async c => {const node=await u.act(()=>api.addNode(c.id));if(node?.id)u.setSelectedNodeId(node.id);return node;};
+    // On Home the screen says what adding a node means (it starts a session); on a Canvas the node joins the open workflow.
+    const add = async c => {if(onAdd)return onAdd(c);const node=await u.act(()=>api.addNode(c.id));if(node?.id)u.setSelectedNodeId(node.id);return node;};
     const sections = groups.filter(group => family === 'All' || family === group.id).map(group => [group, catalogue.filter(c => group.categories.includes(c.family) && found(c, group))]).filter(([, list]) => list.length);
     const open = group => Boolean(query.trim()) || !collapsed.includes(group.id);
     return <aside className="pane library-shelf" data-screen="library" aria-label="Library shelf"><header className="spread"><h2>Library</h2><Btn variant="controls" sm ghost aria-label="Close Library" onClick={event => executeAction("projects.ds_library.CloseLibrary.1", {onClose}, event)}>×</Btn></header><button className="listbutton flex shelf-new-session" onClick={event=>executeAction("projects.ds_library.NewSession.14", {api,u}, event)}><window.AHIcon name="plus" size={16}/>New canvas session</button>

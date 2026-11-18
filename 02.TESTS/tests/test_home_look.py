@@ -68,7 +68,7 @@ def test_reopening_keeps_a_maximised_window_maximised():
 
 
 def test_home_look_rendered(tmp_path, monkeypatch):
-    """1009, 1440 and 1920: full width, composer in the work column, no raw id or cut word, a title once, one update state."""
+    """1009, 1440 and 1920: Home is the map of the work between the docks; its values are parameters; the header acts."""
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
         browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
@@ -86,12 +86,18 @@ def test_home_look_rendered(tmp_path, monkeypatch):
         echo = 'Check the model against the office standard'
         echo_task = client.workshop('createTask', echo)['taskId']
         waiting_task = client.workshop('createTask', 'Export issue package')['taskId']
-        client.workshop('createTask', 'Sheet index check')
+        source_task = client.workshop('createTask', 'Sheet index check')['taskId']
         # The echo session: its one plan step is named like the session itself.
         view = client.workshop('openTaskGraph', echo_task)
         document = client.files('read', path=view['path'])['document']
         document['properties'].setdefault('taskContext', {})['plan'] = [echo]
         write_document(view['path'], document)
+        # A real input link: the echo session takes the sheet index session's output, so the map draws one wire.
+        source = client.workshop('openTaskGraph', source_task)
+        source_id = client.files('read', path=source['path'])['document']['id']
+        status, body = _post(client.connection, '/api/session-model', {'action': 'set', 'path': view['path'], 'values': {'inputLinks': [
+            {'source': {'path': Path(source['path']).name, 'id': source_id}, 'output': 'index.value', 'input': 'sheets'}]}}, client.headers)
+        assert status == 200 and body['ok'], body
         # Needs you: a real held run of an approval gate on another session.
         view = client.workshop('openTaskGraph', waiting_task)
         original = client.files('read', path=view['path'])['document']
@@ -108,11 +114,14 @@ def test_home_look_rendered(tmp_path, monkeypatch):
         result = subprocess.run(
             ['node', '02.TESTS/tests_js/home_look.cjs'],
             input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token, 'browserCache': browser_cache,
-                              'echo': echo, 'echoTask': echo_task, 'shots': os.environ.get('ARCHHUB_HOME_SHOTS', '')}),
+                              'echo': echo, 'echoTask': echo_task, 'other': 'Sheet index check', 'shots': os.environ.get('ARCHHUB_HOME_SHOTS', '')}),
             cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, encoding='utf-8', timeout=240,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
+        # The map's parameters were written through the Home owner into the one settings file.
+        saved = json.loads((state / 'settings' / 'settings.json').read_text(encoding='utf8'))
+        assert set(saved['homeLayout']['map']) <= {'group', 'order', 'card', 'density', 'done', 'filter', 'collapsed'} and saved['homeLayout']['map']
     finally:
         client.close()
         server.close()

@@ -1,4 +1,4 @@
-// F337 SESSION-IS-THE-WORK: Home rows are pieces of work (frozen design v50), rendered from the real compiled Studio.
+// F337 SESSION-IS-THE-WORK: Home's cards are pieces of work (the map of the work, design v61), rendered from the real compiled Studio.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,9 +9,9 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'ds_screens.jsx', 'ds_library.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
-test('SESSIONWORK: one row per piece of work, lead and member avatars, interrupted with Continue', async () => {
+test('SESSIONWORK: one card per piece of work, lead and member avatars, interrupted with Continue', async () => {
   const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
   const shell = fs.existsSync(cache) && fs.readdirSync(cache).filter(name => /^chromium_headless_shell-\d+$/.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
   const full = fs.readdirSync(cache).filter(name => /^chromium-\d+$/.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
@@ -53,7 +53,8 @@ test('SESSIONWORK: one row per piece of work, lead and member avatars, interrupt
         setCanvasTabs: async () => ({ok: true}),
         readSessionListFilters: async () => ({sessionListFilters: {home: 'all'}}),
         setSessionListFilter: async () => ({ok: true}),
-        readHomeLayout: async () => ({homeLayout: {width: 300, collapsed: false, resume: '', order: [], hidden: []}}),
+        readHomeLayout: async () => ({homeLayout: {width: 300, collapsed: false, resume: '', order: [], hidden: []},
+          homeMap: {group: ['Project'], order: ['Needs you first'], card: ['Steps and state'], density: ['Comfortable'], done: ['Show'], filter: ['All']}}),
         setHomeLayout: async layout => { if (layout && layout.resume) window.selected.push(layout.resume); return {ok: true}; },
         refreshAgentSurface: async () => null, openTaskGraph: async () => ({ok: true})};
     });
@@ -64,32 +65,26 @@ test('SESSIONWORK: one row per piece of work, lead and member avatars, interrupt
         Canvas: () => React.createElement('div', null, 'Task canvas'), GraphProperties: () => null});
     });
     await page.addScriptTag({content: sources.at(-1)});
-    const row = title => page.locator('[data-design="home1.row"]').filter({has: page.locator('b', {hasText: title})});
-    await row('Drawing set review').waitFor();
-    // One row for the piece of work: the lead in the avatar column, the others as small avatars at the right edge.
-    assert.equal(await row('Drawing set review').count(), 1);
-    assert.equal(await row('Drawing set review').locator('.resume-avatar').getAttribute('title'), 'Drawing coordinator');
-    const more = row('Drawing set review').locator('.resume-members');
+    const card = title => page.locator('[data-design="home.card"]').filter({has: page.locator('.home-card-head b', {hasText: title})});
+    await card('Drawing set review').waitFor();
+    // One card for the piece of work: the lead is its agent, the others small avatars on the same card.
+    assert.equal(await card('Drawing set review').count(), 1);
+    assert.equal(await card('Drawing set review').locator('.home-card-head > div > small').textContent(), 'Drawing coordinator');
+    const more = card('Drawing set review').locator('.home-card-members');
     assert.equal(await more.getAttribute('title'), 'Also on this work: Model checker, Code checker, Site reviewer');
     assert.equal(await more.locator(':scope > *').count(), 3);
-    assert.equal(await page.locator('.resume-row').filter({has: page.locator('b', {hasText: 'Site reviewer'})}).count(), 0);
-    assert.equal(await page.locator('.resume-row').filter({has: page.locator('b', {hasText: 'Drawing coordinator'})}).count(), 0);
-    const lead = await row('Drawing set review').locator('.resume-avatar').boundingBox();
-    const edge = await more.boundingBox();
-    assert.ok(edge.x > lead.x + 100, 'member avatars sit at the row\'s right edge');
-    // Interrupted work stays an open row with Continue, never under Older.
-    const library = row('Details library');
+    assert.equal(await card('Site reviewer').count(), 0, 'a second live agent on the work is no second card');
+    assert.equal(await card('Drawing coordinator').count(), 0);
+    // Interrupted work stays open with Continue; Continue selects it (the Home owner's record).
+    const library = card('Details library');
     assert.equal(await library.count(), 1);
-    assert.match(await library.locator('.dx-task span').textContent(), /^Interrupted · waiting for an agent$/);
+    assert.match(await library.locator('.home-card-need span').textContent(), /^Interrupted · waiting for an agent$/);
     await library.getByRole('button', {name: 'Continue', exact: true}).click();
     await page.waitForFunction(() => window.selected.includes('session-library'));
-    // An old per-agent-run row is not brought back: it stays under the collapsed Older heading.
-    const older = page.locator('.home-section-heading').filter({hasText: 'Older'});
-    assert.equal(await older.getAttribute('aria-expanded'), 'false');
-    assert.equal(await row('Old agent run').count(), 0);
-    assert.equal(await row('Old agent run').getByRole('button', {name: 'Continue'}).count(), 0);
+    // An old per-agent run offers no Continue.
+    assert.equal(await card('Old agent run').getByRole('button', {name: 'Continue'}).count(), 0);
     assert.deepEqual(errors, []);
-    console.log('PASS sessionwork Home rows: lead + members, interrupted Continue, old runs under Older');
+    console.log('PASS sessionwork Home cards: lead + members, interrupted Continue, no Continue on old runs');
     await page.close();
   } finally { await browser.close(); }
 });

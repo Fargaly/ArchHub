@@ -675,6 +675,12 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
     return {'canvasTabs': settings.read().get('canvasTabs', {'tabs': [], 'active': '', 'split': '', 'collapsed': False})}
 
 
+# The parameters of Home's map of the work; the first choice of each is its default.
+HOME_MAP = {'group': ('Project', 'Agent', 'State'), 'order': ('Needs you first', 'Name'),
+            'card': ('Steps and state', 'State only'), 'density': ('Comfortable', 'Compact'),
+            'done': ('Show', 'Hide'), 'filter': ('All', 'Running', 'Needs you')}
+
+
 def home_layout(function='readHomeLayout', args=(), settings=None):
     """Home view metadata stays with the existing Settings owner."""
     from .nograph_server import JsonFile
@@ -683,8 +689,15 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
     default = {'width': 300, 'collapsed': False, 'resume': '', 'order': [], 'hidden': []}
     if function == 'setHomeLayout':
         value = args[0] if len(args) == 1 else None
-        if type(value) is not dict or set(value) - {'sections'} != set(default):
+        if type(value) is not dict or set(value) - {'sections', 'map'} != set(default):
             raise ValueError('Choose the session list and resumed session.')
+        chart = value.get('map', {})
+        folded = chart.get('collapsed', []) if type(chart) is dict else None
+        if (type(chart) is not dict or set(chart) - set(HOME_MAP) - {'collapsed'}
+                or any(chart[key] not in HOME_MAP[key] for key in chart if key != 'collapsed')
+                or type(folded) is not list or len(folded) > 200 or len(set(map(str, folded))) != len(folded)
+                or any(type(item) is not str or not 0 < len(item) <= 128 for item in folded)):
+            raise ValueError('Choose the map of the work: how sessions are grouped, ordered, drawn and filtered.')
         if type(value['width']) is not int or not 240 <= value['width'] <= 440 or type(value['collapsed']) is not bool:
             raise ValueError('Choose a session list width from 240 to 440 pixels.')
         def valid_id(item):
@@ -699,7 +712,9 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
             raise ValueError('Choose Home sections to collapse.')
         settings.update({'homeLayout': value})
     held = settings.read().get('homeLayout', {})
-    return {'homeLayout': {**{key: held.get(key, value) for key, value in default.items()}, **({'sections': held['sections']} if 'sections' in held else {})}}
+    return {'homeLayout': {**{key: held.get(key, value) for key, value in default.items()},
+                           **{key: held[key] for key in ('sections', 'map') if key in held}},
+            'homeMap': {key: list(choices) for key, choices in HOME_MAP.items()}}  # what each map parameter may be; first is default
 
 
 DOCK_PANELS = ('workshop', 'library', 'map', 'insp')

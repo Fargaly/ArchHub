@@ -45,7 +45,7 @@ const {chromium} = require('playwright');
       assert.deepEqual(measured.secondary.filter(row=>row.ratio<4.5),[],label+': contrast');
     };
     if(['approval_wrong','approval_nested'].includes(input.board)){
-      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+      await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().click();
       const region=page.getByRole('region',{name:'Resumed session',exact:true});
       await region.locator('[data-approval]').waitFor();
       const card=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().approvals.find(card=>card.status==='pending'));
@@ -70,7 +70,7 @@ const {chromium} = require('playwright');
     if(input.board==='canvas_input'){
       const nav=page.getByRole('navigation',{name:'Main navigation'});
       await nav.waitFor();
-      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+      await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().click();
       const canvas=page.getByLabel('Workflow canvas',{exact:true});
       const transform=()=>canvas.locator('.react-flow__viewport').evaluate(el=>window.getComputedStyle(el).transform);
       const open=async (resize=null)=>{
@@ -140,7 +140,7 @@ const {chromium} = require('playwright');
     if(['canvas_open','canvas_reading'].includes(input.board)){
       const nav=page.getByRole('navigation',{name:'Main navigation'});
       await nav.waitFor();
-      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+      await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().click();
       const measure=()=>page.getByLabel('Workflow canvas',{exact:true}).evaluate(area=>{
         const box=area.getBoundingClientRect(),matrix=new window.DOMMatrix(window.getComputedStyle(area.querySelector('.react-flow__viewport')).transform);
         const nodes=[...area.querySelectorAll('.react-flow__node')].map(node=>({id:node.dataset.id,...node.getBoundingClientRect().toJSON()}));
@@ -150,8 +150,10 @@ const {chromium} = require('playwright');
       let positions, reading=0;
       for(const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
         await page.setViewportSize(size);
-        await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
-        await page.locator('.react-flow__node').first().waitFor();await page.waitForTimeout(250);
+        // A double-click on its card enters the session at every width (the Inspector may be folded on a narrow window).
+        await page.waitForTimeout(300);  // the map re-fits to the new window size first
+        await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().locator('.home-card-head').dblclick();
+        await page.getByLabel('Workflow canvas',{exact:true}).locator('.react-flow__node').first().waitFor();await page.waitForTimeout(250);
         const view=await measure();
         assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().title),'Drawing set review');
         assert.equal(view.nodes.length,await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.filter(node=>!node.fixed||node.type==='thing.session').length));
@@ -166,7 +168,7 @@ const {chromium} = require('playwright');
       }
       assert.equal(reading,4,'v48 opens at 100% at each reference width');
       await page.setViewportSize({width:1009,height:940});
-      await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
+      await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().locator('.home-card-head').dblclick();
       await page.getByRole('button',{name:'More canvas actions',exact:true}).click();
       await page.getByRole('menuitem',{name:'Thread',exact:true}).click();
       await page.locator('.v22g-thread').waitFor();await page.waitForTimeout(250);
@@ -182,7 +184,7 @@ const {chromium} = require('playwright');
       await page.getByRole('button',{name:'Fold Inspector',exact:true}).click();
       console.log(`PASS ${input.board}: Thread and Inspector peek keep the session node readable`);
       await nav.getByRole('button',{name:'Home',exact:true}).click();
-      await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();await page.waitForTimeout(250);
+      await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().locator('.home-card-head').dblclick();await page.waitForTimeout(250);
       const view=await measure(),before=await page.evaluate(()=>JSON.stringify(window.ArchHubAPI.getSnapshot().graph.viewport));
       await inputSession.send('Input.dispatchMouseEvent',{type:'mouseWheel',x:view.area.right-20,y:view.area.bottom-160,deltaX:0,deltaY:-140});
       await page.waitForFunction(before=>JSON.stringify(window.ArchHubAPI.getSnapshot().graph.viewport)!==before,before);
@@ -228,41 +230,46 @@ const {chromium} = require('playwright');
       return;
     }
     if (input.board === 'resume') {
+      // Home is the map of the work: the session picked on it is read in the Inspector; its steps, pin, hide and Reset Home stay.
       await page.getByRole('navigation',{name:'Main navigation'}).waitFor();
-      await page.getByRole('heading',{name:'Sessions',exact:true}).waitFor();
-      assert.equal(await page.getByRole('heading',{name:'Sessions',exact:true}).count(),1);
-      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
-      await page.getByRole('region',{name:'Resumed session',exact:true}).getByRole('heading',{name:'Drawing set review',exact:true}).waitFor();
-      assert.equal(await page.locator('[data-resume-step]').count(),3);
-      assert.equal(await page.locator('[data-resume-step][data-state=done]').count(),2);
-      await page.getByRole('button',{name:'Pin Drawing set review',exact:true}).click();
-      await page.getByRole('button',{name:'Unpin Drawing set review',exact:true}).waitFor();
+      const map=page.locator('[data-home-map]'),card=title=>map.locator('[data-design="home.card"]').filter({hasText:title}).first();
+      const inspector=async()=>{if(!await page.locator('[data-home-inspector]').isVisible())await page.locator('.dock.right [data-tab="insp"]').click();};
+      await card('Drawing set review').waitFor();await inspector();
+      await card('Drawing set review').locator('.home-card-head').click();
+      const resumed=page.getByRole('region',{name:'Resumed session',exact:true});
+      await resumed.getByRole('heading',{name:'Drawing set review',exact:true}).waitFor();
+      assert.equal(await resumed.locator('[data-resume-step]').count(),3);
+      assert.equal(await resumed.locator('[data-resume-step][data-state=done]').count(),2);
+      await page.getByRole('button',{name:'Pin to Home',exact:true}).click();
+      await page.getByRole('button',{name:'Unpin',exact:true}).waitFor();
       for(const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
-        await page.setViewportSize(size);await page.waitForTimeout(150);
-        const result=await page.locator('[aria-label="Resumed session"]').evaluate(el=>({scroll:el.scrollHeight>el.clientHeight+1,steps:[...el.querySelectorAll('[data-resume-step]')].map(node=>node.getBoundingClientRect().toJSON()),composer:document.querySelector('.global-composer').getBoundingClientRect().toJSON(),bottom:document.querySelector('.screen-with-composer').getBoundingClientRect().bottom}));
+        await page.setViewportSize(size);await page.waitForTimeout(150);await inspector();
+        await resumed.waitFor();
         await assertReadable(size.width+' Resume');
-        assert.equal(result.bottom,size.height);
-        for(const box of result.steps)assert.ok(box.left>=64&&box.right<=size.width&&box.top>=48&&box.bottom<result.composer.top,JSON.stringify(result));
+        assert.equal(await page.evaluate(()=>document.querySelector('.screen-with-composer').getBoundingClientRect().bottom),size.height);
         await page.screenshot({path:path.resolve('.cache',`designv22g-resume-${size.width}.png`)});
-        console.log(`PASS Resume ${size.width}x${size.height}: readable steps, floating composer, no bottom band`);
+        console.log(`PASS Resume ${size.width}x${size.height}: readable steps in the Inspector, floating composer, no bottom band`);
       }
-      const sash=await page.getByRole('separator',{name:'Resize the session list',exact:true}).boundingBox();
-      await pointer('mouseMoved',sash.x+sash.width/2,sash.y+sash.height/2);await pointer('mousePressed',sash.x+sash.width/2,sash.y+sash.height/2,true);for(let step=1;step<=8;step++)await pointer('mouseMoved',sash.x+sash.width/2+60*step/8,sash.y+sash.height/2,true);await pointer('mouseReleased',sash.x+sash.width/2+60,sash.y+sash.height/2);
-      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().homeLayout.width>=354&&window.ArchHubAPI.getSnapshot().homeLayout.width<=366);
-      const keptWidth=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().homeLayout.width);
-      await page.getByRole('button',{name:'Fold the list to avatars',exact:true}).click();
-      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().homeLayout.collapsed);
-      await page.getByRole('button',{name:'Open the list',exact:true}).click();
-      await page.waitForFunction(()=>!window.ArchHubAPI.getSnapshot().homeLayout.collapsed);
-      await page.getByRole('button',{name:'Hide Sheet index check from Home',exact:true}).click();
-      assert.equal(await page.getByRole('button',{name:'Hide Sheet index check from Home',exact:true}).count(),0);
-      await page.getByRole('button',{name:'Undo Home change',exact:true}).click();
-      await page.getByRole('button',{name:'Hide Sheet index check from Home',exact:true}).waitFor();
+      // Hide is one step the toast's Undo takes back; Reset Home is one step too and also clears the hidden list.
+      await card('Sheet index check').locator('.home-card-head').click();
+      await page.getByRole('button',{name:'Hide from Home',exact:true}).click();
+      await card('Sheet index check').waitFor({state:'detached'});
+      await page.getByRole('alert').filter({hasText:'Sheet index check is hidden from Home'}).getByRole('button',{name:'Undo',exact:true}).click();
+      await card('Sheet index check').waitFor();
+      await map.locator('.react-flow__pane').click({position: (await page.evaluate(() => { const pane = document.querySelector('[data-home-map] .react-flow__pane'), r = pane.getBoundingClientRect(); for (let y = r.top + 4; y < r.bottom; y += 12) for (let x = r.left + 4; x < r.right; x += 12) if (document.elementFromPoint(x, y) === pane) return {x: x - r.left, y: y - r.top}; return {x: 4, y: 4}; }))});  // an empty spot of the map clears the pick
+      await page.getByLabel('Group by',{exact:true}).selectOption('State');
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().homeLayout.map?.group==='State');
+      await card('Sheet index check').locator('.home-card-head').click();
+      await page.getByRole('button',{name:'Hide from Home',exact:true}).click();
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().homeLayout.hidden.length===1);
       await page.getByRole('button',{name:'Reset Home',exact:true}).click();
-      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().homeLayout.width===300);
-      await page.getByRole('button',{name:'Undo Home change',exact:true}).click();
-      await page.waitForFunction(width=>window.ArchHubAPI.getSnapshot().homeLayout.width===width,keptWidth);
-      console.log('PASS Resume: resize, fold, hide/restore and reset/undo use the homeLayout owner');
+      await page.waitForFunction(()=>{const held=window.ArchHubAPI.getSnapshot().homeLayout;return !held.map?.group&&!held.hidden.length;});
+      await page.getByRole('alert').filter({hasText:'Home is back as it was first'}).getByRole('button',{name:'Undo',exact:true}).click();
+      await page.waitForFunction(()=>{const held=window.ArchHubAPI.getSnapshot().homeLayout;return held.map?.group==='State'&&held.hidden.length===1;});
+      await page.getByRole('button',{name:'Reset Home',exact:true}).click();
+      await page.waitForFunction(()=>{const held=window.ArchHubAPI.getSnapshot().homeLayout;return !held.map?.group&&!held.hidden.length;});
+      await card('Drawing set review').locator('.home-card-head').click();
+      console.log('PASS Resume: pin, hide with Undo, and Reset Home (map and hidden) with Undo use the homeLayout owner');
       await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
       await page.evaluate(()=>window.ArchHubAPI.addNode('g_approval_gate',{x:500,y:200}));
       await page.locator('[data-design="toolbar.run"]').click();
@@ -283,16 +290,17 @@ const {chromium} = require('playwright');
       await page.locator('[data-design="approval.panel"]').waitFor();
       await page.locator('body').press('Escape');
       await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Home',exact:true}).click();
-      await page.locator('.dx-task').filter({hasText:'Home approval proof'}).click();
-      assert.match(await page.locator('.resume-row').first().innerText(),/Home approval proof/);
+      await page.locator('[data-design="home.card"]').filter({hasText:'Home approval proof'}).click();
+      assert.equal(await page.locator('[data-design="home.card"]').filter({hasText:'Home approval proof'}).first().getAttribute('data-home-state'),'Needs you');  // the waiting session reads Needs you
       await page.getByRole('region',{name:'Resumed session',exact:true}).getByRole('button',{name:'Approve',exact:true}).click();
       await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.some(node=>node.type==='approval.gate'&&node.status==='Done'));
       console.log('PASS Resume: waiting session first; Approve resumes the real gate and re-reads its file result');
-      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).click();
+      await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).click();
       await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().homeLayout.resume===window.ArchHubAPI.getSnapshot().tasks.find(task=>task.title==='Drawing set review').id);
       await page.reload();
       await page.getByRole('region',{name:'Resumed session',exact:true}).getByRole('heading',{name:'Drawing set review',exact:true}).waitFor();
-      assert.equal(await page.getByRole('button',{name:'Unpin Drawing set review',exact:true}).isVisible(),true);
+      if(!await page.locator('[data-home-inspector]').isVisible())await page.locator('.dock.right [data-tab="insp"]').click();
+      assert.equal(await page.getByRole('button',{name:'Unpin',exact:true}).isVisible(),true);
       assert.deepEqual(errors,[]);
       return;
     }
@@ -360,8 +368,7 @@ const {chromium} = require('playwright');
       console.log('PASS fluid shell: narrow Thread and Inspector peek over Canvas; one floating composer');
       for(const title of ['Drawing set review','Sheet index check','Export issue package','Update drawing references','Model view audit']){
         await nav.getByRole('button',{name:'Home',exact:true}).click();
-        await page.getByRole('button',{name:'Open the list',exact:true}).click();
-        await page.locator('.dx-task').filter({hasText:title}).first().dblclick();
+        await page.locator('[data-design="home.card"]').filter({hasText:title}).first().dblclick();
         await page.getByRole('tab',{name:title,exact:true}).dblclick();
       }
       const overflow=page.locator('.v22g-tab-overflow');
@@ -383,9 +390,10 @@ const {chromium} = require('playwright');
     await page.setViewportSize({width:1864,height:949});
     const nav=page.getByRole('navigation',{name:'Main navigation'});
     await nav.waitFor();
-    await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+    await page.locator('[data-design="home.card"]').filter({hasText:'Drawing set review'}).first().click();
     await page.getByRole('region',{name:'Resumed session'}).waitFor();
-    assert.equal(await page.getByRole('complementary',{name:'Properties'}).count(),0);
+    // Home is the map: the picked session is read in the Inspector (Properties), the one pane beside the map.
+    assert.equal(await page.getByRole('complementary',{name:'Properties'}).count(),1);
     if(input.board==='canvas'||input.board==='canvas_fit')assert.equal(await page.locator('[data-resume-step]').count(),input.board==='canvas'?4:2);
     else assert.equal(await page.locator('[data-resume-step][data-state=done]').count(),2);
     await page.evaluate(()=>document.fonts.ready);
@@ -393,7 +401,7 @@ const {chromium} = require('playwright');
     assert.equal(await page.evaluate(()=>window.devicePixelRatio),1);
     assert.equal(await page.evaluate(()=>localStorage.getItem('archhub.home.layout.v1')),null);
     await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
-    await page.locator('[data-design="canvas.stage"]').waitFor();
+    await page.locator('.dx-home-root[data-screen="task-file"] [data-design="canvas.stage"]').waitFor();
     let preview=page.getByRole('complementary',{name:'Properties'});
     await preview.waitFor();
     const cleanSession=await page.evaluate(()=>({id:window.ArchHubAPI.getSnapshot().graph.id,path:window.ArchHubAPI.getSessionPath()}));
@@ -425,10 +433,12 @@ const {chromium} = require('playwright');
       assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')).viewport,{x:0,y:0,zoom:1});
       await page.reload();
       await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
-      await page.locator('.react-flow__viewport').waitFor();await page.waitForTimeout(250);
+      // The session's own canvas (Home's map is drawn with the same engine): wait for it, then read its transform.
+      const sessionView=page.getByLabel('Workflow canvas',{exact:true}).locator('.react-flow__viewport');
+      await sessionView.waitFor();await page.waitForTimeout(250);
       assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().viewport),{x:0,y:0,zoom:1});
-      const restored=await page.locator('.react-flow__viewport').evaluate(el=>{const m=new window.DOMMatrix(window.getComputedStyle(el).transform);return {x:m.e,y:m.f,zoom:m.a};});
-      assert.deepEqual(restored,{x:0,y:0,zoom:1},'The rendered viewport must restore the saved origin at 100%');
+      const restored=await sessionView.evaluate(el=>{const m=new window.DOMMatrix(window.getComputedStyle(el).transform);return {x:m.e,y:m.f,zoom:m.a};});
+      assert.deepEqual(restored,{x:0,y:0,zoom:1},'The rendered viewport must restore the saved origin at 100%: '+JSON.stringify(restored));
       console.log('PASS saved viewport {x:0,y:0,zoom:1}: file readback and reopened rendered transform unchanged');
       assert.deepEqual(errors,[]);console.log('PASS canvas_fit: real nodes fit; wheel viewport saves and reopens unchanged');return;
     }

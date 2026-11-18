@@ -58,7 +58,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.reload({waitUntil:'domcontentloaded'});
     await page.waitForFunction(id => window.ArchHubAPI?.getSnapshot().tasks.some(t=>t.id===id&&t.checkpoints?.length===1), task.taskId);
     await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Home',exact:true}).click();
-    await page.locator('.dx-task').filter({hasText:'Checkpoint browser task'}).click();
+    await page.locator('[data-design="home.card"]').filter({hasText:'Checkpoint browser task'}).click();
     await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Canvas',exact:true}).click();
     await page.getByRole('tab', {name:'Checkpoint browser task',exact:true}).waitFor();
     assert.deepEqual(content(await page.evaluate(() => window.ArchHubAPI.getSessionDocument())), content(original));
@@ -103,7 +103,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     assert.ok(Math.abs(after.width-live) < 0.5, JSON.stringify({live,bounds:after.width}));
     await page.reload({waitUntil:'domcontentloaded'});
     await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot') && document.querySelector('[data-home-ready]'));
-    await page.locator('.dx-task').filter({hasText:'Checkpoint browser task'}).dblclick();
+    await page.locator('[data-design="home.card"]').filter({hasText:'Checkpoint browser task'}).dblclick();
     await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width')?.value === 375 && document.getElementById('params')?.offsetWidth === 375);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const reopened = await params.boundingBox();

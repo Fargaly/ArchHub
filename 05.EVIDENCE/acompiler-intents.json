@@ -11466,6 +11466,54 @@
         "02.TESTS/tests_replica/test_baboom_stays_with_archhub.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "UPDATERANCESTOR": {
+      "source": "Founder F415 (T0), 2026-11-18: the header of installed 20261117-2144 shows Update failed. The app's own updater could not apply 2144 from 2008 on 2026-11-17 22:32: its process stop ended the in-folder redirector that owns the update worker, so it exited before Setup and the build was installed by direct Setup instead. The updater keeps the exact process chain its own worker depends on, refuses before Setup when a process it must stop cannot be stopped, confirms a rolled_back or applying marker only against Setup's own inventory and receipt, and counts a failed relaunch as failed. Hidden and isolated tests only; the live update marker is not touched.",
+      "scope": [
+        "01.APP/nodelang/quiet_update.py",
+        "02.TESTS/tests_replica/test_update_release_path.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "KEEPUPDATED": {
+      "source": "Founder F395 KEEP-EVERYTHING-UPDATED (2026-11-16/17): keeping every copy of his work current (workspace backup, office standard, ribbon, sites) is an ArchHub workflow in the app, not an agent chore. Three Library nodes (Copy check, Copy guard, Copy update) work on targets he registers once on one Approve card; a workflow file names target ids only; a target that would run a program is check-only; a public push needs the card and a current guard record for exactly those commits. Git runs config-isolated, reads no work tree, and the guard scans raw objects.",
+      "scope": [
+        "01.APP/nodelang/copy_sync_nodes.py",
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/session_files.py",
+        "02.TESTS/tests_replica/test_copy_sync_nodes.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "HOMELOOK": {
+      "source": "Founder 2026-11-18, with a screenshot of Home on installed 20261117-2144 maximised at 1920x1032: he asked what this look is and where the design is. Items seen in his screenshot: the page stays 1440 wide inside the maximised window, the close button stays lit red, the composer overlaps the Sessions list, live sessions show a raw session id as their name, the selected title is printed three times, BABOOM says a one-word status, the header shows two update states at once and a count that disagrees with the list. Then the approved prototype's Home (the map of the work: session cards in project groups, wires, the Canvas docks, Map parameters in the Home owner) is built on real data. Each cut lands only after an independent check; hidden and isolated tests only.",
+      "scope": [
+        "01.APP/nodelang/baboom_reactions.py",
+        "01.APP/nodelang/window_chrome.py",
+        "01.APP/nodelang/window_commands.py",
+        "01.APP/nodelang/nograph_launcher.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_home_look.py",
+        "02.TESTS/tests_js/home_look.cjs",
+        "02.TESTS/tests_js/home_rows.test.cjs",
+        "02.TESTS/tests_js/home_map.test.cjs",
+        "03.TOOLS/tools/real_app_check/real_app_check.py",
+        "03.TOOLS/tools/real_app_check/scenarios/window_frame.mjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "F419": {
+      "source": "Founder 2026-11-18: he asked to see why the program is slow. Measured on his PC: ArchHub's per-session Workshop connectors burn most of a core each (15 hot at once, whole-PC CPU at 91 percent). Cause read from a live stack sample: delivery_events filters on reply_to and the declared workshop_reply_to index is never created, so every poll of every agent walks every delivery receipt. The declared index is created when the store opens; no write lock once it exists.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_workshop_reply_index.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

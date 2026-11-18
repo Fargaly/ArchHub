@@ -1888,6 +1888,12 @@ api.refreshLibraryPorts=async()=>{
  publish({sessionsFolder:data.directory,libraryPorts:data.items,catalogue:data.items.map(i=>({id:i.id,name:i.title,family:i.cat,description:i.sub,unavailable:!!i.noEngine,soon:i.available===false,reason:i.reason,descriptor:{engine:i.engine}})),graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title})),templates:[...state.templates.filter(row=>String(row.id).startsWith('starter:')),...data.sessions.map(row=>({...row,id:'skill:'+row.id}))]});
  projectFile();return data.items;
 };
+// The Library's own loading state: waiting while the catalogue is read, then its rows, or the refusal with Retry.
+api.loadLibrary=async()=>{
+ publish({libraryStatus:'waiting',libraryError:''});
+ try{const items=await api.refreshLibraryPorts();publish({libraryStatus:'loaded'});return items;}
+ catch(error){notice(error.message);publish({libraryStatus:'error',libraryError:error.message||'The Library could not be read.'});return null;}
+};
 async function refreshGraphs(){return refreshSessionFiles();}
 const refreshSessionFiles=async()=>{const data=await sessionRequest('catalogue');publish({graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title}))});return data.sessions;};
 function libraryNode(item,position){return {id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.engine==='script.python'?{ports:{source:[{id:'result',type:'text'}],target:[{id:'a',type:'text'}]}}:{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),...(item.paramDefs?{paramDefs:copy(item.paramDefs)}:{}),position:{x:position.x,y:position.y??100}};}
@@ -2174,19 +2180,22 @@ api.ready=(async()=>{
  // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
  // The refusal still belongs on the status footer; a later update read must not erase it.
  void settingsAction('readLibraryCollapsed').catch(error=>{const message=error.message||String(error);notice(message);publish({libraryCollapsed:[],connectionNotice:state.connectionNotice&&state.connectionNotice!=='Checking for updates…'?state.connectionNotice:message});});
+ // The Library catalogue reads every saved session file (a cold first start on a full profile takes seconds): it loads after
+ // the splash, and the Library shows that it is loading. The first file's nodes take their ports when it arrives.
+ publish({libraryStatus:'waiting',libraryError:''});
  try{
-  await api.refreshLibraryPorts();
   const initialFile=await sessionRequest('initial');
   if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;if(initialFile.migrationDocument)fileHistory.push(copy(initialFile.migrationDocument));projectFile();}
   else await api.newSession();
  }catch(error){notice(error.message||String(error));try{await api.newSession();}catch(inner){notice(inner.message||String(inner));}}
  publish({learning:{...state.learning,layer:'Host'},connectionNotice:state.connectionNotice||''});
  ready=true;watchRefresh();
- void api.refreshLibraryPorts().catch(error=>notice(error.message));
+ void api.loadLibrary();
  void api.refreshRouter?.().catch(error=>notice(error.message));
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{
-  for(const refresh of [refreshSettingsControls,refreshApplicationUpdate,refreshAccount,refreshGraphs,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
+  // The saved sessions arrive with the Library catalogue above (one read of every file), so the tasks never wait behind a second one.
+  for(const refresh of [refreshSettingsControls,refreshApplicationUpdate,refreshAccount,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
    if(activeSurface==='canvas')break;
    try{await refresh();}catch(error){if(refresh!==refreshApplicationUpdate)publish({connectionNotice:error.message});}
   }

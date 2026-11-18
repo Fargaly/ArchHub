@@ -1,0 +1,202 @@
+// Court 11 (performance) on the compiled Studio over a seeded isolated server: real CDP input, real owners.
+// Prints one JSON line of metrics: frame p95 (pan/zoom/drag), selection feedback, Workshop fold, open canvas,
+// long tasks and requests in an idle window. The Python court asserts the budgets.
+const fs = require('node:fs');
+const path = require('node:path');
+const {chromium} = require('playwright');
+
+const p95 = list => { const s = [...list].sort((a, b) => a - b); return s.length ? +s[Math.min(s.length - 1, Math.ceil(s.length * .95) - 1)].toFixed(1) : null; };
+
+async function court() {
+  const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+  const idleMs = input.idleMs || 20000;
+  const newest = pattern => fs.readdirSync(input.browserCache).filter(name => pattern.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
+  const full = newest(/^chromium-\d+$/), shell = newest(/^chromium_headless_shell-\d+$/);
+  const executablePath = full ? path.join(input.browserCache, full, 'chrome-win64/chrome.exe') : path.join(input.browserCache, shell, 'chrome-headless-shell-win64/chrome-headless-shell.exe');
+  const browser = await chromium.launch({headless: true, executablePath});
+  const out = {errors: []};
+  try {
+    const context = await browser.newContext({viewport: {width: 1440, height: 900}});
+    await context.addCookies([{name: 'archhub_studio', value: input.cookie, url: input.url}]);
+    await context.addInitScript(() => {
+      window.__perf = {long: [], frames: null};
+      new window.PerformanceObserver(list => { for (const e of list.getEntries()) window.__perf.long.push(Math.round(e.duration)); }).observe({type: 'longtask', buffered: true});
+      window.__perfFrames = () => { const f = []; let last = window.performance.now(), on = true; const tick = t => { f.push(t - last); last = t; if (on) requestAnimationFrame(tick); }; requestAnimationFrame(tick); return () => { on = false; return f.slice(1); }; };
+    });
+    const page = await context.newPage();
+    page.on('pageerror', error => out.errors.push(error.message));
+    const requests = [];
+    page.on('request', request => {
+      const url = new URL(request.url()); let key = url.pathname;
+      try { const body = JSON.parse(request.postData() || '{}'); if (body.function) key += '#' + body.function; else if (body.action) key += '#' + body.action; } catch {}
+      requests.push({at: Date.now(), key});
+    });
+    const responses = [];
+    page.on('response', response => responses.push({at: Date.now(), status: response.status()}));
+    const cdp = await context.newCDPSession(page);
+    const mouse = (type, x, y, extra = {}) => cdp.send('Input.dispatchMouseEvent', {type, x, y, ...extra});
+    await cdp.send('Performance.enable');
+    const metric = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value * 1000]));
+        out.splitPerFrameMs = {};
+    // Frame p95 (rAF deltas, vsync-bound) and main-thread work per frame (CDP TaskDuration), which shows cost below one vsync.
+    out.workPerFrameMs = {};
+    const frames = async (gesture, name) => {
+      await page.evaluate(() => { window.__stop = window.__perfFrames(); }); const start = await metric();
+      if (input.profile === name) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.start'); }
+      await gesture();
+      if (input.profile === name) {
+        // Self time by function over the gesture: where the frame work goes.
+        const {profile} = await cdp.send('Profiler.stop'), self = {}, gap = profile.timeDeltas;
+        const byId = new Map(profile.nodes.map(n => [n.id, n]));
+        profile.samples.forEach((id, i) => { const f = byId.get(id).callFrame; const key = f.functionName + ' ' + f.url.split('/').pop() + ':' + (f.lineNumber + 1); self[key] = (self[key] || 0) + (gap[i] || 0) / 1000; });
+        out.profile = Object.entries(self).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, v]) => k + ' ' + v.toFixed(1));
+      }
+      const list = await page.evaluate(() => window.__stop());
+      const end = await metric(), per = key => +((end[key] - start[key]) / Math.max(1, list.length)).toFixed(2);
+      out.workPerFrameMs[name] = per('TaskDuration');
+      out.splitPerFrameMs[name] = {script: per('ScriptDuration'), style: per('RecalcStyleDuration'), layout: per('LayoutDuration')};
+      return p95(list);
+    };
+    // Double-click on empty canvas (fit), sent as CDP input to this headless page only.
+    const fitView = async () => { const x = pane.x + pane.width / 2, y = pane.y + pane.height - 20;
+      for (const clickCount of [1, 2]) { await mouse('mousePressed', x, y, {button: 'left', buttons: 1, clickCount}); await mouse('mouseReleased', x, y, {button: 'left', buttons: 0, clickCount}); } };
+    const nextPaint = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+
+    await page.goto(input.url);
+    const open = page.getByRole('button', {name: 'Open its Canvas', exact: true});
+    await open.waitFor({timeout: 60000});
+    await page.waitForTimeout(3000);  // Home's first reads settle before the click is timed
+    const flow = page.getByLabel('Workflow canvas', {exact: true});
+    const t0 = Date.now();
+    await open.click();
+    await flow.locator('.react-flow__node[data-id="n28"]').waitFor({timeout: 30000});
+    await nextPaint();
+    out.openCanvasMs = Date.now() - t0;
+    out.arrangedOnOpen = await page.evaluate(() => window.ArchHubAPI.getSnapshot().graph.canvasLayout === 'v48');
+    await page.waitForTimeout(2500);
+
+    // Idle: nobody touches the canvas. Long tasks and requests are counted in the same window.
+    await page.evaluate(() => { window.__perf.long = []; });
+    const idleFrom = Date.now(), revision0 = await page.evaluate(() => {
+      // Which state keys each idle publish changed: evidence for what still re-renders.
+      let last = window.ArchHubAPI.getSnapshot(); window.__changed = {};
+      window.ArchHubAPI.subscribe(() => { const next = window.ArchHubAPI.getSnapshot();
+        for (const key of Object.keys(next)) if (key !== 'revision' && next[key] !== last[key]) window.__changed[key] = (window.__changed[key] || 0) + 1;
+        last = next; });
+      return last.revision;
+    });
+    await page.waitForTimeout(idleMs);
+    // Store publishes in the idle window: each one re-renders every subscriber.
+    out.idlePublishesPerMinute = Math.round((await page.evaluate(() => window.ArchHubAPI.getSnapshot().revision) - revision0) * 60000 / idleMs);
+    out.idlePublishedKeys = await page.evaluate(() => window.__changed);
+    const idleResponses = responses.filter(r => r.at >= idleFrom);
+    out.idleResponsesPerMinute = {changed200: Math.round(idleResponses.filter(r => r.status === 200).length * 60000 / idleMs), unchanged304: Math.round(idleResponses.filter(r => r.status === 304).length * 60000 / idleMs)};
+    out.idleLongTasks = await page.evaluate(() => window.__perf.long.filter(d => d > 50));
+    const idle = requests.filter(r => r.at >= idleFrom);
+    const perMinute = {};
+    for (const r of idle) perMinute[r.key] = (perMinute[r.key] || 0) + 1;
+    for (const key of Object.keys(perMinute)) perMinute[key] = Math.round(perMinute[key] * 60000 / idleMs);
+    out.idleRequestsPerMinute = perMinute;
+    out.idleRequestsTotalPerMinute = Math.round(idle.length * 60000 / idleMs);
+
+    const pane = await flow.boundingBox();
+    // Pan: the canvas pans with the middle button (left-drag on the pane is box selection).
+    out.panP95 = await frames(async () => {
+      const x0 = pane.x + pane.width * .5, y0 = pane.y + pane.height - 40;
+      await mouse('mouseMoved', x0, y0); await mouse('mousePressed', x0, y0, {button: 'middle', buttons: 4, clickCount: 1});
+      for (let i = 1; i <= 40; i++) await mouse('mouseMoved', x0 - i * 6, y0 - i * 2, {button: 'middle', buttons: 4});
+      await mouse('mouseReleased', x0 - 240, y0 - 80, {button: 'middle', buttons: 0, clickCount: 1});
+    }, 'pan');
+    out.zoomP95 = await frames(async () => {
+      const x = pane.x + pane.width / 2, y = pane.y + pane.height / 2;
+      for (let i = 0; i < 40; i++) { await mouse('mouseWheel', x, y, {deltaX: 0, deltaY: i < 20 ? -60 : 60}); await page.evaluate(() => new Promise(r => requestAnimationFrame(r))); }
+    }, 'zoom');
+    await fitView();
+    await page.waitForTimeout(800);
+    const box = async id => flow.locator('.react-flow__node[data-id="' + id + '"]').boundingBox();
+    out.dragP95 = await frames(async () => {
+      const b = await box('n10'), x0 = b.x + b.width / 2, y0 = b.y + 14;
+      await mouse('mouseMoved', x0, y0); await mouse('mousePressed', x0, y0, {button: 'left', buttons: 1, clickCount: 1});
+      for (let i = 1; i <= 40; i++) await mouse('mouseMoved', x0 + i * 4, y0 + i * 2, {button: 'left', buttons: 1});
+      await mouse('mouseReleased', x0 + 160, y0 + 80, {button: 'left', buttons: 0, clickCount: 1});
+    }, 'drag');
+    await page.waitForTimeout(800);
+
+    // Selection: fit the view (double-click the empty canvas), then press time to the node's selected class and to the frame painted after it.
+    await fitView();
+    await page.waitForTimeout(800);
+    out.select = [];
+    for (const id of ['n3', 'n7', 'n12', 'n16']) {
+      // The header point of the card that is on top at that point (not under a dock panel).
+      const [x, y] = await page.evaluate(nodeId => {
+        const el = document.querySelector('[aria-label="Workflow canvas"] .react-flow__node[data-id="' + nodeId + '"]'), r = (el.querySelector('.node-header') || el).getBoundingClientRect();
+        for (const fx of [.5, .3, .7, .15, .85]) { const px = r.left + r.width * fx, py = r.top + Math.min(10, r.height / 2); if (document.elementFromPoint(px, py)?.closest('.react-flow__node') === el) return [px, py]; }
+        return [r.left + r.width / 2, r.top + Math.min(10, r.height / 2)];
+      }, id);
+      await page.evaluate(nodeId => {
+        const el = document.querySelector('[aria-label="Workflow canvas"] .react-flow__node[data-id="' + nodeId + '"]');
+        window.__sel = {pressed: 0, selected: 0, painted: 0};
+        window.addEventListener('pointerdown', () => { window.__sel.pressed = window.performance.now(); }, {capture: true, once: true});
+        const seen = () => { if (!window.__sel.selected && el.classList.contains('selected')) { window.__sel.selected = window.performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => { window.__sel.painted = window.performance.now(); })); } };
+        new window.MutationObserver(seen).observe(el, {attributes: true, attributeFilter: ['class']});
+      }, id);
+      await mouse('mouseMoved', x, y);
+      await mouse('mousePressed', x, y, {button: 'left', buttons: 1, clickCount: 1});
+      await mouse('mouseReleased', x, y, {button: 'left', buttons: 0, clickCount: 1});
+      await page.waitForTimeout(700);
+      const sel = await page.evaluate(([px, py]) => ({...window.__sel, hit: document.elementFromPoint(px, py)?.closest('.react-flow__node')?.dataset.id || document.elementFromPoint(px, py)?.className,
+        now: [...document.querySelectorAll('[aria-label="Workflow canvas"] .react-flow__node.selected')].map(el => el.dataset.id)}), [x, y]);
+      out.select.push({id, selectedMs: sel.selected ? Math.round(sel.selected - sel.pressed) : null, paintedMs: sel.painted ? Math.round(sel.painted - sel.pressed) : null, hit: sel.hit, selectedNow: sel.now});
+    }
+
+    // Two quick clicks: the second card stays selected (no deferred echo of the first may revert it).
+    {
+      const point = id => page.evaluate(nodeId => { const r = document.querySelector('[aria-label="Workflow canvas"] .react-flow__node[data-id="' + nodeId + '"] .node-header').getBoundingClientRect(); return [r.left + r.width / 2, r.top + Math.min(10, r.height / 2)]; }, id);
+      for (const id of ['n12', 'n3']) { const [x, y] = await point(id); await mouse('mousePressed', x, y, {button: 'left', buttons: 1, clickCount: 1}); await mouse('mouseReleased', x, y, {button: 'left', buttons: 0, clickCount: 1}); }
+      await page.waitForTimeout(900);
+      out.rapidSelect = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Workflow canvas"] .react-flow__node.selected')].map(el => el.dataset.id));
+    }
+
+    // Click a card, then empty canvas, on a 4x slower CPU: the Inspector must end with nothing selected, every time.
+    {
+      const point = id => page.evaluate(nodeId => { const r = document.querySelector('[aria-label="Workflow canvas"] .react-flow__node[data-id="' + nodeId + '"] .node-header').getBoundingClientRect(); return [r.left + r.width / 2, r.top + Math.min(10, r.height / 2)]; }, id);
+      const click = async (x, y) => { await mouse('mousePressed', x, y, {button: 'left', buttons: 1, clickCount: 1}); await mouse('mouseReleased', x, y, {button: 'left', buttons: 0, clickCount: 1}); };
+      await cdp.send('Emulation.setCPUThrottlingRate', {rate: 4});
+      out.inspectorClears = [];
+      for (const id of ['n3', 'n7', 'n12', 'n16', 'n3', 'n7']) {
+        const [x, y] = await point(id);
+        await click(x, y);
+        await click(pane.x + pane.width / 2, pane.y + pane.height - 20);
+        await page.waitForTimeout(1200);
+        out.inspectorClears.push(await page.evaluate(() => document.querySelector('.shared-properties-selection')?.hidden !== false
+          && !document.querySelector('[aria-label="Workflow canvas"] .react-flow__node.selected')));
+      }
+      await cdp.send('Emulation.setCPUThrottlingRate', {rate: 1});
+    }
+
+    // Workshop fold and open: click to the control's new state, painted.
+    out.workshopToggleMs = [];
+    for (const [from, to] of [['Fold Workshop', 'Open Workshop'], ['Open Workshop', 'Fold Workshop']]) {
+      const button = page.getByRole('button', {name: from, exact: true}).first();
+      await button.waitFor();
+      const b = await button.boundingBox();
+      await page.evaluate(() => { window.addEventListener('pointerdown', () => { window.__press = window.performance.now(); }, {capture: true, once: true}); });
+      await mouse('mouseMoved', b.x + b.width / 2, b.y + b.height / 2);
+      await mouse('mousePressed', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 1, clickCount: 1});
+      await mouse('mouseReleased', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 0, clickCount: 1});
+      const ms = await page.evaluate(label => new Promise(resolve => {
+        const check = () => document.querySelector('[aria-label="' + label + '"]') ? requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(window.performance.now() - window.__press)))) : requestAnimationFrame(check);
+        check();
+      }), to);
+      out.workshopToggleMs.push(ms);
+      await page.waitForTimeout(600);
+    }
+  } catch (error) {
+    out.errors.push(error.stack || String(error));
+  } finally {
+    await browser.close();
+  }
+  console.log('PERF ' + JSON.stringify(out));
+  process.exit(out.errors.length ? 1 : 0);
+}
+court();

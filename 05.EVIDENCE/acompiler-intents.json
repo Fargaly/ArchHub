@@ -11582,7 +11582,8 @@
         "02.TESTS/tests_js/studio_sessionwork.test.cjs",
         "02.TESTS/tests/test_boot_splash.py",
         "02.TESTS/tests_js/boot_splash.cjs",
-        "01.APP/nodelang/workshop_mailbox.py"
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/baboom_work_presence.py"
       ]
     },
     "F419": {

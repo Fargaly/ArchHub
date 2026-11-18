@@ -153,17 +153,21 @@ _SOON = {'value': None, 'asked': threading.Event(), 'worker': None, 'failure': '
 
 
 def _read_when_asked():
-    while True:
-        _SOON['asked'].wait()
-        _SOON['asked'].clear()
-        if _SOON['worker'] is not threading.current_thread():
-            return  # stopped (the app closes) or replaced
-        try:
-            _SOON['value'], _SOON['failure'] = latest(), ''
-        except Exception as error:  # noqa: BLE001 - the worker outlives a raising read: a dead one is started again on every poll
-            if repr(error) != _SOON['failure']:  # one line per failure, not one per poll
-                _LOG.warning('BABOOM reaction read failed: %r', error)
-            _SOON['failure'], _SOON['value'] = repr(error), None
+    from .workshop_mailbox import close_thread_watch
+    try:
+        while True:
+            _SOON['asked'].wait()
+            _SOON['asked'].clear()
+            if _SOON['worker'] is not threading.current_thread():
+                return  # stopped (the app closes) or replaced
+            try:
+                _SOON['value'], _SOON['failure'] = latest(), ''
+            except Exception as error:  # noqa: BLE001 - the worker outlives a raising read: a dead one is started again on every poll
+                if repr(error) != _SOON['failure']:  # one line per failure, not one per poll
+                    _LOG.warning('BABOOM reaction read failed: %r', error)
+                _SOON['failure'], _SOON['value'] = repr(error), None
+    finally:
+        close_thread_watch()  # its kept Workshop connection closes in this thread, never later from another one
 
 
 def stop_soon():

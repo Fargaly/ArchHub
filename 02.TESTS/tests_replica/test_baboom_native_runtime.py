@@ -246,3 +246,26 @@ def test_baboom_polls_reuse_one_workshop_connection_and_parse_declarations_once_
     baboom_reactions.latest()
     assert watch._records is not parsed                         # a commit: parsed afresh, once
     watch.close()
+
+def test_the_reaction_worker_closes_its_workshop_connection_in_its_own_thread(monkeypatch):
+    # Review: a dead worker's kept connection was closed later from another thread ("SQLite objects created in a
+    # thread can only be used in that same thread") and lingered until garbage collection.
+    from pathlib import Path
+    import threading
+    import time
+    from nodelang import baboom_reactions, workshop_mailbox
+    from nodelang.workshop_mailbox import call
+    call('declare', {'task': 'reaction worker', 'paths': [str(Path.cwd())], 'status': 'working', 'request_id': 'F419'},
+         {'threadId': 'reaction-worker'})
+    closed = []
+    real = workshop_mailbox._StoreWatch.close
+    monkeypatch.setattr(workshop_mailbox._StoreWatch, 'close',
+                        lambda self: closed.append(threading.current_thread().name) or real(self))
+    monkeypatch.setitem(baboom_reactions._SOON, 'worker', None)
+    baboom_reactions.latest_soon()                              # the worker opens its kept connection on the read
+    worker = baboom_reactions._SOON['worker']
+    time.sleep(1)                                               # one read done: the worker holds its connection
+    baboom_reactions.stop_soon()
+    worker.join(10)
+    assert not worker.is_alive()
+    assert closed == ['baboom-reactions']                       # closed once, by the worker itself

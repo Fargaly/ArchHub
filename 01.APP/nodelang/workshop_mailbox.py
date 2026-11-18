@@ -894,6 +894,14 @@ def thread_watch(timeout_seconds):
     return held[1]
 
 
+def close_thread_watch():
+    """The calling thread is ending: its kept watcher closes here, in the thread that opened it."""
+    held = getattr(_THREAD_WATCH, 'held', None)
+    _THREAD_WATCH.held = None
+    if held is not None:
+        held[1].close()
+
+
 def _pending(history, identity, runtime, records=None):
     snapshot = not history._db.in_transaction
     if snapshot:

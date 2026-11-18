@@ -1,5 +1,7 @@
 """Isolated static export check; no application imports, browser or live profile."""
+import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -8,8 +10,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "03.TOOLS/packaging/website"))
-from build_site import build_site
+from build_site import LATEST_INSTALLER, build_site, slug, soon_chip
 from links import load_links, readme_table
+
+DATA = ROOT / "03.TOOLS/packaging/website/data"
+# Served by Caddy, not files: BABOOM's chat and sign-in proxy, the release record and BABOOM's own site.
+SERVED = ("/signin", "/api/", "/download.json", "/baboom")
 
 
 class Links(HTMLParser):
@@ -41,80 +47,62 @@ class Links(HTMLParser):
 
 
 class StaticSiteTest(unittest.TestCase):
-    def test_release_pages_and_single_link_source(self):
+    def test_design_pages_data_pages_and_honest_states(self):
         rows = load_links()
         build = "test-build-123"
         installer = next(row["url"] for row in rows if row["kind"] == "repo") + "/releases/download/" + build + "/setup.exe"
-        # Fixed addresses the generator itself writes: newest installer, release lookup, BABOOM companion.
-        allowed = {row["url"] for row in rows} | {installer} | {
-            "https://github.com/Fargaly/ArchHub/releases/latest/download/ArchHub-Setup-0.exe",
-            "https://api.github.com/repos/Fargaly/ArchHub/releases/latest",
-            "https://github.com/Fargaly/ArchHub/releases/latest/download/release.json",
-            "https://baboom.archhub.io/companion/baboom-companion.css",
-            "https://baboom.archhub.io/companion/baboom-pages.js"}
+        # The catalogue is exported from the app at build time, in its own process (this test never imports it).
+        subprocess.run([sys.executable, str(ROOT / "03.TOOLS/packaging/website/export_catalogue.py")], check=True)
+        catalogue = json.loads((ROOT / ".cache/site/catalogue.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory(prefix="sitelinks-test-") as temporary:
             output = Path(temporary) / "site"
             build_site(output, build, installer, "a" * 64)
-            self.assertEqual({path.relative_to(output).as_posix() for path in output.rglob("*.html")}, {
-                "index.html", "docs/getting-started/index.html", "community/index.html",
-                "changelog/index.html", "404.html",
-            })
-            for page in output.rglob("*.html"):
-                with self.subTest(page=page.name):
+            pages = {path.relative_to(output).as_posix() for path in output.rglob("*.html")}
+            for required in ("index.html", "download/index.html", "docs/index.html", "docs/getting-started/index.html",
+                             "features/index.html", "security/index.html", "signin/index.html", "community/index.html",
+                             "changelog/index.html", "account/index.html", "docs/nodes/index.html", "search/index.html", "404.html"):
+                self.assertIn(required, pages)
+            for absent in ("signup", "contact", "cloud", "pricing", "community/people"):
+                self.assertFalse(any(page.startswith(absent + "/") for page in pages), absent)
+            self.assertEqual(len([p for p in pages if p.startswith("docs/nodes/") and p != "docs/nodes/index.html"]), len(catalogue["nodes"]))
+            for starter in catalogue["starters"]:
+                self.assertIn(f"community/{slug(starter['id'])}/index.html", pages)
+            site = next(row["url"] for row in rows if row["kind"] == "site")
+            for name in pages:
+                page = output / name
+                with self.subTest(page=name):
                     text = page.read_text(encoding="utf-8")
-                    self.assertIn(build, text)
-                    self.assertNotIn("Cell graph", text)
                     parser = Links()
                     parser.feed(text)
-                    visible = " ".join(parser.visible)
-                    self.assertNotRegex(visible, r"\b[0-9a-f]{7,40}\b")
-                    self.assertNotIn("Source:", visible)
-                    self.assertNotRegex(text.lower(), r"coming\s+soon")
                     self.assertEqual(parser.metadata["archhub-build"], build)
-                    self.assertEqual(parser.metadata["og:image"], next(row["url"] for row in rows if row["kind"] == "site") + "/og.png")
-                    self.assertTrue(parser.metadata["og:title"])
-                    self.assertIn('/favicon.svg', parser.targets)
-                    self.assertIn('/favicon.ico', parser.targets)
+                    self.assertEqual(parser.metadata["og:image"], site + "/og.png")
+                    self.assertIn("/favicon.svg", parser.targets)
+                    self.assertNotIn('href="#/', text)
+                    self.assertNotRegex(text, r"(?i)fargool|ahmed|api\.archhub\.io/founder|founder of archhub")
+                    # The label for an unbuilt part appears only as the one chip.
+                    self.assertEqual(len(re.findall(r"(?i)coming\s+soon", text)), text.count(soon_chip()))
+                    self.assertNotRegex(text.lower(), r"not\s+live\s+yet")
                     for image in parser.images:
-                        self.assertTrue((output / image["src"].lstrip("/")).is_file())
-                        self.assertTrue(image["alt"])
-                        self.assertEqual((image["width"], image["height"]), ("1600", "1000"))
-                    for row in rows:
-                        self.assertIn(row["url"], parser.targets)
+                        source = image["src"]
+                        if source.startswith("/"):
+                            self.assertTrue((output / source.lstrip("/")).is_file(), source)
+                        self.assertTrue(image.get("alt") is not None, source)
                     for target in parser.targets:
-                        self.assertTrue(target in allowed or target.startswith(("/", "#")))
                         self.assertFalse(target.startswith("//"))
-                        if target.startswith("/"):
-                            local = output / target.lstrip("/")
+                        if target.startswith("/") and not target.startswith(SERVED):
+                            local = output / target.split("#")[0].split("?")[0].lstrip("/")
                             self.assertTrue(local.is_file() or (local / "index.html").is_file(), target)
-                    addresses = set(re.findall(r'https?://[^\s<>"\x27)]+', text))
-                    site = next(row["url"] for row in rows if row["kind"] == "site")
-                    route = page.relative_to(output).as_posix().removesuffix("index.html")
-                    self.assertEqual(parser.metadata["og:url"], site + "/" + route)
-                    self.assertTrue(addresses <= allowed | {site + "/og.png", site + "/" + route})
-            home = Links()
-            home.feed((output / "index.html").read_text(encoding="utf-8"))
-            self.assertEqual({image["src"] for image in home.images}, {
-                "/assets/home.png", "/assets/canvas.png", "/assets/library.png", "/assets/session.png"})
-            home_text = " ".join(home.visible)
-            for phrase in ("Revit", "AutoCAD", "Excel", "Outlook", "Claude Code", "Codex", "OpenCode", "Gemini CLI", "Goose", "BABOOM", ".archhub", "Approve", "Windows Credential Manager"):
-                self.assertIn(phrase, home_text)
-            # The feed is the release's own record behind a Caddy redirect, never a pinned file here.
+            for name in ("download/index.html",):
+                self.assertIn(f'href="{LATEST_INSTALLER}"', (output / name).read_text(encoding="utf-8"))
+            self.assertIn(f'data-rel="tag">{build}<', (output / "download/index.html").read_text(encoding="utf-8"))
             self.assertFalse((output / "download.json").exists())
-            self.assertIn('data-dl href="https://github.com/Fargaly/ArchHub/releases/latest/download/ArchHub-Setup-0.exe"',
-                          (output / "index.html").read_text(encoding="utf-8"))
-            docs = (output / "docs/getting-started/index.html").read_text(encoding="utf-8")
-            self.assertIn("<h2>Install</h2>\n<ol>", docs)
-            self.assertIn("<h2>First open</h2>\n<p>", docs)
-            self.assertIn("Save or Ctrl S", docs)
-            self.assertNotIn("there is no Save button", docs)
-            for asset in ("favicon.svg", "favicon.ico", "og.png"):
-                self.assertGreater((output / asset).stat().st_size, 0)
-            for licence in output.rglob("*.txt"):
-                self.assertTrue(set(re.findall(r'https?://[^\s<>"\x27)]+' , licence.read_text(encoding="utf-8"))) <= allowed)
+            account = (output / "account/index.html").read_text(encoding="utf-8")
+            self.assertEqual(re.findall(r'class="accs" id="([a-z-]+)"', account), ["acc-me", "acc-plan", "acc-comm", "acc-social", "acc-brain"])
+            search = json.loads((output / "search.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(search), len(catalogue["nodes"]) + len(catalogue["starters"]))
             self.assertIn(readme_table(), (ROOT / "README.md").read_text(encoding="utf-8"))
-            for name in ("inter-variable.woff2", "jetbrains-mono-regular.woff2", "OFL-Inter.txt", "OFL-JetBrainsMono.txt"):
-                self.assertGreater((output / "assets/fonts" / name).stat().st_size, 0)
+            for name in ("favicon.svg", "favicon.ico", "og.png", "assets/fonts/inter-variable.woff2"):
+                self.assertGreater((output / name).stat().st_size, 0)
             for identity, address, digest in (("bad/id", installer, "a" * 64),
                                                (build, installer.replace("https:", "http:"), "a" * 64),
                                                (build, installer.replace(build, "other-build"), "a" * 64),

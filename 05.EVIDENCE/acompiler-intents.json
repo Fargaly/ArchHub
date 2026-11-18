@@ -11637,6 +11637,17 @@
         "06.CLOUD/cloud_backend/tests/test_cockpit_admin_panel.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "SESSIONTARGET": {
+      "source": "Founder 2026-11-18: when I talk in the composer inside a session it must talk in the Workshop with that session's agents, not start a new session. Design v63 rows C1-C2: inside a session Send goes to that session's thread and its agents; All agents means this session's agents; it never creates a session; BABOOM only by explicit pick; every pick clears when moving to another session. Found on installed 20261118-1808: the canvas composer defaulted to BABOOM inside a session.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "02.TESTS/tests/test_session_composer.py",
+        "02.TESTS/tests_js/session_composer_live.cjs",
+        "02.TESTS/tests_js/studio_session_target.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

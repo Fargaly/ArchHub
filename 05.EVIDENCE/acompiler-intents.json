@@ -11575,7 +11575,9 @@
         "05.EVIDENCE/acompiler-intents.json",
         "01.APP/nodelang/baboom_nograph.py",
         "02.TESTS/tests_replica/test_baboom_nograph.py",
-        "01.APP/nodelang/site_export.py"
+        "01.APP/nodelang/site_export.py",
+        "02.TESTS/tests/test_home_reopen_185.py",
+        "02.TESTS/tests_js/home_reopen_185.cjs"
       ]
     },
     "F419": {

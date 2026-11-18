@@ -7,6 +7,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+from importlib import import_module
 import json
 import logging
 import os
@@ -367,6 +368,35 @@ def _installed_matches_target(app_dir, data):
     return target is not None and _installed_build_time(app_dir, current) == target
 
 
+def _installed_inventory_matches(app_dir):
+    """The same manifest Setup verified against its embedded digest before publishing BUILD_ID."""
+    # ArchHub.vbs also starts this module by file path.
+    inventory = import_module(".host_addin_retarget", __package__) if __package__ else import_module("host_addin_retarget")
+
+    app_dir = Path(app_dir)
+    manifest, receipt = app_dir / "source-manifest.tsv", app_dir / inventory.RECEIPT
+    for path in (manifest, receipt, app_dir / "BUILD_ID"):
+        _plain(path)
+    with manifest.open("rb") as stream:
+        raw = stream.read(_RELEASE_BYTES + 1)
+    with receipt.open("rb") as stream:
+        installed = stream.read(_RELEASE_BYTES + 1)
+    if len(raw) > _RELEASE_BYTES or len(installed) > _RELEASE_BYTES:
+        return False
+    evidence = json.loads(installed, object_pairs_hook=_unique_object)
+    if (type(evidence) is not dict or evidence.get("manifest") != raw.decode("utf-8")
+            or type(evidence.get("installed_at_ns")) is not int
+            or not 0 < evidence["installed_at_ns"] <= (app_dir / "BUILD_ID").stat().st_mtime_ns):
+        return False
+    for relative, digest in inventory.manifest_rows(raw).items():
+        path = app_dir / relative
+        _plain(path)
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                return False
+    return True
+
+
 def _ordering_refusal(app_dir, data, current):
     if not current:
         return "Installed build identity is missing; update ordering is unavailable."
@@ -597,32 +627,39 @@ def _rollback(updates, app, data, reason):
     return {**data, "confirmed": False, "rolled_back": False, "reason": reason}
 
 
-def _status(updates, app_dir, *, verify_confirmed=False):
+def _read_stage_marker(updates):
     marker = updates / "staged.json"
     _plain(marker)
-    if not marker.exists():
-        return {"staged": False, "build_id": "", "status": "none", "reason": "nothing staged"}
     with marker.open("rb") as stream:
         raw = stream.read(16385)
     if len(raw) > 16384:
         raise ValueError("staged marker exceeds size budget")
-    data = json.loads(raw)
+    data = json.loads(raw, object_pairs_hook=_unique_object)
     if (not isinstance(data, dict) or not isinstance(data.get("build_id"), str)
             or not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", data["build_id"])
             or not isinstance(data.get("sha256"), str)
             or not re.fullmatch(r"[0-9a-fA-F]{64}", data["sha256"])):
         raise ValueError("staged identity invalid")
+    return data
+
+
+def _status(updates, app_dir, *, verify_confirmed=False, reconcile=False):
+    try:
+        data = _read_stage_marker(updates)
+    except FileNotFoundError:
+        return {"staged": False, "build_id": "", "status": "none", "reason": "nothing staged"}
     phase = data.get("phase", "staged")
     if phase not in ("staged", "applying", "awaiting_boot", "confirmed", "rolled_back"):
         raise ValueError("staged phase invalid")
-    if phase == "rolled_back":
-        reason = " ".join(str(data.get("rollback_reason") or "").split())[:512]
-        return {**data, "staged": False, "retained": True, "status": phase,
-                "reason": "Previous build restored after a failed update; "
-                          + (reason + "; " if reason else "")
-                          + "waiting for a newer release."}
     target = updates / ASSET_NAME
     current = installed_build_id(app_dir)
+    resume_direct_install = phase == "rolled_back" and reconcile and current == data["build_id"]
+    if phase == "rolled_back" and not resume_direct_install:
+        recorded_reason = " ".join(str(data.get("rollback_reason") or "").split())[:512]
+        reason = ("Matching build needs verification at boot." if current == data["build_id"]
+                  else "Previous build restored after a failed update; "
+                  + (recorded_reason + "; " if recorded_reason else "") + "waiting for a newer release.")
+        return {**data, "staged": False, "retained": True, "status": phase, "reason": reason}
     if phase == "applying":
         # The attempt reservation survives loss or alteration of its package.
         # Returning 'unavailable' here would let a launcher boot partial code.
@@ -639,12 +676,12 @@ def _status(updates, app_dir, *, verify_confirmed=False):
     # A confirmed package is retained evidence, not an executable candidate.
     # Avoid reading up to 1 GiB on each normal startup. Effect paths opt in.
     confirmed_current = phase == "confirmed" and current == data["build_id"]
-    if (verify_confirmed or not confirmed_current) and _digest(target) != data["sha256"].lower():
-        raise ValueError("staged installer no longer matches published SHA-256")
+    if verify_confirmed or not confirmed_current:
+        if _digest(target) != data["sha256"].lower():
+            raise ValueError("staged installer no longer matches published SHA-256")
     _plain(target)
-    status = "awaiting_boot" if current == data["build_id"] and phase == "staged" else phase
+    status = "awaiting_boot" if resume_direct_install or (current == data["build_id"] and phase == "staged") else phase
     if status == "staged":
-        json.loads(raw, object_pairs_hook=_unique_object)
         refusal = _ordering_refusal(app_dir, data, current)
         if refusal:
             # This exact owned package remains evidence; it is not a ready
@@ -718,10 +755,10 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             if channel != "stable" and _published_prerelease(opener, channel):
                 # A preview may be staged for the Update button. Auto-install refuses it.
                 latest = {**latest, "prerelease": True}
-            if held.get("status") == "rolled_back" and latest["build_id"] == held["build_id"]:
-                return {**held, "staged": False}
             if not current:
                 return {"staged": False, "reason": "Installed build identity is missing; install a versioned ArchHub release first.", "build_id": ""}
+            if held.get("status") == "rolled_back" and latest["build_id"] == held["build_id"]:
+                return {**held, "staged": False}
             if latest["build_id"] == current:
                 return {"staged": False, "reason": "up to date", "build_id": current}
             refusal = _ordering_refusal(app_dir, latest, current)
@@ -776,37 +813,54 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
 
     A leftover executable under the install folder held a file, the silent replace failed
     with Windows error 32 (file in use), and the suppressed dialog answered Abort.
-    The process running this update is left alive so it can start the installer.
+    The out-of-folder updater and its Windows venv redirector must survive Setup.
     A supervisor outside the install folder, including agent connectors, is not stopped
     and is not a reason to refuse the update.
     """
     import psutil
     root = Path(app_dir).resolve()
-    me = os.getpid()
-    stopped = []
+    updater = psutil.Process()
+    ancestors = [ancestor.pid for ancestor in updater.parents()]
+    candidates = []
     for process in (process_iter or psutil.process_iter)(["pid", "exe"]):
         try:
-            if process.info.get("pid") == me:
-                continue
+            pid = process.info.get("pid")
             exe = process.info.get("exe")
-            if exe and Path(exe).resolve().is_relative_to(root):
-                process.terminate()
-                stopped.append(process)
+            executable = Path(exe).resolve() if exe else None
         except (psutil.Error, OSError, ValueError):
             continue
+        if pid == updater.pid or not executable or not executable.is_relative_to(root):
+            continue
+        if pid in ancestors:
+            if (os.name == "nt" and pid == ancestors[0] and executable.parent == root / ".venv" / "Scripts"
+                    and executable.name in ("python.exe", "pythonw.exe")
+                    and executable == Path(sys.executable).resolve()
+                    and not Path(updater.exe()).resolve().is_relative_to(root)):
+                continue
+            raise ValueError("An in-folder launcher must release the install before Setup")
+        candidates.append(process)
+    stopped = []
+    for process in candidates:
+        try:
+            process.terminate()
+            stopped.append(process)
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.AccessDenied as error:
+            raise OSError("runtime process %d refused termination" % process.pid) from error
     if stopped:
         _gone, alive = psutil.wait_procs(stopped, timeout=wait_seconds)
-        refused = []
         for process in alive:
             try:
                 process.kill()
             except psutil.NoSuchProcess:
                 continue  # it exited between the wait and the kill
             except psutil.Error as error:
-                refused.append("%d (%s)" % (process.pid, type(error).__name__))
-        if refused:
-            # Better to refuse the update than let the silent installer abort mid-replace.
-            raise OSError("runtime processes could not be stopped: " + ", ".join(refused))
+                raise OSError("runtime process %d could not be stopped" % process.pid) from error
+        if alive:
+            _, remaining = psutil.wait_procs(alive, timeout=wait_seconds)
+            if remaining:
+                raise OSError("runtime processes still running: " + ", ".join(str(p.pid) for p in remaining))
     return [process.pid for process in stopped]
 
 
@@ -838,6 +892,11 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             refusal = _ordering_refusal(app_dir, data, installed_build_id(app_dir))
             if refusal:
                 return {**data, "staged": False, "applied": False, "status": "not_ready", "reason": refusal}
+            if stop_runtime is not None:
+                try:
+                    stop_runtime(Path(app_dir))
+                except (OSError, ValueError) as exc:
+                    return {**data, "applied": False, "status": "failed", "reason": str(exc)}
             _discard_rollback_copy(updates)
             _marker(updates, {**data, "phase": "applying"})
             attempted_build = data["build_id"]
@@ -846,8 +905,6 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             options = {"timeout": None, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
             setup_log = updates / 'setup.log'
             setup_log.unlink(missing_ok=True)
-            if stop_runtime is not None:
-                stop_runtime(Path(app_dir))
             # /NOCLOSEAPPLICATIONS wins over the script default. /CLOSEAPPLICATIONS
             # and /FORCECLOSEAPPLICATIONS make Restart Manager ask every process
             # that holds a file under the install directory to quit. Revit holds
@@ -896,17 +953,17 @@ def begin_update_boot(state_dir: Path, app_dir: Path) -> dict:
     try:
         with _locked(state_dir) as updates:
             _discard_rollback_copy(updates)
-            data = _status(updates, app_dir)
+            data = _status(updates, app_dir, reconcile=True)
             # Setup wrote BUILD_ID after copying; the owner may have exited
             # before recording its result. Let the matching new app prove boot.
             # There is no product-sized rollback copy, so an unconfirmed boot
             # stays on the installed build instead of restoring one.
-            if (data.get("status") == "applying" and data.get("bytes_verified")
-                    and _installed_matches_target(app_dir, data)):
+            if data.get("status") in ("applying", "awaiting_boot"):
+                if not (data.get("bytes_verified") and _installed_matches_target(app_dir, data)
+                        and _installed_inventory_matches(app_dir)):
+                    return {**data, "status": "applying", "reason": "installed payload requires reconciliation"}
                 _marker(updates, {**data, "phase": "awaiting_boot", "boot_started": True})
                 return {**data, "status": "awaiting_boot", "boot_started": True}
-            if data.get("status") == "awaiting_boot":
-                _marker(updates, {**data, "phase": "awaiting_boot", "boot_started": True})
             return data
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         # A pending install must never degrade into a normal startup on error.
@@ -938,14 +995,15 @@ def confirm_applied(state_dir: Path, app_dir: Path, *, rollback=True) -> dict:
                     return _rollback(updates, app_dir, data, "installed BUILD_ID does not match staged build")
                 return {**data, "confirmed": False, "reason": "installed BUILD_ID does not match staged build"}
             try:
-                matching = _installed_matches_target(app_dir, data)
+                matching = (_installed_matches_target(app_dir, data)
+                            and (data["status"] == "confirmed" or _installed_inventory_matches(app_dir)))
             except (OSError, ValueError):
                 matching = False
             if not matching:
                 if rollback:
-                    return _rollback(updates, app_dir, data, "installed build metadata does not match the staged release")
+                    return _rollback(updates, app_dir, data, "installed build metadata or source inventory does not match the staged release")
                 return {**data, "confirmed": False,
-                        "reason": "installed build metadata does not match the staged release; reconciliation required"}
+                        "reason": "installed build metadata or source inventory does not match the staged release; reconciliation required"}
             _discard_rollback_copy(updates)
             _marker(updates, {**data, "phase": "confirmed"})
             return {**data, "confirmed": True, "status": "confirmed", "reason": "successful boot acknowledged"}
@@ -1158,10 +1216,41 @@ def _claim_maintainer(app_dir: Path) -> bool:
     return True
 
 
-def _relaunch(app_dir: Path) -> None:
+def _relaunch(app_dir: Path):
     system = os.environ.get("SystemRoot", r"C:\Windows")
-    subprocess.Popen([str(Path(system) / "System32" / "wscript.exe"), str(Path(app_dir) / "ArchHub.vbs")],
-                     close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return subprocess.Popen([str(Path(system) / "System32" / "wscript.exe"), str(Path(app_dir) / "ArchHub.vbs")],
+                            close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _reopen_after_update(state: Path, app_dir: Path, build_id: str, *, sleep) -> bool:
+    """Use the desktop's existing boot acknowledgment to settle the update."""
+    from nodelang.canvas_triggers import TRIGGER_NODE
+
+    file_interval = TRIGGER_NODE["params"]["file_poll_floor_seconds"]
+    for _ in range(2):
+        launcher = None
+        if not _desktop_running():
+            try:
+                launcher = _relaunch(app_dir)
+            except OSError as error:
+                append_update_log(state, "update: error relaunch failed (%s)" % type(error).__name__)
+                continue
+        checks = 0
+        while boot_acknowledgment(False, False, checks) == "wait":
+            try:
+                marker = _read_stage_marker(state / "updates")
+            except (OSError, ValueError):
+                marker = {}
+            if marker.get("build_id") == build_id and marker.get("phase") == "confirmed":
+                return True
+            if launcher is not None and launcher.poll() is not None and not _desktop_running():
+                append_update_log(state, "update: desktop launcher exited before confirming Studio boot")
+                break
+            sleep(file_interval)
+            checks += 1
+        else:
+            break
+    return False
 
 
 def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) -> int:
@@ -1189,11 +1278,10 @@ def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) 
                     applied = apply_staged(state, app_dir, stop_runtime=stop_runtime_processes)
                     if applied.get("applied"):
                         append_update_log(state, "update: installed %s" % applied.get("build_id"))
-                        try:
-                            _relaunch(app_dir)
-                        except OSError as error:
-                            append_update_log(state, "update: error relaunch failed (%s)" % type(error).__name__)
-                        return 0
+                        if _reopen_after_update(state, app_dir, applied["build_id"], sleep=sleep):
+                            return 0
+                        append_update_log(state, "update: error installed build did not confirm Studio boot; installer retained")
+                        return 1
                     if applied.get("status") in ("failed", "unavailable") or "fail" in str(applied.get("reason") or "").lower():
                         append_update_log(state, "update: error %s" % applied.get("reason"))
         except Exception as exc:

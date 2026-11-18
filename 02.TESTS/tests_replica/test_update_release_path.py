@@ -20,6 +20,10 @@ import re
 import sqlite3
 import shutil
 import subprocess
+from textwrap import dedent
+import time
+from types import SimpleNamespace
+import venv
 
 import pytest
 
@@ -34,6 +38,157 @@ _spec.loader.exec_module(offer_check)
 REVISION = "72bcaaecc5c3c69d83a3155c9b691c9b8cf5d8d1"
 # Match the existing snapshot courts: inbox PowerShell runs inside release jobs.
 PWSH = shutil.which("powershell") or shutil.which("pwsh")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Uses the Windows venv redirector")
+@pytest.mark.parametrize("safe", [True, False])
+def test_update_checks_windows_venv_redirector_before_setup(tmp_path, safe):
+    import psutil
+
+    release = _build_output(tmp_path / "release", "20261117-2144-ac0151d", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20261117-2008-e924eb9", "2026-11-17T16:08:00Z")
+    state = _fixture_state(tmp_path / "updater-state")
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    environment = app / (".venv" if safe else "other-launcher")
+    venv.EnvBuilder(with_pip=False).create(environment)
+    python = environment / "Scripts/python.exe"
+    evidence = tmp_path / "invoked-setup.txt"
+    worker = dedent("""
+        import os, subprocess, sys
+        from pathlib import Path
+
+        sys.path[:0] = sys.argv[1:3]
+        from nodelang import quiet_update as qu
+        import psutil
+
+        app, state, evidence = map(Path, sys.argv[3:6])
+        safe = sys.argv[6] == "safe"
+        redirector = psutil.Process(os.getppid())
+        assert Path(redirector.exe()).resolve() == Path(sys.executable).resolve()
+        redirector.info = {"pid": redirector.pid, "exe": redirector.exe()}
+
+        def cleanup(directory):
+            # The only termination candidate is this disposable process's own redirector.
+            assert qu.stop_runtime_processes(directory, process_iter=lambda _attrs: [redirector]) == []
+
+        def setup(argv, **kwargs):
+            assert Path(argv[0]) == state / "updates" / qu.ASSET_NAME
+            assert "/DIR=" + str(app) in argv and "/NOCLOSEAPPLICATIONS" in argv
+            with evidence.open("x", encoding="utf-8") as proof:
+                proof.write("Setup reached once")
+            return subprocess.CompletedProcess(argv, 17)
+
+        result = qu.apply_staged(state, app, runner=setup, stop_runtime=cleanup)
+        if safe:
+            assert result["status"] == "failed" and "exit 17" in result["reason"], result
+        else:
+            assert result["status"] == "failed" and "in-folder launcher" in result["reason"], result
+    """)
+    result = subprocess.run([str(python), "-I", "-B", "-c", worker,
+                             str(Path(qu.__file__).resolve().parents[1]),
+                             str(Path(psutil.__file__).resolve().parents[1]),
+                             str(app), str(state), str(evidence), "safe" if safe else "refuse"],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=25,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr, qu.staged_update(state, app))
+    if safe:
+        assert evidence.read_text(encoding="utf-8") == "Setup reached once"
+    else:
+        assert not evidence.exists()
+    assert qu.staged_update(state, app)["status"] == "staged"
+
+
+@pytest.mark.parametrize("denied", [True, False])
+def test_setup_refuses_an_unreleased_process(tmp_path, monkeypatch, denied):
+    import psutil
+    from unittest.mock import Mock
+
+    release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "old", "2026-11-17T16:08:00Z")
+    state = tmp_path / "updater-state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    process = Mock(pid=2000000000)
+    process.info = {"pid": process.pid, "exe": str(app / "worker.exe")}
+    if denied:
+        process.terminate.side_effect = psutil.AccessDenied(process.pid)
+    monkeypatch.setattr(psutil, "process_iter", lambda _attrs: [process])
+    wait = Mock(return_value=([], [process]))
+    monkeypatch.setattr(psutil, "wait_procs", wait)
+    setup = Mock()
+    result = qu.apply_staged(state, app, runner=setup)
+    assert result["status"] == "failed" and not result["applied"] and result["staged"]
+    assert str(process.pid) in result["reason"]
+    assert wait.call_count == (0 if denied else 2)
+    setup.assert_not_called()
+    assert qu.staged_update(state, app)["status"] == "staged"
+
+
+@pytest.mark.parametrize("phase", ["rolled_back", "applying", "awaiting_boot", "staged"])
+@pytest.mark.parametrize("damage", [None, "missing", "changed"])
+def test_boot_reconciles_a_matching_build_installed_by_direct_setup(tmp_path, phase, damage):
+    release = _build_output(tmp_path / "release", "20261117-2144-ac0151d", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20261117-2008-e924eb9", "2026-11-17T16:08:00Z")
+    state = _fixture_state(tmp_path / "updater-state")
+    opener = _local_github(release)
+    staged = qu.stage_if_newer(state, app, opener=opener)
+    qu._marker(state / "updates", {**staged, "phase": phase, "rollback_reason": "Previous attempt failed"})
+
+    calls = []
+    _fake_installer(calls)([staged["installer"], "/DIR=" + str(app)])
+    if damage:
+        member = app / "nodelang" / "__release_marker__.py"
+        if damage == "missing":
+            member.unlink()
+        else:
+            member.write_text("not the installed manifest member")
+        assert qu.begin_update_boot(state, app)["status"] == "applying"
+        assert qu.confirm_applied(state, app).get("confirmed") is False
+        assert qu._read_stage_marker(state / "updates")["phase"] == phase
+        return
+    assert qu.begin_update_boot(state, app)["status"] == "awaiting_boot"
+    assert qu.staged_update(state, app)["status"] == "awaiting_boot"
+    assert qu.confirm_applied(state, app)["status"] == "confirmed"
+    assert qu.staged_update(state, app)["status"] == "confirmed"
+    assert qu.stage_if_newer(state, app, opener=opener)["reason"] == "up to date"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("confirms", [True, False])
+def test_maintainer_recovers_a_failed_launcher_and_requires_boot_ack(tmp_path, monkeypatch, confirms):
+    from nodelang.canvas_triggers import TRIGGER_NODE
+
+    monkeypatch.setitem(TRIGGER_NODE["params"], "file_poll_floor_seconds", 7)
+    state = tmp_path / "state"
+    updates = state / "updates"
+    updates.mkdir(parents=True)
+    app = tmp_path / "ArchHub"
+    build_id = "20261117-2144-ac0151d"
+    marker = {"build_id": build_id, "sha256": "0" * 64, "phase": "awaiting_boot"}
+    qu._marker(updates, marker)
+    calls = []
+
+    def relaunch(directory):
+        calls.append(directory)
+        if len(calls) == 1:
+            raise OSError("test spawn failure")
+        return SimpleNamespace(poll=lambda: None)
+
+    delays = []
+
+    def boot(seconds):
+        delays.append(seconds)
+        if confirms:
+            qu._marker(updates, {**marker, "phase": "confirmed"})
+
+    monkeypatch.setattr(qu, "_claim_maintainer", lambda _app: True)
+    monkeypatch.setattr(qu, "_desktop_running", lambda: False)
+    monkeypatch.setattr(qu, "state_directory", lambda: state)
+    monkeypatch.setattr(qu, "check_for_update", lambda *_args: {"staged": True, "status": "staged"})
+    monkeypatch.setattr(qu, "apply_staged", lambda *_args, **_kwargs: {"applied": True, "build_id": build_id})
+    monkeypatch.setattr(qu, "_relaunch", relaunch)
+    assert qu.maintain(app, sleep=boot) == (0 if confirms else 1)
+    assert calls == [app, app]
+    assert delays == [7] * (1 if confirms else 150)
 
 
 @pytest.mark.parametrize("fault", ["refused", "empty_tag", "empty_revision", "wrong_tag", "wrong_revision",
@@ -150,6 +305,7 @@ def _installer_bytes(build_id: str, built_at: str) -> bytes:
     metadata = json.dumps({"format": 1, "build_id": build_id, "built_at": built_at},
                           separators=(",", ":")) + "\n"
     return json.dumps({"BUILD_ID": build_id, "BUILD_METADATA.json": metadata,
+                       "app/__init__.py": "", "bridges/fixture.dll": "stub",
                        "nodelang/__release_marker__.py": "BUILD = %r\n" % build_id}).encode("utf-8")
 
 
@@ -241,12 +397,27 @@ def _fake_installer(calls):
         returncode = 0
 
     def runner(argv, **_options):
+        from nodelang.host_addin_retarget import HEADER, save_receipt
+
         calls.append(argv)
         target = Path(next(a for a in argv if a.startswith("/DIR="))[len("/DIR="):])
-        for relative, text in json.loads(Path(argv[0]).read_bytes()).items():
+        payload = json.loads(Path(argv[0]).read_bytes())
+        build_id = payload.pop("BUILD_ID")
+        manifest = [HEADER, "path\tsha256"]
+        for relative, text in payload.items():
             destination = target / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(text, encoding="utf-8")
+            content = text.encode("utf-8")
+            destination.write_bytes(content)
+            if "/" in relative:
+                manifest.append(relative + "\t" + _sha(content))
+        raw = ("\n".join(manifest) + "\n").encode("utf-8")
+        (target / "source-manifest.tsv").write_bytes(raw)
+        save_receipt(target, raw, {}, ())
+        marker = target / "BUILD_ID"
+        marker.write_text(build_id, encoding="utf-8")
+        # Some Windows filesystems cache a recent wall-clock tick for writes.
+        os.utime(marker, ns=(time.time_ns(), time.time_ns()))
         return _Done()
     return runner
 

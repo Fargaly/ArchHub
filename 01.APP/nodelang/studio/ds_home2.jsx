@@ -328,9 +328,11 @@
     const choices = window.UI.threadChoices(s, task, [...(people.choices || [])]);
     // An assigned agent that has not joined is listed but cannot receive yet (no handle), like the Workshop To-list.
     for (const name of agents) if (!choices.some(choice => [choice.name,choice.handle,choice.key].includes(name))) choices.push({key:name,handle:undefined,name});
-    if (!choices.length) choices.push({key:'baboom',handle:'',name:'BABOOM'});
-    const assigned = choices.find(choice => agents.some(name => [choice.name,choice.handle,choice.key].includes(name)));
-    const recipient = to ?? window.UI.threadDefault(s, task) ?? assigned?.handle ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
+    // In a session the composer talks to this session: All agents is its default, its thread's running chat comes first, BABOOM only by a pick.
+    const allAgents = window.UI.sessionAll(choices, agents);
+    choices.unshift(allAgents);
+    const recipient = to ?? window.UI.threadDefault(s, task) ?? 'session';
+    React.useEffect(() => { setTo(null); }, [task?.id]);  // a pick (BABOOM, one agent) belongs to the session it was made in
     const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
     const footer = (running.length ? running.map(h => [h.name, h.file].filter(Boolean).join(' · ')).join(' · ') : 'No program selected.') + ' Model policy: Free first.';
     const persist = async (write, refusal) => {
@@ -389,7 +391,8 @@
       sendingRef.current = true;
       setSending(true);
       const files = s.composerAttachments || [];
-      const turn = window.UI.chatTurn(choices, recipient, body);
+      if (recipient === 'session' && !allAgents.handles.length) { sendingRef.current = false; setSending(false); u.setToast('No agent of this session has joined yet. Add one in Session › Who works on it, or pick BABOOM.'); return; }
+      const turn = recipient === 'session' ? window.UI.sessionTurn(allAgents, body) : window.UI.chatTurn(choices, recipient, body);
       const prompt = turn.prompt + (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(file=>({id:file.id,path:file.path}))) : '');
       const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');

@@ -178,7 +178,15 @@
     if (chosen.start) return {prompt: body, agent: chosen.start, resume: Boolean(chosen.resume)};
     return {prompt: (!to || new RegExp('(^|\\s)@' + to + '\\b').test(body) ? '' : '@' + to + ' ') + body, agent: 'BABOOM', resume: false};
   }
-  // The chat agent a thread is talking to: the one this app started in it (state.chatThreads), or, after a restart,
+  // Inside a session (design v63 C1-C2): "All agents" is this session's agents. Send goes to the session's thread and to them;
+  // BABOOM answers only when picked. An assigned agent that has not joined has no handle and cannot receive yet.
+  function sessionAll(choices, agents) {
+    const handles = [...new Set(choices.filter(c => c.handle && c.key !== 'baboom' && c.key !== 'everyone' && !c.start
+      && agents.some(name => [c.name, c.handle, c.key].includes(name))).map(c => c.handle))];
+    return {key: 'session', handle: 'session', name: 'All agents', handles,
+      detail: handles.length ? 'This session · ' + handles.length + ' agent' + (handles.length > 1 ? 's' : '') : 'No agent of this session has joined yet'};
+  }
+  const sessionTurn = (all, body) => ({prompt: all.handles.map(handle => '@' + handle).join(' ') + ' ' + body, agent: 'BABOOM', resume: false});  // The chat agent a thread is talking to: the one this app started in it (state.chatThreads), or, after a restart,
   // the chat agent that sent the thread's last answer. '' when none, or when that chat ended.
   function threadChat(s, task) {
     const key = task?.id || '', rows = s.chatAgents?.rows || [];
@@ -203,7 +211,7 @@
     const [listOpen, setListOpen] = React.useState(startOpen);
     const chosen = choices.find(c => c.handle === to);
     return <div className="ws-to" onKeyDown={e => e.key === 'Escape' && setListOpen(false)}>
-      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => { if (!listOpen) api.listChatAgents?.(); setListOpen(!listOpen); })}><window.UI.Av id={chosen?.name || to || 'BABOOM'} size={22}/><span className="recipient-name">{chosen?.resume ? chosen.name : chosen?.start ? 'Start ' + chosen.name : '@' + (chosen?.name || to || 'BABOOM')}</span><window.AHIcon name="arrow" size={12} style={{transform:'rotate(90deg)'}}/></button>
+      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => { if (!listOpen) api.listChatAgents?.(); setListOpen(!listOpen); })}><window.UI.Av id={chosen?.name || to || 'BABOOM'} size={22}/><span className="recipient-name">{chosen?.resume || chosen?.key === 'session' ? chosen.name : chosen?.start ? 'Start ' + chosen.name : '@' + (chosen?.name || to || 'BABOOM')}</span><window.AHIcon name="arrow" size={12} style={{transform:'rotate(90deg)'}}/></button>
       {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} data-chat-start={c.key.startsWith('start') ? c.start || 'unavailable' : undefined} data-chat-continue={c.resume ? c.start : undefined} aria-selected={c.handle === to} disabled={c.handle === undefined && !c.act} className="listbutton spread" title={c.reason || (c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : (c.start && !c.resume ? 'Start a new ' : 'Send to ') + c.name)} onClick={() => executeAction("ui.select", () => { if (c.act) { c.act(); return; } setTo(c.handle); setListOpen(false); })}><span>{c.start && !c.resume ? 'Start ' + c.name : c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }
@@ -373,6 +381,8 @@
   window.UI.AgentPicker = AgentPicker;
   window.UI.workshopPeople = workshopPeople;
   window.UI.chatTurn = chatTurn;
+  window.UI.sessionAll = sessionAll;
+  window.UI.sessionTurn = sessionTurn;
   window.UI.threadChoices = threadChoices;
   window.UI.threadDefault = threadDefault;
   window.UI.Messages = Messages;

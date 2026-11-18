@@ -117,32 +117,44 @@ def _seen_build(state_dir):
 
 def _remembered_stage(state_dir):
     """Read a failed or ready marker without hashing the installer."""
-    path = Path(state_dir) / "updates" / "staged.json"
+    from .quiet_update import _read_stage_marker
+
     try:
-        raw = path.read_bytes()
-    except OSError as error:
+        data = _read_stage_marker(Path(state_dir) / "updates")
+    except (OSError, ValueError) as error:
         return {"staged": False, "status": "failed",
                 "reason": "Update marker could not be read (" + type(error).__name__ + ")."}
-    if len(raw) > 16384:
-        return {"staged": False, "status": "failed", "reason": "Update marker could not be read (too large)."}
-    try:
-        import json
-        data = json.loads(raw)
-    except (ValueError, UnicodeError) as error:
-        return {"staged": False, "status": "failed",
-                "reason": "Update marker could not be read (" + type(error).__name__ + ")."}
-    if not isinstance(data, dict):
-        return None
     phase = data.get("phase")
     if phase == "rolled_back":
         reason = " ".join(str(data.get("rollback_reason") or "").split())[:512]
-        return {"staged": False, "status": "rolled_back",
+        return {**{key: data[key] for key in ("build_id", "built_at") if key in data},
+                "staged": False, "status": "rolled_back",
                 "reason": "Previous build restored after a failed update; "
                           + (reason + "; " if reason else "") + "waiting for a newer release."}
     if phase == "staged":
         return {"staged": True, "status": "staged", "build_id": str(data.get("build_id") or ""),
                 "prerelease": data.get("prerelease") is True}
     return None
+
+
+def _current_stage(stage, app_dir, installed):
+    """Keep failed attempts in history when a strictly later release is already installed."""
+    if not stage or stage.get("status") != "rolled_back":
+        return stage
+    target = stage.get("build_id")
+    if (not installed or target == installed or not isinstance(target, str)
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", target)):
+        return stage
+    from .quiet_update import _installed_build_time, _target_build_time
+
+    try:
+        installed_at = _installed_build_time(app_dir, installed)
+        failed_at = _target_build_time(stage)
+    except (OSError, ValueError):
+        return stage
+    if installed_at is not None and failed_at is not None and failed_at < installed_at:
+        return {**stage, "staged": False, "status": "not_ready", "reason": _NOT_NEWER}
+    return stage
 
 
 def _record_seen_build(state_dir, build):
@@ -169,8 +181,10 @@ class ApplicationUpdate:
                  first_boot=False, policy=None, restart_refusal=None):
         from .quiet_update import installed_build_id
         self.state_dir, self.app_dir = Path(state_dir), Path(app_dir)
+        installed = installed_build_id(self.app_dir)
         if initial_stage is None:
             initial_stage = _remembered_stage(self.state_dir)
+        initial_stage = _current_stage(initial_stage, self.app_dir, installed)
         self._request_restart = request_restart
         self._policy = policy or default_update_policy
         self._restart_refusal = restart_refusal
@@ -196,7 +210,7 @@ class ApplicationUpdate:
                             if self._available else "The downloaded update is ready to install.")
             self._prerelease = initial_stage.get("prerelease") is True
         self._updated = None
-        installed, seen = installed_build_id(self.app_dir), _seen_build(self.state_dir)
+        seen = _seen_build(self.state_dir)
         if installed and seen != installed:
             if seen or not first_boot:
                 # A release restart and a local install both land here.
@@ -341,7 +355,8 @@ class ApplicationUpdate:
             result = {"staged": False, "build_id": "", "status": "unavailable",
                 "reason": "Update download failed (" + type(error).__name__ + "). Check again to retry."}
         note_check(self.state_dir, self.app_dir, result)
-        decision = update_decision(result, installed_build_id(self.app_dir))
+        installed = installed_build_id(self.app_dir)
+        decision = update_decision(_current_stage(result, self.app_dir, installed), installed)
         with self._lock:
             self._state, self._detail = decision["state"], decision["detail"]
             self._available = decision["available_build"]

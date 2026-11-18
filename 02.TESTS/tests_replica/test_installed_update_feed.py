@@ -8,6 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
 
+import pytest
+
+from nodelang.application_update import ApplicationUpdate
 from nodelang import quiet_update as qu
 
 INSTALLED = "20261101-1919-86aa03a"
@@ -79,8 +82,47 @@ def test_update_check_stages_a_newer_build_from_the_local_feed_and_logs(tmp_path
     marker = json.loads((state / "updates" / "staged.json").read_text(encoding="utf-8"))
     assert marker["build_id"] == LATEST and marker["phase"] == "staged"
     assert (app / "BUILD_ID").read_text(encoding="utf-8") == INSTALLED
-    log = (state / "launcher.log").read_text(encoding="utf-8")
+    log = (state / "logs" / "updates.log").read_text(encoding="utf-8")
     assert "update: checked latest=%s installed=%s" % (LATEST, INSTALLED) in log
     assert "update: staged %s" % LATEST in log
     assert "/latest" in _Feed.seen and any(path.endswith("/" + qu.ASSET_NAME) for path in _Feed.seen)
     assert state.is_relative_to(Path(os.environ["LOCALAPPDATA"]))
+
+
+@pytest.mark.parametrize("marker_changes,metadata_id,expected", [
+    ({}, LATEST, "idle"),
+    ({"build_id": LATEST}, LATEST, "failed"),
+    ({"built_at": "2026-11-01T19:25:00Z"}, LATEST, "failed"),
+    ({"built_at": "2026-11-02T00:00:00Z"}, LATEST, "failed"),
+    ({"built_at": None}, LATEST, "failed"),
+    ({"built_at": "invalid time"}, LATEST, "failed"),
+    ({}, INSTALLED, "failed"),
+    ({"build_id": ""}, LATEST, "failed"),
+    ({"build_id": "20261001-110000-1-1-abcdef123456", "built_at": None}, LATEST, "idle"),
+    ({"sha256": None}, LATEST, "failed"),
+    ({"sha256": "abcd"}, LATEST, "failed"),
+    ({"sha256": "x" * 64}, LATEST, "failed"),
+])
+def test_installed_status_suppresses_only_an_older_rollback(
+        tmp_path, monkeypatch, marker_changes, metadata_id, expected):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "BUILD_ID").write_text(LATEST)
+    (app / "BUILD_METADATA.json").write_text(json.dumps(
+        {"format": 1, "build_id": metadata_id, "built_at": "2026-11-01T19:25:00Z"}))
+    state = tmp_path / "state"
+    marker = state / "updates" / "staged.json"
+    marker.parent.mkdir(parents=True)
+    failure = {"build_id": INSTALLED, "built_at": "2026-11-01T15:19:00Z", "phase": "rolled_back",
+               "rollback_reason": "Setup failed", "sha256": hashlib.sha256(INSTALLER).hexdigest(), **marker_changes}
+    original = json.dumps({key: value for key, value in failure.items() if value is not None}).encode()
+    marker.write_bytes(original)
+    ui = ApplicationUpdate(state, app, request_restart=None, policy=lambda: {"channel": "stable"})
+    assert ui.status()["state"] == expected
+    assert ui.status()["available_build"] is None
+    # A check returning the same failed release must keep the same header as a fresh launch.
+    monkeypatch.setattr(qu, "read_latest_release", lambda *args: {"build_id": failure["build_id"]})
+    ui._download()
+    assert ui.status()["state"] == expected
+    assert ui.status()["available_build"] is None
+    assert marker.read_bytes() == original

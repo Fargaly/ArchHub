@@ -11648,6 +11648,16 @@
         "02.TESTS/tests_js/studio_session_target.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "LIBRARYREACH": {
+      "source": "Antigravity's independent walk of installed 20261118-1808 (2026-11-18): on a fresh profile the Canvas showed no Library; it took More, Show Library, and below 1436 px one more click on a narrow rail. The founder's design keeps the Library in its dock; it opens by default and one click always shows or hides it.",
+      "scope": [
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests/test_library_reach.py",
+        "02.TESTS/tests_js/library_reach_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

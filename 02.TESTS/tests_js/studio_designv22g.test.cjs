@@ -564,7 +564,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.title==='Note'&&n.params.text==='A real drawing note'));
   });
   let editable,wireId;
-  await t.test('Expanded groups collapse, enter, return with Escape and ungroup without losing members',async()=>{
+  await t.test('Ctrl+G makes one collapsed group; it enters both ways, expands and collapses in place, and ungroups without losing members',async()=>{
     await create('Group b navigation');
     editable=await page.evaluate(async()=>{const a=await window.ArchHubAPI.addNode('math_expression',{x:420,y:240}),b=await window.ArchHubAPI.addNode('math_expression',{x:760,y:240});await window.ArchHubAPI.setNodeParam(a.id,'expression','7');await window.ArchHubAPI.setNodeParam(b.id,'expression','a + 1');await window.ArchHubAPI.connectSockets({from:a.id,fromPort:'value',to:b.id,toPort:'a'});return [a.id,b.id];});
     wireId=await page.evaluate(ids=>window.ArchHubAPI.getSessionDocument().wires.find(w=>w.from.node===ids[0]&&w.to.node===ids[1]).id,editable);
@@ -572,10 +572,9 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('[data-graph-node="'+editable[0]+'"] .node-header').click();
     await page.locator('[data-graph-node="'+editable[1]+'"] .node-header').click({modifiers:['Control']});
     await page.locator('body').press('Control+g');
-    await page.locator('[data-design="group.frame"]').waitFor();
-    await page.locator('[data-design="group.collapse"]').click();
-    const collapsed = page.locator('[data-design="group.node"]');
+    const collapsed = page.locator('[data-design="group.node"]'),frame=page.locator('[data-design="group.frame"]');
     await collapsed.waitFor();
+    assert.equal(await frame.count(),0,'the new group is one node, not a frame');
     const expectedSockets=await page.evaluate(ids=>window.ArchHubAPI.getSnapshot().graph.nodes.filter(n=>ids.includes(n.id))
       .flatMap(n=>[['in',n.inputs],['out',n.outputs]].flatMap(([side,ports])=>ports.map(p=>[side+':'+n.id+':'+p.id,p.type])))
       .sort(),editable);
@@ -590,17 +589,65 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.locator('[data-graph-node="'+editable[0]+'"]').count(),1);
     await page.locator('body').press('Escape');
     await page.locator('[data-design="group.node"]').waitFor();
+    // Expand in place: the frame sits around its members and the wire between them is still drawn.
+    await page.locator('[data-design="group.node"] .node-header').click({button:'right'});
+    await page.getByRole('button',{name:'Expand',exact:true}).click();
+    await frame.waitFor();
+    const [outer,...inner]=await Promise.all([frame,...editable.map(id=>page.locator('[data-graph-node="'+id+'"]'))].map(box=>box.boundingBox()));
+    for(const box of inner)assert.ok(box.x>=outer.x&&box.y>=outer.y&&box.x+box.width<=outer.x+outer.width&&box.y+box.height<=outer.y+outer.height,'the frame sits around its members '+JSON.stringify({outer,box}));
+    assert.equal(await page.locator('.react-flow__edge[data-id="'+wireId+'"]').count(),1,'the member wire stays drawn while the group is expanded');
+    // The frame border takes the pointer: a double-click on it enters, Escape leaves, and Enter on the selected group enters again.
+    await page.locator('body').dblclick({position:{x:outer.x+1,y:outer.y+outer.height/2}});
+    await page.locator('[data-design="group.back"]').waitFor();
+    await page.locator('body').press('Escape');
+    await frame.waitFor();
+    const groupId=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().groups[0].id);
+    // Its own socket reads the wire through the member it stands for.
+    await page.locator('[data-node-inspector="'+groupId+'"] [data-linked-source]').first().waitFor({state:'attached'});
+    assert.equal(await page.locator('[data-node-inspector="'+groupId+'"] [data-linked-source]').count(),1);
+    await page.locator('.node-canvas').press('Enter');
+    await page.locator('[data-design="group.back"]').waitFor();
+    await page.locator('body').press('Escape');
+    await frame.waitFor();
+    await page.locator('[data-design="group.collapse"]').click();
+    await page.locator('[data-design="group.node"]').waitFor();
+    assert.equal(await frame.count(),0,'collapse happens in place');
     await page.locator('[data-design="group.node"] .node-header').click({button:'right'});
     await page.getByRole('button',{name:'Ungroup',exact:true}).click();
     await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().groups.length===0);
     assert.equal(await page.evaluate(ids=>ids.every(id=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.id===id)),editable),true);
   });
-  await t.test('One Group action surrounds a single node; Ungroup keeps its contents and undo restores it',async()=>{
+  await t.test('Window drag, Ctrl+G, then a double-click enters the group: no selection box is left over it',async()=>{
+    await page.getByRole('button',{name:'Fit',exact:true}).click();
+    // A selection window from empty canvas around both nodes, by real pointer input on this headless page only.
+    const boxes=await Promise.all(editable.map(id=>page.locator('[data-graph-node="'+id+'"]').boundingBox()));
+    const a={x:Math.min(...boxes.map(b=>b.x))-12,y:Math.min(...boxes.map(b=>b.y))-12},b={x:Math.max(...boxes.map(b=>b.x+b.width))+12,y:Math.max(...boxes.map(b=>b.y+b.height))+12};
+    const input=await page.context().newCDPSession(page);
+    await input.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:a.x,y:a.y});
+    await input.send('Input.dispatchMouseEvent',{type:'mousePressed',x:a.x,y:a.y,button:'left',buttons:1,clickCount:1});
+    for(let step=1;step<=8;step++)await input.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:a.x+(b.x-a.x)*step/8,y:a.y+(b.y-a.y)*step/8,button:'left',buttons:1});
+    await input.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:b.x,y:b.y,button:'left',buttons:0,clickCount:1});
+    await input.detach();
+    await page.waitForFunction(ids=>ids.every(id=>window.getComputedStyle(document.querySelector('[data-graph-node="'+id+'"] [data-ds-node]')).outlineStyle==='solid'),editable);
+    await page.locator('body').press('Control+g');
+    const header=page.locator('[data-design="group.node"] .node-header');
+    await header.waitFor();
+    assert.equal(await page.locator('.react-flow__nodesselection-rect').isVisible(),false,'the selection box is gone once the new group is the selection');
+    const hit=await header.evaluate(el=>{const r=el.getBoundingClientRect(),top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !!top&&el.contains(top);});
+    assert.equal(hit,true,'the group header is what the pointer reaches');
+    await header.dblclick();
+    await page.locator('[data-design="group.back"]').waitFor();
+    await page.locator('body').press('Escape');
+    await page.locator('[data-design="group.node"]').waitFor();
+    await page.locator('body').press('Control+Shift+g');
+    await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().groups.length===0);
+  });
+  await t.test('One Group action holds a single node; Ungroup keeps its contents and undo restores it',async()=>{
     await page.getByRole('button',{name:'Fit',exact:true}).click();
     await page.locator('[data-graph-node="'+editable[0]+'"] .node-header').click();
     await page.locator('body').press('Control+Alt+g');
     await page.waitForFunction(id=>window.ArchHubAPI.getSessionDocument().nodes.some(n=>n.children?.length===1&&n.children[0]===id),editable[0]);
-    const header=page.locator('[data-design="group.frame"] .node-header');
+    const header=page.locator('[data-design="group.node"] .node-header');
     await header.waitFor();
     await header.click({button:'right'});
     await page.getByRole('button',{name:'Ungroup',exact:true}).click();

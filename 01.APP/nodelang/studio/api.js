@@ -1984,7 +1984,7 @@ api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:
 // Tidy up arranges the document; the first view of a never-arranged file is arranged on screen only (opening never writes).
 const arrangeDocument=d=>{
  const session=d.nodes.find(n=>n.fixed&&n.type==='thing.session'),nodes=d.nodes.filter(n=>(!n.fixed&&(!session||(n.agentWork?.role!=='session'||n.params?.workshop_step&&!d.nodes.some(row=>row.agentWork?.owner===n.id)))||n===session)&&!n.parent),ids=new Set(nodes.map(n=>n.id));
- const incoming=new Map(nodes.map(n=>[n.id,[]])),rank=new Map(),order=new Map(nodes.map((n,i)=>[n.id,i]));
+ const incoming=new Map(nodes.map(n=>[n.id,[]])),rank=new Map(),order=new Map(nodes.map((n,i)=>[n.id,i])),was=new Map(nodes.map(n=>[n.id,n.position]));
  for(const w of d.wires)if(ids.has(w.from.node)&&ids.has(w.to.node))incoming.get(w.to.node).push(w.from.node);
  const left=nodes.filter(n=>n!==session&&session&&incoming.get(session.id).includes(n.id));
  const pending=new Set(nodes.filter(n=>!left.includes(n)).map(n=>n.id));
@@ -1997,6 +1997,9 @@ const arrangeDocument=d=>{
  const grid=v=>Math.round(v/8)*8,y0=grid(session?.position.y||0);let x=grid(session?.position.x||0);
  if(left.length){let y=y0;const width=Math.max(...left.map(n=>size(n).w));for(const n of left){n.position={x:grid(x-width-96),y:grid(y)};y+=size(n).h+32;}}
  for(const column of columns){if(!column)continue;column.sort((a,b)=>{const source=n=>incoming.get(n.id).reduce((sum,id)=>sum+nodes.find(n=>n.id===id).position.y,0)/Math.max(1,incoming.get(n.id).length);return source(a)-source(b)||order.get(a.id)-order.get(b.id);});let y=y0;for(const n of column){n.position={x:grid(x),y:grid(y)};y+=size(n).h+32;}x+=Math.max(...column.map(n=>size(n).w))+96;}
+ // A group's members keep their place inside it: they move with their group, so its frame stays around them.
+ const follow=(id,dx,dy)=>{for(const child of d.nodes)if(child.parent===id){child.position={x:child.position.x+dx,y:child.position.y+dy};follow(child.id,dx,dy);}};
+ for(const n of nodes){const p=was.get(n.id);if(!n.fixed&&n.children?.length&&(n.position.x!==p.x||n.position.y!==p.y))follow(n.id,n.position.x-p.x,n.position.y-p.y);}
  d.properties={...d.properties,canvasLayout:'v48'};
 };
 api.arrangeGraph=async(initial=false)=>{
@@ -2009,8 +2012,10 @@ api.groupNodes=async ids=>{
  if(!Array.isArray(ids))throw Error('Choose nodes to group.');
  const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));
  if(new Set(ids).size!==ids.length||members.length!==ids.length||ids.length<1||members.some(n=>n.fixed)||new Set(members.map(n=>n.parent||'')).size!==1)throw Error('Choose editable nodes in the same group.');
- const node={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},position:{x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-44},...(members[0].parent?{parent:members[0].parent}:{}),children:[...ids],collapsed:false};
- fileEdit(d=>{d.nodes.push(node);const parent=d.nodes.find(n=>n.id===node.parent);if(parent?.children)parent.children=[...parent.children.filter(id=>!ids.includes(id)),node.id];const listing=d.groups.find(g=>g.id===node.parent);if(listing)listing.nodes=[...listing.nodes.filter(id=>!ids.includes(id)),node.id];for(const n of members)n.parent=node.id;d.groups.push({id:node.id,nodes:[...ids]});});
+ // One node from several: the group starts collapsed and carries every member socket (projectGroups).
+ const node={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},...(members[0].parent?{parent:members[0].parent}:{}),children:[...ids],collapsed:true};
+ // Its origin is measured inside the edit: the first edit turns the on-screen arrangement into the document, and the frame sits around the members where they are then.
+ fileEdit(d=>{node.position={x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-44};d.nodes.push(node);const parent=d.nodes.find(n=>n.id===node.parent);if(parent?.children)parent.children=[...parent.children.filter(id=>!ids.includes(id)),node.id];const listing=d.groups.find(g=>g.id===node.parent);if(listing)listing.nodes=[...listing.nodes.filter(id=>!ids.includes(id)),node.id];for(const n of members)n.parent=node.id;d.groups.push({id:node.id,nodes:[...ids]});});
  return state.graph.nodes.find(n=>n.id===node.id);
 };
 api.ungroupNode=async id=>{

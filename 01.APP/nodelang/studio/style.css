@@ -1038,6 +1038,8 @@ kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
 .v22g-group-frame>.node-header>b{font-size:12px;font-weight:700;color:var(--color-ink)}
 .v22g-group-frame>.node-header>span{margin-right:auto}
 .v22g-group-frame [data-design="group.collapse"]{width:22px;height:22px;padding:0;border-radius:5px;color:var(--color-ink-soft)}
+.v22g-group-frame{position:relative}
+.v22g-group-edge{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;stroke:transparent;stroke-width:12px}
 .v22g-script,.v22g-node-type{display:grid;gap:8px;font-size:13px;margin-top:16px}
 .v22g-script>b{font-size:11px;color:var(--color-ink-soft);font-weight:500;margin-top:8px}
 .v22g-script-row{display:grid;grid-template-columns:minmax(0,1fr) 90px 24px;gap:6px}
@@ -1334,3 +1336,6 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .dockws .mms .mn.s-approval{fill:var(--color-warn);opacity:.9}
 .dockws .mms .mn.s-failed{fill:var(--color-err);opacity:.9}
 .dockws .mms .mv{fill:color-mix(in srgb,var(--color-accent) 10%,transparent);stroke:var(--color-accent);stroke-width:1.2}
+/* A window drag leaves xyflow's selection box over the nodes it picked; with one node or none selected (after Ctrl+G the new group is
+   the one) the box is gone, so it never sits over a node and takes its clicks and double-clicks. */
+.node-canvas[data-single-pick] .react-flow__nodesselection{display:none}

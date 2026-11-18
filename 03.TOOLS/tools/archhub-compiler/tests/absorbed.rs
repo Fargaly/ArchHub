@@ -361,6 +361,32 @@ fn banned_user_text_admits_coming_soon_only_inside_the_one_shared_soon_component
 }
 
 #[test]
+fn banned_user_text_admits_coming_soon_only_inside_the_sites_one_soon_chip_helper() {
+    let chip = "def soon_chip():\n    \"\"\"The one place.\"\"\"\n    return '<b class=\"soonchip\">Coming soon</b>'\n";
+    let refused = |path: &str, source: &str| {
+        let mut c = context();
+        c["files"] = json!([path]);
+        intent::check(&c, &[(path.into(), source.into())]).iter().any(|d| d.code == "E0102")
+    };
+    let site = "03.TOOLS/packaging/website/build_site.py";
+    // Admitted: the one helper at the one physical path.
+    assert!(!refused(site, chip));
+    // Refused: a copy anywhere else, including the same native identity under another area or no area.
+    for path in ["03.TOOLS/packaging/website/other.py", "06.CLOUD/packaging/website/build_site.py",
+                 "packaging/website/build_site.py", "01.APP/nodelang/site_export.py"] {
+        assert!(refused(path, chip), "{path}");
+    }
+    // Refused: the words in another function of the same file.
+    assert!(refused(site, &format!("{chip}def page():\n    return 'Coming soon'\n")));
+    // Refused: a second binding of the helper, however it is spelled.
+    assert!(refused(site, &format!("{chip}def  soon_chip ():\n    return 'coming soon'\n")));
+    assert!(refused(site, &format!("{chip}soon_chip = lambda: 'coming soon'\n")));
+    // Refused: the withdrawn wording, inside the helper or out of it, on the site or in the app.
+    assert!(refused(site, "def soon_chip():\n    return 'Not live yet'\n"));
+    assert!(refused("01.APP/nodelang/studio/ui.jsx", "function Soon() {\n  return 'Not live yet';\n}\n"));
+}
+
+#[test]
 fn html_intent_rules_use_html_ast_text_attributes_and_tags() {
     let mut c = context();
     c["files"] = json!(["index.html"]);

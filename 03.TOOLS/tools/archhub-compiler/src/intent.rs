@@ -354,7 +354,8 @@ pub fn check_with_authority(
                         .filter_map(Value::as_str)
                         .any(|s| content.to_lowercase().contains(&s.to_lowercase())
                             && !(s.eq_ignore_ascii_case("coming soon") && file.replace('\\', "/") == "01.APP/nodelang/studio/ui.jsx"
-                                && crate::in_shared_soon(file, node, source)))
+                                && crate::in_shared_soon(file, node, source)
+                            || s.eq_ignore_ascii_case("coming soon") && crate::in_site_soon_chip(file, node, source)))
                     {
                         violated = Some("banned user-visible sentinel text");
                     }

@@ -382,6 +382,41 @@ pub fn in_shared_soon(file: &str, node: Node<'_>, source: &str) -> bool {
     false
 }
 
+/// The public site's one holder of the same label: `soon_chip()` in the site generator, at exactly
+/// 03.TOOLS/packaging/website/build_site.py (no other area, no copy), defined once in the syntax tree.
+pub const SITE_SOON: &str = "03.TOOLS/packaging/website/build_site.py";
+
+pub fn in_site_soon_chip(file: &str, node: Node<'_>, source: &str) -> bool {
+    if file.replace('\\', "/") != SITE_SOON {
+        return false;
+    }
+    let binds = |n: Node<'_>| match n.kind() {
+        "function_definition" | "class_definition" => n.child_by_field_name("name").is_some_and(|x| text(x, source) == "soon_chip"),
+        "assignment" | "augmented_assignment" => n.child_by_field_name("left").is_some_and(|x| text(x, source) == "soon_chip"),
+        _ => false,
+    };
+    let mut root = node;
+    while let Some(p) = root.parent() {
+        root = p;
+    }
+    let (mut count, mut stack) = (0, vec![root]);
+    while let Some(n) = stack.pop() {
+        count += usize::from(binds(n));
+        stack.extend(children(n));
+    }
+    if count != 1 {
+        return false;
+    }
+    let mut parent = node.parent();
+    while let Some(p) = parent {
+        if p.kind() == "function_definition" && binds(p) {
+            return true;
+        }
+        parent = p.parent();
+    }
+    false
+}
+
 /// A syntax node that binds the name `Soon`: a function, generator, class or method of that name, a variable,
 /// a named function expression, an assignment to `Soon` or `x.Soon`, or an object property whose value is code.
 fn declares_soon(node: Node<'_>, source: &str) -> bool {
@@ -1587,7 +1622,7 @@ impl Extractor<'_> {
                 });
                 if runtime
                     && !docstring
-                    && ["not available yet", "coming soon", "placeholder"]
+                    && ["not available yet", "coming soon", "not live yet", "placeholder"]
                         .iter()
                         .any(|p| {
                             if *p == "coming soon" && lower.contains(p) && in_shared_soon(self.file, node, self.source) {

@@ -333,6 +333,11 @@ fn coming_soon_is_admitted_only_inside_the_one_shared_soon_component() {
     assert!(has(&report("nodelang/library_engines.py", "REASON = 'Coming soon: not built yet'\n"), "E0003"));
 }
 #[test]
+fn not_live_yet_is_refused_like_coming_soon_in_runtime_files() {
+    assert!(has(&report("nodelang/library_engines.py", "REASON = 'Not live yet'\n"), "E0003"));
+    assert!(has(&report("01.APP/nodelang/studio/ui.jsx", "function Soon() {\n  return 'Not live yet';\n}\n"), "E0003"));
+}
+#[test]
 fn comments_are_not_runtime_readers_or_failures() {
     let r = report(
         "view.jsx",

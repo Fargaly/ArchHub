@@ -371,12 +371,13 @@ def _deliver_to(message, identity, declaration=None, history=None):
         _replied_author(history, message), message, declaration or {}))
 
 
-def _declaration(history, identity, runtime=None):
+def _declaration(history, identity, runtime=None, known=None):
+    """known: the caller's own read_declarations(include_archived=True), so one poll reads the table once."""
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         row = history._db.execute("SELECT record FROM workshop_declarations WHERE json_extract(record,'$.session')=?",
             (identity["sender_key"],)).fetchone()
         if row:
-            return next((value for value in read_declarations(history._db, include_archived=True)
+            return next((value for value in (read_declarations(history._db, include_archived=True) if known is None else known)
                          if value["session"] == identity["sender_key"]), json.loads(row[0]))
     return {"runtime":runtime, "session":identity["sender_key"], "agent":identity["sender_label"]}
 
@@ -559,10 +560,16 @@ def recipient_identity(row, declarations=()):
     """F320: the one identity of an addressee, defined once. (runtime, native session id) when the session has a
     native id, otherwise its declaration key. Every receipt read and every "same addressee" decision uses it."""
     session = row.get("session") or row.get("recipient")
-    bound = next((value for value in declarations if value.get("session") == session), {}) if session else {}
-    native = row.get("native_session_id") or bound.get("native_session_id")
+    native, runtime = row.get("native_session_id"), row.get("runtime") or row.get("app")
+    # F419: the declarations are searched only for what the row does not carry itself (every poll asks this per row).
+    bound = {}
+    if session and not (native and runtime):
+        index = getattr(declarations, "by_session", None)
+        bound = (index.get(session, {}) if index is not None
+                 else next((value for value in declarations if value.get("session") == session), {}))
+    native = native or bound.get("native_session_id")
     if native:
-        return ("native", str(row.get("runtime") or row.get("app") or bound.get("runtime") or ""), str(native))
+        return ("native", str(runtime or bound.get("runtime") or ""), str(native))
     return ("session", str(session or ""))
 
 
@@ -666,10 +673,76 @@ def _seen(history, body, identity, runtime):
     return {"seen": ids}
 
 
+# F419, this process: (store, session) -> (its names, sequence already matched, ids of the notes that name it,
+# ids it has already received or answered: receipts, live deliveries, replies and the read cursor only ever grow).
+_ROUTED = {}
+
+
+def news_for(connection, sender_key, after):
+    """F419: between polls, on any read connection: (the room's newest sequence, whether a row after `after` names
+    this session or is routed to it). True when this process has not polled for the session yet. New names or a
+    declaration change are not rows; the connector's unconditional poll sees those."""
+    last = (connection.execute("SELECT last_sequence FROM conversations WHERE id=?", (ROOM,)).fetchone() or (0,))[0]
+    store = connection.execute("PRAGMA database_list").fetchone()[2]
+    held = next((value for place, value in _ROUTED.items() if place[0] == store and place[2] == sender_key), None)
+    if held is None or after is None or after > last:
+        return last, True
+    return last, connection.execute(held[4][0], (ROOM, after, *held[4][1])).fetchone() is not None
+
+
+class _StoreWatch:
+    """F419: the Workshop owner's cheap look between polls, on the owner's own open store, kept open.
+
+    Opened once through application_history (read-only use: no write is made); used from the one thread that made it.
+    """
+
+    def __init__(self, timeout_seconds):
+        self._held = application_history(read_only=True, busy_timeout_seconds=timeout_seconds)
+        self._db = self._held.__enter__()._db
+
+    def version(self):
+        """Moves whenever any other connection commits to the Workshop store."""
+        return self._db.execute("PRAGMA data_version").fetchone()[0]
+
+    def newest(self):
+        return (self._db.execute("SELECT last_sequence FROM conversations WHERE id=?", (ROOM,)).fetchone() or (0,))[0]
+
+    def news(self, sender_key, after):
+        return news_for(self._db, sender_key, after)
+
+    def close(self):
+        self._held.__exit__(None, None, None)
+
+
+def store_watch(timeout_seconds):
+    """A watcher an agent connector keeps between polls; only this owner opens the Workshop file."""
+    return _StoreWatch(timeout_seconds)
+
+
 def _pending(history, identity, runtime):
-    declaration = _declaration(history, identity, runtime)
-    declarations = read_declarations(history._db)
-    known = read_declarations(history._db, include_archived=True)
+    snapshot = not history._db.in_transaction
+    if snapshot:
+        history._db.execute("BEGIN")  # one read snapshot: the name match and the page see the same rows
+    try:
+        return _pending_page(history, identity, runtime)
+    finally:
+        if snapshot:
+            history._db.execute("ROLLBACK")
+
+
+class _Known(list):
+    """Declarations with their session index, built once for a poll: the first row of each session, as a search finds it."""
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.by_session = {}
+        for row in rows:
+            self.by_session.setdefault(row.get("session"), row)
+
+
+def _pending_page(history, identity, runtime):
+    known = _Known(read_declarations(history._db, include_archived=True))
+    declaration = _declaration(history, identity, runtime, known)
+    declarations = [row for row in known if row["current"]]
     mine = recipient_identity(declaration, known)
     # Every declaration key of this addressee, current or archived: its receipts are this addressee's receipts.
     keys = sorted({identity["sender_key"]} | {row["session"] for row in known if recipient_identity(row, known) == mine})
@@ -690,22 +763,46 @@ def _pending(history, identity, runtime):
     # F320: a label under any folder ends in this session's token; a reply may answer this session's own message.
     tokens = sorted({_session_tag(value, app=False) for value in names} - {""})
     moved = "".join(" OR instr(','||" + header + "||',',?)>0" for _ in tokens)
-    # Filter payloads in SQLite; the indexed routing receipts also resolve aliases such as To 717.
-    cursor = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND category=? AND public=1 "
-        "AND sequence>? AND idempotency_key NOT LIKE 'workshop-escalation:%' AND ("
+    # F419: whether a note's To line or its parent names this session never changes once the note is written, so
+    # each note is matched once per process and names; every poll re-ran that text match over the whole room
+    # (0.4 s of CPU a poll on 14,660 rows, in every agent session).
+    store = history._db.execute("PRAGMA database_list").fetchone()[2]
+    place = (store, os.stat(store).st_ino if store else 0, identity["sender_key"])
+    spelling = (tuple(aliases), tuple(tokens), mine)
+    last = (history._db.execute("SELECT last_sequence FROM conversations WHERE id=?", (ROOM,)).fetchone() or (0,))[0]
+    held, matched, named, settled = _ROUTED.get(place, (spelling, 0, frozenset(), set()))[:4]
+    if held != spelling or matched > last:
+        matched, named, settled = 0, frozenset(), set()
+    naming = ("category=? AND public=1 AND ("
         + header + " IN (" + marks + ") OR (instr(" + header + ",',')>0 AND (" + multiple + "))" + moved
         + " OR (reply_to IS NOT NULL AND (SELECT parent.author FROM messages parent WHERE parent.conversation_id="
-        "messages.conversation_id AND parent.id=messages.reply_to) LIKE ?) OR id IN ("
+        "messages.conversation_id AND parent.id=messages.reply_to) LIKE ?))")
+    named_by = (CATEGORY, *aliases, *("," + value + "," for value in aliases), *("/" + value + "," for value in tokens),
+                "% [" + identity["sender_key"] + "]")
+    if last > matched:
+        named |= {row[0] for row in history._db.execute(
+            "SELECT id FROM messages WHERE conversation_id=? AND sequence>? AND " + naming, (ROOM, matched, *named_by))}
+    # The same two tests over only the rows after a given sequence: news_for's question between polls.
+    news = ("SELECT 1 FROM messages WHERE conversation_id=? AND sequence>? AND ((" + naming + ") OR (author=? AND category=? "
+            "AND json_extract(content,'$.event')='addressed' AND (json_extract(content,'$.recipient') IN ("
+            + ",".join("?" for _ in keys) + ") OR (json_extract(content,'$.runtime')=? "
+            "AND json_extract(content,'$.native_session_id')=?)))) LIMIT 1",
+            (*named_by, DELIVERY_AUTHOR, DELIVERY_CATEGORY, *keys, *seat))
+    _ROUTED[place] = (spelling, max(matched, last), named, settled, news)
+    # The indexed routing receipts also resolve aliases such as To 717; they can arrive after the note, so each poll reads them.
+    cursor = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND category=? AND public=1 "
+        "AND sequence>? AND idempotency_key NOT LIKE 'workshop-escalation:%' AND ("
+        "id IN (SELECT value FROM json_each(?)) OR id IN ("
         "SELECT reply_to FROM messages WHERE conversation_id=? AND author=? AND category=? "
         "AND json_extract(content,'$.event')='addressed' AND (json_extract(content,'$.recipient') IN ("
         + ",".join("?" for _ in keys) + ") OR (json_extract(content,'$.runtime')=? "
         "AND json_extract(content,'$.native_session_id')=?)))) ORDER BY sequence",
-        (ROOM, CATEGORY, since,
-         *aliases, *("," + value + "," for value in aliases), *("/" + value + "," for value in tokens),
-         "% [" + identity["sender_key"] + "]",
+        (ROOM, CATEGORY, since, json.dumps(sorted(named)),
          ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, *keys, *seat))
     with closing(cursor):
         for raw in cursor:
+            if raw["id"] in settled:
+                continue
             message = history._message(raw)
             groups, _owner = receipts(history, message, known)
             routed = {key for key, records in groups.items() if "addressed" in records}
@@ -717,6 +814,7 @@ def _pending(history, identity, runtime):
                 continue
             events = groups.get(mine, {})
             if "answered" in events or "delivered" in events or _acknowledged(history, message, identity, declaration):
+                settled.add(message["id"])
                 continue
             message["delivery_sequence"] = message["sequence"]
             cost = len(json.dumps(message).encode())
@@ -1152,12 +1250,16 @@ def read_declarations(connection, *, include_archived=False):
         row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
         row["process_alive"] = _session_alive(row)
         row["current"] = row["status"] != "done" and row["process_alive"]
+    holders = {}  # F419: each role's newest current holder in one pass (it was a pass over every row for each row)
+    for row in rows:
+        if row.get("role") and row["current"] and (row["role"] not in holders
+                or row.get("updated_at", "") > holders[row["role"]].get("updated_at", "")):
+            holders[row["role"]] = row
     for row in rows:
         role = row.get("role")
         if not role:
             continue
-        holders = [other for other in rows if other.get("role") == role and other["current"]]
-        holder = max(holders, key=lambda other: other.get("updated_at", ""), default=None)
+        holder = holders.get(role)
         row["role_current"] = row is holder
         if holder is not None and not row["current"]:
             # Role and human names follow their owner; exact session identities never do.

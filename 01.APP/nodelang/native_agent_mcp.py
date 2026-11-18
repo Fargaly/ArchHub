@@ -122,6 +122,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
     worker = None
     failures = set()
     retry_at, retry_delay = {}, {}
+    watch, versions, handed, senders, read_at = [], {}, {}, {}, {}
     server._mailbox_pages = pages
     server._mailbox_seen = lambda ids, context: background_call("seen", {"message_ids":ids, "channel":"connector tool result"}, context)
     server._mailbox_stop = lambda: (stopped.set(), wake.set())
@@ -145,7 +146,46 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
                     declared.discard(())
                     state["bootstrap_only"] = False
 
-    def refresh(context):
+    def store_version():
+        """F419: a number that moves when any other connection commits to the Workshop store; None = unknown, poll."""
+        if mailbox_call is not None:
+            return None
+        try:
+            if not watch:
+                from .workshop_mailbox import store_watch  # the Workshop owner's read, never its file opened here
+                watch.append(store_watch(budget))
+            return watch[0].version()
+        except Exception:
+            if "version" not in failures:
+                logging.getLogger(__name__).warning("Workshop store version unreadable; every poll reads the store.")
+                failures.add("version")
+            while watch:
+                watch.pop().close()
+            return None
+
+    def unchanged(key, version):
+        """Nothing committed since this session's last poll concerns it, and the page it had is still the answer."""
+        with lock:
+            held = key in pages
+        seen = versions.get(key)
+        if version is None or seen is None or not (held or not handed.get(key)):
+            return False
+        if seen[0] != version:
+            try:
+                newest, concerned = watch[0].news(senders.get(key), seen[1])
+            except Exception:
+                if "news" not in failures:
+                    logging.getLogger(__name__).warning("Workshop store news unreadable; the store is polled.")
+                    failures.add("news")
+                return False
+            failures.discard("news")
+            if concerned:
+                return False
+            versions[key] = (version, newest)
+        return True
+
+    def refresh(context, version=None, due=True):
+        """True when the poll found a message it had not held before. due: the unconditional poll's turn."""
         retire_bootstrap(context)
         key = tuple(context.items())
         if key not in declared and time.monotonic() >= retry_at.get(key, 0):
@@ -173,32 +213,63 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         try:
             with lock:
                 epoch = epochs.get(key, 0)
+            # A declaration change is a commit but not a room row: the unconditional poll (backing off to the recovery
+            # cap) sees it. With no commit at all since the last read, that poll has nothing to see either.
+            # shortcut: another agent's process ending is not a commit; it is seen after the next commit by anyone.
+            if not due and (version is None or unchanged(key, version)):
+                return False
+            if due and version is not None and read_at.get(key) == version and unchanged(key, version):
+                return False
+            newest = None
+            if version is not None:
+                try:
+                    newest = watch[0].newest()
+                except Exception:
+                    version = None  # no room number: this poll still runs, and the next one reads the store too
             page = background_call("pending", {}, context)
             failures.discard((key, "pending"))
             with lock:
                 if epochs.get(key, 0) == epoch:
                     pages[key] = page
+            versions[key] = None if version is None else (version, newest)
+            read_at[key] = version
+            senders[key] = page.get("sender_key")
+            ids = frozenset(message["id"] for message in page.get("pending", []))
+            new = bool(ids - handed.get(key, frozenset()))
+            handed[key] = ids
+            return new
         except Exception:
             if (key, "pending") not in failures:
                 logging.getLogger(__name__).warning("Workshop pending delivery unavailable; the original tool result is retained.")
                 failures.add((key, "pending"))
+            if version is not None and versions.get(key):
+                versions[key] = (version, versions[key][1])  # tried at this commit; the next commit or turn tries again
+            return False
 
     def run_mailbox():
-        # An idle connector backs off (x2 up to the recovery cap); a tool call wakes a refresh at once.
-        # Polling every second in every agent session kept the founder's machine busy (founder: "the app is very slow").
-        interval = budget
+        # Every short budget, or sooner after a tool call, the connector asks the store one number: was anything
+        # committed? Only a commit that names this session reads the store, at most once per budget however many tool
+        # calls or commits fall inside it. The unconditional poll backs off to the recovery cap. (F419: a full poll per
+        # tool call, then after 1, 2 and 4 s, kept every agent session at 30-58% of a core; "the app is very slow".)
+        recovery = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds']
+        interval, looked, due = budget, time.monotonic() - budget, time.monotonic()
         while not stopped.is_set():
-            woken = wake.wait(interval)
+            woken = wake.wait(budget)
+            if woken and stopped.wait(max(looked + budget - time.monotonic(), 0)):
+                return
             wake.clear()
-            interval = budget if woken else min(interval * 2,
-                LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds'])
             with lock:
                 pending = list(contexts.values())
+            version, looked = store_version(), time.monotonic()
+            turn = looked >= due or (version is None and woken)   # no readable store number: a tool call polls, as before
+            new = False
             for context in pending:
                 if stopped.is_set():
                     return
-                refresh(context)
-
+                new = refresh(context, version, turn) or new
+            if new or turn:
+                interval = budget if new else min(interval * 2, recovery)
+                due = time.monotonic() + interval
     def start(context, *, startup=False):
         nonlocal worker
         with lock:

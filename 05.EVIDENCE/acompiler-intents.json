@@ -11585,7 +11585,9 @@
         "01.APP/nodelang/workshop_mailbox.py",
         "01.APP/nodelang/baboom_work_presence.py",
         "02.TESTS/tests_js/onebaboom_click.test.cjs",
-        "02.TESTS/tests_js/studio_shell_v51.test.cjs"
+        "02.TESTS/tests_js/studio_shell_v51.test.cjs",
+        "02.TESTS/tests_js/session_composer_live.cjs",
+        "02.TESTS/tests_js/studio_update_notice.test.cjs"
       ]
     },
     "F419": {

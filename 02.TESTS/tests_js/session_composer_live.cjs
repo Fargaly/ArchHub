@@ -24,7 +24,7 @@ const {chromium} = require('playwright');
       if (request.url().endsWith('/api/router/chat')) chats.push(JSON.parse(body));
       if (body.includes('"createTask"')) created.push(body);
     });
-    const ws = page.locator('[data-dock-workspace]');
+    const ws = page.locator('.dx-home-root[data-screen="task-file"] [data-dock-workspace]');  // the session's own docks (Home's map has docks too)
     const composer = page.locator('.v22g-composer-dock form');
     const target = () => composer.locator('.recipient-name').innerText();
     const sessionId = title => page.evaluate(name => window.ArchHubAPI.getSnapshot().tasks.find(task => task.title === name).id, title);
@@ -40,11 +40,10 @@ const {chromium} = require('playwright');
     };
 
     await page.goto(input.url);
-    await page.locator('.dx-task, [data-dock-workspace]').first().waitFor({state: 'attached'});
+    await page.locator('[data-home-map] [data-design="home.card"], [data-dock-workspace]').first().waitFor({state: 'attached'});
     if (!await ws.count()) {
-      const row = page.locator('.dx-task').filter({hasText: 'Drawing set review'}).first();
-      if (await row.isVisible()) await row.click();
-      await page.getByRole('button', {name: 'Open its Canvas', exact: true}).click();
+      // Home is the map: a double-click on the session's card enters it.
+      await page.locator('[data-home-map] [data-design="home.card"]').filter({hasText: 'Drawing set review'}).first().locator('.home-card-head').dblclick();
     }
     await ws.waitFor();
     await composer.waitFor();

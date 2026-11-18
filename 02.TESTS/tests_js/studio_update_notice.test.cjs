@@ -55,6 +55,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   win.crypto.randomUUID=require('node:crypto').randomUUID;
   win.ARCHHUB_BOOT={home_load_ms:60000,token:'isolated-session',csrf:'isolated-csrf'};
   win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+  win.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};  // JSDOM has none; Home's map and the docks observe their room
   win.AbortSignal.timeout=ms=>{
     assert.equal(ms,15000);
     const controller=new win.AbortController();deadlines.push(controller);return controller.signal;
@@ -405,7 +406,7 @@ test('STUDIOFIX task replies own separate drafts and late replies preserve newer
  }});
  const message=()=>v.doc.querySelector('textarea[aria-label="Message"]');
  const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
-  const select=async title=>{await v.click([...v.doc.querySelectorAll('button.dx-task')].find(b=>b.textContent.includes(title)));};
+  const select=async title=>{await v.click([...v.doc.querySelectorAll('[data-design="home.card"]')].find(node=>node.querySelector('.home-card-head b')?.textContent.includes(title))?.querySelector('.home-card-head'));};  // Home is the map: a card picks its session
  try{
   await v.settle(()=>!!message(),'Home task composer opens');
   await type('A reply');
@@ -470,7 +471,7 @@ test('Workshop plan steps are cards beside the conversation and review rows keep
   assert.ok(review,'a review row carries its status line');
   assert.equal(review.querySelector('.dx-evidence').textContent,'Evidence');
   assert.match(review.textContent,/Needs a visual check/);
-  await v.click([...v.doc.querySelectorAll('button.dx-task')].find(node=>node.textContent.includes('Unify task workspace')));
+  await v.click([...v.doc.querySelectorAll('[data-design="home.card"]')].find(node=>node.querySelector('.home-card-head b')?.textContent.includes('Unify task workspace'))?.querySelector('.home-card-head'));
   await v.settle(()=>v.doc.querySelectorAll('.dx-flow-card').length===2,'the working task shows its own cards');
   const words=[...v.doc.querySelectorAll('.dx-flow-status')].map(node=>node.textContent);
   assert.deepEqual(words,['Working','Awaiting verification']);

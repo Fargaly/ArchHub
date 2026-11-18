@@ -160,7 +160,7 @@ def test_unavailable_companion_reports_reason_and_plain_launch_still_opens_home(
 def test_task_callback_focuses_same_window_and_dispatches_one_id():
     from nodelang.nograph_launcher import _open_task
     calls, scripts = [], []
-    window = SimpleNamespace(showNormal=lambda: calls.append('show'),
+    window = SimpleNamespace(isMinimized=lambda: False, show=lambda: calls.append('show'),
         raise_=lambda: calls.append('raise'), activateWindow=lambda: calls.append('activate'))
     view = SimpleNamespace(page=lambda: SimpleNamespace(runJavaScript=scripts.append))
     task_id = 'task-";\\\n\u2028'

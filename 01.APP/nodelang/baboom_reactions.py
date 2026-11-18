@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 import time
 
 from .baboom_persona import speech
@@ -111,3 +112,40 @@ def latest(*, environment=None, now=None):
     except (OSError, ValueError, KeyError, sqlite3.Error):
         _LOG.warning('BABOOM reaction read unavailable; open Workshop to inspect its activity')
         return None
+
+
+_SOON = {'value': None, 'asked': threading.Event(), 'worker': None, 'failure': ''}
+
+
+def _read_when_asked():
+    while True:
+        _SOON['asked'].wait()
+        _SOON['asked'].clear()
+        if _SOON['worker'] is not threading.current_thread():
+            return  # stopped (the app closes) or replaced
+        try:
+            _SOON['value'], _SOON['failure'] = latest(), ''
+        except Exception as error:  # noqa: BLE001 - the worker outlives a raising read: a dead one is started again on every poll
+            if repr(error) != _SOON['failure']:  # one line per failure, not one per poll
+                _LOG.warning('BABOOM reaction read failed: %r', error)
+            _SOON['failure'], _SOON['value'] = repr(error), None
+
+
+def stop_soon():
+    """The app closes: the worker ends instead of waiting for a next ask."""
+    _SOON['worker'] = None
+    _SOON['asked'].set()
+
+
+def latest_soon():
+    """The reaction last read, at once; the read itself runs in one worker thread.
+
+    The companion asks from the Qt GUI thread on every poll. latest() opens the Workshop file and reads the tail of
+    every declared transcript: measured with 19 writing sessions one read takes over a second, so it never runs there.
+    """
+    worker = _SOON['worker']
+    if worker is None or not worker.is_alive():
+        _SOON['worker'] = threading.Thread(target=_read_when_asked, name='baboom-reactions', daemon=True)
+        _SOON['worker'].start()
+    _SOON['asked'].set()
+    return _SOON['value']

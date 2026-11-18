@@ -57,7 +57,8 @@ def _open_launch(arguments, companion, show_home, show_unavailable):
 def _open_task(window, view, task_id):
     if not isinstance(task_id, str) or not task_id.strip():
         raise ValueError('No such Workshop task')
-    window.showNormal()
+    from .window_commands import show_again
+    show_again(window)
     window.raise_()
     window.activateWindow()
     view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:open-task', {detail: "
@@ -187,9 +188,10 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         return 0
     from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
     from PyQt6.QtWidgets import QFileDialog, QMenu, QSystemTrayIcon
+    from .window_commands import show_again
 
     def show_home():
-        window.showNormal()
+        show_again(window)  # the tray and a second launch: a maximised window comes back maximised
         window.raise_()
         window.activateWindow()
         view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:open-home'))")
@@ -201,7 +203,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     def ask_baboom():
         # A click on BABOOM: ArchHub's one composer, pointed at BABOOM, with the caret in it.
         if window.isMinimized() or not window.isVisible():
-            window.showNormal()  # minimised or in the tray: the same restore as the tray's Open ArchHub
+            show_again(window)  # minimised or in the tray: the same restore as the tray's Open ArchHub
         window.raise_()
         window.activateWindow()
         view.setFocus()
@@ -289,6 +291,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     downloads = install_studio_downloads(view.page().profile(), view.page(), server.public_url, parent=window,
                                          on_status=lambda status: window.statusBar().showMessage(status['detail']))
     app.aboutToQuit.connect(downloads.close)
+    from .baboom_reactions import stop_soon
+    app.aboutToQuit.connect(stop_soon)  # the companion's reaction worker ends with the app
     view.load(QUrl(server.public_url + '/studio?bootstrap=' + server.browser_bootstrap_token))
 
     def land_companion():

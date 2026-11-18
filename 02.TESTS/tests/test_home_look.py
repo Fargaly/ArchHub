@@ -16,6 +16,57 @@ def test_baboom_reaction_lines_are_whole_sentences():
         assert text.startswith('An agent ') and text.endswith('.') and len(text.split()) >= 4, (kind, text)
 
 
+def test_the_companion_never_waits_for_the_reaction_read(monkeypatch):
+    """latest() reads the Workshop file and every transcript tail (over a second with 19 writing sessions): the
+    companion asks through latest_soon(), which answers at once and reads in one worker thread."""
+    import threading
+    from nodelang import baboom_reactions
+    started, release, reads = threading.Event(), threading.Event(), []
+
+    def slow_read():
+        reads.append(1)
+        started.set()
+        release.wait(10)
+        return 'read %d' % len(reads)
+    monkeypatch.setattr(baboom_reactions, 'latest', slow_read)
+    monkeypatch.setitem(baboom_reactions._SOON, 'value', None)
+    assert baboom_reactions.latest_soon() is None and started.wait(10)
+    assert baboom_reactions.latest_soon() is None and len(reads) == 1, 'a second ask does not start a second read'
+    release.set()
+    for _ in range(500):
+        if baboom_reactions._SOON['value'] is not None:
+            break
+        threading.Event().wait(.01)
+    assert str(baboom_reactions.latest_soon()).startswith('read ')
+    # A raising read is logged and answered as "no reaction" by the same worker; the app's close ends that worker.
+    worker = baboom_reactions._SOON['worker']
+    monkeypatch.setattr(baboom_reactions, 'latest', lambda: 1 / 0)
+    for _ in range(500):
+        if baboom_reactions.latest_soon() is None:
+            break
+        threading.Event().wait(.01)
+    assert baboom_reactions.latest_soon() is None and 'ZeroDivisionError' in baboom_reactions._SOON['failure']
+    assert baboom_reactions._SOON['worker'] is worker and worker.is_alive(), 'a raising read does not start a new thread'
+    baboom_reactions.stop_soon()
+    worker.join(10)
+    assert not worker.is_alive(), 'the worker stops when the app closes'
+
+
+def test_reopening_keeps_a_maximised_window_maximised():
+    """The tray's Open, a second launch, BABOOM and a task link bring the window back as he left it."""
+    from types import SimpleNamespace
+    from PyQt6.QtCore import Qt
+    from nodelang.window_commands import show_again
+    calls = []
+    state = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowMinimized
+    window = SimpleNamespace(isMinimized=lambda: True, windowState=lambda: state, setWindowState=calls.append, show=lambda: calls.append('show'))
+    show_again(window)
+    assert calls == [Qt.WindowState.WindowMaximized, 'show'], 'a minimised window comes back maximised if it was'
+    calls.clear()
+    show_again(SimpleNamespace(isMinimized=lambda: False, show=lambda: calls.append('show')))
+    assert calls == ['show'], 'a window in the tray is shown as it was hidden: never showNormal()'
+
+
 def test_home_look_rendered(tmp_path, monkeypatch):
     """1009, 1440 and 1920: full width, composer in the work column, no raw id or cut word, a title once, one update state."""
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')

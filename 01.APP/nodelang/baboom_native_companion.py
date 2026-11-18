@@ -1109,8 +1109,8 @@ def create_baboom_native_companion_window(
         def _check_reactions(self):
             if self._dismissed or self._stopped or self._dragged:
                 return
-            from .baboom_reactions import latest
-            reaction = latest()
+            from .baboom_reactions import latest_soon
+            reaction = latest_soon()  # never read files on the GUI thread
             state = reaction.state if reaction is not None else 'idle'
             if state != self._reaction_state:
                 self._reaction_state = state
@@ -1124,9 +1124,9 @@ def create_baboom_native_companion_window(
                 presence = baboom_work_presence(self._work_rows())
             except Exception:
                 presence = BaboomWorkPresence("idle", "", "idle", False, "")
-            from .baboom_reactions import latest
+            from .baboom_reactions import latest_soon
             from .baboom_persona import speech
-            reaction = latest()
+            reaction = latest_soon()
             if reaction is not None:
                 presence = reaction
             snapshot = controller.latest_snapshot

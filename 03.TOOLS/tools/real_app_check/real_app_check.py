@@ -107,7 +107,7 @@ def tree_digest(root: Path, entries=CODE_ENTRIES) -> str:
         base = root / entry
         files = ([base] if base.is_file() else
                  sorted(path for path in base.rglob("*") if path.is_file() and "__pycache__" not in path.parts
-                        and path.suffix not in (".pyc", ".pyo")) if base.is_dir() else [])
+                        and path.suffix.lower() not in (".pyc", ".pyo", ".dpapi")) if base.is_dir() else [])
         for path in files:
             digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
             digest.update(hashlib.sha256(path.read_bytes()).digest())
@@ -129,7 +129,7 @@ def overlay_files(overlay: Path) -> list:
             raise ValueError("overlay path escapes its folder: %s" % relative)
         if "__pycache__" in relative.parts or path.suffix in (".pyc", ".pyo"):
             continue
-        if relative.parts[0] not in OVERLAY_ROOTS:
+        if path.suffix.lower() == ".dpapi" or (relative.parts[0] not in OVERLAY_ROOTS and relative.as_posix() != "archhub.ico"):
             raise ValueError("overlay path is outside the code allowlist: %s" % relative.as_posix())
         chosen.append(relative)
     return chosen
@@ -145,7 +145,7 @@ def stage_app(installed: Path, overlay: Path | None, run_dir: Path, *, repo: Pat
     for entry in CODE_ENTRIES:
         source = installed / entry
         if source.is_dir():
-            shutil.copytree(source, app / entry, ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(source, app / entry, ignore=shutil.ignore_patterns("__pycache__", "*.dpapi"))
         elif source.is_file():
             shutil.copy2(source, app / entry)
     laid = []
@@ -162,6 +162,7 @@ def stage_app(installed: Path, overlay: Path | None, run_dir: Path, *, repo: Pat
         for name in ("package.json", "package-lock.json"):
             shutil.copy2(repo / name, app / name)
         compiled = subprocess.run(["node", "packaging/compile_studio.cjs"], cwd=app, capture_output=True,
+                                  env={**os.environ, "ARCHHUB_NODE_MODULES": str(repo / "node_modules")},
                                   text=True, timeout=600)
         if compiled.returncode != 0:
             raise SystemExit("Studio recompile refused: " + (compiled.stdout + compiled.stderr)[-600:])
@@ -496,6 +497,53 @@ def native_folder_action(request):
     return {'title': request['title'], 'folder': request['folder'], 'closed': True}
 
 
+def reopen_rig_window(desktop, state, pid):
+    """Use the isolated launcher's Open ArchHub handler, also used by its tray."""
+    import psutil
+    port = int((state / "launcher-ipc-port").read_text().strip())
+    owner = psutil.Process(pid)
+    if pid not in desktop.job.pids():
+        return {"error": "launcher is outside the rig job"}
+    def owns_listener():
+        return owner.is_running() and any(
+            c.status == psutil.CONN_LISTEN and c.laddr == ("127.0.0.1", port)
+            for c in owner.net_connections(kind="tcp"))
+    if not owns_listener():
+        return {"error": "isolated launcher does not own its Open listener"}
+    with socket.create_connection(("127.0.0.1", port), timeout=JobRunner.SETTLE_SECONDS) as connection:
+        if not owns_listener():
+            return {"error": "isolated launcher changed before Open"}
+        connection.sendall(b"[]\n")
+    return {"requested": True}
+
+
+def window_frame(desktop: HiddenDesktop) -> dict:
+    """The rig's own ArchHub window as Windows holds it: maximised or not, and its client size in physical pixels."""
+    user, ours, found = desktop.u32, set(desktop.job.pids()), []
+    callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+
+    def visit(hwnd, _):
+        pid, title = w.DWORD(), ctypes.create_unicode_buffer(64)
+        user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        user.GetWindowTextW(hwnd, title, 64)
+        if pid.value in ours and title.value == 'ArchHub':
+            found.append(hwnd)
+        return True
+    user.EnumDesktopWindows(w.HANDLE(desktop.handle), callback(visit), 0)
+    if len(found) != 1:
+        return {'error': 'expected one ArchHub window on the rig desktop, found %d' % len(found)}
+    user.SetThreadDpiAwarenessContext.argtypes, user.SetThreadDpiAwarenessContext.restype = (w.HANDLE,), w.HANDLE
+    previous = user.SetThreadDpiAwarenessContext(w.HANDLE(-4))  # per monitor: physical pixels, as the page reports them
+    try:
+        client = w.RECT()
+        user.GetClientRect(w.HWND(found[0]), ctypes.byref(client))
+        return {'zoomed': bool(user.IsZoomed(w.HWND(found[0]))), 'visible': bool(user.IsWindowVisible(w.HWND(found[0]))),
+                'client': [client.right - client.left, client.bottom - client.top]}
+    finally:
+        if previous:
+            user.SetThreadDpiAwarenessContext(previous)
+
+
 def pick_folder(desktop: HiddenDesktop, python: str, title: str, folder: str, evidence: Path, env) -> dict:
     request = evidence / 'native-folder-request.json'
     request.write_text(json.dumps({'title': title, 'folder': folder, 'desktop': desktop.name,
@@ -622,6 +670,10 @@ def main(argv=None) -> int:
                 request = json.loads(line[len("NATIVE "):])
                 if request.get("kind") == "pick-folder":
                     answer = pick_folder(desktop, str(python), request["title"], request["folder"], out, env)
+                elif request.get("kind") == "window-frame":
+                    answer = window_frame(desktop)
+                elif request.get("kind") == "reopen-rig-window":
+                    answer = reopen_rig_window(desktop, run_dir / "state", owner["listener_pid"])
                 else:
                     answer = {"error": "unknown native request"}
                 natives.append(answer)

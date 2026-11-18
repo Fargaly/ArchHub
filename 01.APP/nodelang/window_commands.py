@@ -4,10 +4,17 @@ import logging
 import math
 import threading
 
-from PyQt6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEngineScript
+
+
+def show_again(window):
+    """Bring the window back from the tray or the taskbar as the user left it: a maximised window stays maximised."""
+    if window.isMinimized():
+        window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
+    window.show()
 
 
 class WindowCommands(QObject):
@@ -81,7 +88,7 @@ class WindowCommands(QObject):
         elif action == "close":
             QTimer.singleShot(0, self.window.close)  # the same close the native caption button did
         elif action == "open":
-            self.window.showNormal()
+            show_again(self.window)
             self.window.raise_()
             self.window.activateWindow()
         elif action == "quit":

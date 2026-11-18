@@ -107,14 +107,23 @@ export function peerKeyPath(pid, socket) {
  * kept in one small file for all senders of this user: a per-process memory
  * never helped them, and concurrent pushes were refused before sending.
  */
-const verifiedIdentities = durableIdentities(path.join(os.tmpdir(), "archhub-peer-identities.json"));
+// Only on Windows, where the decision reads it: on POSIX an unknown identity is refused anyway, and a file in a
+// shared /tmp could be planted.
+const verifiedIdentities = IS_WINDOWS ? durableIdentities(path.join(os.tmpdir(), "archhub-peer-identities.json")) : new Map();
 
 function durableIdentities(file) {
   const read = () => { try { return JSON.parse(fs.readFileSync(file, "utf8")) ?? {}; } catch { return {}; } };
   const write = (all) => {
-    // false when the write is lost (a busy file): a later send then probes again
-    try { const temporary = `${file}.${process.pid}.tmp`; fs.writeFileSync(temporary, JSON.stringify(all)); fs.renameSync(temporary, file); return true; }
-    catch { return false; }
+    // A fresh name created exclusively (never an existing file or link); false when the write is lost (a busy file):
+    // a later send then probes again, and a leftover temporary file is removed.
+    const temporary = `${file}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+    try {
+      const handle = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+      try { fs.writeFileSync(handle, JSON.stringify(all)); } finally { fs.closeSync(handle); }
+      fs.renameSync(temporary, file);
+      return true;
+    }
+    catch { try { fs.rmSync(temporary, { force: true }); } catch { return false; } return false; }
   };
   return {
     get: (pid) => read()[pid],

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PeerEndpoint} from '../01.APP/nodelang/workshop/vendor/src/peer-protocol.mjs';
+import {PeerEndpoint} from '../../01.APP/nodelang/workshop/vendor/src/peer-protocol.mjs';
 
 // No peer.start(), sockets, registry writes or native app calls. The real
 // pending/queue machinery runs; only the socket write is injected and logged.
@@ -83,7 +83,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import {buildFrame} from '../01.APP/nodelang/workshop/vendor/src/peer-protocol.mjs';
+import {buildFrame} from '../../01.APP/nodelang/workshop/vendor/src/peer-protocol.mjs';
 
 async function pair(){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'sl-followup-'));

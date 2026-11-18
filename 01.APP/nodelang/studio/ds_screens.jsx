@@ -725,6 +725,10 @@
   const {Group: CanvasGroup, Panel: CanvasPanel, Separator: CanvasSeparator} = window.ReactResizablePanels;
   const SOCKET_STYLE = {position: 'relative', inset: 'auto', transform: 'none', display: 'inline-grid', placeItems: 'center', width: 22, height: 22,
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
+  // The live view during a pan or zoom: the engine moves the view itself; only these read it each frame.
+  const useLiveView = source => React.useSyncExternalStore(source.subscribe, source.get);
+  function LiveZoom({source}) { return Math.round(useLiveView(source).zoom * 100) + '%'; }
+  function LiveMap({source, ...props}) { return <window.UI.CanvasMap {...props} view={useLiveView(source)} />; }
   function Canvas({
     active = true,
     preview = null,
@@ -761,6 +765,8 @@
       held = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
+    const flow = React.useRef(null);
+    const viewSource = React.useMemo(() => { const listeners = new Set(); return {get: () => view.current, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); }, emit: () => listeners.forEach(fn => fn())}; }, []);
     const userViewport = React.useRef(false);
     const canvasTouched = React.useRef(false);
     React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
@@ -805,6 +811,8 @@
     };
     const updateView = (next, persist = true) => {
       view.current = next;
+      flow.current?.setViewport({x: next.pan.x, y: next.pan.y, zoom: next.zoom});
+      viewSource.emit();
       setViewport(next);
       if (persist) persistView({x:next.pan.x,y:next.pan.y,zoom:next.zoom});
     };
@@ -1373,8 +1381,9 @@
         }}>
     <CanvasContext.Provider value={{renderNode, renderFrame, openNode, preview:!!preview}}>
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
-       viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
-       onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
+       defaultViewport={{x: pan.x, y: pan.y, zoom}} onInit={inst => { flow.current = inst; inst.setViewport({x: view.current.pan.x, y: view.current.pan.y, zoom: view.current.zoom}); }}
+       onMove={(event,v) => { if (event instanceof window.Event) { view.current = {zoom: v.zoom, pan: {x: v.x, y: v.y}}; viewSource.emit(); } }}
+       onMoveEnd={(event, v) => { if (event instanceof window.Event) { setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
        onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
@@ -1394,7 +1403,7 @@
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
     {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).length} more steps →</button>}
-    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
+    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
 
    </div>
    </CanvasPanel>
@@ -1402,7 +1411,7 @@
      {inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
    </CanvasPanel></>}
   </CanvasGroup>
-  {mapHost && window.ReactDOM.createPortal(<window.UI.CanvasMap nodes={visible} area={area} view={viewport} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}
+  {mapHost && window.ReactDOM.createPortal(<LiveMap source={viewSource} nodes={visible} sizes={new Map(flowNodes.map(f => [f.id, f.measured]))} area={area} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}
   {peek==='library'&&u.libraryOpen&&!docked&&<div className="canvas-pane-peek" data-side="library"><window.UI.LibraryShelf onClose={()=>setPeek('')} /></div>}
   {peek==='inspector'&&!externalInspector&&(inspected||wire)&&<div className="canvas-pane-peek" data-side="inspector"><button type="button" className="dx-quiet" aria-label="Close Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek('')},event)}>×</button>{inspected?<NodeInspector n={inspected} s={s} u={u}/>:<WireInspector wire={wire} s={s} u={u} onClose={()=>setPeek('')} />}</div>}
 

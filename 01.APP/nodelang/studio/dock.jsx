@@ -326,13 +326,11 @@
   }
 
   // Mini map of the open canvas: real node boxes and the real view; click or drag moves the view, the wheel zooms.
-  function CanvasMap({nodes, area, view, onView, onZoom}) {
+  // sizes: the canvas engine's measured card sizes by id, so a pan or zoom frame reads no layout.
+  function CanvasMap({nodes, sizes, area, view, onView, onZoom}) {
     const W = 168, H = 104, surface = area.current;
     if (!surface || !nodes.length) return <div className="mmap"><p className="mmh">This canvas has no nodes yet.</p></div>;
-    const boxes = nodes.map(node => {
-      const element = surface.querySelector('[data-graph-node="' + window.CSS.escape(node.id) + '"]');
-      return {node, x: node.x, y: node.y, w: element?.offsetWidth || 240, h: element?.offsetHeight || 120};
-    });
+    const boxes = nodes.map(node => ({node, x: node.x, y: node.y, w: sizes?.get(node.id)?.width || 240, h: sizes?.get(node.id)?.height || 120}));
     const seen = {x: -view.pan.x / view.zoom, y: -view.pan.y / view.zoom, w: surface.clientWidth / view.zoom, h: surface.clientHeight / view.zoom};
     const x0 = Math.min(seen.x, ...boxes.map(b => b.x)) - 40, y0 = Math.min(seen.y, ...boxes.map(b => b.y)) - 40;
     const x1 = Math.max(seen.x + seen.w, ...boxes.map(b => b.x + b.w)) + 40, y1 = Math.max(seen.y + seen.h, ...boxes.map(b => b.y + b.h)) + 40;

@@ -1,7 +1,11 @@
 """One command catalogue; adapters keep execution and parameters with their owners."""
 from __future__ import annotations
 
+import json
+import logging
 from functools import lru_cache
+
+_LOG = logging.getLogger(__name__)
 
 
 CONTEXTS = ('node', 'wire', 'group', 'session', 'project', 'run', 'step', 'library-card',
@@ -41,11 +45,72 @@ def describe_agent_tools(tools):
     return rows
 
 
-@lru_cache(maxsize=1)
-def agent_commands():
+def _catalogue_key():
+    """The MCP package version and the bytes of these sources decide the catalogue; any change rebuilds it.
+    Content, not mtimes: an update rewrites every file's time but an identical file keeps its key."""
+    from hashlib import sha256
+    from importlib.metadata import PackageNotFoundError, version
+    from pathlib import Path
+    try:
+        digest = sha256(version('mcp').encode())
+    except PackageNotFoundError:
+        digest = sha256(b'')
+    for path in sorted(Path(__file__).parent.glob('*.py')):
+        digest.update(path.name.encode() + b'|' + path.read_bytes())
+    return digest.hexdigest()
+
+
+# The release build bakes the catalogue next to this module (bake_catalogue), so even the first start after an
+# update reads it; the per-profile copy in <state>/cache covers source checkouts. Both are disposable acceleration.
+PACKAGED_CATALOGUE = 'agent-commands.json'
+
+
+def _build_rows():
     from .native_agent_mcp import build_server
     server = build_server(_registry_catalogue=True)
     return describe_agent_tools(server._tool_manager.list_tools())
+
+
+def _write(path, key, rows):
+    """Atomic: a unique temporary beside the target, renamed over it; a failed write leaves no temporary behind."""
+    import os
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(prefix='.agent-commands-', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+            json.dump({'key': key, 'rows': rows}, stream)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def bake_catalogue():
+    """Release build step: write the catalogue beside this module for the installed app."""
+    from pathlib import Path
+    _write(Path(__file__).parent / PACKAGED_CATALOGUE, _catalogue_key(), _build_rows())
+
+
+@lru_cache(maxsize=1)
+def agent_commands():
+    """Building the catalogue imports the MCP package (3-7 s cold), so a held copy with the current key is read instead."""
+    from pathlib import Path
+    from .user_paths import state_directory
+    key, profile = _catalogue_key(), state_directory() / 'cache' / PACKAGED_CATALOGUE
+    for cache in (Path(__file__).parent / PACKAGED_CATALOGUE, profile):
+        try:
+            held = json.loads(cache.read_text(encoding='utf-8'))
+            if held['key'] == key:
+                return held['rows']
+        except (OSError, ValueError, KeyError, TypeError) as unusable:
+            _LOG.debug('Agent command catalogue %s not used: %s', cache, unusable)
+    rows = _build_rows()
+    try:
+        _write(profile, key, rows)
+    except OSError as unwritten:  # acceleration only: the next start builds it again
+        _LOG.info('Agent command catalogue cache not written: %s', unwritten)
+    return rows
 
 
 def commands_for_context(context, selection=None):

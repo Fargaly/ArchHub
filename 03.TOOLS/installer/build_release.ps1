@@ -838,6 +838,30 @@ foreach ($name in 'site.zip', 'stdlib.zip', 'stamp.json') {
         throw "The installer snapshot lacks packed/$name; no installer was compiled."
     }
 }
+# STUDIOPERF: bake the agent command catalogue into the installed nodelang, keyed on the staged sources and the
+# packed MCP version, so a cold start reads it instead of importing MCP. Acceleration only: a failed bake leaves the
+# app to build it on first start, so it never fails the release.
+# Isolated (-E -s: no PYTHON* variables, no user site), paths passed explicitly, bounded at 120 s.
+$bakePaths = (@((Join-Path $selectedRoot 'packed/site.zip'), $selectedRoot) | ConvertTo-Json -Compress)
+$bakeCode = "import json,sys; sys.path[:0]=json.loads(sys.argv[1]); from nodelang.command_registry import bake_catalogue; bake_catalogue()"
+try {
+    $bake = [Diagnostics.ProcessStartInfo]::new($PythonPath)
+    foreach ($argument in '-E', '-s', '-B', '-c', $bakeCode, $bakePaths) { $bake.ArgumentList.Add($argument) }
+    $bake.UseShellExecute = $false
+    $bake.CreateNoWindow = $true
+    $baking = [Diagnostics.Process]::Start($bake)
+    if (-not $baking.WaitForExit(120000)) {
+        $baking.Kill($true)
+        Write-Warning 'Agent command catalogue bake exceeded 120 s and was stopped; the app builds it on first start.'
+    } elseif ($baking.ExitCode -ne 0) {
+        Write-Warning 'Agent command catalogue was not baked; the app builds it on first start.'
+    }
+} catch {
+    Write-Warning "Agent command catalogue was not baked ($_); the app builds it on first start."
+}
+# A stopped bake can leave its unique temporary; it never enters the payload.
+Get-ChildItem -LiteralPath (Join-Path $selectedRoot 'nodelang') -Filter '.agent-commands-*.tmp' -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 $preflightOutput = Join-Path $output 'preflight'
 & $PythonPath -I -B (Join-Path $selectedRoot 'packaging/preflight_imports.py') --source $selectedRoot --output $preflightOutput
 if ($LASTEXITCODE -ne 0) { throw 'Preflight import closure generation failed; no installer was compiled.' }

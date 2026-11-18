@@ -248,6 +248,8 @@ def _aliases(identity, declaration=None):
     tags = {_session_tag(value, app) for app in (True, False) for value in (
         identity.get("sender_label"), declaration.get("agent"),
         "session-" + sha256(str(native).encode()).hexdigest()[:12] if native else "")} - {""}
+    # F243: the bare 12-hex tag of a session-<tag> token names that session too (exact match only).
+    tags |= {tag[len("session-"):] for tag in tags if tag.startswith("session-")}
     # A declared name that ends in another session's token addresses nobody.
     declared = [value for value in (declaration.get("display_name"), declaration.get("title"))
                 if _session_tag(value, app=False) in ("", *tags)]
@@ -444,6 +446,9 @@ def _recipient_rows(message, declarations):
         and len({row.get("native_session_id") for row in declarations
             if str(row.get("native_session_id") or "").casefold().startswith(target)}) > 1}
     ambiguous = {target for target in ambiguous if not any(target in _aliases({}, row) for row in declarations)}
+    # F243: a bare tag shared by two live sessions names neither.
+    ambiguous |= {target for target in targets if re.fullmatch(r"[0-9a-f]{12}", target) and len({recipient_identity(row)
+        for row in declarations if row.get("current") and target in _aliases({}, row)}) > 1}
     if ambiguous:
         message = {**message, "content":"To " + ", ".join(target for target in targets if target not in ambiguous)
             + ":\n" + message["content"].partition("\n")[2]}
@@ -1238,8 +1243,9 @@ def _session_alive(row):
 
 
 def _exact_session_alias(alias, row):
+    # F243: a bare 12-hex session tag is a session identity too; it never follows a role to its next holder.
     return (alias.casefold() in {str(row.get(key) or "").casefold() for key in ("native_session_id", "session")}
-            or _session_tag(alias) != "")
+            or _session_tag(alias) != "" or re.fullmatch(r"[0-9a-f]{12}", alias.casefold()) is not None)
 
 
 def read_declarations(connection, *, include_archived=False):

@@ -796,3 +796,53 @@ def run_matrix_cell(peer_value, tmp_path, monkeypatch, path, history_name):
             worker._watch(history, time.time(), mailbox.read_declarations(history._db, include_archived=True))
     follow_ups = [(app, native) for app, native, key in transport.sent if key == message['id'] + ':reminder']
     assert per_identity(follow_ups) == [0 if siblings else 1] * len(addressees), transport.sent
+
+
+def test_a_bare_session_tag_addresses_exactly_that_session(peer, tmp_path, monkeypatch):
+    """F243: send(to="<12-hex tag>") reaches the live session whose label ends in session-<tag>, exactly."""
+    declaration = peer[0]
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    token = declaration['agent'].rsplit(' / ', 1)[-1]
+    bare = token[len('session-'):]
+    assert token.startswith('session-') and len(bare) == 12
+    for target in (bare, token):
+        result = mailbox.call('send', {'to': target, 'text': 'bare tag ' + target},
+            {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+        assert result['status'] == 'recorded' and result['matched'] == 1, (target, result)
+        assert routed_sessions(result['message_id']) == [declaration['session']], target
+    for wrong in ('abcdefabcdef', bare[:6]):   # another tag, and a prefix of the right one: never matched
+        result = mailbox.call('send', {'to': wrong, 'text': 'wrong tag ' + wrong},
+            {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+        assert result['status'] == 'returned' and result['matched'] == 0, (wrong, result)
+
+
+def test_a_bare_tag_shared_by_two_live_sessions_names_neither(peer):
+    with mailbox.application_history() as history:
+        declaration = next(row for row in mailbox.read_declarations(history._db) if row['session'] == peer[0]['session'])
+    bare = declaration['agent'].rsplit(' / ', 1)[-1][len('session-'):]
+    other = {**declaration, 'session': 'agent:session:' + 'c' * 64, 'native_session_id': 'another-native'}
+    assert declaration['current'] and other['current']
+    message = {'content': 'To ' + bare + ':\nshared tag', 'category': mailbox.CATEGORY, 'author': 'another sender'}
+    assert [row['session'] for row in mailbox._recipient_rows(message, [declaration])] == [declaration['session']]
+    assert mailbox._recipient_rows(message, [declaration, other]) == []
+
+
+def test_an_ended_sessions_bare_tag_never_reaches_the_new_role_holder(peer, tmp_path, monkeypatch):
+    """F243 review: the role's aliases follow its new holder, but an ended session's bare tag is its own identity."""
+    _declaration, _label, transcript, _context, observed = peer
+    monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: False)
+    body = {'task': 'role handover', 'paths': [str(tmp_path)], 'request_id': 'unassigned', 'role': 'design'}
+    dead = mailbox.call('declare', {**body, 'status': 'done'},
+        {'claude/sessionID': 'old-role-session'}, peer=observed)['declaration']
+    holder = mailbox.call('declare', {**body, 'status': 'working'},
+        {'claude/sessionID': 'new-role-session'}, peer=observed)['declaration']
+    bare = dead['agent'].rsplit(' / ', 1)[-1][len('session-'):]
+    assert len(bare) == 12 and bare not in holder['agent']
+    with mailbox.application_history() as history:
+        current = next(row for row in mailbox.read_declarations(history._db) if row['session'] == holder['session'])
+    assert bare not in current.get('aliases', ()) and 'design' in mailbox._aliases({}, current)
+    result = mailbox.call('send', {'to': bare, 'text': 'must not reach the new holder'},
+        {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+    assert result['status'] == 'returned' and result['matched'] == 0, result
+    assert result['message_id'] not in pulled({'claude/sessionID': 'new-role-session'}, observed)
+    assert not transcript.exists()

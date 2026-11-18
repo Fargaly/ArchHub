@@ -18,6 +18,10 @@ const {chromium} = require('playwright');
       const page = await context.newPage();
       const errors = [];
       page.on('pageerror', error => { errors.push(error.message); console.error('PAGEERROR ' + error.message); });
+      // Two live Claude Code sessions in one folder with no task, as on his PC: the agent owner's answer is stood in for here.
+      const live = ['Claude Code / 00.ARCHUB / session-62fdf0706b09', 'Claude Code / 00.ARCHUB / session-8dff5b479f68'];
+      await page.route('**/api/universal/agents-canvas', route => route.fulfill({status: 200, contentType: 'application/json',
+        body: JSON.stringify({agents: [], sessions: live.map((name, index) => ({id: 'live' + index, name, status: 'working', task: null}))})}));
       await page.goto(input.url);
       await page.locator('[data-home-ready]').waitFor({state: 'attached'});
       await page.locator('.resume-heading h1').filter({hasText: input.echo}).waitFor();  // the owner's resume record selects it at every width
@@ -60,6 +64,22 @@ const {chromium} = require('playwright');
       assert.ok(!seen.stepTitles.includes(input.echo), 'no step card repeats the title' + at);
       // G: one update state at a time.
       assert.ok(!(seen.checking && seen.failed), 'never "Checking for updates" beside "Update failed"' + at);
+      // C (design v61): below 1100 the list folds to avatars; each avatar names its session and selects it.
+      if (width < 1100) {
+        const avatars = page.locator('aside[aria-label="Sessions"] .resume-row .resume-avatar');
+        await page.waitForFunction(() => (window.ArchHubAPI.getSnapshot().agentGraph?.sessions || []).length === 2);  // the agents arrive after the tasks
+        await avatars.and(page.locator('[aria-label^="Claude Code · 00.ARCHUB"]')).nth(1).waitFor();
+        const names = await avatars.evaluateAll(buttons => buttons.filter(button => button.getClientRects().length).map(button => button.getAttribute('aria-label')));
+        assert.ok(names.length >= 3 && new Set(names).size === names.length, 'every folded session is told apart' + at + ': ' + JSON.stringify(names));
+        assert.deepEqual(names.filter(name => name.startsWith('Claude Code · 00.ARCHUB')).sort(), ['Claude Code · 00.ARCHUB · 62fdf0', 'Claude Code · 00.ARCHUB · 8dff5b'], 'two live sessions of one app and folder are told apart' + at);
+        const other = names.find(name => !name.startsWith(input.echo) && !name.startsWith('Claude Code'));
+        await page.getByRole('button', {name: other, exact: true}).click();
+        await page.locator('.resume-heading h1').filter({hasText: other.split(' · ')[0]}).waitFor();
+        await page.getByRole('button', {name: names.find(name => name.startsWith(input.echo)), exact: true}).click();
+        await page.locator('.resume-heading h1').filter({hasText: input.echo}).waitFor();
+        // The selection is in the Home owner's record before this window closes (the next width opens on it).
+        await page.waitForFunction(async id => (await window.ArchHubAPI.readHomeLayout()).homeLayout.resume === id, input.echoTask, {polling: 250});
+      }
       assert.deepEqual(errors, [], 'no page errors' + at);
       if (input.shots) await page.screenshot({path: path.join(input.shots, 'home-' + width + '.png')});
       await context.close();

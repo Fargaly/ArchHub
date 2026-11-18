@@ -11523,6 +11523,10 @@
     "HOMELOOK": {
       "source": "Founder 2026-11-18, with a screenshot of Home on installed 20261117-2144 maximised at 1920x1032: he asked what this look is and where the design is. Items seen in his screenshot: the page stays 1440 wide inside the maximised window, the close button stays lit red, the composer overlaps the Sessions list, live sessions show a raw session id as their name, the selected title is printed three times, BABOOM says a one-word status, the header shows two update states at once and a count that disagrees with the list. Then the approved prototype's Home (the map of the work: session cards in project groups, wires, the Canvas docks, Map parameters in the Home owner) is built on real data. Each cut lands only after an independent check; hidden and isolated tests only.",
       "scope": [
+        "01.APP/nodelang/baboom_companion_process.py",
+        "01.APP/nodelang/nograph_server.py",
+        "02.TESTS/tests_replica/test_baboom_companion_process.py",
+        "02.TESTS/tests_replica/test_baboom_atlas_is_inspected_off_the_gui_thread.py",
         "01.APP/nodelang/agent_status.py",
         "01.APP/nodelang/baboom_reactions.py",
         "01.APP/nodelang/window_chrome.py",

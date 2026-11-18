@@ -11570,7 +11570,9 @@
         "02.TESTS/tests_js/settings_node_bridge.mjs",
         "02.TESTS/tests_js/studio_workflows_categories.test.cjs",
         "02.TESTS/tests_replica/test_baboom_native_runtime.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/baboom_nograph.py",
+        "02.TESTS/tests_replica/test_baboom_nograph.py"
       ]
     },
     "F419": {

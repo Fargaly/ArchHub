@@ -182,7 +182,40 @@ const {chromium} = require('playwright');
     await pins.click();
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="Workflow canvas"] [data-graph-node][data-fixed]').length === 1);
     assert.deepEqual(await drawn(), [null, null, null]);
-    assert.deepEqual(errors, []);
+    // APPROVALCONTEXT: the Workshop's Waiting card says what will change and where, in plain words; Show opens the draft itself.
+    const held = page.locator('[data-ws-approval="app:ask:canvas-test-draft"]');
+    await held.waitFor();
+    const said = await held.innerText();
+    for (const words of ['Draft a reply', 'site@example.com', 'RE: Site report', 'Thanks, the north entrance is fixed.', 'Outlook asked', 'Reply to the site report'])
+      assert.ok(said.includes(words), 'the card says ' + words + ': ' + said);
+    assert.ok(!said.includes('never-shown'), 'no other argument of the held call is shown');
+    await held.getByRole('button', {name: 'Show', exact: true}).click();
+    await held.locator('[data-ws-draft-body]').waitFor();
+    assert.equal((await held.locator('[data-ws-draft-body]').innerText()).trim(), ('Thanks, the north entrance is fixed. '.repeat(8)).trim());
+    assert.ok(await page.locator('.settings-page, [data-screen="settings"]').count() === 0, 'Show never opens Settings');
+    await held.getByRole('button', {name: 'Hide', exact: true}).click();
+    // Key 2 on the hovered card rejects it (design); nothing is sent.
+    await held.hover();
+    await held.dispatchEvent('keydown', {key: '2', bubbles: true});
+    await held.waitFor({state: 'detached'});
+    // Show on a held step of ANOTHER session opens that session with the step centred in the free area, over its opening view.
+    await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
+    await page.locator('[data-design="home.card"]').filter({hasText: 'Drawing set review'}).dblclick();
+    // (slice sits in the group the presence check made; count is still drawn on its own)
+    await page.locator('.app-header .header-here').filter({hasText: 'Drawing set review'}).waitFor();
+    await canvas.locator('[data-graph-node="count"]').waitFor({state: 'attached'});
+    const step = page.locator('[data-ws-approval="app:ask:canvas-test-step"]');
+    await step.getByRole('button', {name: 'Show', exact: true}).click();
+    await page.locator('.app-header .header-here').filter({hasText: 'Model view audit'}).waitFor();
+    // The step is brought into the free area at its centre: across exactly, and down within the band the composer and zoom bar settle in.
+    await page.waitForFunction(() => {
+      const pane = document.querySelector('[aria-label="Workflow canvas"]').getBoundingClientRect(), card = document.querySelector('[aria-label="Workflow canvas"] [data-graph-node="count"]')?.getBoundingClientRect();
+      if (!card) return false;
+      let x0 = pane.left, x1 = pane.right, y1 = pane.bottom; const y0 = pane.top + 56;
+      for (const foot of [document.querySelector('[aria-label="Workflow canvas"] .canvas-toolbar'), document.querySelector('.v22g-composer-dock>form')]) { const b = foot?.getBoundingClientRect(); if (b?.width && b.top < pane.bottom && b.bottom > y0 && b.right > pane.left && b.left < pane.right) y1 = Math.min(y1, b.top); }
+      for (const dock of document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
+      return Math.abs(card.left + card.width / 2 - (x0 + x1) / 2) < 4 && Math.abs(card.top + card.height / 2 - (y0 + y1) / 2) < 60 && card.left >= x0 && card.right <= x1 && card.top >= y0 && card.bottom <= y1;
+    });    assert.deepEqual(errors, []);
     console.log('PASS design_canvas_live at 1009, 1440 and 1920');
   } finally {
     await browser.close();

@@ -1380,6 +1380,9 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .dockws .wsc{border:1px solid var(--color-line-soft);border-radius:8px;padding:8px 9px;background:var(--color-bg);display:grid;gap:6px}
 .dockws .wsc.warn{border-color:color-mix(in srgb,var(--color-warn) 55%,var(--color-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--color-warn) 10%,transparent)}
 .dockws .wsc.bad{border-color:color-mix(in srgb,var(--color-err) 55%,var(--color-line))}
+/* APPROVALCONTEXT: a held draft shows who it goes to, its subject and its text. */
+.dockws .ws-draft{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;margin:0;font-size:12px}.dockws .ws-draft dt{color:var(--color-ink-muted)}.dockws .ws-draft dd{margin:0;overflow-wrap:anywhere}
+.dockws .ws-draft-preview{margin:0;font-size:12px;overflow-wrap:anywhere}.dockws .ws-draft-body{margin:0;max-height:240px;overflow:auto;white-space:pre-wrap;font:12px/1.45 var(--type-family-ui);background:var(--color-bg-soft);border-radius:6px;padding:6px 8px}
 .dockws .wsch{display:flex;align-items:center;gap:7px;min-width:0}
 .dockws .wsch b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
 .dockws .wsch em{font-style:normal;color:var(--color-ink-muted);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}

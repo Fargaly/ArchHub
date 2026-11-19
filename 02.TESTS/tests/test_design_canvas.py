@@ -49,6 +49,15 @@ def test_fixed_nodes_expanded_is_a_view_on_the_open_tabs_and_refuses_a_value_tha
         canvas_tabs('setCanvasTabs', [{**plain, 'expanded': 'yes'}], settings=held)
     assert canvas_tabs(settings=held)['canvasTabs'] == shown, 'a refused write changes nothing'
 
+def test_a_held_connector_draft_card_carries_its_recipient_subject_and_text_only():
+    from nodelang.hook_decision import _ask_card
+    card = _ask_card({'id': 'app:ask:x', 'input_digest': 'x', 'title': 'Edit', 'who': 'Outlook', 'summary': 'Reply',
+                      'replay': {'kind': 'connector', 'connector': 'outlook', 'action': 'outlook_reply_draft',
+                                 'arguments': {'to': 'a@example.com', 'cc': 'b@example.com', 'subject': 'RE: x', 'body': 'Hello', 'token': 'secret'}}})
+    assert card['draft'] == {'to': 'a@example.com', 'cc': 'b@example.com', 'subject': 'RE: x', 'body': 'Hello'}
+    assert card['action'] == 'outlook_reply_draft' and 'secret' not in json.dumps(card)
+    assert 'draft' not in _ask_card({'id': 'app:ask:y', 'input_digest': 'y', 'replay': {'kind': 'permit', 'tool': 'x', 'arguments': {}}})
+
 def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
     """Compiled Studio on a seeded temporary Workshop at 1009, 1440 and 1920."""
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
@@ -106,6 +115,24 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
         held['document']['nodes'] = [*held['document']['nodes'], waiting]
         client.files('save', path=other['path'], document=held['document'])
         client.workshop('openTaskGraph', opened_task)
+        # APPROVALCONTEXT: one held Outlook reply draft, in the shape the Outlook connector holds it (a fake: nothing is sent).
+        from nodelang import hook_decision
+        def hold(path):
+            held = hook_decision._read_holds(path)
+            held['holds']['app:ask:canvas-test-draft'] = {
+                'id': 'app:ask:canvas-test-draft', 'input_digest': 'canvas-test-draft', 'status': 'pending', 'at': 1.0,
+                'title': 'Edit', 'who': 'Outlook', 'text': '', 'textLabel': '', 'summary': 'Reply to the site report', 'permit_open': False,
+                'replay': {'kind': 'connector', 'connector': 'outlook', 'action': 'outlook_reply_draft',
+                           'arguments': {'to': 'site@example.com', 'cc': '', 'subject': 'RE: Site report', 'body': 'Thanks, the north entrance is fixed. ' * 8, 'token': 'never-shown'}},
+                'record': {'asked': {'who': 'Outlook', 'when': '', 'what': 'Reply to the site report'}, 'decided': None}}
+            # A held step in the other session's file: Show from this one opens that session with the step centred.
+            held['holds']['app:ask:canvas-test-step'] = {
+                'id': 'app:ask:canvas-test-step', 'input_digest': 'canvas-test-step', 'status': 'pending', 'at': 2.0,
+                'title': 'Run', 'who': 'Drawing coordinator', 'text': '', 'textLabel': '', 'summary': 'Count the sheets', 'permit_open': False,
+                'replay': {'kind': 'canvas', 'payload': {'node': {'id': 'count'}, 'continuation': {'path': other['path'], 'document': {'properties': {'taskContext': {'task': working_task}}}}}},
+                'record': {'asked': {'who': 'Drawing coordinator', 'when': '', 'what': 'Count the sheets'}, 'decided': None}}
+            hook_decision._write_holds(path, held)
+        hook_decision._with_ask_file(os.environ, hold)
         result = subprocess.run(
             ['node', '02.TESTS/tests_js/design_canvas_live.cjs'],
             input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token, 'browserCache': browser_cache,

@@ -304,7 +304,7 @@
   // What needs the user, what failed and who is working, from the Workshop, approval and task owners already in Studio state.
   function WorkshopPanel({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
-    const [busy, setBusy] = React.useState(''), acting = React.useRef('');  // the ref holds a second click in the same frame
+    const [busy, setBusy] = React.useState(''), [shown, setShown] = React.useState(''), acting = React.useRef('');  // the ref holds a second click in the same frame
     const tasks = (s.tasks || []).filter(task => task.status !== 'ARCHIVED');
     const taskOf = card => tasks.find(task => [card.taskId, card.task_id, card.work, ...(card.taskIds || [])].includes(task.id));
     const waiting = (s.approvals || []).filter(card => card.status === 'pending')
@@ -332,12 +332,22 @@
     });
     return <div className="wsb" data-dock-workshop="">
       <section className="wssec" aria-label="Waiting for you"><span className="eyebrow"><Icon name="shield" size={12} />Waiting for you · {waiting.length}</span>
-        {waiting.map(card => { const task = taskOf(card); return <div className="wsc warn" key={card.id} data-ws-approval={card.id}>
-          <div className="wsch"><Av id={card.who || task?.owner || 'Agent'} size={22} /><b>{task?.title || card.title}</b><em>{card.who}</em></div>
-          <p>{task ? card.title : card.summary}{task && card.summary ? <> · <span className="soft">{card.summary}</span></> : null}</p>
+        {waiting.map(card => { const task = taskOf(card), draft = card.draft;
+          // In plain words: what will change and where (the session or file, the step), who asked and why; a draft shows its own text.
+          const where = task?.title || (card.path ? card.path.split(/[\\/]/).pop().replace(/\.archhub$/, '') : '');
+          const step = card.nodeId && (task?.workflow || []).find(node => node.id === card.nodeId)?.title;
+          const what = draft ? (/reply/i.test(card.action || '') ? 'Draft a reply' : 'Draft a message') + (card.who ? ' in ' + card.who : '') : step ? 'Run ' + step : card.title;
+          return <div className="wsc warn" key={card.id} data-ws-approval={card.id} data-ws-draft={draft ? '' : undefined} title="1 Approve · 2 Reject" tabIndex={0}
+            // Keys 1 and 2 answer the card under the pointer (design): the card takes the focus on hover, never away from typing.
+            onMouseEnter={event => { if (!window.document.activeElement?.closest?.('input, textarea, select, [contenteditable="true"]')) event.currentTarget.focus({preventScroll: true}); }}
+            onKeyDown={event => { if (event.target === event.currentTarget && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key === '1' || event.key === '2')) { event.preventDefault(); decide(card, event.key === '1' ? 'approve' : 'decline'); } }}>
+          <div className="wsch"><Av id={card.who || task?.owner || 'Agent'} size={22} /><b>{what}</b><em>{where || card.who}</em></div>
+          {draft && <dl className="ws-draft"><dt>To</dt><dd>{draft.to || 'No recipient'}{draft.cc ? ' · cc ' + draft.cc : ''}</dd>{draft.subject && <><dt>Subject</dt><dd>{draft.subject}</dd></>}</dl>}
+          {draft?.body && (shown === card.id ? <pre className="ws-draft-body" data-ws-draft-body="">{draft.body}</pre> : <p className="soft ws-draft-preview">{draft.body.slice(0, 160)}{draft.body.length > 160 ? '…' : ''}</p>)}
+          <p>{card.who ? card.who + ' asked' : 'Asked'}{card.summary ? <> · <span className="soft">{card.summary}</span></> : null}</p>
           <div className="wsca"><Btn p sm disabled={busy === card.id} onClick={event => executeAction('ui.select', () => decide(card, 'approve'), event)}>Approve</Btn>
             <Btn sm disabled={busy === card.id} onClick={event => executeAction('ui.select', () => decide(card, 'decline'), event)}>Reject</Btn>
-            <Btn sm ghost onClick={event => executeAction('ui.select', () => onShow({task, nodeId: card.nodeId, approvalId: card.id}), event)}>Show</Btn></div></div>; })}
+            <Btn sm ghost aria-expanded={draft ? shown === card.id : undefined} onClick={event => executeAction('ui.select', () => draft ? setShown(shown === card.id ? '' : card.id) : onShow({task, path: card.path, nodeId: card.nodeId, approvalId: card.id}), event)}>{draft && shown === card.id ? 'Hide' : 'Show'}</Btn></div></div>; })}
         {!waiting.length && <p className="hint">Nothing waits for you.</p>}</section>
       <section className="wssec" aria-label="Failed"><span className="eyebrow"><Icon name="close" size={12} />Failed · {failed.length}</span>
         {failed.map(({task, row}) => <div className="wsc bad" key={task.id + ':' + row.id} data-ws-failed={row.id}>

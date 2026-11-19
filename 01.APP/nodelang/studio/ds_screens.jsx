@@ -814,6 +814,7 @@
     const canvasTouched = React.useRef(false);
     React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
     const stopAutoFrame = () => { canvasTouched.current = true; };
+    const shownScope = React.useRef(null);  // the scope in which a Show centred a step
     // Follow: the view moves with the agent's step (a view only); wheel, a canvas press or Esc stops it.
     const [following, setFollowing] = React.useState(false);
     const stopFollow = () => { if (following) { setFollowing(false); u.setToast('Stopped following.'); } };
@@ -899,6 +900,7 @@
     };
     React.useEffect(() => {
       const saved = s.graph.viewport;
+      if (shownScope.current === s.graph.scopeKey) return;  // a step Show centred is what he asked to see
       userViewport.current = s.graph.viewportSaved === true;
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
     }, [s.graph.scopeKey, embedded, s.graph.viewportSaved, s.graph.viewport?.x, s.graph.viewport?.y, s.graph.viewport?.zoom]);
@@ -1280,6 +1282,19 @@
     React.useEffect(() => {
       if (following && presenceStep) centreOn(presenceStep);
     }, [following, presenceStep?.id, presenceStep?.x, presenceStep?.y]);
+    // A step asked for by Show (the Workshop's Waiting card) comes to the centre once this canvas draws it.
+    React.useEffect(() => {
+      // It waits for the session it belongs to (never a same-named step on the canvas still showing) and for the card's own measured size.
+      const wanted = window.UI.centreWhenShown, node = wanted && visible.find(row => row.id === wanted.nodeId);
+      if (!node || preview || !active) return;
+      if (wanted.task ? u.canvasTabs?.active !== wanted.task : wanted.path && api.getSessionPath?.() !== wanted.path) return;
+      if (!area.current?.querySelector('[data-graph-node="' + node.id + '"]')?.offsetHeight) return;
+      window.UI.centreWhenShown = null;
+      // The step Show asked for wins over this canvas's opening view: no auto-frame or saved view moves it away afterwards.
+      stopAutoFrame();
+      shownScope.current = s.graph.scopeKey;
+      centreOn(node);
+    }, [flowNodes, active, u.selectedNodeId, u.canvasTabs?.active, s.graph.scopeKey]);
     // Esc stops Follow wherever the focus is (design): one window listener, only while following.
     React.useEffect(() => {
       if (!following) return;

@@ -1689,6 +1689,13 @@ def _ask_card(row: dict) -> dict:
             "text": row.get("text") or "", "textLabel": row.get("textLabel") or "", "summary": row.get("summary") or "",
             "description": row.get("summary") or "", "status": row.get("status") or "pending",
             "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
+    replay = row.get('replay') or {}
+    arguments = replay.get('arguments') if isinstance(replay.get('arguments'), dict) else {}
+    if replay.get('kind') == 'connector' and any(isinstance(arguments.get(key), str) for key in ('to', 'subject', 'body')):
+        # What the held connector call will write, in its own words: who it goes to, the subject and the text (never other arguments).
+        card['draft'] = {key: str(arguments.get(key) or '')[:4000 if key == 'body' else 400] for key in ('to', 'cc', 'subject', 'body')}
+        card['action'] = str(replay.get('action') or '')
+        card['connector'] = str(replay.get('connector') or '')
     if continuation:
         refs, current, node = [], continuation, (row.get('replay') or {}).get('payload', {}).get('node', {})
         while current:

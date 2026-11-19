@@ -454,10 +454,13 @@
     const persistWidth = value => persist(() => writeInspectorWidth(value), 'Could not save the Properties width.');
     // Dock layout edits are written in the order they were made; a refused write shows here with Retry.
     const saveDock = layout => { dockWrites.current = dockWrites.current.then(() => persist(() => api.setDockLayout(layout), 'Could not save the panel layout.')); };
-    const showWork = async ({task: target, nodeId, approvalId}) => {
+    const showWork = async ({task: target, path, nodeId, approvalId}) => {
+      // A held step in a file with no task opens that file and its step; only a card with neither opens the approval itself.
+      if (!target && path) { const opened = await u.act(() => api.openSession(path)); if (opened && !opened.cancelled) { u.go('canvas'); if (nodeId) { window.UI.centreWhenShown = {nodeId, path}; u.setSelectedNodeId(nodeId); } } return; }
       if (!target) { if (approvalId) u.show('Approve', {id: approvalId}); return; }
       if (target.id !== task?.id) await u.openTaskFile(target.id);
-      if (nodeId) { u.setSelectedNodeId(nodeId); inspect({nodeId, wireId: null}); return; }
+      // Show selects the step and brings it to the centre of the free area (design panTo), once the canvas draws it.
+      if (nodeId) { window.UI.centreWhenShown = {nodeId, task: target.id}; u.setSelectedNodeId(nodeId); inspect({nodeId, wireId: null}); return; }
       // A Workshop card's Show of a thread: the one composer now has that task as its context; put the cursor in it.
       focusAsk = {task: target.id, from: target.id === task?.id ? '' : task?.id || ''};   // settled by placeComposer below
     };

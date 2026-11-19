@@ -12115,6 +12115,15 @@
         "02.TESTS/tests_replica/test_every_agent_joins.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "PDFTEXTCACHED": {
+      "source": "Founder request R193: PDF reads cache extracted text in state_directory/pdf-text keyed by path, size, mtime and pages, with non-blocking hook note.",
+      "scope": [
+        "01.APP/nodelang/clean_office_adapter.py",
+        "01.APP/nodelang/hook_decision.py",
+        "02.TESTS/tests/test_pdf_reads_as_cached_text.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

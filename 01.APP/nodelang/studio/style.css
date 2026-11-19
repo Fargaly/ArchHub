@@ -993,7 +993,6 @@ kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
 .v22g-composer[data-expanded=true] textarea{height:66px!important;overflow:auto}.v22g-composer[data-expanded=true]{align-items:start}
 .v22g-canvas .canvas-toolbar{top:12px;right:12px;left:auto;bottom:auto;height:auto;gap:2px;padding:3px;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg-panel)}
 .v22g-canvas .canvas-toolbar button{height:26px;min-width:28px;padding:0 8px;font-size:12px;color:var(--v22g-ink2);border-radius:5px}
-.v22g-canvas .canvas-toolbar [aria-label="Zoom out"],.v22g-canvas .canvas-toolbar [aria-label="Zoom in"]{display:none!important}
 .v22g-approval-pop>[data-approval]{background:var(--color-bg-raised)!important}
 .header-new{display:flex;align-items:center;gap:6px;padding:0 12px;height:30px;font-size:12px}
 .v22g-beside{height:100%;display:flex;flex-direction:column;min-height:0}.v22g-beside>header{height:32px;flex-shrink:0}.v22g-beside>[data-screen=canvas]{flex:1;min-height:0}

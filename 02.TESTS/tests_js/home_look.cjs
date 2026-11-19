@@ -27,6 +27,8 @@ const {chromium} = require('playwright');
       const map = page.locator('[data-home-map]'), card = title => map.locator('.react-flow__node').filter({has: page.locator('[data-design="home.card"]'), hasText: title}).first();
       await map.waitFor();
       await card(input.echo).waitFor();
+      // ZOOMKEEP: the map's zoom bar sits clear of the composer; Fit is pressed with a real click at every width.
+      await page.locator('.home-map-canvas [data-design="canvas.fit"]').click();
       // A map value is in the Home owner's published record (the write is back), not only on screen.
       const held = (key, value) => page.waitForFunction(([key, value]) => ((window.ArchHubAPI.getSnapshot().homeLayout?.map || {})[key] || '') === value, [key, value]);
       const read = () => page.evaluate(() => {
@@ -64,6 +66,24 @@ const {chromium} = require('playwright');
       await page.waitForFunction(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].filter(b => b.textContent.startsWith('Claude Code')).length === 2);
       const liveTitles = await page.evaluate(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].map(b => b.textContent).filter(t => t.startsWith('Claude Code')).sort());
       assert.deepEqual(liveTitles, ['Claude Code · 62fdf0', 'Claude Code · 8dff5b'], 'live sessions are told apart' + at);
+      if (width === 1440) {
+        // ZOOMKEEP (founder: "when I zoom, after a while it fits"): his zoom stays when the map's arrangement changes (a live agent comes).
+        const zoomOf = () => page.evaluate(() => new window.DOMMatrix(window.getComputedStyle(document.querySelector('[data-home-map] .react-flow__viewport')).transform).a);
+        const box = await page.locator('[data-home-map] .react-flow__pane').boundingBox(), cdp = await context.newCDPSession(page);  // input on this headless page only
+        const before = await zoomOf();
+        await cdp.send('Input.dispatchMouseEvent', {type: 'mouseWheel', x: box.x + box.width / 2, y: box.y + box.height / 2, deltaX: 0, deltaY: -600});
+        await page.waitForFunction(was => new window.DOMMatrix(window.getComputedStyle(document.querySelector('[data-home-map] .react-flow__viewport')).transform).a > was * 1.05, before);
+        const zoomed = await zoomOf();
+        await page.unroute('**/api/universal/agents-canvas');
+        await page.route('**/api/universal/agents-canvas', route => route.fulfill({status: 200, contentType: 'application/json',
+          body: JSON.stringify({agents: [], sessions: [...live, 'Codex / 00.ARCHUB / session-0a1b2c3d4e5f'].map((name, index) => ({id: 'live' + index, name, status: 'working', task: null}))})}));
+        await page.waitForFunction(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].some(b => b.textContent.startsWith('Codex')), null, {timeout: 60000});
+        assert.equal(await zoomOf(), zoomed, 'his zoom stays when a session comes onto the map' + at);
+        await page.unroute('**/api/universal/agents-canvas');
+        await page.route('**/api/universal/agents-canvas', route => route.fulfill({status: 200, contentType: 'application/json',
+          body: JSON.stringify({agents: [], sessions: live.map((name, index) => ({id: 'live' + index, name, status: 'working', task: null}))})}));
+        await page.waitForFunction(() => ![...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].some(b => b.textContent.startsWith('Codex')), null, {timeout: 60000});
+      }
       // Every name on Home, the docks included, is readable: no raw session id; the map's bar words do not overlap.
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /session-[0-9a-f]{6,}/i, 'no raw session id anywhere on Home' + at);
       const bar = await page.evaluate(() => [...document.querySelectorAll('.home-map-bar>button')].filter(b => b.getClientRects().length).map(b => { const r = b.getBoundingClientRect(); return [r.left, r.right, b.scrollWidth <= b.clientWidth + 1]; }));

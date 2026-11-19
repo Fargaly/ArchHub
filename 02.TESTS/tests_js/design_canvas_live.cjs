@@ -28,9 +28,37 @@ const {chromium} = require('playwright');
     await ws.waitFor();
     await canvas.locator('.react-flow__node[data-id="slice"]').waitFor({state: 'attached'});
 
+    // ZOOMKEEP. The free area: the canvas minus the docks, the 56 px zoom band and what floats at its foot (composer, zoom bar).
+    const free = () => page.evaluate(() => {
+      const pane = document.querySelector('[aria-label="Workflow canvas"]').getBoundingClientRect();
+      let x0 = pane.left, x1 = pane.right, y1 = pane.bottom; const y0 = pane.top + 56;
+      for (const foot of [document.querySelector('[aria-label="Workflow canvas"] .canvas-toolbar'), document.querySelector('.v22g-composer-dock>form')]) { const b = foot?.getBoundingClientRect(); if (b?.width && b.top < pane.bottom && b.bottom > y0 && b.right > pane.left && b.left < pane.right) y1 = Math.min(y1, b.top); }
+      for (const dock of document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
+      const cards = [...document.querySelectorAll('[aria-label="Workflow canvas"] [data-graph-node]')].map(card => card.getBoundingClientRect());
+      const zoom = new window.DOMMatrix(window.getComputedStyle(document.querySelector('[aria-label="Workflow canvas"] .react-flow__viewport')).transform).a;
+      return {x0, x1, y0, y1, zoom, inside: cards.every(c => c.left >= x0 - 2 && c.right <= x1 + 2 && c.top >= y0 - 2 && c.bottom <= y1 + 2), left: Math.min(...cards.map(c => c.left))};
+    });
+    // A canvas he never viewed opens fitted into the free area (design openView), or at the session's left edge at reading size below 62%.
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Workflow canvas"] [data-graph-node]').length > 0);
+    const opened = await free();
+    assert.ok(opened.inside && opened.zoom >= .62 || opened.zoom >= .8 && Math.abs(opened.left - opened.x0 - 16) < 24, 'the canvas opens fitted to the session, or at its left edge at reading size: ' + JSON.stringify(opened));
+    // The zoom bar is % / Fit / Flow (design): no − or +.
+    assert.equal(await canvas.locator('.canvas-toolbar [aria-label="Zoom in"], .canvas-toolbar [aria-label="Zoom out"]').count(), 0);
+    // His zoom stays: zoom in at a point, then 30 s of polls and autosave, and the zoom is the same.
+    const viewBox = await canvas.boundingBox(), zoomInput = await context.newCDPSession(page);  // input on this headless page only
+    for (let step = 0; step < 4; step++) await zoomInput.send('Input.dispatchMouseEvent', {type: 'mouseWheel', x: viewBox.x + viewBox.width / 2, y: viewBox.y + viewBox.height / 2, deltaX: 0, deltaY: -400});
+    await page.waitForFunction(was => new window.DOMMatrix(window.getComputedStyle(document.querySelector('[aria-label="Workflow canvas"] .react-flow__viewport')).transform).a > was * 1.2, opened.zoom);
+    const zoomed = (await free()).zoom;
+    assert.ok(zoomed <= 2.0001, 'zoom stops at 200%: ' + zoomed);
+    await page.waitForTimeout(30000);
+    assert.equal((await free()).zoom, zoomed, 'after 30 s of polls and autosave his zoom is unchanged');
+
     for (const width of [1009, 1440, 1920]) {
       await page.setViewportSize({width, height: 900});
       await page.getByRole('button', {name: 'Fit', exact: true}).click();
+      // Fit uses only the free area: every card lies inside it, unless that needs less than the design's 35% floor.
+      const fitted = await free();
+      assert.ok(fitted.inside || Math.abs(fitted.zoom - .35) < .001, width + ': after Fit every card is inside the free area ' + JSON.stringify(fitted));
       const fits = await snapshot(() => ({page: document.documentElement.scrollWidth <= window.innerWidth, canvas: document.querySelector('[aria-label="Workflow canvas"]').getBoundingClientRect().width}));
       assert.ok(fits.page && fits.canvas >= 240, width + ': no sideways scroll and a usable canvas ' + JSON.stringify(fits));
 

@@ -790,7 +790,8 @@
     const api = preview ? {getSnapshot:()=>s, refreshProjects:async()=>preview, setSessionViewport:()=>{}} : window.UI.api;
     const zoomRow = s.settings.find(r => r.id === 'Appearance.Default zoom') || s.settings.find(r => r.page === 'Appearance' && (r.label === 'Zoom percentage' || r.key === 'Zoom percentage'))
       || s.settings.find(r => r.id === 'Appearance.Zoom percentage');
-    const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
+    // The design's zoom range: 30-200%.
+    const zoomMin = Math.max(.3, Number(s.canvasPolicy?.zoom_min ?? .3)), zoomMax = Math.min(2, Number(s.canvasPolicy?.zoom_max ?? 2));
     const [selected, setSelected] = React.useState(u.selectedNodeId && s.graph.nodes.some(n => n.id === u.selectedNodeId) ? [u.selectedNodeId] : []),
       [wireId, setWireId] = React.useState(null),
       [selectedWires, setSelectedWires] = React.useState([]),
@@ -818,13 +819,21 @@
     const stopFollow = () => { if (following) { setFollowing(false); u.setToast('Stopped following.'); } };
     // The step's centre goes to the centre of the canvas area no dock covers, under the zoom band and above what floats at its foot,
     // the composer and the zoom bar, measured (design panTo).
-    const centreOn = n => {
-      const box = area.current?.getBoundingClientRect(); if (!box?.width) return;
+    // The canvas area no dock covers, under the 56 px zoom band and above what floats at its foot (composer, zoom bar), measured;
+    // in the canvas's own pixels (design freeRect). Centring, Fit and the opening view all use it.
+    const freeArea = () => {
+      const box = area.current?.getBoundingClientRect(); if (!box?.width) return null;
       let x0 = box.left, x1 = box.right, y1 = box.bottom; const y0 = box.top + 56;
       for (const foot of [zoomBar.current, window.document.querySelector('.v22g-composer-dock>form')]) { const b = foot?.getBoundingClientRect(); if (b?.width && b.top < box.bottom && b.bottom > y0 && b.right > box.left && b.left < box.right) y1 = Math.min(y1, b.top); }
       for (const dock of window.document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
+      return {x: x0 - box.left, y: y0 - box.top, w: x1 - x0, h: y1 - y0};
+    };
+    // A box of the canvas fitted into the free area: design fit, zoom kept within 35-105% of reading size.
+    const fitFree = boxes => { const free = freeArea(); const fitted = free && fitCanvasViewport(boxes, free.w, free.h, Math.max(zoomMin, .35), Math.min(zoomMax, 1.05), 1.05); return fitted && {zoom: fitted.zoom, pan: {x: fitted.pan.x + free.x, y: fitted.pan.y + free.y}}; };
+    const centreOn = n => {
+      const free = freeArea(); if (!free) return;
       const card = area.current.querySelector('[data-graph-node="' + n.id + '"]'), z = view.current.zoom;
-      updateView({zoom: z, pan: {x: (x0 + x1) / 2 - box.left - (n.x + (card?.offsetWidth || 268) / 2) * z, y: (y0 + y1) / 2 - box.top - (n.y + (card?.offsetHeight || 240) / 2) * z}}, false);
+      updateView({zoom: z, pan: {x: free.x + free.w / 2 - (n.x + (card?.offsetWidth || 268) / 2) * z, y: free.y + free.h / 2 - (n.y + (card?.offsetHeight || 240) / 2) * z}}, false);
     };
     // Flow view is this open tab's own view state (Settings owner, canvasTabs); the session file never changes.
     const flowTab = embedded && !preview ? (u.canvasTabs?.tabs || []).find(tab => tab.id === u.canvasTabs.active) : null, flowView = !!flowTab?.flow;
@@ -1315,13 +1324,12 @@
       .map(edge => ({...edge, sourceHandle: 'flow:out', targetHandle: 'flow:in'})) : edges;
     const fit = (persist = true) => {
       if (!visible.length || !area.current) return;
-      const w = area.current.clientWidth, h = area.current.clientHeight;
       const boxes = [...area.current.querySelectorAll('[data-graph-node]')].map(el => {
         const n = visible.find(n => n.id === el.dataset.graphNode);
         return n && {x: n.x, y: n.y, w: el.offsetWidth || n.w || 224, h: el.offsetHeight || n.h || 160};
       }).filter(Boolean);
       if (!boxes.length) return;
-      const fitted = fitCanvasViewport(boxes, w, h, zoomMin, zoomMax, embedded ? 1 : Number(s.canvasPolicy?.zoom_fit_max ?? 1.25));
+      const fitted = fitFree(boxes);
       if (fitted) updateView(fitted, persist);
     };
     React.useEffect(() => {
@@ -1343,13 +1351,15 @@
           return node && {node,x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
         }).filter(Boolean);
         if (boxes.length!==visible.length || boxes.some(box=>!box.w||!box.h)) return;
-        const left=peek==='library'?248:0,right=peek==='inspector'?380:occludedWidth;
-        const width=area.current.clientWidth-left-right,height=area.current.clientHeight;
-        if (width<=48 || height<=144) return;
-        // Opening follows pane/node sizing only until input; touching a node does not save the viewport.
-        const session=boxes.find(box=>box.node.type==='thing.session');
-        const x=session?session.x:Math.min(...boxes.map(box=>box.x)),y=Math.min(...boxes.map(box=>box.y));
-        updateView({zoom:1,pan:{x:left+52-x,y:124-y}},false);
+        const free=freeArea();
+        if (!free || free.w<=48 || free.h<=144) return;
+        // A canvas he never viewed opens with the whole session fitted into the free area (design openView). When that would be under
+        // 62%, it opens at the session's left edge at reading size instead. Opening follows sizing only until input; nothing is saved.
+        const fitted=fitFree(boxes);
+        if (fitted && fitted.zoom>=.62) { updateView(fitted,false); return; }
+        const x=Math.min(...boxes.map(box=>box.x)),y=Math.min(...boxes.map(box=>box.y)),spanH=Math.max(...boxes.map(box=>box.y+box.h))-y;
+        const zoom=Math.max(.8,Math.min(1,free.h/Math.max(1,spanH)));
+        updateView({zoom,pan:{x:free.x+16-x*zoom,y:free.y+8-y*zoom}},false);
       };
       const observer=new window.ResizeObserver(frame);
       observer.observe(area.current);
@@ -1515,7 +1525,7 @@
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
     {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(areaWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{(count=>count+' more step'+(count>1?'s':'')+' →')(visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).length)}</button>}
-    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
+    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
 
    </div>
    </WorkPanel>
@@ -1611,15 +1621,29 @@
       const old = seen.current, zoom = Math.max(zoomMin, Math.min(zoomMax, value)), x = area.current.clientWidth / 2, y = area.current.clientHeight / 2;
       setView({zoom, pan: {x: x - (x - old.pan.x) * zoom / old.zoom, y: y - (y - old.pan.y) * zoom / old.zoom}});
     };
-    // The whole map fits its room when it is drawn and when its arrangement changes. When the room changes (a dock dragged, folded or
-    // opened; the window) only a view he has not touched re-fits: his own zoom and pan are kept.
+    // The whole map fits its room when it is first drawn. After that, an arrangement change (a session or live agent comes or goes) or a
+    // room change (a dock, the window) re-fits only a view he has not touched: his own zoom and pan are kept. Fit and double-click re-fit.
     React.useLayoutEffect(() => {
-      fit();
+      if (!touched.current) fit();
       const observer = new window.ResizeObserver(() => { if (area.current) onRoom?.(area.current.clientWidth, area.current.clientHeight); if (!touched.current) fit(); });
       if (area.current) observer.observe(area.current);
       return () => observer.disconnect();
     }, [chart.layout]);
-    const edges = chart.wires.map(w => ({id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: false, focusable: false,
+    // The zoom bar stays clear of the composer that floats over the map (as on the canvas): every control can be pressed.
+    const bar = React.useRef(null), restGap = React.useRef(null), [rise, setRise] = React.useState(null);
+    React.useLayoutEffect(() => {
+      const place = () => {
+        const host = area.current?.getBoundingClientRect(), own = bar.current?.getBoundingClientRect(), form = window.document.querySelector('.home-map-stage .global-composer form');
+        const c = form?.getBoundingClientRect();
+        if (!host || !own || !c?.width) { setRise(null); return; }
+        if (restGap.current === null && !bar.current.style.bottom) restGap.current = host.bottom - own.bottom;  // where its stylesheet rests it
+        const gap = restGap.current ?? 12, rest = {left: own.left, right: own.right, bottom: host.bottom - gap, top: host.bottom - gap - own.height};
+        setRise(rest.right > c.left - 8 && rest.left < c.right + 8 && rest.bottom > c.top - 8 && rest.top < c.bottom + 8 ? Math.round(host.bottom - c.top + 8) : null);
+      };
+      const observer = new window.ResizeObserver(place);
+      for (const element of [area.current, window.document.querySelector('.home-map-stage .global-composer form')]) if (element) observer.observe(element);
+      return () => observer.disconnect();
+    }, []);    const edges = chart.wires.map(w => ({id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: false, focusable: false,
       data: {color: typeColor(w.type), state: 'compatible', opacity: .9, label: w.label}}));
     return <div className="v22g-canvas home-map-canvas" data-design="canvas.stage" data-home-canvas="">
       <div ref={area} className="node-canvas" tabIndex={0} aria-label="Map of the work" title="Drag to pan · Wheel to zoom · Double-click to fit" style={{position:'absolute',inset:0,'--xy-background-color':'transparent'}}
@@ -1632,7 +1656,7 @@
             onNodeClick={(event, node) => { if (!node.data.n.group) onPick(node.data.n); }} onNodeDoubleClick={(event, node) => { if (!node.data.n.group) onOpen(node.data.n); }} onPaneClick={() => onPick(null)}
             zoomOnDoubleClick={false} deleteKeyCode={null} proOptions={{hideAttribution: true}} />
         </HomeMapContext.Provider>
-        <div data-canvas-overlay="" className="canvas-toolbar"><button type="button" className="button-reset" title="Reset zoom" onClick={event => executeAction('projects.controls.activate', {handler: () => zoomAt(1)}, event)}>{Math.round(view.zoom * 100)}%</button>
+        <div data-canvas-overlay="" className="canvas-toolbar" ref={bar} style={rise == null ? undefined : {bottom: rise}}><button type="button" className="button-reset" title="Reset zoom" onClick={event => executeAction('projects.controls.activate', {handler: () => zoomAt(1)}, event)}>{Math.round(view.zoom * 100)}%</button>
           <button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction('projects.controls.activate', {handler: fit}, event)}>Fit</button></div>
       </div>
       {mapHost && window.ReactDOM.createPortal(<window.UI.CanvasMap nodes={chart.nodes.filter(n => !n.group || n.collapsed).map(n => ({id: n.id, x: n.x, y: n.y, type: 'home', status: n.state === 'Needs you' ? 'approval' : ''}))}
@@ -1765,16 +1789,8 @@ function projectsdsscreensjsxNodeMenu16({n,openNode,setSelected,u,canvas}, event
                 };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxZoomOut20({zoomAt,view}, event) {
-  const handler = () => zoomAt(view.current.zoom / 1.2);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
 function projectsdsscreensjsxResetZoom21({zoomAt}, event) {
   const handler = () => zoomAt(1);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxZoomIn22({zoomAt,view}, event) {
-  const handler = () => zoomAt(view.current.zoom * 1.2);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdsscreensjsxFit23({fit}, event) {
@@ -1814,9 +1830,7 @@ const PROJECT_ACTIONS = {
   "projects.ds_screens.SaveSkill.14": "projectsdsscreensjsxSaveSkill14",
   "projects.ds_screens.Run.15": "projectsdsscreensjsxRun15",
   "projects.ds_screens.NodeMenu.16": "projectsdsscreensjsxNodeMenu16",
-  "projects.ds_screens.ZoomOut.20": "projectsdsscreensjsxZoomOut20",
   "projects.ds_screens.ResetZoom.21": "projectsdsscreensjsxResetZoom21",
-  "projects.ds_screens.ZoomIn.22": "projectsdsscreensjsxZoomIn22",
   "projects.ds_screens.Fit.23": "projectsdsscreensjsxFit23",
   "projects.ds_screens.AddANodeCtrlK.24": "projectsdsscreensjsxAddANodeCtrlK24",
   "projects.ds_screens.DeleteWire.28": "projectsdsscreensjsxDeleteWire28",
@@ -1824,5 +1838,5 @@ const PROJECT_ACTIONS = {
   "projects.ds_screens.OpenParameters.31": "projectsdsscreensjsxOpenParameters31",
   "projects.ds_screens.Open.32": "projectsdsscreensjsxOpen32"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsdsscreensjsxNavigateHome5,projectsdsscreensjsxParent6,projectsdsscreensjsxGraphs7,projectsdsscreensjsxWorkspaces8,projectsdsscreensjsxToggleLibrary9,projectsdsscreensjsxGroup10,projectsdsscreensjsxUndo11,projectsdsscreensjsxRedo12,projectsdsscreensjsxArrange13,projectsdsscreensjsxSaveSkill14,projectsdsscreensjsxRun15,projectsdsscreensjsxNodeMenu16,projectsdsscreensjsxZoomOut20,projectsdsscreensjsxResetZoom21,projectsdsscreensjsxZoomIn22,projectsdsscreensjsxFit23,projectsdsscreensjsxAddANodeCtrlK24,projectsdsscreensjsxDeleteWire28,projectsdsscreensjsxSettings30,projectsdsscreensjsxOpenParameters31,projectsdsscreensjsxOpen32});
+window.registerActions(PROJECT_ACTIONS, {projectsdsscreensjsxNavigateHome5,projectsdsscreensjsxParent6,projectsdsscreensjsxGraphs7,projectsdsscreensjsxWorkspaces8,projectsdsscreensjsxToggleLibrary9,projectsdsscreensjsxGroup10,projectsdsscreensjsxUndo11,projectsdsscreensjsxRedo12,projectsdsscreensjsxArrange13,projectsdsscreensjsxSaveSkill14,projectsdsscreensjsxRun15,projectsdsscreensjsxNodeMenu16,projectsdsscreensjsxResetZoom21,projectsdsscreensjsxFit23,projectsdsscreensjsxAddANodeCtrlK24,projectsdsscreensjsxDeleteWire28,projectsdsscreensjsxSettings30,projectsdsscreensjsxOpenParameters31,projectsdsscreensjsxOpen32});
 })();

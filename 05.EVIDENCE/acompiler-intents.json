@@ -8853,7 +8853,8 @@
         "02.TESTS/tests_js/studio_designmatch.test.cjs",
         "02.TESTS/tests_js/studio_footerretry.test.cjs",
         "02.TESTS/tests_js/wire_agents.test.cjs",
-        "02.TESTS/tests_js/wsadd.test.cjs"
+        "02.TESTS/tests_js/wsadd.test.cjs",
+        "02.TESTS/tests_js/studio_workshop_detail.test.cjs"
       ]
     },
     "STUDIOFIX": {

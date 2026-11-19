@@ -1624,7 +1624,11 @@ function datasetPorts(node){
  return {source:[{id:'records',type:'list',label:'Record[]'},...(node.paramDefs||[]).map(d=>({id:'field:'+d.id,type:'list',label:d.name+' \u00b7 '+(COLUMN_LABEL[d.type]||'Any')+'[]'}))],target:[]};
 }
 function fileNode(node, document=sessionDocument){
- const ports0=state.libraryPorts||[],item=ports0.find(row=>row.id===node.item)||ports0.find(row=>row.engine===node.type), base=node.ports||item?.ports||{source:[],target:[]};
+ const ports0=state.libraryPorts||[],item=ports0.find(row=>row.id===node.item)||ports0.find(row=>row.engine===node.type);let base=node.ports||item?.ports||{source:[],target:[]};
+ // A session file from before its Parameters/Tools/Context values shows them with their defaults and output sockets;
+ // the file gets them at the first edit (api.setNodeParam). Opening writes nothing.
+ if(node.type==='thing.session'&&item?.paramDefs){const outs=(item.ports?.source||[]).filter(p=>!(base.source||[]).some(q=>q.id===p.id));
+  node={...node,paramDefs:node.paramDefs?.length?node.paramDefs:item.paramDefs,params:{...Object.fromEntries(item.paramDefs.map(d=>[d.id,item.params[d.id]])),...node.params}};base={...base,source:[...(base.source||[]),...outs]};}
  const defs=(node.paramDefs||[]).filter(d=>!node.fixed||!['reference','thread','limit','workspace'].includes(d.id)).map(d=>node.type==='param.value'&&d.id==='value'?{...d,type:node.params.type}:d), bind=node.type==='param.value'?node.bind:null, owner=bind&&document.nodes.find(n=>n.id===bind.node);
  const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
   target:[...(base.target||[]).map(p=>node.type==='param.value'&&p.id==='value'?{...p,type:PARAM_SOCKET[node.params.type]||'any'}:p),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
@@ -1633,7 +1637,7 @@ function fileNode(node, document=sessionDocument){
  const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=item?.setting||defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
    return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:(['min','max','step'].includes(key)||kind==='number'||kind==='integer')?'number':PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
    dataType:kind||'',min:def.min,max:def.max,step:def.step??(kind==='integer'?1:undefined),unit:node.type==='param.value'&&key==='type'?'':def.unit||'',options:['enum','choice'].includes(kind)?def.options||[]:undefined,
-   editable:!(node.fixed&&['reference','thread','limit','workspace'].includes(key))&&!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
+   editable:!(node.fixed&&['reference','thread','limit',...(node.type==='thing.session'?[]:['workspace'])].includes(key))&&!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
    linkedTo:bind&&key==='value'?(owner?.title||'')+' \u00b7 '+(owner?.paramDefs?.find(d=>d.id===bind.param)?.name||bind.param):''};});
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&document.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
@@ -2136,6 +2140,10 @@ api.setNodeParam=async(id,key,value)=>{
  if(held?.type==='thing.setting'&&held.params.setting&&key==='value'){await api.setSetting(held.params.setting,value);return state.graph.nodes.find(n=>n.id===id);}
  // The Workshop node's update parameters are the Settings owner's values: an explicit edit writes that owner first.
  if(held&&held.params?.tool==='workshop'&&UPDATE_POLICY_KEYS.includes(key))await api.setApplicationSetting(key,value);
+ const sessionItem=held?.type==='thing.session'&&!(held.paramDefs||[]).length&&(state.libraryPorts||[]).find(row=>row.engine==='thing.session');
+ if(sessionItem?.paramDefs?.some(d=>d.id===key)){  // the first edit of a session from before its panel values: they join the file with it
+  fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.paramDefs=copy(sessionItem.paramDefs);for(const def of sessionItem.paramDefs)if(!Object.hasOwn(n.params,def.id))n.params[def.id]=copy(sessionItem.params[def.id]);n.params[key]=value;},[id],{node:id,key,value});
+  return state.graph.nodes.find(n=>n.id===id);}
  if(held&&(held.type==='param.value'||(held.paramDefs||[]).some(d=>d.id===key))){await paramOp('set',[id,key,value]);return state.graph.nodes.find(n=>n.id===id);}
  fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(!n||!Object.hasOwn(n.params,key))throw Error('Parameter is absent');n.params[key]=value;},[id],{node:id,key,value});return state.graph.nodes.find(n=>n.id===id);};
 async function paramOp(op,args){

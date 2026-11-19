@@ -1047,6 +1047,50 @@ def test_an_agent_draft_tool_that_asks_without_a_card_is_refused_not_held(monkey
         _mode(None)
 
 
+def _session_for(native, agent, values):
+    """A task session file whose Session node holds `values`, and a declaration tying agent session `native` to it."""
+    import json as _json
+    from nodelang.session_files import read_document, write_document
+    from nodelang.workshop_mailbox import application_history
+    from nodelang.workshop_tasks import create, open_session
+    with application_history() as history:
+        task = create(history, 'Sheet set review ' + native, 'founder')['id']
+        path = open_session(history, task)['path']
+        record = {'root': 'root-' + native, 'session': 'identity-' + native, 'native_session_id': native, 'runtime': 'codex',
+                  'work': task, 'status': 'working', 'display_name': agent, 'agent': agent, 'request_id': 'r1',
+                  'pid': 999999, 'created_at': 0}
+        with history._transaction(write=True):
+            history._db.execute("CREATE TABLE IF NOT EXISTS workshop_declarations("
+                                "root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
+            history._db.execute("INSERT INTO workshop_declarations VALUES(?,?)", (record['root'], _json.dumps(record)))
+    document = read_document(path)
+    next(n for n in document['nodes'] if n['id'] == 'start')['params'].update(values)
+    write_document(path, document)
+    return path
+
+
+def test_a_session_card_tool_off_and_read_only_agent_are_refused_in_that_session_only():
+    """Session card > Tools off and Inspector > Session read only are enforced on the agent's calls in that session."""
+    from nodelang import hook_decision
+    _mode("Accept edits")
+    try:
+        _session_for('native-a', 'Codex', {'tools_off': ['revit'], 'read_only_agents': ['Codex']})
+        _session_for('native-b', 'Claude', {'tools_off': [], 'read_only_agents': []})
+        off = hook_decision.decide({'tool_name': 'revit_execute_csharp', 'tool_input': {'code': 'return 1;'}, 'session_id': 'native-a'})
+        assert off['verdict'] == 'refuse' and 'session-setting' in off['rules'], off
+        assert any('revit is off for this session' in note for note in off['notes']), off['notes']
+        write = hook_decision.decide({'tool_name': 'write', 'tool_input': {'path': 'notes.txt', 'content': 'x'}, 'session_id': 'native-a'})
+        assert write['verdict'] == 'refuse' and any('Codex is read only in this session' in note for note in write['notes']), write
+        read = hook_decision.decide({'tool_name': 'read', 'tool_input': {'path': 'notes.txt'}, 'session_id': 'native-a'})
+        assert read['verdict'] in ('allow', 'organize'), read
+        other = hook_decision.decide({'tool_name': 'revit_execute_csharp', 'tool_input': {'code': 'return 1;'}, 'session_id': 'native-b'})
+        assert 'session-setting' not in other['rules'], other
+        loose = hook_decision.decide({'tool_name': 'write', 'tool_input': {'path': 'notes.txt', 'content': 'x'}, 'session_id': 'no-such-agent'})
+        assert 'session-setting' not in loose['rules'], loose
+    finally:
+        _mode(None)
+
+
 def _bound_literal(code, name):
     match = re.search(r'var %s = ("(?:\\.|[^"\\])*");' % name, code)
     assert match, code

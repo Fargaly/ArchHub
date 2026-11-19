@@ -266,6 +266,45 @@
     return {params: p, nodes, wires, groups, total: every.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
       signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
+  // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
+  // sessions, run budget. Done when and input links are the session model's (POST /api/session-model); read-only agents and
+  // the run budget are the Session node's own values, the same ones its card shows. One value, one owner each.
+  function SessionInspector({s, u, task}) {
+    const path = api.getSessionPath(), session = s.graph.nodes.find(row => row.fixed && row.type === 'thing.session');
+    const [attempt, setAttempt] = React.useState(0), [load, setLoad] = React.useState({status: 'waiting'});
+    const stamp = path + ':' + (s.graph.revision || '') + ':' + s.graph.nodes.length + ':' + attempt;
+    React.useEffect(() => {
+      if (!path) return undefined;
+      let current = true; setLoad(held => held.status === 'loaded' ? held : {status: 'waiting'});
+      Promise.all([api.readSessionModel(path), api.sessionInputLinks(path)]).then(([row, rows]) => { if (current) setLoad({status: row ? 'loaded' : 'empty', row, links: rows || []}); },
+        error => { if (current) setLoad({status: 'error', message: error.message}); });
+      return () => { current = false; };
+    }, [stamp]);
+    if (!path || !session) return null;
+    if (load.status === 'waiting') return <section className="v48-session-inspector" aria-label="Session"><h3>Session</h3><p role="status">Reading this session…</p></section>;
+    if (load.status === 'error') return <section className="v48-session-inspector" aria-label="Session"><h3>Session</h3><p role="alert">{load.message}</p><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setAttempt(value => value + 1), event)}>Retry session</button></section>;
+    if (load.status === 'empty') return <section className="v48-session-inspector" aria-label="Session"><h3>Session</h3><p className="muted">This file has no session record yet.</p></section>;
+    const model = {state: 'loaded', row: load.row}, links = load.links, setModel = next => setLoad(held => ({...held, row: next.row}));
+    const checks = s.graph.nodes.filter(row => !row.fixed && (/check/i.test(row.type) || /check/i.test(row.category || '') || /check/i.test(row.title || '')));
+    const done = model.state === 'loaded' ? model.row.doneCheck : null, tries = done?.tries || 0;
+    const doneState = !done ? 'Not set' : done.blocked ? 'Blocked · failed 3 of 3' : tries ? 'Failed ' + tries + ' of 3' : 'Not run yet';
+    const setDone = node => u.act(() => api.setSessionModel(path, {doneCheck: node ? {node} : null}).then(row => { setModel({state: 'loaded', row}); return row; }));
+    const readOnly = session.params.read_only_agents || [], members = (task?.members || []).map(row => row.name).concat(task?.members?.length ? [] : task?.agents || []);
+    const setReadOnly = (name, on) => u.act(() => api.setNodeParam(session.id, 'read_only_agents', on ? [...new Set([...readOnly, name])] : readOnly.filter(row => row !== name)));
+    const budget = (session.parameterSchema || []).find(row => row.key === 'run_budget');
+    if (load.status === 'loaded') return <section className="v48-session-inspector" data-design="inspector.session" aria-label="Session">
+      <h3>Session</h3>
+      <label className="grid">Done when<select data-design="inspector.session.donewhen" aria-label="Done when" value={done?.node || ''} onChange={event => setDone(event.target.value)}>
+        <option value="">{checks.length ? 'Pick a check on this canvas…' : 'Add a Check node to this canvas first'}</option>{checks.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
+      <p className="muted" data-design="inspector.session.donestate">{doneState}{done ? ' · three failures in a row block Done' : ''}</p>
+      <h4>Who works on it</h4>
+      {members.length ? members.map(name => <label key={name} className="v48-session-param"><span>{name}</span><span>Read only <input type="checkbox" aria-label={name + ' read only'} checked={readOnly.includes(name)} onChange={event => setReadOnly(name, event.target.checked)}/></span></label>) : <p className="muted">No agent yet.</p>}
+      <h4>Inputs from other sessions</h4>
+      {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span>{link.source.path}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
+      {budget && <label className="grid">Run budget<window.UI.ValueWidget n={session} p={budget} value={session.params.run_budget} u={u}/></label>}
+    </section>;
+    return null;
+  }
   function Home({fileWorkspace = false} = {}) {
     const s = useData(), u = useApp();
     const [preview, setPreview] = React.useState(null), [previewError, setPreviewError] = React.useState('');
@@ -626,7 +665,7 @@
         <h2>{propertyTab === 'Selection' ? inspectedNode?.title || task?.title || s.graph.name : task?.title || s.graph.name || 'Task'}</h2>
         <div data-design="inspector.tab" role="tablist" aria-label="Properties view">{[['Task','This task'],['Selection','Properties'],['Automate','Automate']].map(([tab,label]) => <button data-design={'inspector.' + tab.toLowerCase()} type="button" role="tab" aria-selected={propertyTab === tab} key={tab} onClick={() => executeAction('ui.select', () => setPropertyTab(tab))}>{label}</button>)}</div>
       </header>
-      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? <>{fileWorkspace && propertyTab==='Task' && u.modal?.kind!=='Approve' && approvalSteps.map(({card})=><section key={card.id} className="v48-current-approval"><span>Needs your approval</span><h3>{s.graph.nodes.find(node=>node.id===card.nodeId)?.title || card.title}</h3><window.UI.ApprovalCard id={card.id} compact/>{card.text && <details className="v48-approval-parameters"><summary>All parameters</summary><pre>{card.text}</pre></details>}</section>)}<div className="v48-task-progress" role="progressbar" aria-label="Task progress" aria-valuemin={0} aria-valuemax={resumeSteps.length || 1} aria-valuenow={resumeSteps.filter(step=>step.state.kind==='done').length}>{resumeSteps.map((step,index)=><i key={step.id} data-state={approvalSteps.some(row=>row.index===index)?'awaiting':step.state.kind}/>)}</div><p className="v48-progress-line">{resumeSteps.filter(step=>step.state.kind==='done').length} of {resumeSteps.length} steps done{resumeSteps[currentStep] ? ', now ' + resumeSteps[currentStep].title : ''}</p><label className="grid">Description<textarea data-design="inspector.describe" aria-label="Workflow description" rows={6} key={task.id+':description'} defaultValue={s.graph.documentation || task.scope || task.description || ''} onBlur={e=>{if(e.target.value!==(s.graph.documentation||task.scope||task.description||''))u.act(()=>api.updateGraph(s.graph.id,{documentation:e.target.value}));}} /></label><div className="v48-made"><h3>What it made</h3>{resumeSteps.filter(step=>step.output).map(step=><button type="button" key={step.id} onClick={event=>executeAction('ui.select',()=>inspect({nodeId:step.id,wireId:null}),event)}><span><window.UI.ResultPreview value={step.value??step.preview}/></span><div><b>{step.title}</b><small>{step.output}</small></div></button>)}</div></> : <p className="muted">Select a task</p>}</div>
+      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? <>{fileWorkspace && propertyTab==='Task' && u.modal?.kind!=='Approve' && approvalSteps.map(({card})=><section key={card.id} className="v48-current-approval"><span>Needs your approval</span><h3>{s.graph.nodes.find(node=>node.id===card.nodeId)?.title || card.title}</h3><window.UI.ApprovalCard id={card.id} compact/>{card.text && <details className="v48-approval-parameters"><summary>All parameters</summary><pre>{card.text}</pre></details>}</section>)}<div className="v48-task-progress" role="progressbar" aria-label="Task progress" aria-valuemin={0} aria-valuemax={resumeSteps.length || 1} aria-valuenow={resumeSteps.filter(step=>step.state.kind==='done').length}>{resumeSteps.map((step,index)=><i key={step.id} data-state={approvalSteps.some(row=>row.index===index)?'awaiting':step.state.kind}/>)}</div><p className="v48-progress-line">{resumeSteps.filter(step=>step.state.kind==='done').length} of {resumeSteps.length} steps done{resumeSteps[currentStep] ? ', now ' + resumeSteps[currentStep].title : ''}</p><label className="grid">Description<textarea data-design="inspector.describe" aria-label="Workflow description" rows={6} key={task.id+':description'} defaultValue={s.graph.documentation || task.scope || task.description || ''} onBlur={e=>{if(e.target.value!==(s.graph.documentation||task.scope||task.description||''))u.act(()=>api.updateGraph(s.graph.id,{documentation:e.target.value}));}} /></label><div className="v48-made"><h3>What it made</h3>{resumeSteps.filter(step=>step.output).map(step=><button type="button" key={step.id} onClick={event=>executeAction('ui.select',()=>inspect({nodeId:step.id,wireId:null}),event)}><span><window.UI.ResultPreview value={step.value??step.preview}/></span><div><b>{step.title}</b><small>{step.output}</small></div></button>)}</div>{fileWorkspace && <SessionInspector s={s} u={u} task={task}/>}</> : <p className="muted">Select a task</p>}</div>
       <div className="shared-properties-task" hidden={propertyTab !== 'Automate'}><h3>Triggers</h3>{s.graph.nodes.filter(row=>row.type.startsWith('trigger.')).map(row=><button type="button" className="dx-link" key={row.id} onClick={event=>executeAction('ui.select',()=>inspect({nodeId:row.id,wireId:null}),event)}>{row.title}</button>)}{task && <button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.act(api.addAutomation),event)}>Add trigger</button>}</div>
       {task && !fileWorkspace && <div className="dx-preview-actions" hidden={propertyTab !== 'Task'}>
         <Btn sm p onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id))}>Open task</Btn>

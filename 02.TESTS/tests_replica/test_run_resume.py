@@ -631,3 +631,21 @@ def test_automation_history_follows_effect_approval_on_the_same_run(tmp_path, mo
         assert session_files.read_runs(path)[-1] == finished
     finally:
         service.close()
+
+
+def test_the_session_run_budget_is_the_run_budget(tmp_path, monkeypatch):
+    """Session card > Parameters > Run budget: the run stops at it, with the reason on the first step it did not run."""
+    from nodelang import session_files
+    for name in ('USERPROFILE', 'HOME', 'LOCALAPPDATA', 'APPDATA'):
+        monkeypatch.setenv(name, str(tmp_path / name))
+    document = session_files.new_document('Budgeted')
+    document['nodes'] = [
+        {'id': 'start', 'type': 'thing.session', 'fixed': True, 'params': {'value': 'Budgeted', 'workspace': '', 'run_budget': '1 minute'},
+         'position': {'x': 0, 'y': 0}},
+        {'id': 'note', 'type': 'thing.file', 'params': {'path': ''}, 'position': {'x': 300, 'y': 0}}]
+    ticks = iter(range(10000))  # each clock read is 100 s later: the deadline passes before the first step
+    monkeypatch.setattr(session_files.time, 'monotonic', lambda: next(ticks) * 100.0)
+    answer = session_files.run_document(document)
+    stopped = [row for row in answer['results'].values() if row['status'] == 'Stopped']
+    assert stopped and all(row['error'] == 'Run budget of 60 s reached before this step.' for row in stopped), answer['results']
+    assert answer.get('run', {}).get('budget_s', 60) == 60

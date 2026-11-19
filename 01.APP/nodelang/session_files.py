@@ -1529,7 +1529,10 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         raise ValueError('Cycle detected: disconnect a feedback wire before Run')
     if plan_only:
         return {'ok': True, 'order': order}
-    # SPEC 3.2: every run has an explicit budget; by default the sum of its nodes' own seconds.
+    # SPEC 3.2: every run has an explicit budget: the session's Run budget (Session card › Parameters) when it sets one,
+    # otherwise the sum of its nodes' own seconds.
+    if budget_s is None and depth == 0:
+        budget_s = canvas_documents.session_run_budget(document)
     if budget_s is None:
         budget_s = sum((nodes[key].get('budget') or {}).get('seconds', canvas_documents.BUDGET_DEFAULT['seconds']) for key in order)
     if type(budget_s) not in (int, float) or budget_s < 0:

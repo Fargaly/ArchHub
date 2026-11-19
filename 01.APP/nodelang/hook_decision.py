@@ -293,6 +293,55 @@ def _outside_recipient(value) -> bool:
     return bool(_EMAIL_ADDR.search(text) or re.search(r"https?://", text, re.I))
 
 
+_HOST_TOOL = re.compile(r"(revit|acad|autocad|max|rhino|blender|excel|word|outlook|bluebeam)", re.I)
+_SESSION_WRITES = ("write", "delete", "publish", "send", "shell")
+
+
+def session_values(event) -> tuple[dict, str]:
+    """The Session node values of the session file this call's agent works in, and that agent's label.
+
+    The agent's session id (the hook payload's) -> its Workshop declaration -> its task -> the task's session file.
+    ({}, "") when the call belongs to no session file.
+    """
+    native = str(event.get("session") or "")
+    if not native:
+        return {}, ""
+    from .session_files import read_document
+    from .workshop_mailbox import application_history, read_declarations
+    from .workshop_tasks import _declared_id, get
+    try:
+        with application_history(read_only=True) as history:
+            # Archived rows too: a native session id names one agent session, live or not.
+            row = next((d for d in read_declarations(history._db, include_archived=True)
+                        if native in (d.get("native_session_id"), d.get("session"))), None)
+            held = get(history, row.get("work") or _declared_id(row["session"])) if row else None
+        path = (held or {}).get("session_path")
+        document = read_document(path) if path else None
+    except (OSError, ValueError, KeyError, IndexError) as unreadable:
+        logging.getLogger(__name__).debug("No session values for %s: %s", native, unreadable)
+        return {}, ""
+    node = next((n for n in (document or {}).get("nodes", []) if n.get("type") == "thing.session" and n.get("fixed")), None)
+    return dict((node or {}).get("params") or {}), str(row.get("display_name") or row.get("agent") or "") if row else ""
+
+
+def session_refusal(event, action) -> str:
+    """The Session card's Tools and Read only, enforced: why this call is refused in its session, or ""."""
+    tool, data = event["tool"], event["input"] if isinstance(event["input"], dict) else {}
+    target = str(data.get("host") or data.get("connector") or "")
+    if action == "read" and not _HOST_TOOL.search(tool + " " + target):
+        return ""  # plain reads stay as fast as before: no session lookup
+    values, agent = session_values(event)
+    if not values:
+        return ""
+    for program in values.get("tools_off") or []:
+        token = str(program).casefold()
+        if token and (token in tool.casefold() or token == target.casefold()):
+            return "%s is off for this session (Session card > Tools)." % program
+    if agent and agent in (values.get("read_only_agents") or []) and action in _SESSION_WRITES:
+        return "%s is read only in this session (Inspector > Session)." % agent
+    return ""
+
+
 def _own_workspace(tool: str, data) -> bool:
     """His Notion, his Drive, his mailbox drafts, his Workshop. Not a public send.
 
@@ -1451,6 +1500,10 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
                                                                             session=event['session']),
                "trifecta": trifecta, "banned_package": facts["banned_package"]}
     scanners["policy"], rules = cedar_forbids(action, context, vendor)
+    refused_here = session_refusal(event, action)
+    if refused_here:
+        rules = [*rules, "session-setting"]
+        notes.append(refused_here)
     if secret and action not in ("publish", "send"):
         notes.append("A secret is in this %s. Keep it out of git (.gitignore or a credential store); "
                      "a push carrying it will be refused." % action)

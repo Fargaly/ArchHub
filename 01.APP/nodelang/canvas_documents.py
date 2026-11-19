@@ -222,9 +222,53 @@ def _run_workshop(params, feeds):
     return {'messages': messages}, '%d messages' % len(messages)
 
 
+# The Session card's Parameters, Tools and Context: typed values of the session node itself (R28, "node properties ARE
+# the settings"), each with its param:<id> input socket and edited inline on the card. group = the card panel.
+# Workspace stays the node's own 'workspace' value; Permissions stays the Settings permissions owner (one owner each).
+SESSION_PARAMS = (
+    {'id': 'run_budget', 'name': 'Run budget', 'type': 'choice', 'options': ['Node budgets', '1 minute', '5 minutes', '15 minutes'],
+     'group': 'Parameters', 'value': 'Node budgets'},
+    {'id': 'prefer_no_agent', 'name': 'Prefer steps with no agent', 'type': 'bool', 'group': 'Parameters', 'value': True},
+    {'id': 'reply_in', 'name': 'Reply in', 'type': 'choice', 'options': ['English', 'Arabic', 'Both'], 'group': 'Parameters',
+     'value': 'English'},
+    {'id': 'tools_off', 'name': 'Tools the agent may not use', 'type': 'list', 'group': 'Tools', 'value': []},
+    {'id': 'brief', 'name': 'Brief', 'type': 'text', 'group': 'Context', 'value': ''},
+    {'id': 'project_folder', 'name': 'Project folder', 'type': 'folder', 'group': 'Context', 'value': ''},
+    {'id': 'standard', 'name': 'Standard', 'type': 'choice', 'options': ['Office standard, current', 'Office standard, previous'],
+     'group': 'Context', 'value': 'Office standard, current'},
+    # The Inspector's Session group: agents that may read this session's file but not change it.
+    {'id': 'read_only_agents', 'name': 'Read-only agents', 'type': 'list', 'group': 'Session', 'value': []},
+)
+
+
+# The Run budget a session sets, in the seconds the run engine stops at; None = the sum of its nodes' own budgets.
+RUN_BUDGET_SECONDS = {'Node budgets': None, '1 minute': 60, '5 minutes': 300, '15 minutes': 900}
+
+
+def session_run_budget(document):
+    session = next((n for n in document.get('nodes', []) if n.get('type') == 'thing.session' and n.get('fixed')), None)
+    return RUN_BUDGET_SECONDS.get(((session or {}).get('params') or {}).get('run_budget'))
+
+
+def session_param_defs():
+    """The session node's declared parameters (without their default values)."""
+    return [{key: value for key, value in row.items() if key != 'value'} for row in SESSION_PARAMS]
+
+
+def session_param_values():
+    return {row['id']: copy.deepcopy(row['value']) for row in SESSION_PARAMS}
+
+
 def _run_session(params, feeds):
+    held = {**session_param_values(), **params}
     return {'value': feeds.get('value', params.get('value', '')), 'agent': feeds.get('agent', ''),
-            'profile': feeds.get('profile'), 'rules': feeds.get('rules', [])}, 'Session parameters'
+            'profile': feeds.get('profile'), 'rules': feeds.get('rules', []),
+            'parameters': {'run_budget': held['run_budget'], 'prefer_no_agent': held['prefer_no_agent'],
+                           'reply_in': held['reply_in'], 'workspace': held.get('workspace', ''),
+                           'read_only_agents': list(held['read_only_agents'] or [])},
+            'tools': {'off': list(held['tools_off'] or [])},
+            'context': {'brief': held['brief'], 'project_folder': held['project_folder'], 'standard': held['standard']},
+            'project folder': held['project_folder'], 'standard': held['standard']}, 'Session parameters'
 
 
 def _run_you(params, feeds):
@@ -253,7 +297,9 @@ THING_ENGINES = {
                     'out': [_port('result'), _port('messages', 'list'), _port('agent', 'string')]},
     'thing.session': {'pure': True, 'run': _run_session,
                       'in': [_port('value'), _port('agent', 'string'), _port('profile'), _port('rules', 'list')],
-                      'out': [_port('value', 'string'), _port('agent', 'string'), _port('profile'), _port('rules', 'list')]},
+                      'out': [_port('value', 'string'), _port('agent', 'string'), _port('profile'), _port('rules', 'list'),
+                              _port('parameters'), _port('tools'), _port('context'), _port('project folder', 'file'),
+                              _port('standard', 'string')]},
     'thing.you': {'pure': True, 'run': _run_you, 'in': [], 'out': [_port('profile')]},
     'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string'), _port('temperature', 'number'), _port('system', 'string')],
                     'out': [_port('text', 'string'), _port('model', 'string')]},
@@ -319,7 +365,8 @@ def thing_items():
                           'thing.workspace', {'path': ''}))
     items.append(card('thing:file', 'files', 'File or folder', 'A local file or folder reference', 'thing.file', {'path': ''}))
     items.append(card('thing:file:write', 'files', 'Write file', 'Writes after Approve, then re-reads', 'thing.file.write', {'path': '', 'content': ''}))
-    items.append(card('thing:session', 'workshop', 'Session', 'Task parameters', 'thing.session', {'value': '', 'workspace': ''}))
+    items.append({**card('thing:session', 'workshop', 'Session', 'Task parameters', 'thing.session',
+                         {'value': '', 'workspace': '', **session_param_values()}), 'paramDefs': session_param_defs()})
     items.append(card('thing:you', 'settings', 'You', 'Current profile in Settings', 'thing.you', {}))
     items.append(card('thing:workshop', 'workshop', 'Workshop thread', 'Messages in the Workshop room', 'thing.workshop',
                       dict(THING_ENGINES['thing.workshop']['params'])))

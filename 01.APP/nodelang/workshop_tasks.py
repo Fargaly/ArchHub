@@ -513,10 +513,17 @@ def _leave_other_sessions(history, task, owner):
 
 def handover(history, task):
     """What a joining agent needs to continue: the work, its file, the plan and the last handover note."""
+    from .canvas_documents import session_param_values
     row = get(history, task)
     context = _session_context(row.get("session_path")) if row else {}
+    # The Session card's Context and Reply in (the session node's own values): every agent that joins gets them.
+    held = next((entry["params"] for entry in context.get("parameters") or [] if entry.get("id") == "start"), {})
+    values = {**session_param_values(), **held}
     return {"task": task, "title": short_title(row["title"]) if row else "", "path": (row or {}).get("session_path") or "",
-            "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {})}
+            "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {}),
+            "context": {"brief": values["brief"], "project_folder": values["project_folder"], "standard": values["standard"],
+                        "reply_in": values["reply_in"]},
+            "instructions": "Reply in %s in this session." % values["reply_in"]}
 
 
 _NO_REQUEST = {"", "unassigned", "none", "n/a", "-"}
@@ -1175,8 +1182,14 @@ def _start_session(task, title, zoom=1, *, purpose='', generation='', agent='', 
                 ports = {'source': [{'id': 'value' if node_id == 'start' else 'agent' if kind == 'thing.agent' else 'profile' if kind == 'thing.you' else 'rules',
                                      'type': 'string' if node_id in ('start', 'fixed-agent') else 'list' if kind == 'thing.workshop' else 'any'}],
                          'target': [{'id': 'value', 'type': 'any'}, {'id': 'agent', 'type': 'string'}, {'id': 'profile', 'type': 'any'}, {'id': 'rules', 'type': 'list'}] if node_id == 'start' else []}
-                document['nodes'].append({'id': node_id, 'type': kind, 'title': label, 'fixed': True,
-                                          'params': params, 'ports': ports, 'position': {'x': x, 'y': y}})
+                node = {'id': node_id, 'type': kind, 'title': label, 'fixed': True,
+                        'params': params, 'ports': ports, 'position': {'x': x, 'y': y}}
+                if node_id == 'start':  # its Parameters, Tools and Context panels (canvas_documents.SESSION_PARAMS)
+                    node['params'] = {**params, **canvas_documents.session_param_values()}
+                    node['paramDefs'] = canvas_documents.session_param_defs()
+                    ports['source'] += [{'id': port['id'], 'type': port['type']}
+                                        for port in canvas_documents.THING_ENGINES['thing.session']['out'][4:]]
+                document['nodes'].append(node)
             for node_id, socket in [('fixed-agent', 'agent'), ('fixed-you', 'profile'), ('fixed-workshop', 'rules')]:
                 document['wires'].append({'id': 'fixed-' + socket, 'from': {'node': node_id, 'socket': socket},
                                           'to': {'node': 'start', 'socket': socket}})

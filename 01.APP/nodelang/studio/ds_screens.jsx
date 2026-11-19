@@ -514,6 +514,22 @@
     if(typeof value==='object'){const rows=Object.entries(value);if(rows.length===1)return <ResultPreview value={rows[0][1]}/>;return <dl>{rows.slice(0,8).map(([key,item])=><React.Fragment key={key}><dt>{key.replace(/_/g,' ')}</dt><dd><ResultPreview value={item}/></dd></React.Fragment>)}</dl>;}
     return <pre>{String(value)}</pre>;
   }
+  // The run mode shown on the Session card is the Settings › Permissions value, read from and written to its owner.
+  function SessionPermissions() {
+    const [attempt, setAttempt] = React.useState(0), [load, setLoad] = React.useState({status: 'waiting'});
+    React.useEffect(() => {
+      let current = true; setLoad({status: 'waiting'});
+      api.readPermissions().then(row => { if (current) setLoad({status: (row.runModes || []).length ? 'loaded' : 'empty', row}); },
+        error => { if (current) setLoad({status: 'error', message: error.message}); });
+      return () => { current = false; };
+    }, [attempt]);
+    const save = runMode => api.setPermissions({runMode}).then(row => setLoad({status: 'loaded', row}), error => setLoad({status: 'error', message: error.message}));
+    if (load.status === 'waiting') return <p className="v48-session-param" role="status">Reading permissions…</p>;
+    if (load.status === 'error') return <p className="v48-session-param" role="alert">{load.message}<button type="button" className="dx-link nodrag" onClick={event => executeAction('projects.controls.activate', {handler: () => setAttempt(value => value + 1)}, event)}>Retry permissions</button></p>;
+    if (load.status === 'empty') return <p className="v48-session-param">No run modes. Settings › Permissions sets them.</p>;
+    if (load.status === 'loaded') return <label className="v48-session-param"><span>Permissions<em>Settings › Permissions</em></span><select className="nodrag" aria-label="Permissions" value={load.row.runMode} onChange={event => save(event.target.value)}>{load.row.runModes.map(mode => <option key={mode}>{mode}</option>)}</select></label>;
+    return null;
+  }
   function SessionCard({n, s, u, selected, socket}) {
     const [open, setOpen] = React.useState({});
     const task = (s.tasks || []).find(row => row.id === n.agentTask);
@@ -529,34 +545,43 @@
     const panels = [
       ['Agent', 'user', name, agent],
       ['You', 'user', [s.profile.name, s.profile.role].filter(Boolean).join(' · ') || 'Your profile', you],
-      ['Parameters', 'settings', task?.rules?.join(' · ') || 'Session parameters', n],
-      ['Tools', 'code', (s.hosts || []).filter(h => /connected|running|listening/.test(h.state)).length + ' connected programs'],
-      ['Context', 'folder', task?.references?.join(' · ') || task?.scope || 'Task context'],
+      ['Parameters', 'settings', [n.params.run_budget, n.params.reply_in && 'Reply in ' + n.params.reply_in].filter(Boolean).join(' · ') || 'How this session runs', n],
+      ['Tools', 'code', (s.hosts || []).filter(h => /connected|running|listening/.test(h.state)).length + ' connected programs' + ((n.params.tools_off || []).length ? ' · ' + n.params.tools_off.length + ' off' : ''), n],
+      ['Context', 'folder', n.params.brief || task?.scope || 'Everything about this project', n],
       ['Thread', 'workshop', messages.length + ' messages · opens beside the canvas', thread]
     ];
     const usedPorts = (owner, side) => (owner?.[side === 'out' ? 'outputs' : 'inputs'] || []).filter(p => s.graph.wires.some(w => side === 'out' ? w.from === owner.id && w.fromPort === p.id && !(s.graph.nodes.find(r => r.id === w.to)?.fixed && !expanded) && !sessionAgents.some(row=>row.id===w.to) : w.to === owner.id && w.toPort === p.id && !(s.graph.nodes.find(r => r.id === w.from)?.fixed && !expanded) && !sessionAgents.some(row=>row.id===w.from)));
     const panelSocket = (owner, p, side) => socket({...p, id: owner.id === n.id ? p.id : owner.id + ':' + p.id}, side);
     const edit = owner => (owner?.parameterSchema || []).filter(p => p.editable).map(p => <label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={owner} p={p} value={owner.params[p.key]} u={u}/></label>);
+    // R28: the Parameters, Tools and Context panels are the session node's own values (node properties ARE the settings).
+    const group = name => new Set((n.paramDefs || []).filter(d => d.group === name).map(d => d.id).concat(name === 'Parameters' ? ['workspace'] : []));
+    // "Prefer steps with no agent" has no planner behind it yet: shown inert (every element acts or goes).
+    const editGroup = name => { const keys = group(name); return (n.parameterSchema || []).filter(p => p.editable && keys.has(p.key) && p.key !== 'tools_off').map(p => p.key === 'prefer_no_agent' ? <window.UI.Soon key={p.key} label={p.label}><label className="v48-session-param"><span>{p.label}</span><input type="checkbox" disabled checked={!!n.params[p.key]} readOnly/></label></window.UI.Soon> : <label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={n} p={p} value={n.params[p.key]} u={u}/></label>); };
+    const panelOuts = {Parameters: ['parameters'], Tools: ['tools'], Context: ['context', 'project folder', 'standard']};
+    const panelPorts = new Set(Object.values(panelOuts).flat());
+    const toolsOff = n.params.tools_off || [];
+    const setToolOff = (name, off) => u.act(() => api.setNodeParam(n.id, 'tools_off', off ? [...new Set([...toolsOff, name])] : toolsOff.filter(row => row !== name)));
     return <div className={'v48-session' + (selected ? ' selected' : '')} data-design="session.node">
       <header className="node-header"><window.UI.Av id={name} size={24}/><div><b>{name}</b><small>{agent?.params.agent ? 'Agent session' : 'Session'}</small></div><span className="v48-state-dot"/>
         {/* Folded by default as the design draws it; he can show the profile, thread and agent as their own cards and fold them again. A view, never a file write. */}
         <button type="button" className="button-reset nodrag v48-session-pins" data-design="session.pins" aria-expanded={expanded} aria-label={'On every canvas · ' + (expanded ? 'Collapse' : 'Expand')} title={expanded ? 'Fold the profile, thread and agent into this card' : 'Show the profile, thread and agent as their own cards'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs, expanded: !expanded}))},event)}><window.AHIcon name={expanded ? 'minus' : 'plus'} size={12}/></button></header>
       <div className="v48-session-body"><div><span>Task</span><b>{task?.title || s.graph.name}</b></div><div><span>Runs</span><b>{n.params.model || sessionAgents.find(row=>row.params.model)?.params.model || agent?.params.model || live?.model || 'No active agent'}</b></div>{messages.length > 0 && <p>{messages.at(-1).text}</p>}<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button></div>
       {/* The session's own outputs are always there to wire from (the design's task socket); its inputs show when wired. */}
-      {((n.outputs || []).length > 0 || usedPorts(n, 'in').length > 0) && <div className="v48-session-ports">{['in','out'].map(side => (side === 'out' ? n.outputs || [] : usedPorts(n,side)).map(p => <span key={side+p.id} data-side={side}>{panelSocket(n,p,side)}{p.id === 'value' ? 'task' : p.name}</span>))}</div>}
+      {((n.outputs || []).length > 0 || usedPorts(n, 'in').length > 0) && <div className="v48-session-ports">{['in','out'].map(side => (side === 'out' ? (n.outputs || []).filter(p => !panelPorts.has(p.id)) : usedPorts(n,side)).map(p => <span key={side+p.id} data-side={side}>{panelSocket(n,p,side)}{p.id === 'value' ? 'task' : p.name}</span>))}</div>}
       <div className="v48-session-panels">{panels.filter(([,,,owner]) => !expanded || !owner?.fixed || owner === n).map(([label, icon, summary, owner]) => <section key={label} className="v48-session-panel">
         <button type="button" data-design={'session.panel.' + label.toLowerCase()} className="button-reset nodrag v48-session-panel-head" aria-expanded={label === 'Thread' ? undefined : !!open[label]} onClick={event=>executeAction('projects.controls.activate',{handler:()=>label === 'Thread' ? u.setTaskFace(u.taskFace === 'split' ? 'canvas' : 'split') : setOpen(v => ({...v,[label]:!v[label]}))},event)}>
           {label==='Agent'?<window.UI.Av id={name} size={22}/>:<span className="v48-panel-tile"><window.AHIcon name={icon} size={12}/></span>}<b>{label}</b><em>{summary}</em><span>{open[label] ? '⌄' : '→'}</span>
         </button>
         {(label==='Agent'?[owner,...sessionAgents]:[owner]).filter(row=>row&&row.id!==n.id).map(row=>['in','out'].map(side=>usedPorts(row,side).map(p=><span className="v48-panel-port" data-side={side} key={row.id+side+p.id}>{panelSocket(row,p,side)}</span>)))}
+        {(panelOuts[label] || []).map(id => (n.outputs || []).find(p => p.id === id)).filter(Boolean).map(p => <span className="v48-panel-port" data-side="out" data-design={'session.socket.' + p.id.replace(' ', '-')} key={'panel-out-' + p.id} title={p.name}>{panelSocket(n, p, 'out')}</span>)}
         {open[label] && label !== 'Thread' && <div className="v48-session-panel-body nodrag nowheel">
-          {owner && edit(owner)}
+          {owner && owner !== n && edit(owner)}
+          {label === 'Parameters' && <><SessionPermissions/>{editGroup('Parameters')}</>}
+          {label === 'Context' && editGroup('Context')}
           {label === 'Agent' && sessionAgents.map(row=><button key={row.id} type="button" className="dx-link" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Node',{id:row.id})},event)}>{row.title} · Properties</button>)}
           {label === 'Agent' && <button type="button" className="dx-link" onClick={() => u.go('settings/Agents')}>Manage agents</button>}
           {label === 'You' && <button type="button" className="dx-link" onClick={() => u.go('settings/Account')}>Settings › You</button>}
-          {label === 'Tools' && <>{(s.hosts || []).map(h => <div key={h.id}>{h.name} · {h.state}</div>)}<button type="button" className="dx-link" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setLibraryOpen(true)},event)}>As nodes on this Canvas</button><button type="button" className="dx-link" onClick={() => u.go('settings/Connections')}>Connections</button></>}
-          {label === 'Context' && <>{task && <><p>{task.scope}</p>{['rules','agents','folders','references'].map(key => <div key={key}><b>{key[0].toUpperCase()+key.slice(1)}</b><p>{(task[key] || []).join(' · ') || 'None'}</p></div>)}</> }<button type="button" className="dx-link" onClick={() => u.show('Task details', {id:task?.id})}>Edit task context</button></>}
-          {label === 'Parameters' && <button type="button" className="dx-link" onClick={() => u.show('Node', {id:n.id})}>All parameters</button>}
+          {label === 'Tools' && <>{(s.hosts || []).map(h => <label key={h.id} className="v48-session-param"><span>{h.name}<em>{h.state}</em></span><input type="checkbox" className="nodrag" aria-label={h.name + ' · the agent may use it'} checked={!toolsOff.includes(h.id)} onChange={event => setToolOff(h.id, !event.target.checked)}/></label>)}<button type="button" className="dx-link" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setLibraryOpen(true)},event)}>As nodes on this Canvas</button><button type="button" className="dx-link" onClick={() => u.go('settings/Connections')}>Connections</button></>}
         </div>}
       </section>)}</div>
       <footer>{(s.approvals || []).some(card=>card.status==='pending' && (card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.path===api.getSessionPath()))) ? 'Waiting for you' : s.graph.nodes.some(row => /running|working/i.test(row.params?.status || row.status)) ? 'Working' : s.graph.nodes.some(row=>/fail|error/i.test(row.status)) ? 'Failed' : 'Idle'}</footer>
@@ -1733,6 +1758,7 @@
   }
   window.UI.HomeMap = HomeMap;
   window.UI.RunModeChip = RunModeChip;
+  window.UI.ValueWidget = ValueWidget;  // the Inspector's Session group edits the same values as the Session card
   // Memoized: Home's own state changes (its Inspector, rails, thread width) do not re-render the canvas; the
   // canvas still follows the store and the app context it reads.
   window.UI.Canvas = React.memo(Canvas);

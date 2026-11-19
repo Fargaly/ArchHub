@@ -12124,6 +12124,13 @@
         "02.TESTS/tests/test_pdf_reads_as_cached_text.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "WRONGDECISIONS": {
+      "source": "Founder request R136: automated guard ensuring retired wrong architectural decisions never return in 01.APP.",
+      "scope": [
+        "02.TESTS/tests/test_wrong_decisions_never_return.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

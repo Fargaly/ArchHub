@@ -12084,6 +12084,16 @@
         "01.APP/nodelang/library_engines.py",
         "01.APP/nodelang/pipeline_engines.py"
       ]
+    },
+    "OPENCODEPLUGIN": {
+      "source": "Founder 2026-11-19: OpenCode fails to load the ArchHub Workshop plugin. The written plugin follows OpenCode 2's default export (id + setup) and keeps the older export; the app rewrites its own older plugin file on start; the Workshop joins OpenCode 2 sessions (provider agnostic).",
+      "scope": [
+        "01.APP/nodelang/assistant_registration.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/workshop/opencode-plugin.mjs",
+        "02.TESTS/tests_replica/test_opencode_plugin_shape.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

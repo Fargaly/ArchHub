@@ -10,6 +10,7 @@ goose-pin.json is the one typed declaration: the goose.source node, whose params
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -85,10 +86,31 @@ def _run(argv, cwd, env=None, capture=False):
     return done.stdout.strip() if capture else ""
 
 
-def _cargo(cargo_build, cwd, env):
-    """The heavy compile runs only while the desk is idle or away (founder rule R100), queued by run-heavy."""
+CARGO_TAIL_LINES = 200   # how much of cargo's own output a failed desktop run prints
+
+
+def _cargo(cargo_args, cwd, env):
+    """The heavy compile runs only while the desk is idle or away (founder rule R100), queued by run-heavy.
+    cargo's stdout and stderr come through one explicit pipe (never inherited console handles, which a hidden or
+    console-less parent loses) and stdin is closed. On CI every line streams to the job log as it comes. On the desktop
+    cargo stays hidden and low priority, only the last lines are kept, and they are printed if it fails. A failure
+    carries cargo's own exit code. Nothing else (no environment, cache or artifact) is printed."""
     if idle_or_away():
-        subprocess.run(cargo_build, cwd=cwd, env=env, check=True, text=True, creationflags=HIDDEN)
+        on_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+        tail = collections.deque(maxlen=CARGO_TAIL_LINES)
+        with subprocess.Popen(cargo_args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                              creationflags=0 if on_ci else HIDDEN) as child:
+            for line in child.stdout:
+                if on_ci:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                tail.append(line)
+        if child.returncode:
+            if not on_ci:
+                sys.stderr.write("".join(tail))
+                sys.stderr.flush()
+            raise subprocess.CalledProcessError(child.returncode, cargo_args)
         return
     raise RuntimeError("Goose compile not started: the desktop is in use. Queue it again through run-heavy.")
 
@@ -114,6 +136,10 @@ def _prepare(source, pin, series, ours, seed_lock):
     shutil.copyfile(lock, source / "Cargo.lock")
     env = {**os.environ, "RUSTFLAGS": pin["rustflags"], "CARGO_INCREMENTAL": "0"}
     env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+    if "crt-static" in pin["rustflags"]:
+        # llama-cpp-sys-2 builds llama.cpp with the dynamic C runtime unless told otherwise; with Rust on the static
+        # one the final link fails (MSVC RuntimeLibrary mismatch). One C runtime for the whole executable.
+        env["LLAMA_STATIC_CRT"] = "1"
     return env
 
 
@@ -159,7 +185,8 @@ def build(source, output, *, archhub_rev, pin_path=PIN, ours=OURS, seed_lock=Fal
     return receipt
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    """Exit code: 0, cargo's own exit code when cargo fails (e.g. 101), or argparse's 2."""
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
@@ -167,13 +194,22 @@ if __name__ == "__main__":
     parser.add_argument("--archhub-rev", required=True)
     parser.add_argument("--seed-lock", action="store_true")
     parser.add_argument("--check", action="store_true", help="cargo check only: no executable, receipt or output folder")
-    args = parser.parse_args()
-    if args.check:
-        if args.output or args.seed_lock:
-            parser.error("--check writes nothing: it takes no --output and no --seed-lock")
-        print(json.dumps(check(args.source, archhub_rev=args.archhub_rev), indent=2))
-    else:
-        if not args.output:
-            parser.error("--output is required to build")
-        print(json.dumps(build(args.source, args.output, archhub_rev=args.archhub_rev, seed_lock=args.seed_lock),
-                         indent=2))
+    args = parser.parse_args(argv)
+    if args.check and (args.output or args.seed_lock):
+        parser.error("--check writes nothing: it takes no --output and no --seed-lock")
+    if not args.check and not args.output:
+        parser.error("--output is required to build")
+    try:
+        if args.check:
+            result = check(args.source, archhub_rev=args.archhub_rev)
+        else:
+            result = build(args.source, args.output, archhub_rev=args.archhub_rev, seed_lock=args.seed_lock)
+    except subprocess.CalledProcessError as failure:
+        print("%s exited with code %d" % (" ".join(map(str, failure.cmd[:2])), failure.returncode), file=sys.stderr)
+        return failure.returncode
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -5,6 +5,7 @@ No real git, cargo or network: the build's commands are replaced by a fake that 
 """
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -65,7 +66,17 @@ def fake_tools(monkeypatch):
         return ""
     monkeypatch.setattr(build_goose, "_run", run)
     monkeypatch.setattr(build_goose, "idle_or_away", lambda: True)
-    monkeypatch.setattr(build_goose.subprocess, "run", lambda argv, cwd, env, **kw: run(argv, cwd, env))
+    class FakeCargo:   # stands in for the cargo child that _cargo launches through Popen; no real cargo runs
+        def __init__(self, argv, cwd=None, env=None, **_options):
+            run(argv, cwd, env)
+            self.stdout, self.returncode = iter(()), 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+    monkeypatch.setattr(build_goose.subprocess, "Popen", FakeCargo)
     return ran
 
 
@@ -348,8 +359,8 @@ def test_check_dispatch_reaches_no_write_permission_upload_or_publish_step():
         for forbidden in ("upload-artifact", "download-artifact", "actions/cache", "publish_release", "build_release",
                           "gh release", "GH_TOKEN", "github.token", "contents: write", "persist-credentials: true"):
             assert forbidden not in text, (name, forbidden)
-    text = yaml.safe_dump(workflow["jobs"]["goose-check"])
-    assert "build_goose.py --check" in text and "--output" not in text
+    runs = "\n".join(step.get("run", "") for step in workflow["jobs"]["goose-check"]["steps"])
+    assert "build_goose.py --check" in runs and "--output" not in runs
     # every job or step that can write is guarded off in check mode on its own line too
     for name, other in workflow["jobs"].items():
         if (other.get("permissions") or {}).get("contents") == "write":
@@ -386,3 +397,56 @@ def test_the_check_job_is_bounded_by_the_pinned_120_minute_budget():
     # the effective timeout: what the budget step reads from the pinned settings
     effective = build_goose.load_pin(WINDOWS / "goose-pin.json")["check_timeout_minutes"]
     assert type(effective) is int and effective == 120
+
+
+# Native (non-Python) children like cargo itself, writing to BOTH streams; the test harness rewraps Python children.
+_FAILING_CARGO = {
+    101: ["cmd.exe", "/d", "/c", "echo    Compiling pctx_registry v0.1.3& "
+                                 "echo error[E0432]: unresolved import `rmcp::model::RawContent` 1>&2& exit /b 101"],
+    23: ["cmd.exe", "/d", "/c", "echo    Compiling pctx_registry v0.1.3& "
+                                "echo error[E0432]: unresolved import `rmcp::model::RawContent` 1>&2& exit /b 23"],
+}
+
+
+@pytest.mark.parametrize("code", [101, 23])
+@pytest.mark.parametrize("ci", [False, True])
+def test_a_failing_cargo_reports_both_streams_and_its_own_exit_code(tmp_path, monkeypatch, capfd, ci, code):
+    """A real non-interactive Windows child that fails like cargo, writing to stdout AND stderr. The old launch flags
+    dropped both streams and kept only the code (Codex saw 23 on Windows). Both now reach the caller (desktop: the
+    kept tail of one hidden low-priority pipe; CI: streamed to the job log) with the child's own exit code."""
+    if ci:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    else:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.setattr(build_goose, "desk_idle_or_away", lambda: True)
+    with pytest.raises(build_goose.subprocess.CalledProcessError) as failure:
+        build_goose._cargo(_FAILING_CARGO[code], tmp_path, dict(os.environ))
+    assert failure.value.returncode == code
+    captured = capfd.readouterr()
+    assert "error[E0432]: unresolved import `rmcp::model::RawContent`" in captured.err + captured.out   # stderr
+    assert "Compiling pctx_registry v0.1.3" in captured.err + captured.out                              # stdout
+
+
+def test_the_desktop_keeps_only_a_bounded_tail(tmp_path, monkeypatch, capfd):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(build_goose, "desk_idle_or_away", lambda: True)
+    noisy = [sys.executable, "-c", "import sys; [print('line', i) for i in range(5000)]; sys.exit(3)"]
+    with pytest.raises(build_goose.subprocess.CalledProcessError) as failure:
+        build_goose._cargo(noisy, tmp_path, dict(os.environ))
+    lines = [line for line in capfd.readouterr().err.splitlines() if line.startswith("line ")]
+    assert failure.value.returncode == 3 and len(lines) == build_goose.CARGO_TAIL_LINES and lines[-1] == "line 4999"
+
+
+def test_the_command_line_exits_with_cargos_own_code(monkeypatch, capfd):
+    def refuse(*_args, **_kwargs):
+        raise build_goose.subprocess.CalledProcessError(101, ["cargo", "check", "--locked"])
+    monkeypatch.setattr(build_goose, "check", refuse)
+    assert build_goose.main(["--check", "--source", "x", "--archhub-rev", "abc"]) == 101
+    assert "cargo check exited with code 101" in capfd.readouterr().err
+
+
+def test_llama_cpp_uses_the_same_static_c_runtime_as_rust(tmp_path, ours, pin, fake_tools):
+    (ours / "Cargo.lock").write_bytes(UPSTREAM_LOCK)
+    build_goose.check(tmp_path / "src", archhub_rev="abc123", ours=ours, pin_path=pin)
+    env = next(e for c, e in fake_tools if c[0] == "cargo")
+    assert "crt-static" in env["RUSTFLAGS"] and env["LLAMA_STATIC_CRT"] == "1"

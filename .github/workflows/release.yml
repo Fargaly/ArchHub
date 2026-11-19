@@ -77,7 +77,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           python selected/03.TOOLS/packaging/windows/build_goose.py --check --source (Join-Path $env:RUNNER_TEMP 'goose-src') --archhub-rev $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) { throw 'goose-cli cargo check failed on the pinned source with ArchHub patches.' }
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            [Console]::Error.WriteLine("goose-cli cargo check failed on the pinned source with ArchHub patches (exit $code).")
+            exit $code
+          }
 
   build:
     if: ${{ inputs.mode != 'check' }}

@@ -12079,7 +12079,10 @@
         "01.APP/app/secrets_store.py",
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "02.TESTS/tests/test_backups_stay_local_and_small.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/pipeline_engines.py"
       ]
     }
   }

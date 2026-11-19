@@ -868,17 +868,80 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
 _LAUNCHER_HOLDS_INSTALL = "An in-folder launcher must release the install before Setup"
 
 
-def _install_processes(root, process_iter=None):
-    """(process, pid, executable) for each process the install-folder stop would consider."""
+def _owned_executable(exe, root):
+    """The process image when it is an absolute path inside the install folder, else None.
+
+    psutil reports some system processes by bare name ("Registry", "System",
+    "Memory Compression"). Resolving a bare name joins it to the current folder,
+    which is the install folder under ArchHub.vbs, so "Registry" looked like an
+    installed program and the update refused on it at every launch.
+    """
+    if type(exe) is not str or not os.path.isabs(exe):
+        return None
+    path = Path(exe).resolve()
+    return path if path.is_relative_to(root) else None
+
+
+def _session_zero(pid):
+    """True for services and kernel processes (Windows session 0). ArchHub never runs there."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    from ctypes import wintypes
+    session = wintypes.DWORD()
+    if not ctypes.windll.kernel32.ProcessIdToSessionId(wintypes.DWORD(pid), ctypes.byref(session)):
+        return True  # unreadable session: never ours to stop
+    return session.value == 0
+
+
+_UNSUPERVISED_TRANSPORT = ("deferred: an agent's ArchHub connector runs without its supervisor; "
+                           "Setup would cut that agent's connection, so the update waits for it to end")
+# Programs that host agent connectors. A process below one of them is that agent's work, never ArchHub's to stop.
+_AGENT_HOSTS = frozenset(("cursor.exe", "claude.exe", "codex.exe", "opencode.exe", "node.exe", "code.exe",
+                          "gemini.exe", "goose.exe", "windsurf.exe", "antigravity.exe"))
+
+
+def _process_chain(process):
+    """[(exe, command line)] for the process and each ancestor, as far as they can be read."""
+    chain = []
+    try:
+        for item in [process, *process.parents()]:
+            command = item.cmdline()
+            chain.append((str(item.exe() or ""), " ".join(command) if isinstance(command, list) else ""))
+    except Exception as error:  # noqa: BLE001 - a process that ends or hides its details mid-walk keeps what was read
+        chain.append(("", "ancestry unreadable (%s)" % type(error).__name__))
+    return chain
+
+
+def _agent_transport(chain, root=None):
+    """None for ArchHub's own processes; "supervised" or "unsupervised" for an agent-hosted connector.
+
+    Agents start ArchHub's connector through mcp_supervisor (ArchHub-Runtime, outside the install).
+    It pauses its child while Setup's .archhub-installing marker exists and reconnects after, so the
+    agent keeps its connection. An agent-hosted process without that supervisor would just be cut.
+    """
+    commands = " ".join(command for _exe, command in chain)
+    # Hosts outside the install only: BABOOM's own goose.exe ships inside it and is ArchHub's.
+    hosted = any(Path(exe).name.lower() in _AGENT_HOSTS and _owned_executable(exe, root) is None
+                 for exe, _command in chain[1:]) if root is not None else False
+    if not (hosted or "native_agent_mcp" in commands or "mcp_supervisor" in commands):
+        return None
+    return "supervised" if any("mcp_supervisor" in command for _exe, command in chain[1:]) else "unsupervised"
+
+
+def _install_processes(root, process_iter=None, session_zero=None):
+    """(process, pid, executable) for each process the install-folder stop would consider.
+
+    Only an absolute image path inside the install counts; session_zero, when given, also skips services.
+    """
     import psutil
     for process in (process_iter or psutil.process_iter)(["pid", "exe"]):
         try:
             pid = process.info.get("pid")
-            exe = process.info.get("exe")
-            executable = Path(exe).resolve() if exe else None
+            executable = _owned_executable(process.info.get("exe"), root)
         except (psutil.Error, OSError, ValueError):
             continue
-        if executable and executable.is_relative_to(root):
+        if executable is not None and pid not in (0, 4) and not (session_zero and session_zero(pid)):
             yield process, pid, executable
 
 
@@ -923,21 +986,26 @@ def hold_auto_install(state_dir: Path, reason: str) -> bool:
         return False
 
 
-def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: float = 5.0) -> list:
+def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: float = 5.0,
+                           session_zero=None, chain_of=None) -> list:
     """Stop every other process started from the install folder before the installer copies.
 
     A leftover executable under the install folder held a file, the silent replace failed
     with Windows error 32 (file in use), and the suppressed dialog answered Abort.
     The out-of-folder updater and its Windows venv redirector must survive Setup.
     A supervisor outside the install folder, including agent connectors, is not stopped
-    and is not a reason to refuse the update.
+    and is not a reason to refuse the update. An agent-hosted connector is never stopped:
+    a supervised one is paused by its own supervisor during Setup; an unsupervised one
+    defers the whole update, before anything is stopped.
     """
     import psutil
+    session_zero = session_zero or _session_zero
+    chain_of = chain_of or _process_chain
     root = Path(app_dir).resolve()
     updater = psutil.Process()
     ancestors = [ancestor.pid for ancestor in updater.parents()]
     candidates = []
-    for process, pid, executable in _install_processes(root, process_iter):
+    for process, pid, executable in _install_processes(root, process_iter, session_zero):
         if pid == updater.pid:
             continue
         if pid in ancestors:
@@ -947,7 +1015,11 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
                     and not Path(updater.exe()).resolve().is_relative_to(root)):
                 continue
             raise ValueError(_LAUNCHER_HOLDS_INSTALL)
-        candidates.append(process)
+        transport = _agent_transport(chain_of(process), root)
+        if transport == "unsupervised":
+            raise ValueError(_UNSUPERVISED_TRANSPORT)  # nothing has been stopped yet
+        if transport is None:
+            candidates.append(process)
     stopped = []
     for process in candidates:
         try:
@@ -973,8 +1045,95 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
     return [process.pid for process in stopped]
 
 
+_CONNECTORS_HELD = ("deferred: %d agent connector(s) did not confirm this install attempt idle within %ds "
+                    "(%s); admission reopened, nothing stopped")
+DRAIN_REQUEST = "drain-request.json"  # ArchHub-Runtime\\connectors: while it names an attempt, no new call starts
+
+
+def _runtime_connectors(app_dir) -> Path:
+    return Path(app_dir).parent / "ArchHub-Runtime" / "connectors"
+
+
+def connector_acknowledgements(app_dir: Path, attempt: str, *, process_iter=None) -> list:
+    """For each live supervisor of this install, why it has NOT confirmed `attempt` idle ([] = all confirmed).
+
+    Confirmed means its connectors\\<pid>.json is valid JSON naming this attempt, with admission closed and
+    exactly zero pending calls. Anything else holds: no report (an older supervisor), unreadable or invalid
+    JSON, a missing or non-integer count, admission still open, another attempt, or a call in flight.
+    """
+    import psutil
+    script = str(Path(app_dir).parent / "ArchHub-Runtime" / "mcp_supervisor.py").casefold()
+    folder = _runtime_connectors(app_dir)
+    reasons = []
+    for process in (process_iter or psutil.process_iter)(["pid", "cmdline"]):
+        try:
+            command = process.info.get("cmdline") or []
+            pid = process.info["pid"]
+        except (psutil.Error, OSError, KeyError, TypeError, AttributeError):
+            continue
+        if not any(str(part).casefold() == script for part in command):
+            continue
+        try:
+            report = json.loads((folder / ("%d.json" % pid)).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            reasons.append("pid %d: no report (older supervisor)" % pid)
+            continue
+        except (OSError, ValueError) as error:
+            reasons.append("pid %d: report unreadable (%s)" % (pid, type(error).__name__))
+            continue
+        pending = report.get("pending") if isinstance(report, dict) else None
+        if type(pending) is not int or isinstance(pending, bool):
+            reasons.append("pid %d: report has no call count" % pid)
+        elif report.get("attempt") != attempt:
+            reasons.append("pid %d: has not acknowledged this attempt" % pid)
+        elif report.get("admission") != "closed":
+            reasons.append("pid %d: admission still open" % pid)
+        elif pending != 0:
+            reasons.append("pid %d: %d call(s) in flight" % (pid, pending))
+    return reasons
+
+
+def reopen_connectors(app_dir: Path, attempt: str) -> None:
+    """Remove this attempt's drain request so supervisors admit calls again (a newer attempt's is left alone)."""
+    request = _runtime_connectors(app_dir) / DRAIN_REQUEST
+    try:
+        if json.loads(request.read_text(encoding="utf-8")).get("attempt") == attempt:
+            request.unlink()
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError, AttributeError) as error:
+        raise OSError("connector drain request could not be removed: %s" % error) from error
+
+
+def drain_connectors(app_dir: Path, attempt: str, *, acknowledgements=connector_acknowledgements,
+                     sleep=time.sleep, bound: float = 60.0) -> None:
+    """Close admission for `attempt`, then wait until every live supervisor confirms it idle; raise to defer.
+
+    Order matters: admission is closed first, so no call can start after the all-clear. A deferral
+    reopens admission before it is reported, and nothing has been stopped or signalled to Setup yet.
+    """
+    from nodelang.canvas_triggers import TRIGGER_NODE
+
+    folder = _runtime_connectors(app_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    temporary = folder / (DRAIN_REQUEST + ".tmp")
+    temporary.write_text(json.dumps({"attempt": attempt}), encoding="utf-8")
+    os.replace(temporary, folder / DRAIN_REQUEST)
+    poll = TRIGGER_NODE["params"]["file_poll_floor_seconds"]
+    waited = 0
+    while True:
+        reasons = acknowledgements(app_dir, attempt)
+        if not reasons:
+            return
+        if waited >= bound:
+            reopen_connectors(app_dir, attempt)
+            raise ValueError(_CONNECTORS_HELD % (len(reasons), bound, "; ".join(reasons)[:400]))
+        sleep(poll)
+        waited += poll
+
+
 def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, before_apply=None,
-                 stop_runtime=stop_runtime_processes) -> dict:
+                 stop_runtime=stop_runtime_processes, drain=drain_connectors, expect=None) -> dict:
     """Call before_apply() under staging ownership, then attempt once; retain package.
 
     The trusted callback raises to refuse recovery admission. It must not call
@@ -984,6 +1143,11 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
     try:
         with _locked(state_dir) as updates:
             data = _status(updates, app_dir, verify_confirmed=True)
+            if expect is not None and (data.get("build_id"), str(data.get("sha256", "")).lower()) != (
+                    expect[0], str(expect[1]).lower()):
+                # The staged package is not the one the caller selected (replaced at the handoff): touch nothing.
+                return {**data, "applied": False, "status": "not_ready",
+                        "reason": "staged build changed since it was selected; nothing done"}
             if not data["staged"]:
                 return {**data, "applied": False}
             if data["installed_build_id"] == data["build_id"]:
@@ -1001,10 +1165,18 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             refusal = _ordering_refusal(app_dir, data, installed_build_id(app_dir))
             if refusal:
                 return {**data, "staged": False, "applied": False, "status": "not_ready", "reason": refusal}
+            attempt = "%s-%d-%d" % (data["build_id"], os.getpid(), time.time_ns())
+            if drain is not None:
+                try:
+                    drain(Path(app_dir), attempt)  # admission closed and confirmed idle before anything is stopped
+                except (OSError, ValueError) as exc:
+                    return {**data, "applied": False, "status": "failed", "reason": str(exc)}
             if stop_runtime is not None:
                 try:
                     stop_runtime(Path(app_dir))
                 except (OSError, ValueError) as exc:
+                    if drain is not None:
+                        reopen_connectors(Path(app_dir), attempt)  # refused: agents' calls flow again
                     if str(exc) != _LAUNCHER_HOLDS_INSTALL:  # that one clears by itself within seconds
                         # Refused before Setup: this candidate is not installed automatically again.
                         # A new build or the user's own Retry re-arms it (hold_auto_install).
@@ -1026,6 +1198,8 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
                              "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
                              "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)
+            if drain is not None:
+                reopen_connectors(Path(app_dir), attempt)  # Setup has ended; its own marker is gone too
             exit_code = getattr(result, "returncode", 1)
             if exit_code != 0 or not _installed_matches_target(app_dir, data):
                 reason = ("installer failed (exit %s)" % exit_code) if exit_code != 0 else "installer did not confirm its outcome"
@@ -1422,7 +1596,7 @@ def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) 
     return 0
 
 
-def hand_off(app_dir: Path, *, relaunch: bool, tray: bool = False, sleep=time.sleep,
+def hand_off(app_dir: Path, *, relaunch: bool, tray: bool = False, expect=None, sleep=time.sleep,
              wait_seconds: float = 120.0) -> int:
     """Install the staged build once the desktop that asked for it has fully exited.
 
@@ -1438,7 +1612,7 @@ def hand_off(app_dir: Path, *, relaunch: bool, tray: bool = False, sleep=time.sl
     waited, applied = 0.0, {}
     while True:
         if not _desktop_running():
-            applied = apply_staged(state, app_dir, stop_runtime=stop_runtime_processes)
+            applied = apply_staged(state, app_dir, stop_runtime=stop_runtime_processes, expect=expect)
             if applied.get("reason") != _LAUNCHER_HOLDS_INSTALL:
                 break
         if waited >= wait_seconds:
@@ -1475,12 +1649,19 @@ def main(argv=None):
     parser.add_argument("--apply-staged", type=Path, help="Install a staged build when the desktop is not open, then exit.")
     parser.add_argument("--relaunch", action="store_true", help="With --apply-staged: reopen ArchHub afterwards.")
     parser.add_argument("--tray", action="store_true", help="With --relaunch: reopen in the tray, no window.")
+    parser.add_argument("--expect-build", help="With --apply-staged: install only this staged build id.")
+    parser.add_argument("--expect-sha256", help="With --expect-build: and only with this installer SHA-256.")
     parser.add_argument("--state-dir", type=Path)
     args = parser.parse_args(argv)
     if args.state_dir is not None:
         os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
     if args.apply_staged is not None:
-        return hand_off(args.apply_staged, relaunch=args.relaunch, tray=args.tray)
+        expect = None
+        if args.expect_build or args.expect_sha256:
+            if not (args.expect_build and args.expect_sha256):
+                parser.error("--expect-build and --expect-sha256 go together")
+            expect = (args.expect_build, args.expect_sha256.lower())
+        return hand_off(args.apply_staged, relaunch=args.relaunch, tray=args.tray, expect=expect)
     if args.maintain is not None:
         return maintain(args.maintain)
     if args.recover_failed_launch is None or args.state_dir is None:

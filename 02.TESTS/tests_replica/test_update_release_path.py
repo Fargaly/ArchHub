@@ -114,6 +114,7 @@ def test_setup_refuses_an_unreleased_process(tmp_path, monkeypatch, denied):
     if denied:
         process.terminate.side_effect = psutil.AccessDenied(process.pid)
     monkeypatch.setattr(psutil, "process_iter", lambda _attrs: [process])
+    monkeypatch.setattr(qu, "_session_zero", lambda _pid: False)  # the stand-in runs in the user's session
     wait = Mock(return_value=([], [process]))
     monkeypatch.setattr(psutil, "wait_procs", wait)
     setup = Mock()
@@ -123,6 +124,232 @@ def test_setup_refuses_an_unreleased_process(tmp_path, monkeypatch, denied):
     assert wait.call_count == (0 if denied else 2)
     setup.assert_not_called()
     assert qu.staged_update(state, app)["status"] == "staged"
+
+
+def _fake_process(pid, exe):
+    from unittest.mock import Mock
+    process = Mock(pid=pid)
+    process.info = {"pid": pid, "exe": exe}
+    return process
+
+
+@pytest.mark.parametrize("system_session", [True, False])
+def test_registry_bare_name_with_install_cwd_is_never_a_termination_candidate(tmp_path, monkeypatch, system_session):
+    """Build 18 field defect: psutil names PID 420 "Registry" by bare name; with cwd = the install folder
+    (ArchHub.vbs sets it) the name resolved under the install and the update refused at every launch."""
+    import psutil
+
+    app = tmp_path / "ArchHub"
+    app.mkdir()
+    monkeypatch.chdir(app)  # exactly what ArchHub.vbs does
+    assert Path("Registry").resolve().is_relative_to(app.resolve())  # the trap the old selection fell into
+    registry = _fake_process(420, "Registry")
+    system = _fake_process(4, "System")
+    compression = _fake_process(2000000003, "Memory Compression")
+    owned = _fake_process(2000000001, str(app / "nodelang" / "worker.exe"))
+    external = _fake_process(2000000002, r"C:\Windows\System32\cmd.exe")
+    sessions = []
+
+    def session_zero(pid):
+        sessions.append(pid)
+        return system_session and pid in (4, 420, 2000000003)
+
+    monkeypatch.setattr(psutil, "wait_procs", lambda procs, timeout=None: (list(procs), []))
+    stopped = qu.stop_runtime_processes(app, session_zero=session_zero,
+                                        process_iter=lambda _attrs: [registry, system, compression, owned, external])
+    assert stopped == [2000000001]
+    owned.terminate.assert_called_once()
+    for skipped in (registry, system, compression, external):
+        skipped.terminate.assert_not_called()
+        skipped.kill.assert_not_called()
+    # The bare names and the external program are refused on their path alone, before any session read.
+    assert sessions == [2000000001]
+
+
+def test_an_owned_program_in_session_zero_is_left_alone(tmp_path, monkeypatch):
+    import psutil
+
+    app = tmp_path / "ArchHub"
+    service = _fake_process(2000000004, str(app / "bridges" / "service.exe"))
+    monkeypatch.setattr(psutil, "wait_procs", lambda procs, timeout=None: pytest.fail("nothing to wait for"))
+    assert qu.stop_runtime_processes(app, session_zero=lambda _pid: True,
+                                     process_iter=lambda _attrs: [service]) == []
+    service.terminate.assert_not_called()
+
+
+_SUPERVISOR = r"C:\Users\x\AppData\Local\Python\pythoncore-3.14-64\python.exe"
+_HOSTS = {"cursor": r"C:\Users\x\AppData\Local\Programs\cursor\Cursor.exe",
+          "claude": r"C:\Users\x\.local\bin\claude.exe",
+          "codex": r"C:\Users\x\AppData\Roaming\npm\node_modules\codex\codex.exe",
+          "opencode": r"C:\Users\x\AppData\Local\Programs\OpenCode\OpenCode.exe"}
+
+
+def _transport_chain(app, host, supervised=True):
+    """The real shape seen live: agent -> supervisor (ArchHub-Runtime, base Python) -> install venv python."""
+    connector = (str(app / ".venv" / "Scripts" / "python.exe"),
+                 "python.exe -I -B -c import runpy,sys;runpy.run_module('nodelang.native_agent_mcp') " + str(app))
+    if not supervised:  # the entry before ArchHub-Runtime: the agent started the install's python itself
+        return [(connector[0], "python.exe -m nodelang.native_agent_mcp"), (_HOSTS[host], host)]
+    supervisor = (_SUPERVISOR, "python.exe -I -B ArchHub-Runtime\\mcp_supervisor.py " + str(app))
+    return [connector, supervisor, (_HOSTS[host], host)]
+
+
+def test_agent_hosted_connectors_are_never_stopped_but_archhub_leftovers_are(tmp_path, monkeypatch):
+    """Codex e988: 10 live native_agent_mcp transports run the install's python under Cursor, Claude, Codex
+    and OpenCode. Their supervisor pauses them for Setup; the updater must never stop them itself."""
+    import psutil
+
+    app = tmp_path / "ArchHub"
+    venv_python = str(app / ".venv" / "Scripts" / "python.exe")
+    chains, processes = {}, []
+    for number, host in enumerate(_HOSTS, start=2000000100):
+        processes.append(_fake_process(number, venv_python))
+        chains[number] = _transport_chain(app, host)
+    leftover = _fake_process(2000000200, str(app / "nodelang" / "worker.exe"))
+    chains[2000000200] = [(str(app / "nodelang" / "worker.exe"), "worker.exe"), (r"C:\Windows\explorer.exe", "")]
+    goose_child = _fake_process(2000000201, venv_python)  # BABOOM's goose ships inside the install: ArchHub's own
+    chains[2000000201] = [(venv_python, "python.exe tool.py"), (str(app / "goose.exe"), "goose.exe acp")]
+    monkeypatch.setattr(psutil, "wait_procs", lambda procs, timeout=None: (list(procs), []))
+    stopped = qu.stop_runtime_processes(app, process_iter=lambda _attrs: [*processes, leftover, goose_child],
+                                        session_zero=lambda _pid: False, chain_of=lambda p: chains[p.pid])
+    assert stopped == [2000000200, 2000000201]
+    for transport in processes:
+        transport.terminate.assert_not_called()
+        transport.kill.assert_not_called()
+
+
+@pytest.mark.parametrize("host", list(_HOSTS))
+def test_an_unsupervised_agent_connector_defers_the_update_before_anything_stops(tmp_path, monkeypatch, host):
+    import psutil
+
+    release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "old", "2026-11-17T16:08:00Z")
+    state = tmp_path / "updater-state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    leftover = _fake_process(2000000300, str(app / "nodelang" / "worker.exe"))
+    transport = _fake_process(2000000301, str(app / ".venv" / "Scripts" / "python.exe"))
+    chains = {2000000300: [(str(app / "nodelang" / "worker.exe"), "")],
+              2000000301: _transport_chain(app, host, supervised=False)}
+    monkeypatch.setattr(psutil, "wait_procs", lambda *a, **k: pytest.fail("waited on a process"))
+
+    def stop(directory):
+        return qu.stop_runtime_processes(directory, process_iter=lambda _attrs: [leftover, transport],
+                                         session_zero=lambda _pid: False, chain_of=lambda p: chains[p.pid])
+
+    result = qu.apply_staged(state, app, runner=lambda *a, **k: pytest.fail("Setup ran"), stop_runtime=stop)
+    assert result["applied"] is False and result["reason"].startswith("deferred: an agent's ArchHub connector")
+    leftover.terminate.assert_not_called()
+    transport.terminate.assert_not_called()
+    assert qu.staged_update(state, app)["status"] == "staged"  # retried at the next check, nothing recorded as failed
+
+
+def _supervisor_fixture(tmp_path, reports):
+    """Real disposable report files beside a fake process list: one live supervisor per report key."""
+    app = tmp_path / "LOCAL" / "ArchHub"
+    runtime = tmp_path / "LOCAL" / "ArchHub-Runtime"
+    (runtime / "connectors").mkdir(parents=True)
+    script = str(runtime / "mcp_supervisor.py")
+    processes = [SimpleNamespace(info={"pid": 99, "cmdline": ["python.exe", "other_supervisor.py"]})]
+    for pid, body in reports.items():
+        processes.append(SimpleNamespace(info={"pid": pid, "cmdline": ["python.exe", "-I", "-B", script, str(app)]}))
+        if body is not None:
+            (runtime / "connectors" / ("%d.json" % pid)).write_text(body, encoding="utf-8")
+    return app, runtime / "connectors", (lambda _attrs: processes)
+
+
+@pytest.mark.parametrize("body, held", [
+    ('{"pending": 0, "admission": "closed", "attempt": "A"}', None),                    # the only all-clear
+    ('{"pending": 0, "admission": "open", "attempt": "A"}', "admission still open"),
+    ('{"pending": 0, "admission": "closed", "attempt": "older"}', "has not acknowledged this attempt"),
+    ('{"pending": 0, "admission": "closed"}', "has not acknowledged this attempt"),
+    ('{"pending": 1, "admission": "closed", "attempt": "A"}', "1 call(s) in flight"),
+    ('{"admission": "closed", "attempt": "A"}', "no call count"),
+    ('{"pending": "0", "admission": "closed", "attempt": "A"}', "no call count"),
+    ('{"pending": false, "admission": "closed", "attempt": "A"}', "no call count"),
+    ('[0]', "no call count"),
+    ('{"pending": 0, "admission": ', "report unreadable"),                              # invalid JSON
+    (None, "no report (older supervisor)"),
+])
+def test_only_a_valid_closed_idle_acknowledgement_of_this_attempt_lets_the_install_go_on(tmp_path, body, held):
+    app, _folder, processes = _supervisor_fixture(tmp_path, {11: body})
+    reasons = qu.connector_acknowledgements(app, "A", process_iter=processes)
+    assert reasons == [] if held is None else (len(reasons) == 1 and held in reasons[0])
+
+
+def test_drain_closes_admission_first_then_waits_for_every_acknowledgement(tmp_path):
+    app, folder, processes = _supervisor_fixture(tmp_path, {11: '{"pending": 1, "admission": "closed", "attempt": "A"}',
+                                                            12: '{"pending": 0, "admission": "open"}'})
+    seen = []
+
+    def acknowledgements(directory, attempt):
+        seen.append((folder / qu.DRAIN_REQUEST).read_text(encoding="utf-8"))  # admission already closed
+        if len(seen) == 3:  # both supervisors catch up: the call finished, the request was seen
+            (folder / "11.json").write_text('{"pending": 0, "admission": "closed", "attempt": "A"}', encoding="utf-8")
+            (folder / "12.json").write_text('{"pending": 0, "admission": "closed", "attempt": "A"}', encoding="utf-8")
+        return qu.connector_acknowledgements(directory, attempt, process_iter=processes)
+
+    qu.drain_connectors(app, "A", acknowledgements=acknowledgements, sleep=lambda _s: None, bound=60)
+    assert seen[0] == '{"attempt": "A"}' and len(seen) == 3   # held twice, cleared on the third check
+    assert (folder / qu.DRAIN_REQUEST).exists()   # still closed while the install goes on
+
+
+@pytest.mark.parametrize("body", [None, '{"pending": 0, "admission": "open", "attempt": "A"}', "{bad json",
+                                  '{"pending": 2, "admission": "closed", "attempt": "A"}'])
+def test_anything_short_of_an_acknowledgement_defers_reopens_and_stops_nothing(tmp_path, monkeypatch, body):
+    release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "LOCAL" / "ArchHub", "old", "2026-11-17T16:08:00Z")
+    state = tmp_path / "updater-state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    _app, folder, processes = _supervisor_fixture(tmp_path, {11: body})
+
+    def drain(directory, attempt):
+        return qu.drain_connectors(directory, attempt, sleep=lambda _s: None, bound=3,
+                                   acknowledgements=lambda d, a: qu.connector_acknowledgements(d, a, process_iter=processes))
+
+    result = qu.apply_staged(state, app, runner=lambda *a, **k: pytest.fail("Setup ran"),
+                             stop_runtime=lambda _d: pytest.fail("stopped a process"), drain=drain)
+    assert result["applied"] is False and result["reason"].startswith("deferred: 1 agent connector(s) did not confirm")
+    assert not (folder / qu.DRAIN_REQUEST).exists()   # admission reopened before the deferral was reported
+    assert qu.staged_update(state, app)["status"] == "staged"
+    monkeypatch.setattr(qu, "state_directory", lambda: state)
+    monkeypatch.setattr(qu, "_desktop_running", lambda: False)
+    monkeypatch.setattr(qu, "apply_staged", lambda *a, **k: result)
+    monkeypatch.setattr(qu, "_relaunch", lambda *_a: None)
+    qu.hand_off(app, relaunch=False, sleep=lambda _s: None)
+    assert "update: error deferred: 1 agent connector(s) did not confirm" in \
+        (state / "logs" / "updates.log").read_text(encoding="utf-8")
+
+
+def test_a_refusal_after_the_drain_reopens_admission(tmp_path):
+    release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "LOCAL" / "ArchHub", "old", "2026-11-17T16:08:00Z")
+    state = tmp_path / "updater-state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    _app, folder, processes = _supervisor_fixture(tmp_path, {})
+
+    def refused(_directory):
+        assert (folder / qu.DRAIN_REQUEST).exists()  # admission was closed for this attempt
+        raise OSError("runtime process 7 refused termination")
+
+    drain = lambda d, a: qu.drain_connectors(d, a, sleep=lambda _s: None, bound=3,
+                                            acknowledgements=lambda dd, aa: qu.connector_acknowledgements(dd, aa, process_iter=processes))
+    result = qu.apply_staged(state, app, runner=lambda *a, **k: pytest.fail("Setup ran"), stop_runtime=refused, drain=drain)
+    assert result["applied"] is False and not (folder / qu.DRAIN_REQUEST).exists()
+
+
+@pytest.mark.parametrize("exe, owned", [
+    ("Registry", False), ("System", False), ("", False), (None, False),
+    ("nodelang\\worker.exe", False),            # relative: never joined to the current folder
+    ("C:worker.exe", False),                   # drive-relative is not absolute
+    ("ABSOLUTE_OWNED", True), (r"C:\Windows\System32\cmd.exe", False),
+])
+def test_only_an_absolute_path_inside_the_install_is_owned(tmp_path, monkeypatch, exe, owned):
+    app = (tmp_path / "ArchHub").resolve()
+    app.mkdir()
+    monkeypatch.chdir(app)
+    if exe == "ABSOLUTE_OWNED":
+        exe = str(app / "nodelang" / "worker.exe")
+    assert (qu._owned_executable(exe, app) is not None) is owned
 
 
 @pytest.mark.parametrize("phase", ["rolled_back", "applying", "awaiting_boot", "staged"])
@@ -1056,22 +1283,23 @@ def test_only_a_newer_build_or_the_users_retry_re_arms_a_held_build(tmp_path):
     assert qu.auto_install_held(state3) == ""
 
 
-def test_preflight_predicts_the_pid_420_refusal_without_touching_any_process(tmp_path, monkeypatch):
+def test_preflight_predicts_a_refusal_without_touching_any_process(tmp_path, monkeypatch):
     app = (tmp_path / "ArchHub").resolve()
     app.mkdir()
-    monkeypatch.chdir(app)  # ArchHub.vbs sets this; the current selector resolves bare names here
+    monkeypatch.chdir(app)  # ArchHub.vbs sets this; a bare name must still never resolve into the install
     processes = [SimpleNamespace(info={"pid": 420, "exe": "Registry"}),
+                 SimpleNamespace(info={"pid": 7001, "exe": str(app / "tools" / "held.exe")}),
                  SimpleNamespace(info={"pid": 9001, "exe": str(app / ".venv" / "Scripts" / "pythonw.exe")})]
     asked = []
 
     def can_terminate(pid):
         asked.append(pid)
-        return pid != 420
+        return pid != 7001
 
     assert qu.preflight_refusal(app, desktop_pids={9001}, process_iter=lambda _a: processes,
-                                can_terminate=can_terminate) == "runtime process 420 refused termination"
-    assert asked == [420]  # the desktop's own process is never asked about
-    assert qu.preflight_refusal(app, desktop_pids={9001}, process_iter=lambda _a: processes[1:],
+                                can_terminate=can_terminate) == "runtime process 7001 refused termination"
+    assert asked == [7001]  # "Registry" (PID 420) is not ArchHub's; the desktop's own process is never asked
+    assert qu.preflight_refusal(app, desktop_pids={9001}, process_iter=lambda _a: [processes[0], processes[2]],
                                 can_terminate=lambda _pid: pytest.fail("asked")) == ""
 
 
@@ -1318,3 +1546,27 @@ def test_the_update_policy_reads_the_saved_settings_value(tmp_path):
         r_settings_action(server, SimpleNamespace(body={"function": "setApplicationSetting",
                                                          "args": ["update_idle_minutes", 99999]}))
     assert default_update_policy(state)["idle_minutes"] == 15                 # the refused value was never stored
+
+
+def test_a_package_swapped_at_the_handoff_is_never_installed(tmp_path):
+    """Codex: the caller selected build X; the staged file was replaced by another valid build before the drain."""
+    release = _build_output(tmp_path / "release", "20261120-1200-abc4321", "2026-11-20T08:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20261119-0904-665c785", "2026-11-19T05:04:00Z")
+    state = tmp_path / "state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    marker = json.loads((state / "updates" / "staged.json").read_text(encoding="utf-8"))
+    selected = ("20261118-0000-0000000", marker["sha256"])          # what the caller selected earlier
+    before = (state / "updates" / "staged.json").read_bytes()
+    result = qu.apply_staged(state, app, expect=selected, runner=lambda *a, **k: pytest.fail("Setup ran"),
+                             stop_runtime=lambda _d: pytest.fail("stopped a process"),
+                             drain=lambda *_a: pytest.fail("drained connectors"))
+    assert result["applied"] is False and result["reason"].startswith("staged build changed since it was selected")
+    assert (state / "updates" / "staged.json").read_bytes() == before   # the replacement is left exactly as it is
+    wrong_sha = (marker["build_id"], "0" * 64)
+    assert qu.apply_staged(state, app, expect=wrong_sha, runner=lambda *a, **k: pytest.fail("Setup ran"),
+                           stop_runtime=lambda _d: pytest.fail("stopped"), drain=lambda *_a: pytest.fail("drained"))["applied"] is False
+    calls = []
+    matching = (marker["build_id"], marker["sha256"].upper())          # the selected one: case does not matter
+    qu.apply_staged(state, app, expect=matching, runner=lambda argv, **k: calls.append(argv) or SimpleNamespace(returncode=1),
+                    stop_runtime=lambda _d: None, drain=lambda *_a: None)
+    assert len(calls) == 1

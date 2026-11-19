@@ -426,18 +426,14 @@ begin
 end;
 
 procedure CloseInstallConnectors();
-var
-  Code: Integer;
 begin
-  { Agents start the connector supervisor from ArchHub-Runtime; it closes its connector while this marker exists and
-    starts it again after, so no agent reconnects. Connectors still started from the install itself (the launch
-    before ArchHub-Runtime) are closed here so none of their files is in use. }
+  { Agents start the connector supervisor from ArchHub-Runtime; it swaps its connector for the new build while this
+    marker exists, after the calls in flight are answered, and the agent never reconnects. Setup stops no connector
+    itself: the old forced stop also matched supervisor-hosted workers and cut agents' calls. A connector holds no
+    file Setup replaces (Python reads .py once; .venv is not in [Files]), and the quiet updater defers while an
+    agent-hosted connector runs without its supervisor. }
   SaveStringToFile(ExpandConstant('{app}\.archhub-installing'), '{#BuildId}', False);
   Sleep(2500);
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ''*native_agent_mcp*'' -and $_.CommandLine -like ''*' +
-    ExpandConstant('{app}') + '*'' -and $_.CommandLine -notlike ''*mcp_supervisor.py*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
-    '', SW_HIDE, ewWaitUntilTerminated, Code);
 end;
 
 procedure DeinitializeSetup();

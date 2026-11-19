@@ -23,7 +23,14 @@ if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }
 $checker = Join-Path $PSScriptRoot 'check_update_offer.py'
-$profileGuard = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'tools/real_app_check/profile_guard.py'
+$toolsRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$profileGuard = Join-Path $toolsRoot 'tools/real_app_check/profile_guard.py'
+# The installed updater's parser, as check_update_offer.py finds it: nodelang beside packaging/ (flattened release
+# snapshot), else 01.APP beside 03.TOOLS (numbered repository). Resolved before upload so a readback that cannot
+# import it refuses here instead of failing after the release is already latest.
+$appRoot = @($toolsRoot, (Join-Path (Split-Path -Parent $toolsRoot) '01.APP')) |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'nodelang/quiet_update.py') -PathType Leaf } | Select-Object -First 1
+if (-not $appRoot) { throw 'The installed updater parser (nodelang/quiet_update.py) is not beside this script; nothing was published.' }
 $checkProfile = Join-Path $release 'CHECK-PROFILE'
 $arguments = @($checker, $release, '--live', '--repository', $Repository)
 if ($ExpectedSourceRevision) { $arguments += @('--expected-revision', $ExpectedSourceRevision) }
@@ -92,7 +99,7 @@ if ($global:LASTEXITCODE -ne 0) { throw 'Draft release upload failed; nothing wa
 if ($global:LASTEXITCODE -ne 0) { throw 'Release promotion did not complete; inspect its current state before retrying.' }
 # Read back through the installed updater's own parser, from the live API.
 $probe = "import json,sys; sys.path.insert(0, sys.argv[1]); from nodelang import quiet_update as q; print(json.dumps(q.read_latest_release()))"
-$live = (& $PythonPath $profileGuard --profile $checkProfile -c $probe (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) -join ''
+$live = (& $PythonPath $profileGuard --profile $checkProfile -c $probe $appRoot) -join ''
 if ($global:LASTEXITCODE -ne 0) { throw 'Published release readback failed; inspect the guard receipt.' }
 Write-Output "LIVE latest as installed users read it: $live"
 if (($live | ConvertFrom-Json).build_id -cne $offer.build_id) {

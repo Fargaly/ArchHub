@@ -20,6 +20,7 @@ import re
 import sqlite3
 import shutil
 import subprocess
+import sys
 from textwrap import dedent
 import time
 from types import SimpleNamespace
@@ -901,6 +902,74 @@ def test_a_tray_start_never_shows_the_window(arguments, tray_available, shown):
     window = SimpleNamespace(show=lambda: calls.append("show"))
     assert _show_unless_tray(window, arguments, tray_available) is (not shown)
     assert calls == (["show"] if shown else [])
+
+
+_STUB_NETWORK = """import io, urllib.request
+from pathlib import Path
+# Court stand-in for GitHub: releases/latest answers with the published release, nothing else is reachable.
+_RELEASE = Path(__file__).with_name("published-release.json").read_bytes()
+class _Body(io.BytesIO):
+    def __enter__(self):
+        return self
+    def __exit__(self, *_exc):
+        return False
+def _github(request, timeout=0):
+    if getattr(request, "full_url", request) != "https://api.github.com/repos/Fargaly/ArchHub/releases/latest":
+        raise OSError("court: only the stubbed releases/latest is reachable")
+    return _Body(_RELEASE)
+urllib.request.urlopen = _github
+"""
+
+
+@pytest.mark.parametrize("layout", ["numbered", "flattened", "no_parser"])
+def test_publish_reads_back_latest_through_the_real_parser_in_both_layouts(tmp_path, monkeypatch, layout):
+    """After promotion, publish_release.ps1 reads releases/latest back with the installed updater's own parser
+    (nodelang.quiet_update). Numbered repository: nodelang is in 01.APP beside 03.TOOLS; flattened release snapshot:
+    nodelang beside packaging/. The real publisher, profile guard and parser run from a neutral folder; gh, the
+    pre-upload checker and the network are stand-ins, so nothing is uploaded."""
+    if not PWSH:
+        pytest.skip("PowerShell required")
+    monkeypatch.delenv("PSModulePath", raising=False)
+    release = _build_output(tmp_path / "release", "20261108-test", "2026-11-08T01:00:00Z")
+    published = offer_check.reconcile(release)["github_release"]
+    root = tmp_path / "layout"
+    tools, app = (root / "03.TOOLS", root / "01.APP") if layout == "numbered" else (root, root)
+    windows = tools / "packaging" / "windows"
+    windows.mkdir(parents=True)
+    shutil.copyfile(ROOT / "03.TOOLS/packaging/windows/publish_release.ps1", windows / "publish_release.ps1")
+    (windows / "report.json").write_text(json.dumps(offer_check.check(release)), encoding="utf-8")
+    (windows / "check_update_offer.py").write_text(   # the pre-upload check is its own court; here it approves
+        "from pathlib import Path\nprint(Path(__file__).with_name('report.json').read_text(encoding='utf-8'))\n",
+        encoding="utf-8")
+    guard = tools / "tools" / "real_app_check"
+    guard.mkdir(parents=True)
+    for name in ("profile_guard.py", "real_app_check.py"):
+        shutil.copyfile(ROOT / "03.TOOLS/tools/real_app_check" / name, guard / name)
+    if layout != "no_parser":
+        (app / "nodelang").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "01.APP/nodelang/quiet_update.py", app / "nodelang" / "quiet_update.py")
+        (app / "nodelang" / "__init__.py").write_text(_STUB_NETWORK, encoding="utf-8")
+        (app / "nodelang" / "published-release.json").write_text(json.dumps(published), encoding="utf-8")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "gh.cmd").write_text('@echo off\r\necho %*>>"%GH_CALLS%"\r\nexit /b 0\r\n')
+    calls = tmp_path / "gh-calls.txt"
+    monkeypatch.setenv("PATH", str(tmp_path / "bin") + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("GH_CALLS", str(calls))
+    neutral = tmp_path / "neutral"
+    neutral.mkdir()
+    result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(windows / "publish_release.ps1"),
+                             "-ReleaseDirectory", str(release), "-PythonPath", sys.executable,
+                             "-ExpectedSourceRevision", REVISION],
+                            cwd=neutral, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    recorded = calls.read_text().splitlines() if calls.exists() else []
+    if layout == "no_parser":
+        assert result.returncode == 1 and "nothing was published" in result.stdout + result.stderr
+        assert recorded == []                                  # refused before any GitHub call
+        return
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [line.split()[:2] for line in recorded] == [["auth", "status"], ["release", "create"], ["release", "edit"]]
+    assert '"build_id": "20261108-test"' in result.stdout     # read back by quiet_update.read_latest_release
+    assert "PUBLISHED build-20261108-test as latest" in result.stdout
 
 
 def _held_fixture(tmp_path):

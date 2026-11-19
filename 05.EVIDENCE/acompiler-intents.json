@@ -11840,7 +11840,8 @@
         "02.TESTS/tests_replica/test_onetask.py",
         "02.TESTS/tests_replica/test_agentcanvas.py",
         "02.TESTS/tests_js/agentcanvas.cjs",
-        "01.APP/nodelang/studio/app.jsx"
+        "01.APP/nodelang/studio/app.jsx",
+        "02.TESTS/tests_js/agentwork.cjs"
       ]
     },
     "DRAFTNOASK": {
@@ -11924,7 +11925,15 @@
         "02.TESTS/tests_replica/test_update_real_handoff.py",
         "02.TESTS/tests_replica/test_update_release_path.py",
         "05.EVIDENCE/acompiler-intents.json",
-        "01.APP/nodelang/nograph_server.py"
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/application_update.py",
+        "01.APP/nodelang/pipeline_engines.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "01.APP/nodelang/mcp_supervisor.py",
+        "02.TESTS/tests_replica/test_mcp_supervisor.py",
+        "03.TOOLS/installer/ArchHub.iss"
       ]
     },
     "MEETINGAGENT": {
@@ -12072,7 +12081,12 @@
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "02.TESTS/tests_replica/test_custom_mcp.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/custom_mcp_gateway.py",
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/notion_mcp.py",
+        "03.TOOLS/packaging/preflight_imports.py",
+        "05.EVIDENCE/graphout/origin-main-tools.json"
       ]
     },
     "BACKUPSSMALL": {
@@ -12182,6 +12196,21 @@
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "02.TESTS/tests_js/settings5_agents_sheet.test.cjs",
         "02.TESTS/tests_replica/test_settings5_agent_roster.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "TASKHIERARCHY": {
+      "source": "Founder 2026-11-19, Build 19: a project contains tasks and subtasks. A subtask has a parent in the existing Workshop task owner, inherits its workspace and appears beneath its parent on the Home canvas.",
+      "scope": [
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "02.TESTS/tests_js/home_map.test.cjs",
+        "02.TESTS/tests_replica/test_task_hierarchy.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

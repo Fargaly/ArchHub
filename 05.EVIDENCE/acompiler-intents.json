@@ -12072,6 +12072,15 @@
         "02.TESTS/tests_replica/test_custom_mcp.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "BACKUPSSMALL": {
+      "source": "Founder rule F17: copies stay in the cloud, never multi-GB on his machine. No writer uses backup-location.json or a system partition; the credential archive stays small in the app's own folder; Settings storage controls act or show Coming soon until the cloud destination lands.",
+      "scope": [
+        "01.APP/app/secrets_store.py",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests/test_backups_stay_local_and_small.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

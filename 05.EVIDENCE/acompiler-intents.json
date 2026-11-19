@@ -12139,6 +12139,16 @@
         "03.TOOLS/packaging/links.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "GOOSEAUTHWORKSHOP": {
+      "source": "Codex e988 release blockers (seq 16332, 16336, f9df0a55, ad298341): restore scoped Workshop connector in _meta.enabledExtensions without inline stdio env, keep host Authorization in memory via envKeys/ARCHHUB_HOSTS_TOKEN, and safely scrub retained Authorization headers from sessions.sqlite3 extension_data without altering messages.",
+      "scope": [
+        "01.APP/nodelang/goose_adapter.py",
+        "01.APP/nodelang/goose_runtime.py",
+        "02.TESTS/tests_replica/fixtures/goose_acp_fake.py",
+        "02.TESTS/tests_replica/test_goose_auth_and_workshop.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

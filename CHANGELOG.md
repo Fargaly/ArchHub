@@ -2,6 +2,38 @@
 
 ## Next build
 
+## 20261119-1847-9d8e490
+
+- Published build 20261119-1847-9d8e490 (source 9d8e490).
+- Installer SHA-256: `09c69fba467b972947303543b9f61fd6d1deb9729563ed77c7d534ce2c09f992`.
+- Built at 2026-11-19T14:47:28Z.
+
+Source: 9d8e4901.
+
+## 20261119-1750-7f77383
+
+- Published build 20261119-1750-7f77383 (source 7f77383).
+- Installer SHA-256: `5546e96b2cb7ceb6ea8ca055f52fca6946de768b6ec27450442098888e92927c`.
+- Built at 2026-11-19T13:50:11Z.
+
+Source: 7f773831.
+
+## 20261119-1615-d96e208
+
+- Published build 20261119-1615-d96e208 (source d96e208).
+- Installer SHA-256: `c9dab91cc62bad6e1f1db374b7f0423b8848767f376bc360f0b0515ad4bfee50`.
+- Built at 2026-11-19T12:15:55Z.
+
+Source: d96e2086.
+
+## 20261119-1347-80c15f3
+
+- Published build 20261119-1347-80c15f3 (source 80c15f3).
+- Installer SHA-256: `4a9c5d155eef5c969c53144ee6c2e8dda86a42368c7d59e2ea6f290fcac2c151`.
+- Built at 2026-11-19T09:47:49Z.
+
+Source: 80c15f3f.
+
 ## 20261119-0904-665c785
 
 - Published build 20261119-0904-665c785 (source 665c785).

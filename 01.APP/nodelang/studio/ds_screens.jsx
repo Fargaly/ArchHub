@@ -14,6 +14,25 @@
   } = window.UI;
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
   const wirePath = (a, b, kind) => kind === 'Straight' ? `M${a.x} ${a.y} L${b.x} ${b.y}` : kind === 'Step' ? `M${a.x} ${a.y} L${(a.x + b.x) / 2} ${a.y} L${(a.x + b.x) / 2} ${b.y} L${b.x} ${b.y}` : curve(a, b);
+  // A wire's hit area: a closed band h px either side of the wire, hit by fill. A flat wire's 16 px transparent stroke has a
+  // 0 px tall box, and Chrome's hit test sometimes skipped it, so a right-click opened the Canvas menu (677).
+  const wireBand = (a, b, kind, h = 8) => {
+    const m = (a.x + b.x) / 2;
+    const pts = kind === 'Straight' ? [a, b] : kind === 'Step' ? [a, {x: m, y: a.y}, {x: m, y: b.y}, b]
+      : Array.from({length: 25}, (_, i) => { const t = i / 24, u = 1 - t; return {x: u*u*u*a.x + 3*u*t*m + t*t*t*b.x, y: (u*u*u + 3*u*u*t)*a.y + (3*u*t*t + t*t*t)*b.y}; });
+    const normals = pts.map((p, i) => {
+      let x = 0, y = 0;
+      for (const [s, e] of [[pts[i - 1], p], [p, pts[i + 1]]]) {
+        if (!s || !e) continue;
+        const dx = e.x - s.x, dy = e.y - s.y, l = Math.hypot(dx, dy);
+        if (l) { x -= dy / l; y += dx / l; }
+      }
+      const l = Math.hypot(x, y);
+      return l ? {x: x / l, y: y / l} : {x: 0, y: 1};
+    });
+    const side = k => pts.map((p, i) => `${(p.x + k * h * normals[i].x).toFixed(1)} ${(p.y + k * h * normals[i].y).toFixed(1)}`);
+    return `M${side(1).join(' L')} L${side(-1).reverse().join(' L')} Z`;
+  };
   const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
   const editableGroup = n => n && !n.fixed && !!(n.children?.length || n.frameMembers);
   const expandedGroup = n => editableGroup(n) && (!!n.frameMembers || !n.collapsed);
@@ -727,7 +746,7 @@
     const d = wirePath({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route);
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
       <WirePath id={id} state={data.state} route={data.route} d={d} color={data.color} dash={data.inferred?'6 4':undefined} opacity={data.opacity} />
-      <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={data.label || 'Inspect wire ' + id}>{data.label && <title>{data.label}</title>}</path>
+      <path className="react-flow__edge-interaction" d={wireBand({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route)} fill="transparent" stroke="none" style={{pointerEvents: 'fill'}} aria-label={data.label || 'Inspect wire ' + id}>{data.label && <title>{data.label}</title>}</path>
     </>;
   }
   // A card redraws when its data or selection changes; a drag frame only moves it (the engine sets its transform).

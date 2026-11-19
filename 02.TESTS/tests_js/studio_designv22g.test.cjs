@@ -673,7 +673,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Control+Shift+z');
     await header.waitFor({state:'detached'});
   });
-  const wireMenu=async()=>{const point=await page.locator('.react-flow__edge[data-id="'+wireId+'"] path.react-flow__edge-interaction').evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()/2),m=el.getScreenCTM();return {x:p.x*m.a+m.e,y:p.y*m.d+m.f};});await page.locator('body').click({position:point,button:'right'});await page.getByRole('menu',{name:'Wire menu',exact:true}).waitFor();};
+  const wireMenu=async()=>{const point=await page.locator('.react-flow__edge[data-id="'+wireId+'"] path[data-graph-wire]').evaluate(el=>{const p=el.getPointAtLength(el.getTotalLength()/2),m=el.getScreenCTM();return {x:p.x*m.a+m.e,y:p.y*m.d+m.f};});await page.locator('body').click({position:point,button:'right'});await page.getByRole('menu',{name:'Wire menu',exact:true}).waitFor();};
   await t.test('Wire rule and Enable/Disable change actual Run; Insert Convert is one undo step',async()=>{
     await page.getByRole('button',{name:'Fit',exact:true}).click();
     await wireMenu();await page.getByRole('button',{name:'Add rule',exact:true}).click();

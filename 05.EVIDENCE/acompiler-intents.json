@@ -11901,6 +11901,7 @@
     "GOOSESOURCE": {
       "source": "Founder request via Codex 2026-11-19: build Goose from editable pinned source (aaif-goose v1.54.0 cd643d21 + our patches + Cargo.lock), keep its license, return upstream commit, ArchHub rev, build receipt and exe SHA-256; staging and the runtime verifier stop using the upstream release ZIP.",
       "scope": [
+        "01.APP/nodelang/site_export.py",
         "03.TOOLS/packaging/windows/goose-pin.json",
         "03.TOOLS/packaging/windows/goose/patches/series",
         "03.TOOLS/packaging/windows/goose/Cargo.lock",

@@ -12257,6 +12257,32 @@
         "02.TESTS/tests_js/properties_rerun_fork_live.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "COMMUNITYJOINTRUST": {
+      "source": "Build 19. Bind community membership to an independently enrolled owner and an asymmetric invitation signature. Preserve authentic existing invitations, resolve ambiguous ownership explicitly and reject unverified joins before any membership write.",
+      "scope": [
+        "06.CLOUD/cloud_backend/community_join.py",
+        "06.CLOUD/cloud_backend/main.py",
+        "06.CLOUD/cloud_backend/db.py",
+        "06.CLOUD/cloud_backend/tests/test_community_membership.py",
+        "06.CLOUD/cloud_backend/tests/join_signing.py"
+      ]
+    },
+    "CRYPTO50": {
+      "source": "Build 19. Move the three active cryptography constraints to >=50.0.2,<51. Verify the Windows wheel, installed dependency resolution, desktop credential and signing operations, and the cloud authentication consumers.",
+      "scope": [
+        "requirements.txt",
+        "requirements-cloud.txt",
+        "06.CLOUD/cloud_backend/requirements.txt",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "BUILD19GUIDE": {
+      "source": "Build 19. Align the existing Workshop and Connectors guides with verified Studio actions for Home, subtasks and tool servers. The desktop and exported guide use the same text.",
+      "scope": [
+        "01.APP/nodelang/site_export.py"
+      ]
     }
   },
   "DRAFTNOASK": {

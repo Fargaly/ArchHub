@@ -11889,6 +11889,21 @@
         "02.TESTS/tests_js/design_canvas_live.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "GOOSESOURCE": {
+      "source": "Founder request via Codex 2026-11-19: build Goose from editable pinned source (aaif-goose v1.54.0 cd643d21 + our patches + Cargo.lock), keep its license, return upstream commit, ArchHub rev, build receipt and exe SHA-256; staging and the runtime verifier stop using the upstream release ZIP.",
+      "scope": [
+        "03.TOOLS/packaging/windows/goose-pin.json",
+        "03.TOOLS/packaging/windows/goose/patches/series",
+        "03.TOOLS/packaging/windows/goose/Cargo.lock",
+        "03.TOOLS/packaging/windows/build_goose.py",
+        "03.TOOLS/packaging/windows/stage_goose.py",
+        "01.APP/nodelang/goose_runtime.py",
+        ".github/workflows/release.yml",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests_replica/test_goose_source.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

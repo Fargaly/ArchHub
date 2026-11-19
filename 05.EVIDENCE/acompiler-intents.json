@@ -11860,7 +11860,10 @@
         "02.TESTS/tests/test_session_properties.py",
         "02.TESTS/tests_js/session_properties_live.cjs",
         "05.EVIDENCE/acompiler-intents.json",
-        "01.APP/nodelang/hook_decision.py"
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/session_files.py",
+        "02.TESTS/tests/test_host_exec.py",
+        "02.TESTS/tests_replica/test_run_resume.py"
       ]
     }
   }

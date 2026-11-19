@@ -1465,8 +1465,12 @@
       u.setToast(menuTask.title + ' is archived. Its file stays on disk: Open… in this menu opens it again.');
       return result;
     });
+    // Agents still on this task (a live lease, or a live agent declared on it): the confirm names them before archiving.
+    const working = menuTask ? [...new Set([...(menuTask.members || []).filter(m => m.live).map(m => m.name),
+      ...(s.liveAgents || []).filter(agent => agent.task === menuTask.id).map(agent => agent.name || agent.agent)].filter(Boolean))] : [];
     const archiveConfirm = archiveAsk && menuTask && <div role="alertdialog" aria-label="Delete task" data-design="task.archive" className="v48-archive-ask">
       <p><b>Delete {menuTask.title}?</b> It is archived: it leaves the active list and Home. Its file stays on disk and Open… opens it again. Nothing is deleted.</p>
+      {working.length > 0 && <p role="alert" data-archive-working="">An agent is still working on this task: {working.join(', ')}. Archive it only if that work can stop.</p>}
       <div className="flex"><Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => setArchiveAsk(false)}, event)}>Cancel</Btn><Btn p sm onClick={event => executeAction('projects.controls.activate', {handler: archiveTask}, event)}>Archive</Btn></div></div>;
     const actionsMenu = <> {archiveConfirm}{more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}><div aria-label="Workflow status" style={{padding:'6px 8px',color:A.inkSoft,fontSize:11}}>{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div>{[

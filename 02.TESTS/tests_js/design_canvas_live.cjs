@@ -260,6 +260,8 @@ const {chromium} = require('playwright');
     await page.getByRole('menu', {name: 'Canvas actions', exact: true}).getByRole('menuitem', {name: 'Delete task…', exact: true}).click();
     const ask = page.getByRole('alertdialog', {name: 'Delete task', exact: true});
     assert.match(await ask.innerText(), /archived[\s\S]*leaves the active list and Home[\s\S]*file stays on disk[\s\S]*Nothing is deleted/);
+    // The task is claimed by a live agent (seeded with a lease), so the confirm warns and names it.
+    assert.match(await ask.getByRole('alert').innerText(), /An agent is still working on this task: Drawing coordinator/i);
     await ask.getByRole('button', {name: 'Archive', exact: true}).click();
     // The Studio reads archived tasks too (listTasks with archived): the task is now marked ARCHIVED, off the active list and Home.
     await page.waitForFunction(id => window.ArchHubAPI.getSnapshot().tasks.find(task => task.id === id)?.status === 'ARCHIVED', archived);

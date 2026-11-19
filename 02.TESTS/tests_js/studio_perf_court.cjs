@@ -79,6 +79,7 @@ async function court() {
     const open = page.getByRole('button', {name: 'Open its Canvas', exact: true});
     await open.waitFor({timeout: 60000});
     await page.waitForTimeout(3000);  // Home's first reads settle before the click is timed
+    out.homeMapBoxes = await page.evaluate(() => document.querySelectorAll('.mmap .mn').length);  // Home's map draws its cards
     const flow = page.getByLabel('Workflow canvas', {exact: true});
     await longTasks();
     const t0 = Date.now();
@@ -215,6 +216,31 @@ async function court() {
       await page.waitForTimeout(600);
     }
     out.longTasks.fold = await longTasks();
+
+    // The canvas toolbar's Thread button (the Workshop thread beside the canvas), open then close: press to painted,
+    // and the long animation frames it causes.
+    out.threadToggleMs = [];
+    await longTasks(); await longFrames();
+    for (const round of ['open', 'close']) {
+      const button = page.locator('[data-design="toolbar.thread"]').first();
+      await button.waitFor();
+      const b = await button.boundingBox(), pressed = await button.getAttribute('aria-pressed');
+      await page.evaluate(() => { window.addEventListener('pointerdown', () => { window.__press = window.performance.now(); }, {capture: true, once: true}); });
+      await mouse('mouseMoved', b.x + b.width / 2, b.y + b.height / 2);
+      const ms = await profiled(round === 'open' ? 'thread' : '', async () => {
+        await mouse('mousePressed', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 1, clickCount: 1});
+        await mouse('mouseReleased', b.x + b.width / 2, b.y + b.height / 2, {button: 'left', buttons: 0, clickCount: 1});
+        return page.evaluate(was => new Promise(resolve => {
+          const check = () => document.querySelector('[data-design="toolbar.thread"]')?.getAttribute('aria-pressed') !== was
+            ? requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(window.performance.now() - window.__press)))) : requestAnimationFrame(check);
+          check();
+        }), pressed);
+      });
+      out.threadToggleMs.push(ms);
+      await page.waitForTimeout(900);
+    }
+    out.longTasks.thread = await longTasks();
+    out.longFrames = {...out.longFrames, thread: await longFrames()};
   } catch (error) {
     out.errors.push(error.stack || String(error));
   } finally {

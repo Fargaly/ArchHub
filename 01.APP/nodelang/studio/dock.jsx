@@ -115,17 +115,19 @@
     const narrow = React.useSyncExternalStore(onResize, () => window.innerWidth < NARROW, () => false);
     const opened = React.useSyncExternalStore(narrowOpen.subscribe, narrowOpen.read, () => false);
     const kept = React.useMemo(() => local ? local.layout || defaultLayout(window.innerWidth) : normalize(record, window.innerWidth), [local, JSON.stringify(record)]);
-    const current = React.useRef(kept);
-    current.current = kept;
+    // pending: the layout a change asked for, until it renders. A change during a pending fold transition builds on it.
+    const current = React.useRef(kept), pending = React.useRef(null);
+    if (pending.current === kept) pending.current = null;
+    current.current = pending.current || kept;
     const layout = narrow && !opened && !kept.right.c ? {...kept, right: {...kept.right, c: true}} : kept;
     const change = (next, keep = true) => {
       // Until the owner's record has arrived a change would replace his saved layout with the default: it waits for the record.
       if (next === current.current || !s.dockLayout) return;
-      current.current = next;
+      current.current = pending.current = next;
       setLocal({layout: next});
       if (keep) onSave(next);
     };
-    const reset = () => { narrowOpen.set(false); setLocal({layout: null}); onSave(null); };  // no layout of his own: the default
+    const reset = () => { pending.current = null; narrowOpen.set(false); setLocal({layout: null}); onSave(null); };  // no layout of his own: the default
     const reveal = id => { if (narrow && where(current.current, id)?.side === 'right') narrowOpen.set(true); change(show(current.current, id)); };
     const fold = side => { if (side === 'right' && narrow && !current.current.right.c) narrowOpen.set(!narrowOpen.read()); else change(toggleDock(current.current, side)); };
     React.useImperativeHandle(controls, () => ({
@@ -133,11 +135,13 @@
       hide: id => change(hide(current.current, id)),
       visible: id => visible(layout, id),
       reset,
-    }));    // The thread beside the canvas needs the room: open docks fold while it shows and come back after (not saved).
+    }));
+    // The thread beside the canvas needs the room: open docks fold while it shows and come back after (not saved).
+    // As a transition, after the thread's own frame: folding synchronously inside the click doubled its commit.
     const folded = React.useRef(null);
     React.useLayoutEffect(() => {
       const held = current.current;
-      const set = (sides, c) => change({...held, ...Object.fromEntries(sides.map(side => [side, {...held[side], c}]))}, false);
+      const set = (sides, c) => React.startTransition(() => change({...held, ...Object.fromEntries(sides.map(side => [side, {...held[side], c}]))}, false));
       if (face === 'split' && !folded.current) {
         folded.current = SIDES.filter(side => !held[side].c && held[side].st.length);
         if (folded.current.length) set(folded.current, true);
@@ -338,11 +342,13 @@
 
   // Mini map of the open canvas: real node boxes and the real view; click or drag moves the view, the wheel zooms.
   // sizes: the canvas engine's measured card sizes by id, so a pan or zoom frame reads no layout.
-  function CanvasMap({nodes, sizes, area, view, onView, onZoom}) {
+  // surfaceSize: the canvas size the Canvas observes ({w, h}), so drawing the map reads no layout; without it (Home's
+  // map, or the frame before the first observation) the surface is measured once.
+  function CanvasMap({nodes, sizes, area, surfaceSize, view, onView, onZoom}) {
     const W = 168, H = 104, surface = area.current;
     if (!surface || !nodes.length) return <div className="mmap"><p className="mmh">This canvas has no nodes yet.</p></div>;
     const boxes = nodes.map(node => ({node, x: node.x, y: node.y, w: sizes?.get(node.id)?.width || 240, h: sizes?.get(node.id)?.height || 120}));
-    const seen = {x: -view.pan.x / view.zoom, y: -view.pan.y / view.zoom, w: surface.clientWidth / view.zoom, h: surface.clientHeight / view.zoom};
+    const seen = {x: -view.pan.x / view.zoom, y: -view.pan.y / view.zoom, w: (surfaceSize ? surfaceSize.w : surface.clientWidth) / view.zoom, h: (surfaceSize ? surfaceSize.h : surface.clientHeight) / view.zoom};
     const x0 = Math.min(seen.x, ...boxes.map(b => b.x)) - 40, y0 = Math.min(seen.y, ...boxes.map(b => b.y)) - 40;
     const x1 = Math.max(seen.x + seen.w, ...boxes.map(b => b.x + b.w)) + 40, y1 = Math.max(seen.y + seen.h, ...boxes.map(b => b.y + b.h)) + 40;
     const k = Math.min(W / (x1 - x0), H / (y1 - y0));

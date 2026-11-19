@@ -792,13 +792,15 @@
       [layout, setLayout] = React.useState({scope: null, positions: {}}),
       [flowNodes, setFlowNodes] = React.useState([]),
       [more, setMore] = React.useState(false);
-    const area = React.useRef(),
+    const area = React.useRef(), [areaNode, setAreaNode] = React.useState(null),
       view = React.useRef(viewport),
       held = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
     const flow = React.useRef(null);
     const viewSource = React.useMemo(() => { const listeners = new Set(); return {get: () => view.current, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); }, emit: () => listeners.forEach(fn => fn())}; }, []);
+    // A stable ref callback: the observer below re-attaches when the drawing area element itself changes.
+    const attachArea = React.useCallback(element => { area.current = element; setAreaNode(element); }, []);
     const userViewport = React.useRef(false);
     const canvasTouched = React.useRef(false);
     React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
@@ -814,11 +816,18 @@
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
+    // The canvas width for the "more steps" button comes from the observer, never a layout read during render
+    // (a toggle that resizes the canvas forced a whole layout inside its click, once per visible card).
+    const [areaSize, setAreaSize] = React.useState(null), areaWidth = areaSize?.w || 0;
     React.useLayoutEffect(() => {
-      const observer = new window.ResizeObserver(entries => setPaneWidth(entries[0].contentRect.width));
+      const observer = new window.ResizeObserver(entries => { for (const entry of entries) {
+        if (entry.target === area.current) setAreaSize(old => old && old.w === entry.contentRect.width && old.h === entry.contentRect.height ? old : {w: entry.contentRect.width, h: entry.contentRect.height});
+        else setPaneWidth(entry.contentRect.width);
+      } });
       if (paneBox.current) observer.observe(paneBox.current);
+      if (areaNode) observer.observe(areaNode);
       return () => observer.disconnect();
-    }, [requestState]);
+    }, [requestState, areaNode]);
     // Zoom rule (design): the zoom control rests 36px above the canvas bottom; where it would touch the composer it rises
     // so its bottom is the composer's top less 8px. Checked again on every resize and dock change.
     const zoomBar = React.useRef(null), restBottom = React.useRef(null), [zoomRise, setZoomRise] = React.useState(null);
@@ -1420,7 +1429,7 @@
       {libraryRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Library" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='library'?'':'library')},event)}>Library</button> : <window.UI.LibraryShelf onClose={()=>u.setLibraryOpen(false)} />}
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <WorkPanel id="canvas-work" minSize={240}>
-   <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
+   <div ref={attachArea} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         onPointerDownCapture={event=>{stopAutoFrame();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
         onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
@@ -1468,7 +1477,7 @@
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}</FlowStage>
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
-    {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).length} more steps →</button>}
+    {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(areaWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).length} more steps →</button>}
     <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
 
    </div>
@@ -1477,7 +1486,7 @@
      {inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
    </CanvasPanel></>}
   </Panes>
-  {mapHost && window.ReactDOM.createPortal(<LiveMap source={viewSource} nodes={visible} sizes={new Map(flowNodes.map(f => [f.id, f.measured]))} area={area} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}
+  {mapHost && window.ReactDOM.createPortal(<LiveMap source={viewSource} surfaceSize={areaSize} nodes={visible} sizes={new Map(flowNodes.map(f => [f.id, f.measured]))} area={area} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}
   {peek==='library'&&u.libraryOpen&&!docked&&<div className="canvas-pane-peek" data-side="library"><window.UI.LibraryShelf onClose={()=>setPeek('')} /></div>}
   {peek==='inspector'&&!externalInspector&&(inspected||wire)&&<div className="canvas-pane-peek" data-side="inspector"><button type="button" className="dx-quiet" aria-label="Close Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek('')},event)}>×</button>{inspected?<NodeInspector n={inspected} s={s} u={u}/>:<WireInspector wire={wire} s={s} u={u} onClose={()=>setPeek('')} />}</div>}
 

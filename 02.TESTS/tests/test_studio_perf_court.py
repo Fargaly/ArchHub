@@ -63,6 +63,7 @@ def test_studio_perf_court(tmp_path, monkeypatch):
         metrics = json.loads(result.stdout.split('PERF ', 1)[1])
         if os.environ.get('ARCHHUB_PERF_REPORT_ONLY'):
             return
+        assert metrics['homeMapBoxes'] > 0, "Home's map draws the session cards"
         assert metrics['arrangedOnOpen'] is False, 'saved positions are shown as saved, not re-arranged on open'
         assert all(row['selectedMs'] is not None for row in metrics['select']), metrics['select']
         assert metrics['rapidSelect'] == ['n3'], metrics['rapidSelect']
@@ -75,6 +76,8 @@ def test_studio_perf_court(tmp_path, monkeypatch):
         assert not metrics['longTasks']['drag'], metrics['longTasks']
         # Workshop fold and open: a local action, acknowledged (painted) within 100 ms.
         assert max(metrics['workshopToggleMs']) <= FEEDBACK_MS, metrics['workshopToggleMs']
+        # The canvas toolbar's Thread toggle (threadToggleMs, longTasks.thread) is reported, not asserted: its click
+        # still re-renders all of Home and mounts the thread column (50-60 ms on this machine).
         assert metrics['openCanvasMs'] <= OPEN_CANVAS_MS, metrics['openCanvasMs']
         assert not metrics['idleLongTasks'], metrics['idleLongTasks']
         for gesture in ('panP95', 'zoomP95', 'dragP95'):

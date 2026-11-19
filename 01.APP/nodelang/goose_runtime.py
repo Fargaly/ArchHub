@@ -48,12 +48,20 @@ def _scrub_goose_sessions(work_dir):
                         data = json.loads(raw_data)
                     except (ValueError, TypeError):
                         continue
+                    if not isinstance(data, dict):
+                        continue
                     changed = False
-                    extensions = data.get("enabled_extensions.v0", {}).get("extensions", [])
-                    if not extensions and isinstance(data.get("extensions"), list):
-                        extensions = data["extensions"]
-                    for ext in extensions:
-                        if ext.get("name") == "archhub-hosts":
+                    # Both layouts can coexist in one saved session (versioned and the older top-level list);
+                    # each is cleaned on its own, so no credential survives in either and a second pass finds nothing.
+                    versioned = data.get("enabled_extensions.v0")
+                    collections = [versioned.get("extensions") if isinstance(versioned, dict) else None,
+                                   data.get("extensions")]
+                    for extensions in collections:
+                        if not isinstance(extensions, list):
+                            continue
+                        for ext in extensions:
+                            if not isinstance(ext, dict) or ext.get("name") != "archhub-hosts":
+                                continue
                             headers = ext.get("headers")
                             if isinstance(headers, dict):
                                 keys_to_remove = [
@@ -65,18 +73,12 @@ def _scrub_goose_sessions(work_dir):
                                     del headers[k]
                                     changed = True
                             elif isinstance(headers, list):
-                                new_headers = []
-                                for h in headers:
-                                    if isinstance(h, dict) and h.get("name", "").lower() == "authorization":
-                                        val = h.get("value", "")
-                                        if _is_exact_auth_ref(val):
-                                            new_headers.append(h)
-                                        else:
-                                            changed = True
-                                    else:
-                                        new_headers.append(h)
-                                if changed:
-                                    ext["headers"] = new_headers
+                                kept = [h for h in headers
+                                        if not (isinstance(h, dict) and str(h.get("name", "")).lower() == "authorization"
+                                                and not _is_exact_auth_ref(h.get("value", "")))]
+                                if len(kept) != len(headers):
+                                    ext["headers"] = kept
+                                    changed = True
                     if changed:
                         cursor.execute(
                             "UPDATE sessions SET extension_data = ? WHERE id = ?",

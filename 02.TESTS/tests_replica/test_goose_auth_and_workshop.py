@@ -339,3 +339,41 @@ def test_scrubber_mixed_literal_and_supported_reference_forms(tmp_path):
     # Repeat scrubber run must be a no-op (0 scrubbed)
     repeat_scrubbed = _scrub_goose_sessions(goose_dir)
     assert repeat_scrubbed == 0
+
+
+def test_scrubber_cleans_both_extension_layouts_in_one_session_and_a_second_pass_is_a_no_op(tmp_path):
+    """Codex e988: a saved session holding the versioned list AND the older top-level list lost the credential from
+    the versioned list only; Goose's native export still carried it from the older list. Disposable data only."""
+    db_path = tmp_path / "goose" / "data" / "sessions" / "sessions.db"
+    db_path.parent.mkdir(parents=True)
+    host = lambda token, layout: {"type": "streamable_http", "name": "archhub-hosts", "uri": "http://127.0.0.1:1234/mcp",
+                                  "headers": layout(token)}
+    as_dict = lambda token: {"Authorization": "Bearer " + token, "X-Keep-Me": "kept"}
+    as_list = lambda token: [{"name": "Authorization", "value": "Bearer " + token}, {"name": "X-Keep-Me", "value": "kept"}]
+    other = {"type": "streamable_http", "name": "other-mcp", "headers": {"Authorization": "Bearer user-own-token"}}
+    both = {"enabled_extensions.v0": {"extensions": [host("versioned-secret", as_dict), other]},
+            "extensions": [host("legacy-secret", as_list), other], "unrelated": {"keep": [1, 2, 3]}}
+    legacy_only_versioned_empty = {"enabled_extensions.v0": {"extensions": []}, "extensions": [host("legacy-2", as_dict)]}
+    messages = [(i, ("message %d \x00 bytes" % i).encode("utf-8")) for i in range(1, 152)]
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, extension_data TEXT, description TEXT)")
+        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content BLOB)")
+        conn.executemany("INSERT INTO messages (id, content) VALUES (?, ?)", messages)
+        conn.executemany("INSERT INTO sessions VALUES (?, ?, ?)", [("both", json.dumps(both), "header kept"),
+                                                                    ("legacy", json.dumps(legacy_only_versioned_empty), "x")])
+    assert _scrub_goose_sessions(tmp_path / "goose") == 2
+    assert _scrub_goose_sessions(tmp_path / "goose") == 0          # a true no-op
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT id, content FROM messages ORDER BY id").fetchall() == messages
+        stored = dict(conn.execute("SELECT id, extension_data FROM sessions").fetchall())
+        assert conn.execute("SELECT description FROM sessions WHERE id='both'").fetchone()[0] == "header kept"
+    # what Goose's native JSON export serialises for a session is this stored extension_data
+    for exported in stored.values():
+        assert "secret" not in exported and "legacy-2" not in exported
+    cleaned = json.loads(stored["both"])
+    versioned_host = cleaned["enabled_extensions.v0"]["extensions"][0]
+    legacy_host = cleaned["extensions"][0]
+    assert versioned_host["headers"] == {"X-Keep-Me": "kept"}
+    assert legacy_host["headers"] == [{"name": "X-Keep-Me", "value": "kept"}]
+    assert cleaned["enabled_extensions.v0"]["extensions"][1] == other and cleaned["extensions"][1] == other
+    assert cleaned["unrelated"] == {"keep": [1, 2, 3]}

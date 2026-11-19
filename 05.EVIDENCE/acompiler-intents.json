@@ -11990,6 +11990,22 @@
         "02.TESTS/tests/test_g6_no_junk_nodes.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "BROWSERLINKS": {
+      "source": "Founder request R149: web links from the app open in his own Chrome (default browser if Chrome is missing); buttons that open a new window no longer do nothing.",
+      "scope": [
+        "01.APP/nodelang/studio_window.py",
+        "02.TESTS/tests/test_links_open_in_his_browser.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "ENGLISHREPLY": {
+      "source": "Founder request R164: agents reply in English; a mostly Arabic final reply is sent back once to be rewritten in English; quoted Arabic names still pass.",
+      "scope": [
+        "01.APP/nodelang/native_stop_hook.py",
+        "02.TESTS/tests_replica/test_native_stop_local_idle.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

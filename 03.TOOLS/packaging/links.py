@@ -22,9 +22,9 @@ def load_links():
 
 
 def readme_table():
-    return "\n".join(["| Surface | Link |", "| --- | --- |"] + [
-        f'| {row["kind"]} | [{row["name"]}]({row["url"]})' + (" (not enabled)" if row.get("available") is False else "") + " |" for row in load_links()
-    ])
+    return "\n".join(
+        f'- **{row["name"]}**: [{row["url"]}]({row["url"]})' for row in load_links()
+    )
 
 
 def main():

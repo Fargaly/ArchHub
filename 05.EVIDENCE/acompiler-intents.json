@@ -12290,7 +12290,10 @@
     "BUILD19GUIDE": {
       "source": "Build 19. Align the existing Workshop and Connectors guides with verified Studio actions for Home, subtasks and tool servers. The desktop and exported guide use the same text.",
       "scope": [
-        "01.APP/nodelang/site_export.py"
+        "01.APP/nodelang/site_export.py",
+        "03.TOOLS/packaging/website/build_site.py",
+        "03.TOOLS/packaging/website/export_design.py",
+        "03.TOOLS/packaging/website/data/design.json"
       ]
     }
   },

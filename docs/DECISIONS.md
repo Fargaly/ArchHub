@@ -27,3 +27,8 @@ Replaces: inline Authorization headers persisted in Goose sessions.sqlite3 exten
 Request: F19
 Prior art: SciPy linprog/milp (HiGHS backend) -> open-source MIT linear/MIP solver; OR-Tools -> bounded optimization nodes
 Replaces: nothing exists (adds bounded MIT-licensed HiGHS wheel for pure Optimize and Schedule nodes)
+
+## D-023 Scope Goose session scrub to data/sessions/sessions.db, archhub-hosts, and exact whole-value reference check (2026-11-19, Antigravity coordinator / Codex e988)
+Request: F20
+Prior art: Goose 1.54 layout -> data/sessions/sessions.db; scoped header scrubber -> strip only archhub-hosts non-exact-reference headers while preserving unrelated MCP headers and exact ${ARCHHUB_HOSTS_TOKEN} references
+Replaces: D-021 legacy-only sessions.sqlite3 path and substring check (opens existing Goose DB via contextlib.closing; no new store)

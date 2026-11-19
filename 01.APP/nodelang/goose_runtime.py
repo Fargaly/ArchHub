@@ -15,35 +15,77 @@ from .acp_client import AcpTransport
 from .goose_adapter import GooseAdapter, GooseRefused
 
 def _scrub_goose_sessions(work_dir):
-    import sqlite3
+    import contextlib
     import json
-    db_path = Path(work_dir) / "sessions.sqlite3"
-    if not db_path.exists():
-        return 0
+    import re
+    import sqlite3
+
+    def _is_exact_auth_ref(val):
+        return bool(re.fullmatch(r"(?i)(?:bearer\s+)?\$\{ARCHHUB_HOSTS_TOKEN\}", str(val).strip()))
+
+    candidate_paths = [
+        Path(work_dir) / "data" / "sessions" / "sessions.db",
+        Path(work_dir) / "sessions.sqlite3",
+    ]
     scrubbed = 0
-    try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, extension_data FROM sessions")
-            for row in cursor.fetchall():
-                try:
-                    data = json.loads(row[1])
-                except (ValueError, TypeError):
+    for db_path in candidate_paths:
+        if not db_path.exists():
+            continue
+        try:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+                )
+                if not cursor.fetchone():
                     continue
-                changed = False
-                extensions = data.get("enabled_extensions.v0", {}).get("extensions", [])
-                for ext in extensions:
-                    if ext.get("type") == "streamable_http" and isinstance(ext.get("headers"), dict):
-                        keys_to_remove = [k for k, v in ext["headers"].items() if k.lower() == "authorization" and not str(v).strip().endswith("${ARCHHUB_HOSTS_TOKEN}")]
-                        for k in keys_to_remove:
-                            del ext["headers"][k]
-                            changed = True
-                if changed:
-                    cursor.execute("UPDATE sessions SET extension_data = ? WHERE id = ?", (json.dumps(data), row[0]))
-                    scrubbed += 1
-            conn.commit()
-    except sqlite3.Error as e:
-        raise GooseRefused("Failed to scrub Goose sessions: " + str(e))
+                cursor.execute("SELECT id, extension_data FROM sessions")
+                for row in cursor.fetchall():
+                    raw_data = row[1]
+                    if not raw_data:
+                        continue
+                    try:
+                        data = json.loads(raw_data)
+                    except (ValueError, TypeError):
+                        continue
+                    changed = False
+                    extensions = data.get("enabled_extensions.v0", {}).get("extensions", [])
+                    if not extensions and isinstance(data.get("extensions"), list):
+                        extensions = data["extensions"]
+                    for ext in extensions:
+                        if ext.get("name") == "archhub-hosts":
+                            headers = ext.get("headers")
+                            if isinstance(headers, dict):
+                                keys_to_remove = [
+                                    k for k, v in headers.items()
+                                    if k.lower() == "authorization"
+                                    and not _is_exact_auth_ref(v)
+                                ]
+                                for k in keys_to_remove:
+                                    del headers[k]
+                                    changed = True
+                            elif isinstance(headers, list):
+                                new_headers = []
+                                for h in headers:
+                                    if isinstance(h, dict) and h.get("name", "").lower() == "authorization":
+                                        val = h.get("value", "")
+                                        if _is_exact_auth_ref(val):
+                                            new_headers.append(h)
+                                        else:
+                                            changed = True
+                                    else:
+                                        new_headers.append(h)
+                                if changed:
+                                    ext["headers"] = new_headers
+                    if changed:
+                        cursor.execute(
+                            "UPDATE sessions SET extension_data = ? WHERE id = ?",
+                            (json.dumps(data), row[0]),
+                        )
+                        scrubbed += 1
+                conn.commit()
+        except sqlite3.Error as e:
+            raise GooseRefused("Failed to scrub Goose sessions: " + str(e)) from e
     return scrubbed
 
 # The private host-read extension node: how long a live server may take to report started.

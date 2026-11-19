@@ -11951,6 +11951,45 @@
         "03.TOOLS/installer/ArchHub.iss",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "WORKSHOPPANEL": {
+      "source": "Founder requests R52, R53, R54: the Workshop is a live room built to the design: failed list only when something failed, 1/2 keys on waiting cards, the design hint, board words instead of claimed.",
+      "scope": [
+        "01.APP/nodelang/baboom_native_companion.py",
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/workshop_board.test.cjs",
+        "02.TESTS/tests_replica/test_baboom_board_words.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "INSTALLPRUNE": {
+      "source": "Founder requests R230, R55: the installed app carries no test scripts; the installer removes copies an older install left.",
+      "scope": [
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests_replica/test_install_prune.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "COCKPITFOUNDER": {
+      "source": "Founder requests R55, R17: Cockpit is his private admin; BABOOM shows Open the cockpit and Repo status only when the cloud confirms his account.",
+      "scope": [
+        "01.APP/nodelang/baboom_native_companion.py",
+        "02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "NOJUNKNODES": {
+      "source": "Founder requests R31, R32: no overlapping or repeated junk nodes: a re-declared agent task stays one node, old copies merge after a checkpoint, new agent nodes take the first free spot.",
+      "scope": [
+        "01.APP/nodelang/agent_work.py",
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/canvas_tools.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "02.TESTS/tests/test_g6_no_junk_nodes.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

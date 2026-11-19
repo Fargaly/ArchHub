@@ -1,11 +1,12 @@
 """Social credential custody: one protected record binds a token to its provider account.
 
-The only custody is this runtime's DPAPI-protected secrets.dat, read through
-model_router.protected_credential_entry. A social entry's value is one JSON
-record {"format", "provider", "account_id", "token"} to be written by explicit
-enrollment (format 1, operator-declared), or the same plus "account_binding"
-(format 2) when the provider itself named the account at sign-in.
-Operator-declared identity is not provider-verified identity, and
+Custody is the app Windows Credential Manager entry (F109 / ACCOUNTSTORE), read
+through model_router.protected_credential_entry, with the DPAPI secrets.dat file
+only as a legacy peer that is archived once when non-protected. A social entry's
+value is one JSON record {"format", "provider", "account_id", "token"} written by
+explicit enrollment (format 1, operator-declared), or the same plus
+"account_binding" (format 2) when the provider itself named the account at
+sign-in. Operator-declared identity is not provider-verified identity, and
 social_account_binding reports which one a record is, from the record itself.
 The resolver checks provider and account_id against the same record
 whose token it returns, so replacement between the verifier and the resolver can

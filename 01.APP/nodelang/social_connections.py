@@ -57,15 +57,23 @@ def connection(provider, *, accounts=None, attempt=None):
     blocker = config.get("blocker")
     if not blocker and config.get("state") not in ("saved", "configured", "signin_required"):
         blocker = "ArchHub cloud connection status unavailable"
-    if blocker:
+    # F418: when the provider app is not ready, say so plainly — never leave a dead Connect.
+    # An already-enrolled account stays connected; cloud config issues do not erase custody.
+    if blocker and row["state"] not in ("connected", "connecting", "choosing", "ready"):
+        reason = blocker
+        if not row["can_connect"]:
+            blocker = "not available yet · " + reason
         row.update(state="blocked", blocker=blocker)
+    elif blocker and row["state"] == "connected":
+        row["blocker"] = blocker
     row["review_state"] = config.get("review_state", "")
     publish_blocker = config.get("publish_blocker")
     row["publish_blocker"] = publish_blocker or ""
-    if publish_blocker and not blocker:
+    if publish_blocker and row["state"] == "not_connected":
         row["blocker"] = publish_blocker
-        if row["state"] == "not_connected":
-            row["state"] = "blocked"
+        row["state"] = "blocked"
+    elif publish_blocker and not row.get("blocker"):
+        row["blocker"] = publish_blocker
     return row
 
 
@@ -76,6 +84,11 @@ def rows():
 
 def start(provider):
     provider = _provider(provider)
+    # F34 / F418: no browser for a network that is not available yet.
+    current = connection(provider)
+    if current.get("can_connect") is not True:
+        return {**current, "state": "blocked",
+                "blocker": current.get("blocker") or "not available yet"}
     # The broker refuses missing configuration before opening any browser.
     return connection(provider, attempt=broker.start(provider))
 

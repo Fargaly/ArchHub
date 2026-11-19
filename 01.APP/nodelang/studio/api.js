@@ -1020,7 +1020,11 @@ async function socialWork(description,options={}) {
 }
 api.proposeSocialDraft=async id=>{
  const draft=state.social.drafts.find(row=>row.id===id);if(!draft)throw Error('Choose a saved draft.');
- return socialWork('Review this saved social draft and prepare its existing social.work_prepare approval. Do not publish without the existing approval. Draft '+id+'\n'+JSON.stringify(draft));
+ // F36: hold the exact post on the one Approve card (prepare_post); do not route through BABOOM.
+ const card=await socialOperation('prepare_post',[id]);
+ if(!card?.id||!card?.input_digest)throw Error(card?.error||card?.message||'This draft could not be prepared for approval.');
+ await refreshApprovals();
+ return card;
 };
 api.prepareTutorial=values=>socialWork('Prepare a tutorial recording, captions and private upload for review through the existing video and social tools. Report actual artifacts; do not claim completion before recording.\n'+JSON.stringify(values));
 api.readYoutubeData=(source,operation)=>socialWork('Read YouTube '+operation+' from the actual connected YouTube source and return source-attributed data. Source: '+source);
@@ -1149,7 +1153,9 @@ api.setConnection=async(id,values)=>{
  }else if(values.connected===true){
   const observed=await request('/api/universal/social-connection?provider='+encodeURIComponent(id));
   const row=observed.connection;
-  if(row?.state==='ready')result=await request('/api/universal/social-connection',{provider:id,action:'finish'});
+  if(row?.can_connect===false){
+   result={ok:false,connection:row,error:row?.blocker||'not available yet'};
+  }else if(row?.state==='ready')result=await request('/api/universal/social-connection',{provider:id,action:'finish'});
   else if(['connecting','choosing'].includes(row?.state))result=observed;
   else result=await setConnectionBeforeSocial(id,values);
  }else result=await setConnectionBeforeSocial(id,values);

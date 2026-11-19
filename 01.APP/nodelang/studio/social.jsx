@@ -85,7 +85,8 @@
     };
     const review = async id => {
       const card = await wire.call(() => api.proposeSocialDraft(id));
-      if (card) { u.setTask(card.id); u.go('workshop'); }
+      // F36 / F39: draft (or reply draft) lands on the Workshop Approve list — not a BABOOM task.
+      if (card?.id) u.go('workshop');
     };
     const select = m => {
       setSelected(m.id);
@@ -103,11 +104,12 @@
         })(event))}><span className="source-icon"><Icon name="canvas" /></span><span><b>{social.office.name}</b><small>Your office page</small></span></button><div className="spread label"><span>ACCOUNTS</span><button className="icon-button" title="Connection settings" aria-label="Social connection settings" onClick={event => dispatch("wire.social.2", () => (() => u.go('settings/Connections'))(event))}><Icon name="settings" size={15} /></button></div><button className="listbutton spread" aria-selected={platform === 'All'} onClick={event => dispatch("wire.social.3", () => (() => setPlatform('All'))(event))}><span>All accounts</span><span className="mono muted">{platforms.length}</span></button>{platforms.map(name => {
           const c = s.connections.find(c => c.name === name);
           const provider = {LinkedIn:'linkedin',Instagram:'instagram',Facebook:'facebook','WhatsApp Business':'whatsapp',X:'x',TikTok:'tiktok',YouTube:'youtube'}[name];
-          return <div className="account-row" key={name}><button className="listbutton flex" aria-selected={platform === name} onClick={event => dispatch("wire.social.4", () => (() => setPlatform(name))(event))}><i className={'status-dot ' + (!c?.connected ? 'off' : '')} /><span>{name}</span></button><button className="icon-button" aria-label={(c?.connected ? 'Manage ' : 'Connect ') + name} title={c?.connected ? 'Manage account' : 'Connect with your account'} onClick={event => dispatch("wire.social.5", () => (() => c?.connected ? u.show('Connection', {
+          const unavailable = c && c.can_connect === false && !c.connected;
+          return <div className="account-row" key={name}><button className="listbutton flex" aria-selected={platform === name} onClick={event => dispatch("wire.social.4", () => (() => setPlatform(name))(event))}><i className={'status-dot ' + (!c?.connected ? 'off' : '')} /><span>{name}</span></button>{unavailable ? <small role="status">{c.blocker || 'not available yet'}</small> : <button className="icon-button" aria-label={(c?.connected ? 'Manage ' : 'Connect ') + name} title={c?.connected ? 'Manage account' : 'Connect with your account'} onClick={event => dispatch("wire.social.5", () => (() => c?.connected ? u.show('Connection', {
               id: c.id
             }) : wire.call(() => api.setConnection(c?.id || provider, {
               connected: true
-            })))(event))}><Icon name={c?.connected ? 'more' : 'plus'} size={14} /></button>{c && <small role="status">{c.state}{c.blocker ? ' · '+c.blocker : ''}</small>}{c?.state==='choosing' && <div role="group" aria-label={'Choose '+name+' account'}>{(c.accounts||[]).map(account=><Btn sm key={account.id} onClick={()=>dispatch('wire.social.account',()=>wire.call(()=>api.finishSocialConnection(provider,account.id)))}>{account.name||account.id}</Btn>)}</div>}</div>;
+            })))(event))}><Icon name={c?.connected ? 'more' : 'plus'} size={14} /></button>}{c && !unavailable && <small role="status">{c.state}{c.blocker ? ' · '+c.blocker : ''}</small>}{c?.state==='choosing' && <div role="group" aria-label={'Choose '+name+' account'}>{(c.accounts||[]).map(account=><Btn sm key={account.id} onClick={()=>dispatch('wire.social.account',()=>wire.call(()=>api.finishSocialConnection(provider,account.id)))}>{account.name||account.id}</Btn>)}</div>}</div>;
         })}<div className="social-side-bottom"><span className="status-dot" /> Your review comes before sending<button className="listbutton flex" onClick={event => dispatch("wire.social.6", () => (async () => {
             await wire.call(() => api.addNode('Social media'));
             u.go('canvas');

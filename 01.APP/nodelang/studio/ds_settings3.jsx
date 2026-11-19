@@ -175,11 +175,14 @@
     const status=load.status==='loaded'&&!connections.length?'empty':load.status;
     const group = c => c.host || ['Revit', 'AutoCAD', 'Rhino', '3ds Max', 'Office'].includes(c.name) ? 'Programs' : ['Instagram', 'Facebook', 'WhatsApp Business', 'LinkedIn', 'X', 'TikTok', 'YouTube'].includes(c.name) ? 'Social' : 'Work apps';
     const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {ConnectionsAction0: (g, event) => (() => setFilter(g))(event),
-ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'settings/Dependencies') : c.credential ? u.show('My secrets') : c.connected ? u.show('Connection', {
-              id: c.id
-            }) : u.show('Connect', {
-              id: c.id
-            }))(event),ConnectionsAction2:()=>setAttempt(value=>value+1)});
+ConnectionsAction1: (c, event) => (() => {
+              if (c.host) return u.go(c.connected?'watcher':'settings/Dependencies');
+              if (c.credential) return u.show('My secrets');
+              if (c.connected) return u.show('Connection', {id: c.id});
+              // F34 / F418: never open Connect for a network that is not available yet.
+              if (c.can_connect === false) return;
+              return u.show('Connect', {id: c.id});
+            })(event),ConnectionsAction2:()=>setAttempt(value=>value+1)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div className="grid">{status==='waiting'&&<p role="status">Reading programs and accounts…</p>}{s.hostsProbing&&status!=='waiting'&&<p role="status">Checking programs…</p>}{s.hostError&&<p role="alert">{s.hostError}</p>}{status==='error'&&<div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.ds_settings3.ConnectionsAction2',event)}>Retry Connections</Btn></div>}<div className="flex">{['All', 'Programs', 'Social', 'Work apps'].map(g => <Btn sm ghost key={g} aria-pressed={filter === g} onClick={event => runAction('settings.ds_settings3.ConnectionsAction0', g, event)}>{g}</Btn>)}</div><Card>{status==='loaded'&&<div style={{
           display: 'grid',
           gridTemplateColumns: '1fr 130px',
@@ -203,9 +206,9 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
               fontWeight: 800
             }}>{c.name[0]}</span><div><h3>{c.name}</h3><span className="muted" style={{
                 fontSize: 'calc(12px * var(--text-scale,1))'
-              }}>{c.host ? c.detail||c.state : c.credential ? 'Saved in Windows Credential Manager' : c.connected ? c.display_name||'Connected to your account' : c.blocker||'Connect this account to use it'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
+              }}>{c.host ? c.detail||c.state : c.credential ? 'Saved in Windows Credential Manager' : c.connected ? c.display_name||'Connected to your account' : c.can_connect === false ? (c.blocker || 'not available yet') : c.blocker||'Connect this account to use it'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
             justifySelf: 'end'
-          }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.credential ? 'Details' : c.connected ? 'Open' : c.host?'Manage':'Connect'}</Btn></div></div>)}</Card>{status==='empty'&&<Empty>Connect an account or start a program with its ArchHub bridge, then refresh Connections.</Empty>}</div></>;
+          }}>{c.can_connect === false && !c.connected && !c.host && !c.credential ? <span className="muted" role="status">not available yet</span> : <Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.credential ? 'Details' : c.connected ? 'Open' : c.host?'Manage':'Connect'}</Btn>}</div></div>)}</Card>{status==='empty'&&<Empty>Connect an account or start a program with its ArchHub bridge, then refresh Connections.</Empty>}</div></>;
   }
   function WorkspaceRows() {
     const s = useData(),

@@ -83,6 +83,7 @@ class SocialSurface:
 
     PUBLIC = ("get_state", "update_office_page", "save_social_draft", "discard_social_draft",
               "read_social_message", "triage_social_inbox", "reply_social_message",
+              "prepare_post",
               "set_social_group_rule", "set_social_digest", "generate_social_digest",
               "read_content_source", "add_slide", "edit_slide", "remove_slide", "reorder_slide",
               "set_prototype", "rebaseline_prototype", "check_verdict_pattern", "set_meeting",

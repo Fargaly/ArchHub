@@ -291,9 +291,21 @@ def _archive_file(path, *, create=False):
 
 
 def archive_legacy_credentials() -> None:
-    """Archive non-DPAPI bytes once into the managed Backups destination."""
+    """Archive non-DPAPI bytes once into the managed Backups destination.
+
+    Connected-account listing (F109 / ACCOUNTSTORE) must keep reading Windows
+    Credential Manager even when there is nothing to archive. Skip the Windows
+    mutex when secrets.dat is absent or already DPAPI-protected.
+    """
     from nodelang.model_router import _credential_file_bytes
     if os_store_refused():
+        return
+    # No lock needed to learn that archival has nothing to do.
+    try:
+        peek = _credential_file_bytes(SECRETS_FILE)
+    except Exception:
+        peek = object()  # force the locked Windows path to name the failure
+    if peek is None or (isinstance(peek, (bytes, bytearray)) and peek.startswith(_DPAPI_MARK)):
         return
     if os.name != 'nt':
         raise OSError("legacy credential archival requires Windows")

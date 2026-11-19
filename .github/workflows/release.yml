@@ -25,9 +25,39 @@ concurrency:
 
 jobs:
   # Check-only candidate run: read-only token, no installer, no artifact or cache upload, no publish.
-  goose-check:
+  # Its upper bound is the goose.source node's check_timeout_minutes (the measured 120-minute release-run budget).
+  goose-check-budget:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'check' }}
     runs-on: windows-2025
+    permissions:
+      contents: read
+    outputs:
+      minutes: ${{ steps.budget.outputs.minutes }}
+    steps:
+      - name: Check out the pinned build settings (read only)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: selected
+          persist-credentials: false
+          sparse-checkout: 03.TOOLS/packaging/windows/goose-pin.json
+          sparse-checkout-cone-mode: false
+      - name: Read the check budget from the goose.source node
+        id: budget
+        if: ${{ inputs.mode == 'check' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $minutes = (Get-Content -Raw selected/03.TOOLS/packaging/windows/goose-pin.json | ConvertFrom-Json).params.check_timeout_minutes
+          if ($minutes -isnot [long] -and $minutes -isnot [int]) { throw 'goose.source check_timeout_minutes must be a whole number.' }
+          if ($minutes -lt 1) { throw 'goose.source check_timeout_minutes must be positive.' }
+          "minutes=$minutes" >> $env:GITHUB_OUTPUT
+
+  goose-check:
+    needs: goose-check-budget
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'check' }}
+    runs-on: windows-2025
+    timeout-minutes: ${{ fromJSON(needs.goose-check-budget.outputs.minutes) }}
     permissions:
       contents: read
     steps:

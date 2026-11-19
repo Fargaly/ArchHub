@@ -340,13 +340,15 @@ def test_check_dispatch_reaches_no_write_permission_upload_or_publish_step():
     assert triggers["workflow_dispatch"]["inputs"]["mode"]["default"] == "release"
     assert workflow["permissions"] == {"contents": "read"}
     check = _ran(workflow, "workflow_dispatch", "check")
-    assert list(check) == ["goose-check"]
-    job = workflow["jobs"]["goose-check"]
-    assert job["permissions"] == {"contents": "read"}
-    text = yaml.safe_dump(job)
-    for forbidden in ("upload-artifact", "download-artifact", "actions/cache", "publish_release", "build_release",
-                      "gh release", "GH_TOKEN", "github.token", "contents: write", "persist-credentials: true"):
-        assert forbidden not in text, forbidden
+    assert list(check) == ["goose-check-budget", "goose-check"]
+    for name in check:
+        job = workflow["jobs"][name]
+        assert job["permissions"] == {"contents": "read"}, name
+        text = yaml.safe_dump(job)
+        for forbidden in ("upload-artifact", "download-artifact", "actions/cache", "publish_release", "build_release",
+                          "gh release", "GH_TOKEN", "github.token", "contents: write", "persist-credentials: true"):
+            assert forbidden not in text, (name, forbidden)
+    text = yaml.safe_dump(workflow["jobs"]["goose-check"])
     assert "build_goose.py --check" in text and "--output" not in text
     # every job or step that can write is guarded off in check mode on its own line too
     for name, other in workflow["jobs"].items():
@@ -363,8 +365,24 @@ def test_release_dispatches_keep_the_existing_build_and_publish_path():
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     every = {name: [step.get("name", step.get("uses", "")) for step in job["steps"]
                     if "failure()" not in str(step.get("if", ""))]
-             for name, job in workflow["jobs"].items() if name != "goose-check"}
+             for name, job in workflow["jobs"].items() if not name.startswith("goose-check")}
     for event, mode in (("workflow_dispatch", "release"), ("repository_dispatch", None)):
         ran = _ran(workflow, event, mode)
         assert set(ran) == {"build", "publish"}, (event, ran)
         assert {name: [s for s in steps] for name, steps in ran.items()} == every, event
+
+
+def test_the_check_job_is_bounded_by_the_pinned_120_minute_budget():
+    """goose-check's upper bound is a named, typed parameter of the goose.source node (the measured release-run budget
+    the governed build.ps1 uses), read by a read-only job and wired into timeout-minutes; never a bare literal."""
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    check, budget = workflow["jobs"]["goose-check"], workflow["jobs"]["goose-check-budget"]
+    assert check["needs"] == "goose-check-budget"
+    assert check["timeout-minutes"] == "${{ fromJSON(needs.goose-check-budget.outputs.minutes) }}"
+    assert budget["outputs"]["minutes"] == "${{ steps.budget.outputs.minutes }}"
+    step = next(step for step in budget["steps"] if step.get("id") == "budget")
+    assert ".params.check_timeout_minutes" in step["run"] and "goose-pin.json" in step["run"]
+    # the effective timeout: what the budget step reads from the pinned settings
+    effective = build_goose.load_pin(WINDOWS / "goose-pin.json")["check_timeout_minutes"]
+    assert type(effective) is int and effective == 120

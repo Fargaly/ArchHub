@@ -13,8 +13,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _read(relative):
-    return (ROOT / relative).read_text(encoding="utf-8")
+def _read(relative, root=ROOT):
+    """The numbered repository first (03.TOOLS/installer, 01.APP/colleague_setup.py), then a flattened
+    release snapshot (installer/, colleague_setup.py at the root), as check_update_offer.py resolves both."""
+    numbered = ("03.TOOLS" if relative.startswith("installer/") else "01.APP") + "/" + relative
+    for candidate in (root / numbered, root / relative):
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    raise FileNotFoundError("%s: neither %s nor %s under %s" % (relative, numbered, relative, root))
+
+
+def test_the_reader_finds_the_numbered_repository_and_a_flattened_release(tmp_path):
+    for relative, numbered in (("installer/ArchHub.iss", "03.TOOLS/installer/ArchHub.iss"),
+                               ("colleague_setup.py", "01.APP/colleague_setup.py")):
+        repository, release = tmp_path / "repository", tmp_path / "release"
+        (repository / numbered).parent.mkdir(parents=True, exist_ok=True)
+        (repository / numbered).write_text("numbered", encoding="utf-8")
+        (release / relative).parent.mkdir(parents=True, exist_ok=True)
+        (release / relative).write_text("flattened", encoding="utf-8")
+        assert _read(relative, repository) == "numbered"
+        assert _read(relative, release) == "flattened"
+    try:
+        _read("installer/missing.iss", tmp_path)
+    except FileNotFoundError as error:
+        assert "03.TOOLS/installer/missing.iss" in str(error)
+    else:
+        raise AssertionError("a missing file must be refused, naming both places looked")
 
 
 def _wheelhouse_minor():

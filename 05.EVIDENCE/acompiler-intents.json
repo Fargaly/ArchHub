@@ -11831,7 +11831,13 @@
         "02.TESTS/tests_js/home_map.test.cjs",
         "02.TESTS/tests_js/home_look.cjs",
         "02.TESTS/tests/test_home_look.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/raildoors.test.cjs",
+        "02.TESTS/tests_replica/test_baboom_work_presence.py",
+        "02.TESTS/tests_replica/test_cloud_relay_offer.py",
+        "02.TESTS/tests_replica/test_onetask.py",
+        "02.TESTS/tests_replica/test_agentcanvas.py",
+        "02.TESTS/tests_js/agentcanvas.cjs"
       ]
     },
     "DRAFTNOASK": {
@@ -11853,7 +11859,8 @@
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests/test_session_properties.py",
         "02.TESTS/tests_js/session_properties_live.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/hook_decision.py"
       ]
     }
   }

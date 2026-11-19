@@ -328,7 +328,9 @@
     });
     const retry = ({task, row}) => run(task.id + ':' + row.id, async () => {
       if (!task.sessionOpen) await u.openTaskFile(task.id);
-      await u.act(() => api.runNode(row.id));
+      const result = await u.act(() => api.runNode(row.id));
+      // Failed effect steps may hold again; open the one Approve card like Run step.
+      if (result?.approvalId) u.show('Approve', {id: result.approvalId});
     });
     return <div className="wsb" data-dock-workshop="">
       <section className="wssec" aria-label="Waiting for you"><span className="eyebrow"><Icon name="shield" size={12} />Waiting for you · {waiting.length}</span>

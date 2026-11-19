@@ -161,7 +161,7 @@
         <label style={hostBlock}><span style={hostLabel}>Transaction name</span>
           <input aria-label="Transaction name" value={params.transaction_name || ''} onChange={event => save('transaction_name', event.target.value)} style={hostControl} />
         </label>
-        <button type="button" disabled={!reachable} onClick={event => executeAction('projects.controls.activate', {handler:() => reachable ? api.runNode(n.id) : undefined}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border: reachable ? 'none' : '1px dashed '+A.line, background: reachable ? A.accent : 'transparent', color: reachable ? A.onFill : A.inkSoft, fontSize: 'calc(12px * var(--text-scale,1))'}}>{runLabel}</button>
+        <button type="button" disabled={!reachable} onClick={event => executeAction('projects.controls.activate', {handler:async()=>{if(!reachable)return;const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border: reachable ? 'none' : '1px dashed '+A.line, background: reachable ? A.accent : 'transparent', color: reachable ? A.onFill : A.inkSoft, fontSize: 'calc(12px * var(--text-scale,1))'}}>{runLabel}</button>
       </div>}
     </D.Node>;
   }
@@ -215,7 +215,7 @@
         </label>}
         {preview.preview && <div style={hostBlock}><span style={hostLabel}>Text to send</span><p style={{margin:0, whiteSpace:'pre-wrap', fontSize: 'calc(12px * var(--text-scale,1))', color:A.ink}}>{preview.preview}</p></div>}
         <div aria-label="Result" style={{fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft, marginBottom:8}}>Result {word === 'Done' && n.output ? (typeof n.output.result === 'object' ? JSON.stringify(n.output.result) : String(n.output.result ?? '')) : ''}</div>
-        <button type="button" onClick={event => executeAction('projects.controls.activate', {handler:() => api.runNode(n.id)}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border:'none', background:A.accent, color:A.onFill, fontSize: 'calc(12px * var(--text-scale,1))'}}>Run</button>
+        <button type="button" onClick={event => executeAction('projects.controls.activate', {handler:async()=>{const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border:'none', background:A.accent, color:A.onFill, fontSize: 'calc(12px * var(--text-scale,1))'}}>Run</button>
       </div>}
     </D.Node>;
   }

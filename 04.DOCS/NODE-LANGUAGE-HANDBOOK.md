@@ -380,7 +380,9 @@ Solve runs in the app; effects run through brokers in the host programs.
 
 - **Authority:** [SPEC.md section 3.2](./SPEC.md).
 - **Literature:** Dynamo Automatic versus Manual run; ComfyUI runs only changed nodes.
-- **Current implementation status:** parametric solve is being built (D-014 open item).
+- **Current implementation status:** parametric solve is landed on the file canvas
+  (`canvas_documents.solve`, `test_canvas_parametric.py`); effect nodes wait for
+  Run and the Approve card. Installed close for LEDGER F137 remains with 717.
 
 ## 8. Groups, Library, Workflows and Skills
 
@@ -633,7 +635,10 @@ On request; nothing runs while idle.
 
 - **Authority:** [SPEC.md sections 4.6 and 5](./SPEC.md), [CLEAN-COORDINATION-ENDPOINT.md](./CLEAN-COORDINATION-ENDPOINT.md).
 - **Literature:** MCP tools as the common agent interface.
-- **Current implementation status:** agent canvas tools are being built (D-014 open item).
+- **Current implementation status:** agent canvas tools are landed
+  (`native_agent_mcp` canvas.* tools, `test_canvas_parametric.py`); Workshop
+  Session Link is the live room (F103/F105). Dock Workshop panel is on the canvas
+  (`dock.jsx`); LEDGER F369 installed close remains with 717.
 
 ## 13. Visual Authoring and Performance
 

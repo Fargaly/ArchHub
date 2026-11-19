@@ -829,8 +829,9 @@
           u
         }, event)}>Open</Btn><Btn sm onClick={event => executeAction("appShell.Rerun.60", {
           api,
+          close,
           n,
-          saved
+          u
         }, event)}>Rerun</Btn><Btn sm onClick={event => executeAction("appShell.Fork.61", {
           api,
           n,
@@ -1497,10 +1498,17 @@
   }
   function appShellRerun60({
     api,
+    close,
     n,
-    saved
+    u
   }, event) {
-    const handler = () => saved(() => api.runNode(n.id));
+    // Same Approve card as Run to here: effect nodes return approvalId and must open the card.
+    const handler = async () => {
+      const result = await u.act(() => api.runNode(n.id));
+      if (result?.approvalId) u.show('Approve', {
+        id: result.approvalId
+      });else close();
+    };
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellFork61({

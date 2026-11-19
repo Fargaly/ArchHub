@@ -25,19 +25,22 @@
       ]
     },
     "SPEC-11.4": {
-      "why": "One identity: every lens resolves the same roots and facts.",
+      "why": "NOGRAPH SPEC §11.4 Parametric solve: editing a parameter re-solves pure downstream nodes and marks effect nodes out of date without running them.",
       "tests": [
-        "tests_replica/test_cell_identity.py",
-        "tests_replica/test_cell_federated_identity.py",
-        "tests_replica/test_unified_application_lens.py"
+        "tests_replica/test_canvas_parametric.py::test_solve_order_reuses_upstream_and_reaches_downstream",
+        "tests_replica/test_canvas_parametric.py::test_effect_nodes_wait_for_run",
+        "tests_replica/test_canvas_parametric.py::test_cycle_refused",
+        "tests_replica/test_canvas_parametric.py::test_agent_canvas_tools_build_run_and_refuse_cycles"
       ]
     },
     "SPEC-11.5": {
-      "why": "Explicit causality: rewiring authority changes behavior; deleting projection does not.",
+      "why": "NOGRAPH SPEC §11.5 Run: wire order, refuse cycles before effects, stop at the Approve card where required; result re-read from the real target.",
       "tests": [
-        "tests_replica/test_projection_delta.py",
-        "tests_replica/test_clean_server_visual_projection.py",
-        "tests_replica/test_universal_application_projection_cache.py"
+        "tests_replica/test_designv22g.py::test_effect_script_waits_for_one_approval_without_running",
+        "tests_replica/test_designv22g.py::test_canvas_approval_resumes_without_approving_the_next_effect",
+        "tests_replica/test_designv22g.py::test_canvas_approval_refuses_changed_inputs",
+        "tests_replica/test_portable_parameters.py::test_relative_write_uses_existing_approve_and_readback",
+        "tests_replica/test_run_resume.py::test_canvas_run_history_keeps_one_id_through_approval_and_reopen"
       ]
     },
     "SPEC-11.6": {

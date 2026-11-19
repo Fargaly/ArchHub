@@ -11902,6 +11902,7 @@
       "source": "Build 19 security maintenance: update the packaged Windows Pillow runtime to a version fixing GitHub critical alerts #113, #122, #139, #144 and #153. Verify the app image and PDF paths and the release wheel.",
       "scope": [
         "requirements.txt",
+        "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

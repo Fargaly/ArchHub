@@ -8,15 +8,16 @@
     "package": "goose-cli",
     "binary": "goose",
     "rustflags": "-C target-feature=+crt-static",
-    "cargo_lock_sha256": "ca83de283bab2099eb696786fafdca59eb597d9ed65eaf9e6041e9abdc67e016",
-    "cargo_lock_git_blob": "b2af27095d73813b2dc43cc250b0d1c093d9bfad",
+    "cargo_lock_sha256": "0fd5e83cea2f0c77607d8b8e4e06633c4d4e70745860db975dd7431bbc4ef41f",
+    "cargo_lock_git_blob": "e0d3f1e3024e796720728bd76f016cfed75fa346",
     "license": "Apache-2.0",
     "license_url": "https://raw.githubusercontent.com/aaif-goose/goose/cd643d2126fffab4c6a6186905211ba868d6a657/LICENSE",
     "patches": [
       "0001-telemetry-off-by-default.patch",
       "0002-archhub-config-path.patch",
       "0003-baboom-identity.patch",
-      "0004-archhub-default-extension.patch"
+      "0004-archhub-default-extension.patch",
+      "0005-archhub-advisory-dependencies.patch"
     ]
   }
 }

@@ -82,7 +82,7 @@ def test_the_pin_names_source_and_its_lock_not_a_release_archive():
     assert node["id"] == "goose.source" and not (WINDOWS / "goose" / "patches" / "series").exists()
     pin = build_goose.load_pin(WINDOWS / "goose-pin.json")
     assert pin["commit"] == COMMIT and pin["version"] == "1.54.0" and pin["license"] == "Apache-2.0"
-    assert pin["cargo_lock_sha256"] == "ca83de283bab2099eb696786fafdca59eb597d9ed65eaf9e6041e9abdc67e016"
+    assert pin["cargo_lock_sha256"] == "0fd5e83cea2f0c77607d8b8e4e06633c4d4e70745860db975dd7431bbc4ef41f"
     assert "url" not in pin and "sha256" not in pin
 
 
@@ -97,13 +97,47 @@ def test_the_repository_ships_archhubs_goose_changes_and_its_own_pinned_lock():
     pin = build_goose.load_pin(WINDOWS / "goose-pin.json")
     series = build_goose.archhub_patches(WINDOWS / "goose")
     assert [name for name, _ in series] == ["0001-telemetry-off-by-default.patch", "0002-archhub-config-path.patch",
-                                            "0003-baboom-identity.patch", "0004-archhub-default-extension.patch"]
+                                            "0003-baboom-identity.patch", "0004-archhub-default-extension.patch",
+                                            "0005-archhub-advisory-dependencies.patch"]
     build_goose.check_lock(WINDOWS / "goose" / "Cargo.lock", pin)
     text = {name: (WINDOWS / "goose" / "patches" / name).read_text(encoding="utf-8") for name, _ in series}
     assert "+    Some(config.get_param::<bool>(TELEMETRY_ENABLED_KEY).unwrap_or(false))" in text["0001-telemetry-off-by-default.patch"]
     assert '+                author: "ArchHub".to_string(),' in text["0002-archhub-config-path.patch"]
     assert "+You are BABOOM, the ArchHub agent" in text["0003-baboom-identity.patch"]
     assert 'std::env::var("ARCHHUB_MCP_URL")' in text["0004-archhub-default-extension.patch"]
+
+
+def test_the_advisory_fix_keeps_every_capability_and_carries_its_licences():
+    """0005 fixes zip, rmcp, rustls and opentelemetry_sdk without dropping a feature: code-mode and the
+    computer-controller document tools (docx/pdf/xlsx) stay in goose-cli's defaults."""
+    patch = (WINDOWS / "goose" / "patches" / "0005-archhub-advisory-dependencies.patch").read_text(encoding="utf-8")
+    assert '+zip = { version = "9.0.5"' in patch
+    assert 'docx-rs = { git = "https://github.com/bokuweb/docx-rs", rev = "3b959fa73e6ea78a3c96ab50416407b2c3b8fa7a" }' in patch
+    assert 'rev = "e14032bc282a6d0707f704d2d70f1e1677583458"' in patch                     # umya-spreadsheet 4.0.0
+    assert "+        for (index, worksheet) in self.workbook.sheet_collection()?.iter().enumerate() {" in patch
+    for crate in ("pctx_config", "pctx_registry", "pctx_code_execution_runtime", "pctx_code_mode"):
+        assert '+%s = { path = "vendor/%s" }' % (crate, crate) in patch
+        assert "+++ b/vendor/%s/LICENSE" % crate in patch                                   # MIT, Sideko, Inc.
+    assert "+++ b/vendor/pctx_code_execution_runtime/src/just-bash/LICENSE-just-bash" in patch   # Apache-2.0
+    assert "+use rmcp::model::{CallToolRequestParams, ContentBlock, JsonObject};" in patch
+    assert "p.server_info.as_ref().and_then(|info| info.title.clone())" in patch
+    assert '"code-mode",' not in "\n".join(line for line in patch.splitlines() if line.startswith("-"))
+    assert "computer-controller" not in "\n".join(line for line in patch.splitlines() if line.startswith(("-", "+")))
+
+
+def _lock_versions(name):
+    lock = (WINDOWS / "goose" / "Cargo.lock").read_text(encoding="utf-8").split("\n")
+    return {tuple(int(part) for part in lock[i + 1].split('"')[1].split("-")[0].split(".")[:3])
+            for i, line in enumerate(lock) if line == 'name = "%s"' % name}
+
+
+def test_the_reviewed_lock_carries_only_fixed_versions():
+    """GHSA-m665-v7pm-7grj (zip), the rmcp, rustls and opentelemetry_sdk advisories: every copy in the lock (not only
+    the shipped graph) is at or above its fixed version."""
+    assert _lock_versions("zip") and min(_lock_versions("zip")) >= (9, 0, 5)
+    assert _lock_versions("rmcp") and min(_lock_versions("rmcp")) >= (2, 1, 0)
+    assert _lock_versions("rustls") and min(_lock_versions("rustls")) >= (0, 23, 46)
+    assert _lock_versions("opentelemetry_sdk") and min(_lock_versions("opentelemetry_sdk")) >= (0, 32, 1)
 
 
 def test_build_fetches_the_pinned_commit_and_builds_locked_with_a_receipt(tmp_path, ours, pin, fake_tools):
@@ -257,3 +291,80 @@ def test_the_documentation_export_reads_the_typed_pin_with_no_runtime_manifest(t
     (deployed / "runtime" / "goose").mkdir(parents=True)
     (deployed / "runtime" / "goose" / "manifest.json").write_text('{"version": "1.54.0"}', encoding="utf-8")
     assert documentation_goose_version(deployed) == "1.54.0"            # the deployed-manifest fallback stays
+
+
+def test_check_mode_prepares_the_same_source_and_runs_only_cargo_check(tmp_path, ours, pin, fake_tools):
+    (ours / "Cargo.lock").write_bytes(UPSTREAM_LOCK)
+    result = build_goose.check(tmp_path / "src", archhub_rev="abc123", ours=ours, pin_path=pin)
+    commands = [c for c, _ in fake_tools]
+    assert ["git", "fetch", "-q", "--depth", "1", "https://github.com/aaif-goose/goose.git", COMMIT] in commands
+    assert [Path(c[-1]).name for c in commands if c[:2] == ["git", "apply"]] == ["0001-archhub.patch"]
+    cargo = [c for c in commands if c[0] == "cargo"]
+    assert cargo == [["cargo", "check", "--locked", "--target", "x86_64-pc-windows-msvc", "-p", "goose-cli"]]
+    assert result["mode"] == "check" and result["upstream_commit"] == COMMIT
+    assert not (tmp_path / "out").exists() and not list(tmp_path.glob("*/receipt.json"))   # no output, no receipt
+
+
+def _evaluate(expression, context):
+    """The subset of GitHub expressions this workflow uses: ${{ }}, ==, !=, &&, ||, quoted strings, inputs/github
+    context values and failure()."""
+    if expression is None:
+        return True                                          # no if: always runs (given its needs)
+    text = str(expression).strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    for name, value in context.items():
+        text = text.replace(name, repr(value))
+    text = text.replace("failure()", "False").replace("&&", " and ").replace("||", " or ")
+    return bool(eval(text, {"__builtins__": {}}, {}))   # only literals remain; any unknown name fails the test
+
+
+def _ran(workflow, event, mode):
+    """Which jobs and steps run for one dispatch, by the workflow's own if: guards (a skipped need skips its job)."""
+    context = {"github.event_name": event, "inputs.mode": mode}
+    ran = {}
+    for name, job in workflow["jobs"].items():
+        needs = job.get("needs", [])
+        needs = [needs] if isinstance(needs, str) else needs
+        if all(need in ran for need in needs) and _evaluate(job.get("if"), context):
+            ran[name] = [step.get("name", step.get("uses", "")) for step in job["steps"]
+                         if _evaluate(step.get("if"), context)]
+    return ran
+
+
+def test_check_dispatch_reaches_no_write_permission_upload_or_publish_step():
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers["workflow_dispatch"]["inputs"]["mode"]["options"] == ["release", "check"]
+    assert triggers["workflow_dispatch"]["inputs"]["mode"]["default"] == "release"
+    assert workflow["permissions"] == {"contents": "read"}
+    check = _ran(workflow, "workflow_dispatch", "check")
+    assert list(check) == ["goose-check"]
+    job = workflow["jobs"]["goose-check"]
+    assert job["permissions"] == {"contents": "read"}
+    text = yaml.safe_dump(job)
+    for forbidden in ("upload-artifact", "download-artifact", "actions/cache", "publish_release", "build_release",
+                      "gh release", "GH_TOKEN", "github.token", "contents: write", "persist-credentials: true"):
+        assert forbidden not in text, forbidden
+    assert "build_goose.py --check" in text and "--output" not in text
+    # every job or step that can write is guarded off in check mode on its own line too
+    for name, other in workflow["jobs"].items():
+        if (other.get("permissions") or {}).get("contents") == "write":
+            assert "inputs.mode != 'check'" in other.get("if", ""), name
+        for step in other["steps"]:
+            body = yaml.safe_dump(step)
+            if any(word in body for word in ("upload-artifact", "download-artifact", "publish_release", "build_release")):
+                assert "inputs.mode != 'check'" in step.get("if", ""), (name, step.get("name"))
+
+
+def test_release_dispatches_keep_the_existing_build_and_publish_path():
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    every = {name: [step.get("name", step.get("uses", "")) for step in job["steps"]
+                    if "failure()" not in str(step.get("if", ""))]
+             for name, job in workflow["jobs"].items() if name != "goose-check"}
+    for event, mode in (("workflow_dispatch", "release"), ("repository_dispatch", None)):
+        ran = _ran(workflow, event, mode)
+        assert set(ran) == {"build", "publish"}, (event, ran)
+        assert {name: [s for s in steps] for name, steps in ran.items()} == every, event

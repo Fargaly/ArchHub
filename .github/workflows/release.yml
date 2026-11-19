@@ -9,6 +9,12 @@ on:
         description: 'Independent archhub-broker-review/v1 JSON for this exact revision'
         required: true
         type: string
+      mode:
+        description: 'release (build, then publish) or check (goose-cli cargo check only: no installer, upload or publish)'
+        required: false
+        type: choice
+        options: [release, check]
+        default: release
 
 permissions:
   contents: read
@@ -18,7 +24,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Check-only candidate run: read-only token, no installer, no artifact or cache upload, no publish.
+  goose-check:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'check' }}
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the candidate revision (read only)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: selected
+          persist-credentials: false
+      - name: Use the Python that runs build_goose.py
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check Goose from pinned source with ArchHub's patches and lock (cargo check only)
+        if: ${{ inputs.mode == 'check' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python selected/03.TOOLS/packaging/windows/build_goose.py --check --source (Join-Path $env:RUNNER_TEMP 'goose-src') --archhub-rev $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'goose-cli cargo check failed on the pinned source with ArchHub patches.' }
+
   build:
+    if: ${{ inputs.mode != 'check' }}
     runs-on: windows-2025
     outputs:
       build_id: ${{ steps.identity.outputs.build_id }}
@@ -311,6 +343,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Goose did not build from its pinned source.' }
           "GOOSE_BUILD_PATH=$build" >> $env:GITHUB_ENV
       - name: Compile Studio and installer from verified source snapshots
+        if: ${{ inputs.mode != 'check' }}
         shell: pwsh
         env:
           BUILD_ID: ${{ steps.identity.outputs.build_id }}
@@ -320,6 +353,7 @@ jobs:
             -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
       - name: Prove installed users' updater accepts this build (dry run)
+        if: ${{ inputs.mode != 'check' }}
         shell: pwsh
         run: |
           ./selected/03.TOOLS/packaging/windows/publish_release.ps1 `
@@ -327,6 +361,7 @@ jobs:
             -ExpectedSourceRevision '${{ steps.source.outputs.revision }}' -DryRun
       - name: Retain exact installer and metadata for review
         id: upload
+        if: ${{ inputs.mode != 'check' }}
         uses: actions/upload-artifact@v7
         with:
           name: archhub-installer-${{ steps.identity.outputs.build_id }}
@@ -340,7 +375,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
       - name: Retain failed snapshot and partial build for inspection
-        if: ${{ failure() }}
+        if: ${{ failure() && inputs.mode != 'check' }}
         uses: actions/upload-artifact@v7
         with:
           name: archhub-failed-build-${{ github.run_id }}-${{ github.run_attempt }}
@@ -350,6 +385,7 @@ jobs:
 
   publish:
     needs: build
+    if: ${{ inputs.mode != 'check' }}
     runs-on: windows-2025
     timeout-minutes: 10
     permissions:
@@ -368,11 +404,13 @@ jobs:
         shell: pwsh
         run: python -m pip install --disable-pip-version-check -r selected/requirements.txt
       - name: Download this run's exact build artifact
+        if: ${{ inputs.mode != 'check' }}
         uses: actions/download-artifact@v8
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release-output
       - name: Verify and publish complete updater release
+        if: ${{ inputs.mode != 'check' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

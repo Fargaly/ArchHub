@@ -93,13 +93,8 @@ def _cargo(cargo_build, cwd, env):
     raise RuntimeError("Goose compile not started: the desktop is in use. Queue it again through run-heavy.")
 
 
-def build(source, output, *, archhub_rev, pin_path=PIN, ours=OURS, seed_lock=False):
-    pin = load_pin(pin_path)
-    source, output = Path(source), Path(output)
-    for folder in (source, output):
-        if folder.exists() and any(folder.iterdir()):
-            raise ValueError("Goose build folder must be empty: %s" % folder)
-    series = archhub_patches(ours, pin_path)
+def _prepare(source, pin, series, ours, seed_lock):
+    """The one source preparation for build and check: the pinned commit, ArchHub's ordered patches, ArchHub's lock."""
     lock = Path(ours) / "Cargo.lock"
     if lock.exists():
         check_lock(lock, pin)
@@ -119,6 +114,36 @@ def build(source, output, *, archhub_rev, pin_path=PIN, ours=OURS, seed_lock=Fal
     shutil.copyfile(lock, source / "Cargo.lock")
     env = {**os.environ, "RUSTFLAGS": pin["rustflags"], "CARGO_INCREMENTAL": "0"}
     env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+    return env
+
+
+def _empty(*folders):
+    for folder in folders:
+        if folder.exists() and any(folder.iterdir()):
+            raise ValueError("Goose build folder must be empty: %s" % folder)
+
+
+def check(source, *, archhub_rev, pin_path=PIN, ours=OURS):
+    """Check-only: the same prepared source, then `cargo check` for the release target. Writes no executable, no
+    receipt and no output folder; the CI check-only dispatch runs this and nothing that publishes."""
+    pin = load_pin(pin_path)
+    source = Path(source)
+    _empty(source)
+    series = archhub_patches(ours, pin_path)
+    env = _prepare(source, pin, series, ours, seed_lock=False)
+    cargo_check = ["cargo", "check", "--locked", "--target", pin["target"], "-p", pin["package"]]
+    _cargo(cargo_check, source, env)
+    return {"schema_version": 1, "mode": "check", "upstream_commit": pin["commit"], "archhub_rev": archhub_rev,
+            "inputs": inputs(pin_path), "patches": series, "cargo_lock_sha256": sha(source / "Cargo.lock"),
+            "toolchain": _run(["rustc", "-V"], source, env, capture=True), "command": cargo_check}
+
+
+def build(source, output, *, archhub_rev, pin_path=PIN, ours=OURS, seed_lock=False):
+    pin = load_pin(pin_path)
+    source, output = Path(source), Path(output)
+    _empty(source, output)
+    series = archhub_patches(ours, pin_path)
+    env = _prepare(source, pin, series, ours, seed_lock)
     cargo_build = ["cargo", "build", "--release", "--locked", "--target", pin["target"], "-p", pin["package"], "--bin", pin["binary"]]
     _cargo(cargo_build, source, env)
     built = source / "target" / pin["target"] / "release" / (pin["binary"] + ".exe")
@@ -138,8 +163,17 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output")
     parser.add_argument("--archhub-rev", required=True)
     parser.add_argument("--seed-lock", action="store_true")
+    parser.add_argument("--check", action="store_true", help="cargo check only: no executable, receipt or output folder")
     args = parser.parse_args()
-    print(json.dumps(build(args.source, args.output, archhub_rev=args.archhub_rev, seed_lock=args.seed_lock), indent=2))
+    if args.check:
+        if args.output or args.seed_lock:
+            parser.error("--check writes nothing: it takes no --output and no --seed-lock")
+        print(json.dumps(check(args.source, archhub_rev=args.archhub_rev), indent=2))
+    else:
+        if not args.output:
+            parser.error("--output is required to build")
+        print(json.dumps(build(args.source, args.output, archhub_rev=args.archhub_rev, seed_lock=args.seed_lock),
+                         indent=2))

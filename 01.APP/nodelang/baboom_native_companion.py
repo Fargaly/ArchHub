@@ -180,6 +180,22 @@ def foreground_application_windows() -> str | None:
         return None
 
 
+def _best_bubble_edge(screen: Rect, sprite: Rect, bubble_w: int, bubble_h: int, gap: int = 6) -> str:
+    """Choose bubble placement so it stays within screen bounds without clipping."""
+    fits_left = (sprite.x - gap - bubble_w) >= screen.x
+    fits_right = (sprite.right + gap + bubble_w) <= screen.right
+    if fits_left and not fits_right:
+        return "right"
+    if fits_right and not fits_left:
+        return "left"
+    if fits_left:
+        return "right"
+    fits_above = (sprite.y - gap - bubble_h) >= screen.y
+    if fits_above:
+        return "bottom"
+    return "top"
+
+
 def _message_beside(screen: Rect, sprite: Rect, width: int, height: int) -> Rect | None:
     """A report rectangle next to a sprite that stays where it is.
 
@@ -202,8 +218,13 @@ def _message_beside(screen: Rect, sprite: Rect, width: int, height: int) -> Rect
     x = sprite.x - 8 - width
     if x < screen.x:
         x = sprite.right + 8
+    if x + width > screen.right:
+        x = max(screen.x, screen.right - width)
+    y = sprite.y
+    if y + height > screen.bottom:
+        y = max(screen.y, screen.bottom - height)
     try:
-        return _bounded_rect(screen, width=width, height=height, x=x, y=sprite.y)
+        return _bounded_rect(screen, width=width, height=height, x=x, y=y)
     except ValueError:
         return None
 
@@ -398,6 +419,10 @@ LOOK_NODE = {"id": "baboom.look", "params": {
     "dot_pulse_ms": 2000, "float_px": 3, "float_ms": 3600,
     "badge_px": 18, "badge_top": 4, "badge_right": 6, "badge_pad": 5, "badge_ring_px": 2, "frame_ms": 200}}
 _WORKING_STATES = ("thinking", "editing", "testing")
+# Autonomous aliveness and gentle roaming / perching near active work (F13-safe: read-only foreground rects).
+ALIVE_NODE = {"id": "baboom.alive", "params": {
+    "roam_interval_ms": 25000, "step_px": 24, "perch_margin": 16,
+    "stay_put_key": "stay_put", "drag_margin": 8}}
 
 
 def baboom_ground_state(*, needs: int, working: bool, listening: bool) -> str:
@@ -865,6 +890,10 @@ def create_baboom_native_companion_window(
             self._position_writer = PositionWriter()
             self._position_writer.failed.connect(self._position_save_failed)
             self._position_jobs = ThreadPoolExecutor(max_workers=1, thread_name_prefix="baboom-position")
+            self._stay_put = False
+            self._roam_timer = QTimer(self)
+            self._roam_timer.setInterval(ALIVE_NODE["params"]["roam_interval_ms"])
+            self._roam_timer.timeout.connect(self._roam_tick)
             # With ArchHub (stand_with): its window, the pin setting, the composer door, and where the
             # window, its composer, the busy boxes and the screens are (follow_app).
             self._owner = self._pin = self._on_ask = self._beside = self._stood = self._app_screen = None
@@ -1076,7 +1105,10 @@ def create_baboom_native_companion_window(
                 self._reaction_timer.stop()
                 self._animation_timer.stop()
                 self._look_timer.stop()
+                self._roam_timer.stop()
                 return
+            if not self._roam_timer.isActive() and not self._stay_put:
+                self._roam_timer.start()
             self._projection_timer.setInterval(750 if self._timers_active() else 5000)
             if not self._projection_timer.isActive():
                 self._projection_timer.start()
@@ -1166,8 +1198,8 @@ def create_baboom_native_companion_window(
             )
             return replace(frame, motion=motion, source=source, orb=orb)
 
-        def _place_idle_chrome(self, spot: Rect, edge: str) -> None:
-            """Keep the glyph on the edge. A state bubble sits inward of it."""
+        def _place_idle_chrome(self, spot: Rect, edge: str, screen: Rect | None = None) -> None:
+            """Keep the glyph on the edge or free spot. A state bubble sits inward of it."""
             x, y, width, height = spot.x, spot.y, spot.width, spot.height
             presence = self._work_presence
             text = ""
@@ -1185,6 +1217,7 @@ def create_baboom_native_companion_window(
             look = LOOK_NODE["params"]
             head, drop = (look["box_height"] - height, look["ground_drop"]) if self._look is not None else (0, 0)
             bubble_w = bubble_h = 0
+            gap = 6
             if text:
                 from html import escape
                 linked = on_open_task is not None and presence is not None and bool(presence.task_id)
@@ -1192,7 +1225,8 @@ def create_baboom_native_companion_window(
                 self._state_bubble.setToolTip("Open task and full result" if linked else text)
                 bubble_w = min(200, max(80, self._state_bubble.fontMetrics().horizontalAdvance(text) + 16))
                 bubble_h = max(24, int(self._state_bubble.heightForWidth(bubble_w) or 24))
-            gap = 6
+                if screen is not None:
+                    edge = _best_bubble_edge(screen, spot, bubble_w, bubble_h, gap=gap)
             if text and edge == "right":
                 origin_x, origin_y = x - gap - bubble_w, y
                 sprite_x, sprite_y = gap + bubble_w, 0
@@ -1326,21 +1360,20 @@ def create_baboom_native_companion_window(
 
         def _idle_presence(self, screen, frame) -> None:
             self._stood = sprite = self._home()
-            edge = "right"
             if sprite is None:
-                # One small glyph, always at an edge; never search through work areas.
                 with_app = self._beside is not None and self._beside[0] is not None
                 width, height = _STANDING_SIZE if with_app else (56, 56)
-                x, y = self._free_spot() or (screen.right - width, screen.bottom - height)
+                spot = self._free_spot()
+                if spot is None:
+                    margin = ALIVE_NODE["params"]["perch_margin"]
+                    x = screen.right - margin - width
+                    y = screen.bottom - margin - height
+                else:
+                    x, y = spot
                 x = min(max(x, screen.x), screen.right - width)
                 y = min(max(y, screen.y), screen.bottom - height)
-                edge = min(((x - screen.x, "left"), (screen.right - width - x, "right"),
-                            (y - screen.y, "top"), (screen.bottom - height - y, "bottom")))[1]
-                if edge in ("left", "right"):
-                    x = screen.x if edge == "left" else screen.right - width
-                else:
-                    y = screen.y if edge == "top" else screen.bottom - height
                 sprite = Rect(x, y, width, height)
+            edge = _best_bubble_edge(screen, sprite, 200, 24, gap=6)
             self._layout = replace(frame.layout, sprite=sprite, message=None, edge=edge)
             self._frame = replace(frame, layout=self._layout, report=None)
             self._sprite = render_baboom_native_sprite(self._atlas, self._frame)
@@ -1351,7 +1384,7 @@ def create_baboom_native_companion_window(
                 widget.hide()
             if self._approval is not None:
                 self._approval.hide()
-            self._place_idle_chrome(sprite, edge)
+            self._place_idle_chrome(sprite, edge, screen=screen)
             if self._shows_as != "Screen":
                 self._state_bubble.hide()
                 self._state_badge.hide()
@@ -1382,6 +1415,7 @@ def create_baboom_native_companion_window(
             self._projection_timer.start()
             self._reaction_timer.start()
             self._animation_timer.start()
+            self._roam_timer.start()
             self.refresh()
 
         def stop_projection(self) -> None:
@@ -1390,6 +1424,7 @@ def create_baboom_native_companion_window(
             self._reaction_timer.stop()
             self._animation_timer.stop()
             self._look_timer.stop()
+            self._roam_timer.stop()
             self._tray.hide()
 
         def hide_until_next_launch(self) -> None:
@@ -1415,6 +1450,10 @@ def create_baboom_native_companion_window(
             """
             self._owner, self._pin, self._on_ask = owner, pin, on_ask
             self._pinned = self._pin_on()
+            try:
+                self._stay_put = bool(self._pin.read().get(ALIVE_NODE["params"]["stay_put_key"])) if self._pin is not None else False
+            except (OSError, ValueError, AttributeError, TypeError):
+                self._stay_put = False
             self.winId()
 
         def follow_app(self, app, composer=None, busy=(), screens=(), needs=0, listening=False) -> None:
@@ -1430,8 +1469,6 @@ def create_baboom_native_companion_window(
             had, saw = self._beside, (self._needs, self._listening)
             self._beside = (app, composer, tuple(busy), tuple(screens))
             self._needs, self._listening = (max(0, int(needs)), bool(listening)) if app is not None else (0, False)
-            if had is not None and had[0] is None and app is not None and self._pinned:
-                self._pin_here(False)
             if had is None or (had[0] is None) != (app is None):
                 # Beside ArchHub he keeps its place among the windows and is never over another program.
                 # With ArchHub away he is the desktop companion he was: on top, owned by no window.
@@ -1449,13 +1486,19 @@ def create_baboom_native_companion_window(
                 self.move(self.x() + now.x - before.x, self.y() + now.y - before.y)
 
         def _free_spot(self) -> tuple[int, int] | None:
-            """The spot he dragged BABOOM to. With ArchHub it holds only while pinned and on a screen."""
+            """The spot he dragged BABOOM to. Persists across state changes and stays on screen."""
             placed = controller._user_origin
+            if placed is None:
+                return None
             if self._beside is None:
                 return placed
-            if self._pinned and placed is not None and screen_at(self._beside[3], *placed) is not None:
+            from PyQt6.QtGui import QGuiApplication
+            prim = QGuiApplication.primaryScreen()
+            if prim is not None and prim.virtualGeometry().contains(placed[0], placed[1]):
                 return placed
-            return None
+            if screen_at(self._beside[3], *placed) is not None:
+                return placed
+            return placed
 
         def _home(self) -> Rect | None:
             """Where BABOOM stands in ArchHub; None with no ArchHub window on screen or on a spot of his own."""
@@ -1481,6 +1524,64 @@ def create_baboom_native_companion_window(
                 return self._pin.read().get("pinned") is True
             except (OSError, ValueError, AttributeError, TypeError):
                 return False
+
+        def _toggle_stay_put(self, checked: bool) -> None:
+            self._stay_put = bool(checked)
+            if self._pin is not None:
+                try:
+                    self._pin.update({ALIVE_NODE["params"]["stay_put_key"]: self._stay_put})
+                except (OSError, ValueError, AttributeError, TypeError) as refused:
+                    controller.geometry_receipt("stay_put setting not saved: %s" % type(refused).__name__)
+
+        def _roam_tick(self) -> None:
+            """F13-safe gentle roaming and perching near active work.
+
+            Never steals focus, never injects input, pauses on drag/hover/bubble/DND.
+            """
+            if self._dragged or self._dismissed or self._stopped or self._stay_put:
+                return
+            if self._hover_since is not None or self._details_open:
+                return
+            if self._state_bubble.isVisible() or self._report.isVisible():
+                return
+            if self._approval is not None and self._approval.isVisible():
+                return
+            if self._busy:
+                return
+
+            screen = self._screen_rect()
+            if screen is None:
+                return
+
+            with_app = self._beside is not None and self._beside[0] is not None
+            width, height = _STANDING_SIZE if with_app else (56, 56)
+            current_x, current_y = self._free_spot() or (screen.right - width - 16, screen.bottom - height - 16)
+
+            fw = foreground_window_rect_windows()
+            params = ALIVE_NODE["params"]
+            margin = params["perch_margin"]
+            step = params["step_px"]
+
+            if fw is not None and fw.width > 100 and fw.height > 100:
+                target_x = fw.right - width
+                target_y = max(screen.y + margin, fw.y - height - margin)
+                if target_y < screen.y + margin:
+                    target_y = fw.y + margin
+            else:
+                target_x = current_x + (step if (current_x % 2 == 0) else -step)
+                target_y = current_y + (step if (current_y % 2 == 0) else -step)
+
+            target_x = min(max(target_x, screen.x + margin), screen.right - margin - width)
+            target_y = min(max(target_y, screen.y + margin), screen.bottom - margin - height)
+
+            dx = max(-step, min(step, target_x - current_x))
+            dy = max(-step, min(step, target_y - current_y))
+            if dx != 0 or dy != 0:
+                new_x = current_x + dx
+                new_y = current_y + dy
+                controller.pin_sprite_origin(new_x, new_y)
+                self._save_position(new_x, new_y)
+                self.refresh()
 
         def _greeting_due(self) -> bool:
             """One greeting a visit: a moment after he arrives in ArchHub, while no box of his is open."""
@@ -2065,6 +2166,10 @@ def create_baboom_native_companion_window(
                 menu.addAction("Restart to install build %s" % update["build_id"], lambda: self._say("restart-to-update"))
             else:
                 menu.addAction("Check for updates", lambda: self._say("restart-to-update"))
+            stay_action = menu.addAction("Stay put")
+            stay_action.setCheckable(True)
+            stay_action.setChecked(self._stay_put)
+            stay_action.toggled.connect(self._toggle_stay_put)
             menu.addAction("Open the cockpit", self._open_cockpit)
             menu.addAction("Hide BABOOM until next launch (keeps running)", self.hide_until_next_launch)
             menu.addAction("Stop BABOOM for this launch", self.stop_baboom)
@@ -2077,6 +2182,7 @@ def create_baboom_native_companion_window(
             self._reaction_timer.stop()
             self._animation_timer.stop()
             self._look_timer.stop()
+            self._roam_timer.stop()
             try:
                 menu.exec(event.globalPos())
             finally:
@@ -2124,6 +2230,14 @@ def create_baboom_native_companion_window(
                 return
             self._open_interaction()
 
+        def enterEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            self._hover_since = time.monotonic()
+            super().enterEvent(event)
+
+        def leaveEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            self._hover_since = None
+            super().leaveEvent(event)
+
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             if event.button() == Qt.MouseButton.LeftButton:
                 if not self._pointer_hits(event.position().toPoint()):
@@ -2140,9 +2254,9 @@ def create_baboom_native_companion_window(
                 event.buttons() & Qt.MouseButton.LeftButton
             ):
                 delta = event.globalPosition().toPoint() - self._press_global
-                # A few pixels of travel separate a drag from a click, so a
-                # slightly shaky click still asks BABOOM.
-                if self._dragged or delta.manhattanLength() > 4:
+                from PyQt6.QtWidgets import QApplication
+                threshold = QApplication.startDragDistance()
+                if self._dragged or delta.manhattanLength() >= threshold:
                     self._dragged = True
                     self._quiet_click.stop()
                     self.move(self._press_window_pos + delta)
@@ -2157,10 +2271,17 @@ def create_baboom_native_companion_window(
                 if self._dragged:
                     origin = self.pos() + self._sprite_rect.topLeft()
                     self._dragged = False
-                    if self._beside is None or self._pinned:
-                        # With ArchHub a drag holds only after he un-pinned BABOOM from it; else he springs home.
-                        controller.pin_sprite_origin(origin.x(), origin.y())
-                        self._save_position(origin.x(), origin.y())
+                    from PyQt6.QtGui import QGuiApplication
+                    prim = QGuiApplication.primaryScreen()
+                    vgeom = prim.virtualGeometry() if prim is not None else None
+                    if vgeom is not None:
+                        margin = ALIVE_NODE["params"]["drag_margin"]
+                        bounded_x = min(max(origin.x(), vgeom.x() + margin), vgeom.right() - self._sprite_rect.width() - margin)
+                        bounded_y = min(max(origin.y(), vgeom.y() + margin), vgeom.bottom() - self._sprite_rect.height() - margin)
+                        origin = QPoint(bounded_x, bounded_y)
+                    controller.pin_sprite_origin(origin.x(), origin.y())
+                    self._save_position(origin.x(), origin.y())
+                    self._pin_here(True)
                     self.refresh()
                 elif self._transient_report is not None:
                     self._quiet_click.stop()

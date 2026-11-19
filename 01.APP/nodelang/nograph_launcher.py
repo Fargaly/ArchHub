@@ -64,6 +64,17 @@ def _open_task(window, view, task_id):
                               + json.dumps({'task_id': task_id}) + "}))")
 
 
+def _show_unless_tray(window, arguments, tray_available):
+    """Show the Studio window, except for an update relaunch from the tray: that one never takes his screen.
+
+    Returns True when the start stays in the tray.
+    """
+    in_tray = '--tray' in arguments and tray_available
+    if not in_tray:
+        window.show()
+    return in_tray
+
+
 def run(state_dir, instance_lock=None, serve_launch_requests=None):
     app_root = Path(__file__).resolve().parents[1]
     from .quiet_update import stage_app_folder, finish_app_folder
@@ -104,7 +115,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         lock_studio_navigation(view)
         view.page().setBackgroundColor(QColor('#0e0e11'))
         view.setHtml(_native_boot_document())
-        window.show()
+        from PyQt6.QtWidgets import QSystemTrayIcon
+        _show_unless_tray(window, sys.argv[1:], QSystemTrayIcon.isSystemTrayAvailable())
         app.processEvents()
     started = time.perf_counter()
 
@@ -194,7 +206,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         threading.Event().wait()
         return 0
     from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
-    from PyQt6.QtWidgets import QFileDialog, QMenu, QSystemTrayIcon
+    from PyQt6.QtWidgets import QFileDialog, QMenu
     from .window_commands import show_again
 
     def show_home():
@@ -332,9 +344,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     landing = QTimer()
     landing.timeout.connect(land_companion)
     landing.start(1000)
-    in_tray = '--tray' in sys.argv[1:] and QSystemTrayIcon.isSystemTrayAvailable()
-    if not in_tray:
-        window.show()
+    in_tray = _show_unless_tray(window, sys.argv[1:], QSystemTrayIcon.isSystemTrayAvailable())
     if '--baboom' in sys.argv[1:]:
         QTimer.singleShot(0, lambda: open_launch(sys.argv[1:]))
     seen_open = {"value": in_tray}

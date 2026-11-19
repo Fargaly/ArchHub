@@ -884,3 +884,19 @@ def test_review5_an_update_from_the_tray_reopens_in_the_tray(tmp_path, monkeypat
     monkeypatch.setattr(qu, "_reopen_after_update", lambda *a, sleep, tray: reopened.append(tray) or True)
     assert qu.hand_off(tmp_path / "ArchHub", relaunch=True, tray=True, sleep=lambda _s: None) == 0
     assert reopened == [True]
+
+
+@pytest.mark.parametrize("arguments, tray_available, shown", [
+    (["--tray"], True, False),             # update relaunch from the tray: never takes his screen
+    (["--tray", "--baboom"], True, False),
+    (["--tray"], False, True),             # no tray to live in: the window is the only way back
+    ([], True, True),                      # a normal start opens the Studio
+])
+def test_a_tray_start_never_shows_the_window(arguments, tray_available, shown):
+    """Both the cold-start loading card and the Studio open go through this one decision."""
+    from nodelang.nograph_launcher import _show_unless_tray
+
+    calls = []
+    window = SimpleNamespace(show=lambda: calls.append("show"))
+    assert _show_unless_tray(window, arguments, tray_available) is (not shown)
+    assert calls == (["show"] if shown else [])

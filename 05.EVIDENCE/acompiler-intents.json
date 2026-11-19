@@ -12213,6 +12213,19 @@
         "02.TESTS/tests_replica/test_task_hierarchy.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "INSTALLEDGAPS": {
+      "source": "Claude task 290722ff / founder installed-app gaps: F3 grouping composite (GROUPONE court fixture + request headers), F10 Rerun again=true (Fork already green), F16 History off-canvas (run invents no nodes), F38 fast boot (NoGraphServer listen before cloud relay and TriggerService warm-up). Book: group is one node; Rerun/Fork one click; History not on canvas; app light and opens fast. LEDGER F38 OPEN (server up 30.15s). ONELIBRARY/SETTINGS5/parametric left alone.",
+      "scope": [
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "02.TESTS/tests_js/studio_group_document.test.cjs",
+        "02.TESTS/tests_js/studio_rerun_again.test.cjs",
+        "02.TESTS/tests_replica/test_f38_listen_first.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

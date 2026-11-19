@@ -702,6 +702,8 @@
     // xyflow caches Handle positions; re-measure when the card's rows/sockets change or its size changes (auto-height, field add/hide/reorder).
     // Layout only: nothing here runs a node.
     const frame=expandedGroup(data.n), flow = c.flow && !data.n.fixed && !frame;  // Flow view: one socket in and one out, on steps only
+    // An expanded group's frame is sized from its members; they mount and measure after it, so it re-renders when their sizes arrive.
+    RF.useStore(state => frame ? (data.n.frameMembers || data.n.children).map(member => { const size = state.nodeLookup.get(member)?.measured; return size ? size.width + 'x' + size.height : ''; }).join(',') : '');
     const n = data.n, handles = [...n.inputs, ...n.outputs].map(p => p.id).join('|') + '#' + (n.parameterSchema || []).map(p => p.key).join('|') + (flow ? '#flow' : '');
     React.useLayoutEffect(() => {
       const measure = () => updateInternals(id);

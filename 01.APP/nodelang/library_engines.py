@@ -610,6 +610,9 @@ def save_skill(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": str(destination)}, "%s - %d chars" % (name, len(document))
 
 
+VALUATION_METHODS = ('TOPSIS', 'Weighted sum')
+
+
 def weighted_valuation(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Weighted min/max normalization of actual wired rows, with typed criteria."""
     rows = _rows(feeds)
@@ -627,6 +630,10 @@ def weighted_valuation(params: Mapping[str, object], feeds: Mapping[str, object]
                 or not math.isfinite(criterion['weight']) or criterion['weight'] < 0
                 or criterion['direction'] not in ('minimize','maximize')):
             raise ValueError('Each criterion needs a field, finite nonnegative weight and minimize/maximize direction')
+    method = str(feeds.get('method') or params.get('method') or 'Weighted sum')
+    if method not in VALUATION_METHODS:
+        raise ValueError('Choose one of: ' + ', '.join(VALUATION_METHODS))
+    topsis = method == 'TOPSIS'
     total = sum(c['weight'] for c in criteria)
     if not math.isfinite(total) or total <= 0 or len({c['field'] for c in criteria}) != len(criteria):
         raise ValueError('Criteria must be unique and have a positive finite total weight')
@@ -639,11 +646,25 @@ def weighted_valuation(params: Mapping[str, object], feeds: Mapping[str, object]
         width = high - low
         if not math.isfinite(width):
             raise ValueError('Criterion range exceeds finite numeric limits')
+        if topsis:
+            norm = math.sqrt(sum(value * value for value in values))
+            weighted = [value / norm * (criterion['weight']/total) if norm else 0.0 for value in values]
+            best, worst = (min, max) if criterion['direction'] == 'minimize' else (max, min)
+            columns.append((weighted, best(weighted), worst(weighted)))
+            continue
         normalized = [(value-low)/width if width else 1.0 for value in values]
         if criterion['direction'] == 'minimize' and width:
             normalized = [1-value for value in normalized]
         columns.append([value * (criterion['weight']/total) for value in normalized])
-    scored = [{**row,'score':sum(column[index] for column in columns)} for index,row in enumerate(rows)]
+    if topsis:
+        # TOPSIS (Hwang and Yoon): closeness to the ideal option and distance from the worst, 0..1.
+        def closeness(index):
+            near = math.sqrt(sum((v[index] - b) ** 2 for v, b, _w in columns))
+            far = math.sqrt(sum((v[index] - w) ** 2 for v, _b, w in columns))
+            return far / (near + far) if near + far else 1.0
+        scored = [{**row,'score':closeness(index)} for index,row in enumerate(rows)]
+    else:
+        scored = [{**row,'score':sum(column[index] for column in columns)} for index,row in enumerate(rows)]
     scored.sort(key=lambda row:row['score'], reverse=True)
     return {'out':[{**row,'rank':index+1} for index,row in enumerate(scored)]}, 'Scored %d linked rows' % len(rows)
 
@@ -1688,7 +1709,7 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 # (universal_pipeline._ensure_pipeline_node_interfaces mints them), so what
 # the library says a card does is what can be wired to it.
 ENGINE_SOCKETS = {
-    'research.weighted': {'source':('out',), 'target':('in','criteria')},
+    'research.weighted': {'source':('out',), 'target':('in','criteria','method')},
     "tool.workshop": {"source": ("out",), "target": (
         "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",
         "tick_cadence_minutes", "backup_count", "backup_budget_bytes", "recovery_timeout_seconds", "instance_retry_ms", "preflight_database_ms", "broker_start_ms", "refusal_poll_ms", "quit_watchdog_ms", "account_http_ms", "session_minimum_validity_seconds", "session_poll_ms", "worker_join_ms", "host_stop_ms", "host_cancel_ms", "mutation_poll_ms", "desktop_refresh_ms", "archive_step_ms", "cloud_shutdown_ms", "update_shutdown_ms", "export_release_ms", "toast_visible_ms", "voice_hold_ms", "model_request_ms", "model_cli_request_ms", "keep_running_in_tray",
@@ -2669,6 +2690,7 @@ def library_catalogue() -> list:
                 "engine": wiring["engine"], "params": dict(wiring["params"]),
                 "sockets": {side: list(names) for side, names in engine_sockets(wiring["engine"]).items()},
                 "ports": library_item_ports(item, wiring["engine"], title),
+                **({"paramDefs": [dict(row) for row in wiring["paramDefs"]]} if wiring.get("paramDefs") else {}),
             }
             legacy = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
             if legacy is not None and legacy != wiring:
@@ -2730,6 +2752,7 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
         interfaces = next(entry['interfaces'] for entry in coordination_catalogue() if entry['engine'] == engine)
     if engine == 'research.weighted':
         interfaces = {'in':{'type':'list','direction':'input'},'criteria':{'type':'list','direction':'input'},
+                      'method':{'type':'string','direction':'input'},
                       'out':{'type':'list','direction':'output'}}
     return _interface_ports(interfaces, sockets)
 
@@ -2800,7 +2823,8 @@ ENGINE_SOCKETS["archhub.enforce"] = {
     "target": ("pending", *_enforce_defaults()),
 }
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (("enforce", (("archhub_enforce", "Enforce", "Check pending writes; correct compiler diagnostics before approval"),)),)
-LIBRARY_ITEM_ENGINES['research_valuation'] = {'engine':'research.weighted','params':{'criteria':'[]'}}
+LIBRARY_ITEM_ENGINES['research_valuation'] = {'engine':'research.weighted','params':{'criteria':'[]','method':'TOPSIS'},
+                                              'paramDefs':[{'id':'method','name':'Method','type':'choice','options':list(VALUATION_METHODS)}]}
 
 # Existing catalogue projection seeds these same cards and their wireable parameters.
 from .clean_office_adapter import COORDINATION_NODES as _COORDINATION_NODES
@@ -2818,7 +2842,7 @@ for _engine, _spec in _COORDINATION_NODES.items():
     LIBRARY_ITEM_ENGINES[_item] = {'engine': _engine, 'params': dict(_card_defaults)}
     _coordination_rows.append((_item, _label, _label))
 LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('office', tuple(_coordination_rows)))
-LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Weighted valuation','Score wired rows using explicit numeric criteria and weights'),)),)
+LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Decision score','Rank wired options by weighted criteria (TOPSIS or weighted sum); re-ranks as you edit'),)),)
 
 # Two generic nodes. Limits live here as parameters; host_exec reads them.
 from .host_exec import host_exec as _host_exec, connector_call as _connector_call

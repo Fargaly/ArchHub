@@ -421,7 +421,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Escape');
     await page.getByRole('button',{name:'Review',exact:true}).click();
     assert.equal(await page.locator('[data-design="approval.panel"]').count(),1);
-    await page.getByRole('button',{name:'Approve',exact:true}).click();
+    // The Workshop panel lists what waits for him with its own Approve (the design); the one Approve card is the approval panel.
+    await page.locator('[data-design="approval.panel"]').getByRole('button',{name:'Approve',exact:true}).click();
     await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.some(node=>node.type==='approval.gate'&&node.status==='Done'));
     await page.locator('body').press('Escape');
     await page.getByRole('button',{name:'Notifications',exact:true}).click();
@@ -511,7 +512,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.getByRole('button',{name:'Review',exact:true}).click();
     assert.equal(await page.locator('[data-design="approval.panel"]').count(),1);
     assert.equal(Math.round((await page.locator('[data-design="approval.panel"]').boundingBox()).height),324);
-    await page.getByRole('button',{name:'Approve',exact:true}).click();
+    // The Workshop panel lists what waits for him with its own Approve (the design); the one Approve card is the approval panel.
+    await page.locator('[data-design="approval.panel"]').getByRole('button',{name:'Approve',exact:true}).click();
     await page.waitForFunction(id=>window.ArchHubAPI.getSessionDocument().nodes.find(n=>n.id===id).result?.output?.result===9,scriptId).catch(async()=>{throw Error('Approved script readback '+JSON.stringify(await page.evaluate(id=>({node:window.ArchHubAPI.getSessionDocument().nodes.find(n=>n.id===id),approvals:window.ArchHubAPI.getSnapshot().approvals.map(c=>({status:c.status,error:c.error}))}),scriptId)));});
     await page.locator('body').press('Escape');
   });

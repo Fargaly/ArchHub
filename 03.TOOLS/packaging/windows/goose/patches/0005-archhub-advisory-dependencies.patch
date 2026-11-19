@@ -8321,3 +8321,11 @@ index 0000000..6e17a3a
 +        )
 +    }
 +}
+diff --git a/crates/goose-cli/src/commands/update.rs b/crates/goose-cli/src/commands/update.rs
+--- a/crates/goose-cli/src/commands/update.rs
++++ b/crates/goose-cli/src/commands/update.rs
+@@ -415,3 +415,3 @@
+             Some(p) => p.to_owned(),
+-            None => bail!("Zip entry has unsafe path: {}", entry.name()),
++            None => bail!("Zip entry has an unsafe path"),
+         };

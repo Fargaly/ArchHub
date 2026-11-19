@@ -37,11 +37,18 @@ def sections(markup):
     return pages
 
 
+# Articles whose text is the app's own guide (_DOCS_TEMPLATES in 01.APP/nodelang/site_export.py); the design keeps
+# their menu place and "Open it in ArchHub" line. A value here replaces a line the app guide has moved on from.
+APP_GUIDES = {"workshop": None, "connectors": "Settings, Connections."}
+
+
 def docs(markup):
-    """The design's docs articles (its DOCS table): slug, title, group, lede, paragraphs, where in the app."""
+    """The design's docs articles (its DOCS table): slug, title, group, lede, paragraphs, where in the app.
+    App guides keep only slug, title, group and where; build_site.py takes their text from the app."""
     start = markup.index("const DOCS=") + len("const DOCS=")
     table = ast.literal_eval(markup[start:markup.index("};", start) + 1])
-    return [[slug, *row] for slug, row in table.items()]
+    return [[slug, row[0], row[1], APP_GUIDES[slug] or row[-1]] if slug in APP_GUIDES else [slug, *row]
+            for slug, row in table.items()]
 
 
 def export(source):

@@ -61,11 +61,6 @@
    "workshop",
    "The Workshop",
    "Guides",
-   "Every agent and you in one room.",
-   [
-    "The Workshop is the one room where you and every agent work together.",
-    "Work sits on the left: every task, grouped as Needs attention and In progress. Show history adds Completed and archived. Click a task to open it."
-   ],
    "Home, then any piece of work: its thread is the Workshop for that work."
   ],
   [
@@ -108,12 +103,7 @@
    "connectors",
    "Connectors",
    "Guides",
-   "Host programs, what each node needs, and what is available.",
-   [
-    "The connector table comes from the operation catalogue and the release’s host artifact index.",
-    "A packaged connector is not a running connection. Open the host program with its connector loaded before using its nodes."
-   ],
-   "Settings, Connectors."
+   "Settings, Connections."
   ],
   [
    "account-web",

@@ -1,5 +1,6 @@
 """Build the public static site without importing the application runtime."""
 import argparse
+import ast
 import html
 import json
 import re
@@ -262,13 +263,28 @@ def side_nav():
             + '<a href="https://baboom.archhub.io/libraries/index.html">Libraries</a>')
 
 
-def doc_article(template, index):
+def app_guides():
+    """The in-app guides (site_export._DOCS_TEMPLATES), read from the source's syntax tree, never imported."""
+    tree = ast.parse((ROOT / "01.APP/nodelang/site_export.py").read_text(encoding="utf-8"))
+    value = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                 and getattr(node.targets[0], "id", "") == "_DOCS_TEMPLATES")
+    return ast.literal_eval(value.args[0])
+
+
+def doc_article(template, index, build_id):
     esc = html.escape
     rows = guides()
-    _, title, group, lede, paragraphs, where = rows[index]
+    if len(rows[index]) == 4:  # an app guide (export_design.APP_GUIDES): its text is the app's own
+        key, _, group, where = rows[index]
+        title, lede, text = app_guides()[key]
+        # Sections the installed package fills in (host artifacts, operations, node catalogue) stay in the app.
+        parts = text.replace("{build}", build_id).split("\n## ")
+        body = markdown("\n## ".join(p for p in parts if not re.search(r"\{(connectors|operations|catalogue)\}", p)))
+    else:
+        _, title, group, lede, paragraphs, where = rows[index]
+        body = "<h2>How it works</h2>" + "".join(f"<p>{esc(t)}</p>" for t in paragraphs)
     following = rows[(index + 1) % len(rows)]
-    fill = {"crumb": esc(group), "title": esc(title), "lede": esc(lede),
-            "body": "<h2>How it works</h2>" + "".join(f"<p>{esc(t)}</p>" for t in paragraphs), "app": esc(where)}
+    fill = {"crumb": esc(group), "title": esc(title), "lede": esc(lede), "body": body, "app": esc(where)}
     markup = template
     for key, value in fill.items():
         markup = re.sub(rf'(<[^>]*data-a="{key}"[^>]*>)(</)', lambda m: m.group(1) + value + m.group(2), markup, count=1)
@@ -349,7 +365,7 @@ def build_site(output, build_id, installer_url, sha256):
         pages[name] = (title.group(1) if title and route != "/" else "ArchHub", release_facts(from_design(markup), build_id, sha256))
     for index, row in enumerate(guides()):
         if row[0] != "getting-started":
-            pages[f"docs/{row[0]}/index.html"] = (row[1], doc_article(look["pages"]["/docs/*"], index))
+            pages[f"docs/{row[0]}/index.html"] = (row[1], doc_article(look["pages"]["/docs/*"], index, build_id))
     labels = {c["id"]: c["label"] for c in data["categories"]}
     for node in data["nodes"]:
         pages[f"docs/nodes/{slug(node['id'])}/index.html"] = (node["title"], node_page(node, labels.get(node["cat"], node["cat"])))

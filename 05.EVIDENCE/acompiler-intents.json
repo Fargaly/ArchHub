@@ -11866,6 +11866,16 @@
         "02.TESTS/tests/test_host_exec.py",
         "02.TESTS/tests_replica/test_run_resume.py"
       ]
+    },
+    "BABOOMBRAIN": {
+      "source": "Founder request via Codex 2026-11-19: when the selected BABOOM brain is unavailable, BABOOM returns the actual failure on fresh and task threads, keeps the draft and keeps explicit other-agent routes; one BABOOM owner for desktop and composer.",
+      "scope": [
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/baboom_nograph.py",
+        "02.TESTS/tests_replica/test_chat_works.py",
+        "02.TESTS/tests_replica/test_graphout.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

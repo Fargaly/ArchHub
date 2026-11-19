@@ -1288,25 +1288,60 @@ def _set_task_status(task, status):
 
 
 def _list_agents():
-    from .agent_runtime_registry import RUNTIMES
+    """One named row per agent app (Book Ch.9 / F32), filled with live process and declaration state."""
+    from .agent_runtime_registry import AGENT_APPS, RUNTIMES
     observed = _SERVER._live_agents.get() or {'processes': [], 'complete': False}
     declared = [row for row in _declarations() if row.get('current')]
-    rows = {}
+    live = {}
     for process in observed['processes']:
         runtime = process['runtime']
-        row = rows.get(runtime)
+        row = live.get(runtime)
         if row is None:
             mine = [r for r in declared if (r.get('runtime') or r.get('app')) == runtime]
             busy = [r for r in mine if r.get('status') == 'working']
-            row = rows[runtime] = {'id': runtime, 'runtime': runtime, 'name': RUNTIMES.get(runtime, {}).get('label', runtime),
-                                   'session_count': 0, 'presence': 'working' if busy else 'idle',
-                                   'status_text': 'Working' if busy else 'Idle',
-                                   'task': busy[0].get('task') if busy else 'Idle', 'model': 'Model not reported',
-                                   'sessions': [{'root': r['root'], 'task': r.get('task'), 'status': r.get('status'),
-                                                 'request_id': r.get('request_id', r['root'])} for r in mine],
-                                   'observation_complete': observed['complete'], 'evidence': 'process'}
+            if busy:
+                task = busy[0].get('task') or 'Working — task not reported'
+            else:
+                task = 'Idle'
+            row = live[runtime] = {
+                'id': runtime, 'runtime': runtime,
+                'name': dict(AGENT_APPS).get(runtime) or RUNTIMES.get(runtime, {}).get('label', runtime),
+                'session_count': 0,
+                'presence': 'working' if busy else 'idle',
+                'status_text': 'Working' if busy else 'Idle',
+                'task': task,
+                'model': 'Model not reported',
+                'sessions': [{'root': r['root'], 'task': r.get('task'), 'status': r.get('status'),
+                              'request_id': r.get('request_id', r['root'])} for r in mine],
+                'observation_complete': observed['complete'], 'evidence': 'process',
+            }
         row['session_count'] += 1
-    return list(rows.values())
+    rows = []
+    for app_id, label in AGENT_APPS:
+        row = live.pop(app_id, None)
+        if row is None:
+            mine = [r for r in declared if (r.get('runtime') or r.get('app')) == app_id]
+            busy = [r for r in mine if r.get('status') == 'working']
+            if busy:
+                presence, status_text, task = 'working', 'Working', busy[0].get('task') or 'Working — task not reported'
+            elif mine:
+                presence, status_text, task = 'idle', 'Idle', 'Idle'
+            else:
+                presence, status_text, task = 'stopped', 'Not running', 'Connect'
+            row = {
+                'id': app_id, 'runtime': app_id, 'name': label,
+                'session_count': len(mine), 'presence': presence, 'status_text': status_text,
+                'task': task, 'model': 'Model not reported',
+                'sessions': [{'root': r['root'], 'task': r.get('task'), 'status': r.get('status'),
+                              'request_id': r.get('request_id', r['root'])} for r in mine],
+                'observation_complete': observed['complete'], 'evidence': 'roster',
+            }
+        else:
+            row['name'] = label
+        rows.append(row)
+    # Observed runtimes outside the Settings roster stay available to Workshop views.
+    rows.extend(live.values())
+    return rows
 
 
 def _list_messages(before=None):
@@ -1609,6 +1644,9 @@ def r_agents_canvas(s, req):
                 wires.append({'id': row['root'] + ':task', 'from': row['root'], 'to': task['id'],
                               'fromPort': 'task', 'toPort': 'task', 'type': 'event'})
         for runtime in roster:
+            # Roster placeholders (idle / not running) are Settings rows only; do not invent Workshop sessions.
+            if runtime.get('evidence') != 'process':
+                continue
             if not any(row['vendor'] == runtime['runtime'] for row in sessions):
                 sessions.append({'id': 'runtime:' + runtime['id'], 'name': runtime['name'], 'vendor': runtime['runtime'],
                                  'status': runtime['presence'], 'task': None, 'taskTitle': '', 'message': None})

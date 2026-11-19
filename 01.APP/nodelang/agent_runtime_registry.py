@@ -9,6 +9,16 @@ from nodelang.agent_runtime_defs.gemini import DEFINITION as GEMINI
 from nodelang.agent_runtime_defs.opencode import DEFINITION as OPENCODE
 
 RUNTIMES = {definition["id"]: definition for definition in (CLAUDE, CODEX, GEMINI, OPENCODE)}
+# Settings › Agents (Book Ch.9 / F32): one named row per agent app with live state.
+# Labels match the Book; Antigravity is the F32 addition beside the Book five.
+AGENT_APPS = (
+    ('claude', 'Claude Code'),
+    ('codex', 'Codex'),
+    ('opencode', 'OpenCode'),
+    ('gemini', 'Gemini CLI'),
+    ('goose', 'BABOOM'),
+    ('antigravity', 'Antigravity'),
+)
 _runtime_process_cache = {}
 # Desktop hosts and services supply presence through declarations, not helpers.
 _PROCESS_ROLES = {

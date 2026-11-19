@@ -1,49 +1,37 @@
-"""Stage an already fetched pinned Goose archive. Never downloads or installs."""
+"""Stage goose.exe built from pinned source (build_goose.py). Never downloads, builds or installs."""
 from __future__ import annotations
 
-import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import shutil
-import zipfile
+
+from build_goose import OURS, PIN, archhub_patches, check_lock, inputs, load_pin, sha
 
 
-def stage_goose(archive, destination, *, pin_path=Path(__file__).with_name("goose-pin.json")):
-    archive, destination = Path(archive), Path(destination)
-    pin = json.loads(Path(pin_path).read_text(encoding="utf-8"))
-    with archive.open("rb") as source:
-        digest = hashlib.file_digest(source, "sha256").hexdigest()
-    if digest != pin["sha256"]:
-        raise ValueError("Goose archive SHA-256 differs from the version pin")
+def stage_goose(build, destination, *, archhub_rev, pin_path=PIN, ours=OURS):
+    """Check the build against this source revision, its engine inputs, the pin, the ordered patch series and its
+    receipt, then copy it into an empty folder. A cached build from another revision or other inputs is refused."""
+    build, destination = Path(build), Path(destination)
+    pin = load_pin(pin_path)
+    receipt = json.loads((build / "receipt.json").read_text(encoding="utf-8"))
+    if (receipt.get("version"), receipt.get("upstream_commit")) != (pin["version"], pin["commit"]):
+        raise ValueError("Goose build is not from the pinned version and commit")
+    if receipt.get("patches") != archhub_patches(ours, pin_path):
+        raise ValueError("Goose build patches differ from the declared patches (names, digests or order)")
+    if receipt.get("archhub_rev") != archhub_rev or receipt.get("inputs") != inputs(pin_path):
+        raise ValueError("Goose build was made from another ArchHub revision or other engine inputs")
+    check_lock(Path(ours) / "Cargo.lock", pin)
+    if receipt.get("cargo_lock_sha256") != pin["cargo_lock_sha256"]:
+        raise ValueError("Goose build Cargo.lock differs from the pinned lock")
+    if sha(build / "goose.exe") != receipt.get("executable_sha256") or sha(build / "LICENSE") != receipt.get("license_sha256"):
+        raise ValueError("Goose build files differ from its receipt")
     if destination.exists() and any(destination.iterdir()):
         raise ValueError("Goose staging destination must be empty")
-    with zipfile.ZipFile(archive) as package:
-        entries = package.infolist()
-        for entry in entries:
-            path = PurePosixPath(entry.filename)
-            if (path.is_absolute() or ".." in path.parts or "\\" in entry.filename
-                    or ":" in entry.filename or (entry.external_attr >> 16) & 0o170000 == 0o120000):
-                raise ValueError("Unsafe Goose archive entry")
-        binaries = [e for e in entries if PurePosixPath(e.filename).name == "goose.exe"]
-        if len(binaries) != 1:
-            raise ValueError("Goose archive must contain exactly one goose.exe")
-        # Flatten only the binary's distribution directory, preserving DLLs
-        # and its upstream notices. Never extract a desktop installer.
-        prefix = PurePosixPath(binaries[0].filename).parent
-        destination.mkdir(parents=True, exist_ok=True)
-        for entry in entries:
-            path = PurePosixPath(entry.filename)
-            if entry.is_dir() or not path.is_relative_to(prefix):
-                continue
-            relative = path.relative_to(prefix)
-            target = destination.joinpath(*relative.parts)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with package.open(entry) as source, target.open("wb") as output:
-                shutil.copyfileobj(source, output)
-    with (destination / "goose.exe").open("rb") as source:
-        binary_digest = hashlib.file_digest(source, "sha256").hexdigest()
-    manifest = {"version": pin["version"], "archive_sha256": digest,
-                "executable_sha256": binary_digest, "source_url": pin["url"]}
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("goose.exe", "LICENSE", "receipt.json"):
+        shutil.copyfile(build / name, destination / name)
+    manifest = {"version": pin["version"], "source_commit": pin["commit"], "archhub_rev": receipt["archhub_rev"],
+                "executable_sha256": receipt["executable_sha256"], "source_url": pin["repository"]}
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
 
@@ -51,7 +39,8 @@ def stage_goose(archive, destination, *, pin_path=Path(__file__).with_name("goos
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("archive")
+    parser.add_argument("build")
     parser.add_argument("destination")
+    parser.add_argument("--archhub-rev", required=True)
     args = parser.parse_args()
-    stage_goose(args.archive, args.destination)
+    stage_goose(args.build, args.destination, archhub_rev=args.archhub_rev)

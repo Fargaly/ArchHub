@@ -1,7 +1,22 @@
 {
-  "version": "1.54.0",
-  "url": "https://github.com/aaif-goose/goose/releases/download/v1.54.0/goose-x86_64-pc-windows-msvc.zip",
-  "sha256": "5c39bc91c3eadc231847e21a8a469e778431084437b233a63a950fee22db6239",
-  "license": "Apache-2.0",
-  "license_url": "https://raw.githubusercontent.com/block/goose/v1.54.0/LICENSE"
+  "id": "goose.source",
+  "params": {
+    "version": "1.54.0",
+    "repository": "https://github.com/aaif-goose/goose.git",
+    "commit": "cd643d2126fffab4c6a6186905211ba868d6a657",
+    "target": "x86_64-pc-windows-msvc",
+    "package": "goose-cli",
+    "binary": "goose",
+    "rustflags": "-C target-feature=+crt-static",
+    "cargo_lock_sha256": "ca83de283bab2099eb696786fafdca59eb597d9ed65eaf9e6041e9abdc67e016",
+    "cargo_lock_git_blob": "b2af27095d73813b2dc43cc250b0d1c093d9bfad",
+    "license": "Apache-2.0",
+    "license_url": "https://raw.githubusercontent.com/aaif-goose/goose/cd643d2126fffab4c6a6186905211ba868d6a657/LICENSE",
+    "patches": [
+      "0001-telemetry-off-by-default.patch",
+      "0002-archhub-config-path.patch",
+      "0003-baboom-identity.patch",
+      "0004-archhub-default-extension.patch"
+    ]
+  }
 }

@@ -83,7 +83,9 @@ def documentation_goose_version(app_dir=None):
     for root in roots:
         for relative in ("packaging/windows/goose-pin.json", "runtime/goose/manifest.json"):
             try:
-                value = json.loads((root / relative).read_text(encoding="utf-8"))["version"]
+                data = json.loads((root / relative).read_text(encoding="utf-8"))
+                # the pin is the typed goose.source node (version in its params); the deployed manifest is flat
+                value = (data["params"] if data.get("id") == "goose.source" else data)["version"]
                 if isinstance(value, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
                     return value
             except (OSError, ValueError, KeyError, TypeError):

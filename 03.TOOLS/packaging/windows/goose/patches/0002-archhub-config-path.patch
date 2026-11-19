@@ -1,0 +1,23 @@
+diff --git a/crates/goose/src/config/paths.rs b/crates/goose/src/config/paths.rs
+index f7b0646..7a1d855 100644
+--- a/crates/goose/src/config/paths.rs
++++ b/crates/goose/src/config/paths.rs
+@@ -16,13 +16,12 @@ impl Paths {
+                 DirType::AgentsHome => base.join(".agents"),
+             }
+         } else {
+-            // NOTE: "Block" is kept here for backwards compatibility with existing
+-            // user config/data directories (e.g. ~/Library/Application Support/Block/goose/).
+-            // Changing this would orphan existing installations.
++            // ArchHub: BABOOM's engine keeps its own config/data under ArchHub, never a stock goose
++            // install's Block/goose folders (ArchHub sets GOOSE_PATH_ROOT; this is the fallback).
+             let strategy = choose_app_strategy(AppStrategyArgs {
+-                top_level_domain: "Block".to_string(),
+-                author: "Block".to_string(),
+-                app_name: "goose".to_string(),
++                top_level_domain: "io".to_string(),
++                author: "ArchHub".to_string(),
++                app_name: "baboom".to_string(),
+             })
+             .expect("goose requires a home dir");
+ 

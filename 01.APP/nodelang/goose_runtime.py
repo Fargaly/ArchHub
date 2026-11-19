@@ -92,6 +92,8 @@ def _scrub_goose_sessions(work_dir):
 
 # The private host-read extension node: how long a live server may take to report started.
 HOST_EXTENSION_NODE = {'id': 'baboom.goose.host_read', 'params': {'start_seconds': 30}}
+# The upstream Goose commit the packaged goose.exe is built from (goose-pin.json "commit").
+GOOSE_SOURCE_COMMIT = 'cd643d2126fffab4c6a6186905211ba868d6a657'
 
 
 class GooseRuntime:
@@ -118,7 +120,8 @@ class GooseRuntime:
                 digest = hashlib.file_digest(source, "sha256").hexdigest()
             if manifest["version"] != "1.54.0" or digest != manifest["executable_sha256"]:
                 raise ValueError
-            if manifest["archive_sha256"] != "5c39bc91c3eadc231847e21a8a469e778431084437b233a63a950fee22db6239":
+            # built from pinned source (packaging/windows/goose-pin.json), not the upstream release archive
+            if manifest["source_commit"] != GOOSE_SOURCE_COMMIT:
                 raise ValueError
         except (OSError, ValueError, KeyError, TypeError):
             raise GooseRefused("The packaged Goose brain is missing or has a different digest. Repair the ArchHub package.") from None

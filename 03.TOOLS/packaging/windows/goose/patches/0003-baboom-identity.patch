@@ -1,0 +1,98 @@
+diff --git a/crates/goose/src/agents/prompt_manager.rs b/crates/goose/src/agents/prompt_manager.rs
+index afced25..b26e3b3 100644
+--- a/crates/goose/src/agents/prompt_manager.rs
++++ b/crates/goose/src/agents/prompt_manager.rs
+@@ -141,7 +141,7 @@ impl<'a> SystemPromptBuilder<'a, PromptManager> {
+             prompt_template::render_template("system.md", &context)
+         }
+         .unwrap_or_else(|_| {
+-            "You are a general-purpose AI agent called goose, created by Block".to_string()
++            "You are BABOOM, the ArchHub agent".to_string()
+         });
+ 
+         let mut system_prompt_extras = self.manager.system_prompt_extras.clone();
+diff --git a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__all_platform_extensions.snap b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__all_platform_extensions.snap
+index 8661969..563868a 100644
+--- a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__all_platform_extensions.snap
++++ b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__all_platform_extensions.snap
+@@ -2,8 +2,8 @@
+ source: crates/goose/src/agents/prompt_manager.rs
+ expression: system_prompt
+ ---
+-You are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).
+-goose is being developed as an open-source software project.
++You are BABOOM, the ArchHub agent, an AI assistant for architects working in their own programs.
++BABOOM's engine is built on goose, an open-source project of AAIF (Agentic AI Foundation).
+ 
+ # Turn Context
+ 
+diff --git a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__basic.snap b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__basic.snap
+index 494d322..ede6411 100644
+--- a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__basic.snap
++++ b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__basic.snap
+@@ -3,8 +3,8 @@ source: crates/goose/src/agents/prompt_manager.rs
+ assertion_line: 457
+ expression: system_prompt
+ ---
+-You are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).
+-goose is being developed as an open-source software project.
++You are BABOOM, the ArchHub agent, an AI assistant for architects working in their own programs.
++BABOOM's engine is built on goose, an open-source project of AAIF (Agentic AI Foundation).
+ 
+ # Turn Context
+ 
+diff --git a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__one_extension.snap b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__one_extension.snap
+index f81e754..c72f5c7 100644
+--- a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__one_extension.snap
++++ b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__one_extension.snap
+@@ -3,8 +3,8 @@ source: crates/goose/src/agents/prompt_manager.rs
+ assertion_line: 473
+ expression: system_prompt
+ ---
+-You are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).
+-goose is being developed as an open-source software project.
++You are BABOOM, the ArchHub agent, an AI assistant for architects working in their own programs.
++BABOOM's engine is built on goose, an open-source project of AAIF (Agentic AI Foundation).
+ 
+ # Turn Context
+ 
+diff --git a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__typical_setup.snap b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__typical_setup.snap
+index 20c70bd..6fa4b58 100644
+--- a/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__typical_setup.snap
++++ b/crates/goose/src/agents/snapshots/goose__agents__prompt_manager__tests__typical_setup.snap
+@@ -3,8 +3,8 @@ source: crates/goose/src/agents/prompt_manager.rs
+ assertion_line: 494
+ expression: system_prompt
+ ---
+-You are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).
+-goose is being developed as an open-source software project.
++You are BABOOM, the ArchHub agent, an AI assistant for architects working in their own programs.
++BABOOM's engine is built on goose, an open-source project of AAIF (Agentic AI Foundation).
+ 
+ # Turn Context
+ 
+diff --git a/crates/goose/src/agents/state_machine/tests/provider_lifecycle.rs b/crates/goose/src/agents/state_machine/tests/provider_lifecycle.rs
+index 664613c..c71fa6d 100644
+--- a/crates/goose/src/agents/state_machine/tests/provider_lifecycle.rs
++++ b/crates/goose/src/agents/state_machine/tests/provider_lifecycle.rs
+@@ -256,7 +256,7 @@ async fn provider_lifecycle() -> Result<()> {
+     result.assert_message(-1, Agent, "The standard prompt is active.");
+     let call = api.calls().last().cloned().expect("provider request");
+     assert!(call.uses_model("gpt-4.1"));
+-    assert!(call.system_contains("general-purpose AI agent called goose"));
++    assert!(call.system_contains("You are BABOOM, the ArchHub agent"));
+ 
+     Ok(())
+ }
+diff --git a/crates/goose/src/prompts/system.md b/crates/goose/src/prompts/system.md
+index 27a8d2f..7aa04c7 100644
+--- a/crates/goose/src/prompts/system.md
++++ b/crates/goose/src/prompts/system.md
+@@ -1,5 +1,5 @@
+-You are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).
+-goose is being developed as an open-source software project.
++You are BABOOM, the ArchHub agent, an AI assistant for architects working in their own programs.
++BABOOM's engine is built on goose, an open-source project of AAIF (Agentic AI Foundation).
+ 
+ {% if moim_system_prompt_block is defined %}
+ {{ moim_system_prompt_block }}

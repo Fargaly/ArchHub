@@ -7,8 +7,8 @@ param(
     [string]$OutputDirectory,
     [string]$IsccPath,
     [string]$NodePath,
-    # Fetched by 717 with founder OK. This build never downloads Goose.
-    [string]$GooseArchivePath,
+    # The output folder of packaging/windows/build_goose.py (pinned source). This build never downloads or builds Goose.
+    [string]$GooseBuildPath,
     [string]$PythonPath,
     [switch]$PrepareCandidateManifest,
     [string]$LocalCandidateManifest,
@@ -23,10 +23,10 @@ param(
 # Build only the selected colleague installer. No installed state, builder-home
 # skills, PyInstaller runtime, or implicit sibling checkout enters this package.
 $ErrorActionPreference = 'Stop'
-if (-not $GooseArchivePath -or -not (Test-Path -LiteralPath $GooseArchivePath -PathType Leaf)) {
-    throw 'Supply the pinned Goose CLI archive via -GooseArchivePath; no separate installation or automatic download.'
+if (-not $GooseBuildPath -or -not (Test-Path -LiteralPath (Join-Path $GooseBuildPath 'receipt.json') -PathType Leaf)) {
+    throw 'Supply the Goose build folder (build_goose.py output with receipt.json) via -GooseBuildPath; no automatic download.'
 }
-$GooseArchivePath = (Resolve-Path -LiteralPath $GooseArchivePath).Path
+$GooseBuildPath = (Resolve-Path -LiteralPath $GooseBuildPath).Path
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -86,6 +86,7 @@ $selectedInputs = @(
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
     'packaging/windows/licenses/ArchHub-components-MIT.txt',
     'packaging/windows/stage_goose.py', 'packaging/windows/goose-pin.json',
+    'packaging/windows/build_goose.py', 'packaging/windows/goose/patches', 'packaging/windows/goose/Cargo.lock',
     'packaging/windows/stage_betterleaks.py', 'packaging/windows/betterleaks-pin.json',
     'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt',
     'packaging/windows/licenses/Betterleaks-MIT.txt'
@@ -195,6 +196,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/legacy_cleanup_identities.json',
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'nodelang/studio/design-tokens.json', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
+            'packaging/windows/build_goose.py', 'packaging/windows/goose/Cargo.lock',
             'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',
             'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
@@ -223,6 +225,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # renders with, beside their licences. They are data, not code: named exactly, so the
         # generic allowlist never turns into "any binary under nodelang".
         if ($Path -ceq 'nodelang/studio/fonts/inter-variable.woff2') { return $true }
+        if ($Path -cmatch '^packaging/windows/goose/patches/[A-Za-z0-9][A-Za-z0-9._-]*\.patch$') { return $true }
         if ($Path -cmatch '^nodelang/data/website/(favicon\.(ico|svg)|og\.png|fonts/[A-Za-z0-9][A-Za-z0-9._-]*\.(woff2|txt))$') { return $true }
         # The .NET add-in sources: build_host_bridges.ps1 compiles the Revit and
         # AutoCAD ones and only that compiled closure is installed. Their
@@ -822,8 +825,9 @@ if ($BrokerReviewPath) {
     throw 'Release refused: a shipped host broker is unreviewed.'
 }
 $goosePayload = Join-Path $output 'goose-payload'
-& $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_goose.py') $GooseArchivePath $goosePayload
+& $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_goose.py') $GooseBuildPath $goosePayload --archhub-rev $sourceRevision
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Goose staging failed; no installer was compiled.' }
+$gooseManifest = [IO.File]::ReadAllText((Join-Path $goosePayload 'manifest.json')) | ConvertFrom-Json
 $betterleaksPayload = Join-Path $output 'betterleaks-payload'
 & $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_betterleaks.py') $betterleaksPayload
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Betterleaks fetch failed; no installer was compiled.' }
@@ -916,6 +920,8 @@ if ($candidate) {
         betterleaks_version = $betterleaksManifest.version
         betterleaks_sha256 = $betterleaksManifest.archive_sha256
         betterleaks_executable_sha256 = $betterleaksManifest.executable_sha256
+        goose_source_commit = $gooseManifest.source_commit
+        goose_executable_sha256 = $gooseManifest.executable_sha256
         studio_manifest = 'studio-build.json'
         studio_manifest_sha256 = $studioBuild.Sha256
         studio_files = $studioBuild.Files
@@ -945,6 +951,8 @@ $metadata = [ordered]@{
     betterleaks_version = $betterleaksManifest.version
     betterleaks_sha256 = $betterleaksManifest.archive_sha256
     betterleaks_executable_sha256 = $betterleaksManifest.executable_sha256
+    goose_source_commit = $gooseManifest.source_commit
+    goose_executable_sha256 = $gooseManifest.executable_sha256
     payload_manifest = $sourceManifestName
     payload_manifest_sha256 = $snapshot.Sha256
     payload_files = $snapshot.Rows.Count

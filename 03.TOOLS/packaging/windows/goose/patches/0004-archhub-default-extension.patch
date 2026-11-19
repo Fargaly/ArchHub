@@ -1,0 +1,58 @@
+diff --git a/crates/goose/src/config/extensions.rs b/crates/goose/src/config/extensions.rs
+index 7658913..71dfdd4 100644
+--- a/crates/goose/src/config/extensions.rs
++++ b/crates/goose/src/config/extensions.rs
+@@ -223,19 +223,43 @@ pub fn configured_enabled_state(config: &Config, name: &str) -> Option<bool> {
+ }
+ 
+ pub fn get_enabled_extensions() -> Vec<ExtensionConfig> {
+-    get_all_extensions()
+-        .into_iter()
+-        .filter(|ext| ext.enabled)
+-        .map(|ext| ext.config)
+-        .collect()
++    with_archhub(
++        get_all_extensions()
++            .into_iter()
++            .filter(|ext| ext.enabled)
++            .map(|ext| ext.config)
++            .collect(),
++    )
+ }
+ 
+ pub fn get_enabled_extensions_with_config(config: &Config) -> Vec<ExtensionConfig> {
+-    get_extensions_map_with_config(config)
+-        .into_values()
+-        .filter(|ext| ext.enabled)
+-        .map(|ext| ext.config)
+-        .collect()
++    with_archhub(
++        get_extensions_map_with_config(config)
++            .into_values()
++            .filter(|ext| ext.enabled)
++            .map(|ext| ext.config)
++            .collect(),
++    )
++}
++
++/// ArchHub: the app's own MCP endpoint is a default extension. ArchHub sets ARCHHUB_MCP_URL to its
++/// loopback server when it starts BABOOM's engine; only a 127.0.0.1 http URL is accepted.
++pub const ARCHHUB_EXTENSION: &str = "archhub";
++
++fn with_archhub(mut extensions: Vec<ExtensionConfig>) -> Vec<ExtensionConfig> {
++    let uri = std::env::var("ARCHHUB_MCP_URL").unwrap_or_default();
++    let present = extensions
++        .iter()
++        .any(|ext| ext.name() == ARCHHUB_EXTENSION);
++    if uri.starts_with("http://127.0.0.1:") && !present {
++        extensions.push(ExtensionConfig::streamable_http(
++            ARCHHUB_EXTENSION.to_string(),
++            uri,
++            "ArchHub: the user's programs, canvas and Workshop".to_string(),
++            DEFAULT_EXTENSION_TIMEOUT,
++        ));
++    }
++    extensions
+ }
+ 
+ pub fn get_available_extensions() -> Vec<ExtensionConfig> {

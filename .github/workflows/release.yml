@@ -297,33 +297,32 @@ jobs:
           $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
           $buildId = "$stamp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-${{ steps.source.outputs.revision }}"
           "build_id=$buildId" >> $env:GITHUB_OUTPUT
-      - name: Verify independent review and fetch the pinned bundled runtime
+      - name: Verify independent review and build the bundled runtime from pinned source
         shell: pwsh
         env:
           SOURCE_REVISION: ${{ steps.source.outputs.revision }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $probe = 'import sys,runpy;owner=runpy.run_path("selected/nodelang/host_artifact_review.py");owner["load_review"](sys.argv[1],source_revision=sys.argv[2],bridges_root="selected/bridges")'
+          $probe = 'import sys,runpy;owner=runpy.run_path("selected/01.APP/nodelang/host_artifact_review.py");owner["load_review"](sys.argv[1],source_revision=sys.argv[2],bridges_root="selected/01.APP/bridges")'
           python -c $probe $env:BROKER_REVIEW_PATH $env:SOURCE_REVISION
           if ($LASTEXITCODE -ne 0) { throw 'Independent broker review does not decide these source bytes.' }
-          $pin = Get-Content selected/packaging/windows/goose-pin.json -Raw | ConvertFrom-Json
-          $archive = Join-Path $env:RUNNER_TEMP 'goose.zip'
-          Invoke-WebRequest -Uri $pin.url -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sha256) { throw 'Pinned runtime digest differs.' }
-          "GOOSE_ARCHIVE_PATH=$archive" >> $env:GITHUB_ENV
+          $build = Join-Path $env:RUNNER_TEMP 'goose-build'
+          python selected/03.TOOLS/packaging/windows/build_goose.py --source (Join-Path $env:RUNNER_TEMP 'goose-src') --output $build --archhub-rev $env:SOURCE_REVISION
+          if ($LASTEXITCODE -ne 0) { throw 'Goose did not build from its pinned source.' }
+          "GOOSE_BUILD_PATH=$build" >> $env:GITHUB_ENV
       - name: Compile Studio and installer from verified source snapshots
         shell: pwsh
         env:
           BUILD_ID: ${{ steps.identity.outputs.build_id }}
         run: |
-          ./selected/installer/build_release.ps1 `
+          ./selected/03.TOOLS/installer/build_release.ps1 `
             -BuildId $env:BUILD_ID `
-            -GooseArchivePath $env:GOOSE_ARCHIVE_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
+            -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
       - name: Prove installed users' updater accepts this build (dry run)
         shell: pwsh
         run: |
-          ./selected/packaging/windows/publish_release.ps1 `
+          ./selected/03.TOOLS/packaging/windows/publish_release.ps1 `
             -ReleaseDirectory "$env:GITHUB_WORKSPACE/release-output" `
             -ExpectedSourceRevision '${{ steps.source.outputs.revision }}' -DryRun
       - name: Retain exact installer and metadata for review
@@ -386,6 +385,6 @@ jobs:
           if ($manifest.build_id -cne $env:BUILD_ID) { throw 'Downloaded artifact is not this run''s build.' }
           # One reconciliation and publish path for CI and local builds: bytes,
           # updater readability, newer than live latest, free tag, pushed source.
-          ./selected/packaging/windows/publish_release.ps1 `
+          ./selected/03.TOOLS/packaging/windows/publish_release.ps1 `
             -ReleaseDirectory release-output -ExpectedSourceRevision $env:SOURCE_REVISION `
             -Repository $env:GH_REPO

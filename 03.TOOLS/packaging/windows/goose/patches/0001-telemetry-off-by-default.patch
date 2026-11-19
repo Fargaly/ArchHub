@@ -1,0 +1,24 @@
+diff --git a/crates/goose/src/posthog.rs b/crates/goose/src/posthog.rs
+index 66a34b6..a8eda51 100644
+--- a/crates/goose/src/posthog.rs
++++ b/crates/goose/src/posthog.rs
+@@ -35,8 +35,9 @@ pub fn get_telemetry_choice() -> Option<bool> {
+         return Some(false);
+     }
+ 
++    // ArchHub: telemetry is off unless the user turned it on; no consent prompt for an unset choice.
+     let config = Config::global();
+-    config.get_param::<bool>(TELEMETRY_ENABLED_KEY).ok()
++    Some(config.get_param::<bool>(TELEMETRY_ENABLED_KEY).unwrap_or(false))
+ }
+ 
+ /// Check if telemetry is enabled.
+@@ -44,7 +45,7 @@ pub fn get_telemetry_choice() -> Option<bool> {
+ /// Returns false if:
+ /// - GOOSE_TELEMETRY_OFF environment variable is set to "1" or "true"
+ /// - GOOSE_TELEMETRY_ENABLED config value is set to false
+-/// - User has not made a telemetry choice yet (opt-in required)
++/// - User has not made a telemetry choice yet (ArchHub: an unset choice is "off")
+ ///
+ /// Returns true only if the user has explicitly opted in.
+ pub fn is_telemetry_enabled() -> bool {

@@ -90,8 +90,13 @@ def steps(transcript):
     for call in calls:
         if _tool(call) == 'declare':
             args = call['input'] if isinstance(call['input'], dict) else {}
-            current = {'key': call['id'], 'title': args.get('task') or 'Declared step', 'calls': []}
-            groups.append(current)
+            title, work = args.get('task') or 'Declared step', args.get('request_id') or ''
+            # Only a proven repeat continues a step: the same declared work (request id and task text) while that
+            # step is still the active, unfinished one. A finished task or another task with the same label is new.
+            if not (current and work and current.get('work') == work and current['title'] == title
+                    and current.get('state') != 'done'):
+                current = {'key': call['id'], 'title': title, 'work': work, 'calls': []}
+                groups.append(current)
         elif _tool(call) in ('task_complete', 'complete'):
             if current:
                 current['state'] = 'done'
@@ -112,18 +117,11 @@ def project(document, session_node, declaration, transcript):
     session_node['params']['detail'] = '' if transcript.get('calls') else 'detail not available'
     from .canvas_documents import THING_ENGINES
     from .library_engines import library_item_ports
-    projected = []
-    for index, group in enumerate(steps(transcript)):
+    projected, before = [], copy.deepcopy(document)
+    groups = steps(transcript)
+    for group in groups:
         calls = group['calls']
-        mapped = [mapping(c) for c in calls]
-        dominant = Counter((m[0], m[1], m[3]) for m in mapped).most_common(1)
-        chosen = next(m for m in mapped if (m[0], m[1], m[3]) == dominant[0][0]) if dominant else ('step', 'note', {}, '')
-        kind, engine, params, item = chosen
-        params = redact(params)
-        # Secret-bearing parameters are never persisted, including under benign container keys.
-        params = {k: v for k, v in params.items() if '[redacted]' not in json.dumps(v)}
-        if params != chosen[2]:
-            engine, item = 'note', ''
+        mapped, chosen, kind, engine, params, item = _projection(calls)
         identity = 'work-' + sha256((session_node['id'] + '\0' + group['key']).encode()).hexdigest()[:24]
         existing = next((n for n in document['nodes'] if n['id'] == identity), None)
         metadata = {'role': 'step', 'owner': session_node['id'], 'runtime': runtime, 'native': native,
@@ -132,8 +130,9 @@ def project(document, session_node, declaration, transcript):
         if declaration.get('task_id'):
             metadata['task'] = declaration['task_id']
         if existing is None:
+            from .canvas_documents import free_spot
             node = {'id': identity, 'type': engine, 'title': redact(str(group['title'])), 'params': params,
-                    'paramDefs': _definitions(params), 'position': {'x': 464 + index % 4 * 320, 'y': 380 + index // 4 * 400},
+                    'paramDefs': _definitions(params), 'position': free_spot(document, 464, 380),
                     'agentWork': metadata}
             node['approvalRequired'] = True
             if item:
@@ -145,6 +144,7 @@ def project(document, session_node, declaration, transcript):
             node = existing
             node['agentWork'] = metadata
         projected.append((node, calls))
+    _merge_repeats(document, before, session_node['id'], projected, transcript)
     # Inferred wires explain observed data flow; they are evidence, not executable bindings.
     document['wires'] = [w for w in document['wires'] if w.get('agentOwner') != session_node['id']]
     for later, _later_calls in projected:
@@ -166,6 +166,146 @@ def project(document, session_node, declaration, transcript):
                 document['wires'].append({'id': 'inferred-' + earlier['id'] + '-' + later['id'] + '-' + key,
                     'from': {'node': earlier['id'], 'socket': source}, 'to': {'node': later['id'], 'socket': target},
                     'inferred': True, 'agentOwner': session_node['id']})
+
+
+def _projection(calls):
+    """The node an agent step projects to: its dominant tool mapping, with secrets removed."""
+    mapped = [mapping(c) for c in calls]
+    dominant = Counter((m[0], m[1], m[3]) for m in mapped).most_common(1)
+    chosen = next(m for m in mapped if (m[0], m[1], m[3]) == dominant[0][0]) if dominant else ('step', 'note', {}, '')
+    kind, engine, params, item = chosen
+    params = redact(params)
+    # Secret-bearing parameters are never persisted, including under benign container keys.
+    params = {k: v for k, v in params.items() if '[redacted]' not in json.dumps(v)}
+    if params != chosen[2]:
+        engine, item = 'note', ''
+    return mapped, chosen, kind, engine, params, item
+
+
+# What the projection itself writes on a step node; any other key is something he set (icon, colour, label, ...).
+_PROJECTED_KEYS = frozenset({'id', 'type', 'title', 'params', 'paramDefs', 'position', 'agentWork', 'approvalRequired',
+                             'item', 'ports', 'result'})
+
+
+def _customised(node, engine, params, item):
+    """True when he changed anything the projection did not make, or moved it: keep that copy."""
+    from .canvas_documents import THING_ENGINES
+    from .library_engines import library_item_ports
+    if set(node) - _PROJECTED_KEYS or node.get('approvalRequired') is not True or node.get('item', '') != item:
+        return True
+    if node.get('paramDefs') != _definitions(params):
+        return True
+    spec = THING_ENGINES.get(engine)
+    if node.get('ports') != ({'source': spec['out'], 'target': spec['in']} if spec else library_item_ports(item, engine)):
+        return True
+    # Before this change the projection placed steps on a 320 x 400 grid from (464, 380); anywhere else he moved it.
+    position = node.get('position') or {}
+    x, y = position.get('x'), position.get('y')
+    return not (isinstance(x, (int, float)) and isinstance(y, (int, float)) and (x - 464) % 320 == 0
+                and 464 <= x <= 464 + 3 * 320 and (y - 380) % 400 == 0 and y >= 380)
+
+
+def _remapped(wire, target):
+    new = copy.deepcopy(wire)
+    for side in ('from', 'to'):
+        new[side]['node'] = target.get(new[side]['node'], new[side]['node'])
+    return new
+
+
+def _signature(wire):
+    return json.dumps({k: v for k, v in wire.items() if k != 'id'}, sort_keys=True)
+
+
+def _memberships(document, identity):
+    node = next((n for n in document['nodes'] if n['id'] == identity), {})
+    return ({('group', g.get('id')) for g in document.get('groups', []) if identity in g.get('nodes', [])}
+            | {('node', n['id']) for n in document['nodes'] if identity in n.get('children', [])}
+            | ({('parent', node['parent'])} if node.get('parent') else set()))
+
+
+def _merge_repeats(document, before, owner, projected, transcript):
+    """Older files hold one node per re-declare of the same work. A copy merges into its surviving step only when
+    it is a proven, untouched repeat: same owner and task, its calls now inside the survivor, its type and
+    parameters exactly what the projection made (no hand edits), and its wires and groups move without conflict.
+    Its hand-drawn wires (with their conditions) and group membership move onto the survivor. Anything else stays."""
+    by_call = {c['id']: c for c in transcript.get('calls', [])}
+    survivors = {n['id']: (n, {c['id'] for c in calls}) for n, calls in projected}
+    merged = {}
+    for copy_node in list(document['nodes']):
+        work = copy_node.get('agentWork') or {}
+        if copy_node['id'] in survivors or work.get('role') != 'step' or work.get('owner') != owner:
+            continue
+        mine = set(work.get('calls') or [])
+        match = [(n, ids) for n, ids in survivors.values()
+                 if n['title'] == copy_node['title'] and mine and mine <= ids and work.get('task')
+                 and n['agentWork'].get('task') == work.get('task') and n['id'] != copy_node['id']]
+        if len(match) != 1 or not all(i in by_call for i in mine):
+            continue                                   # no proof, or two candidates: leave it intact
+        survivor = match[0][0]
+        _mapped, _chosen, _kind, engine, params, item = _projection([by_call[i] for i in sorted(mine, key=list(by_call).index)])
+        if copy_node['type'] != engine or copy_node.get('params') != params or _customised(copy_node, engine, params, item):
+            continue                                   # he edited or styled this copy: it is his, keep it
+        theirs, ours = _memberships(document, copy_node['id']), _memberships(document, survivor['id'])
+        if theirs and ours and theirs != ours:
+            continue                                   # in a different group than the survivor: ambiguous
+        merged[copy_node['id']] = (copy_node, survivor, theirs - ours)
+    # The whole copy -> survivor mapping is decided first; every original wire is then remapped once, both ends,
+    # from the original wire list. A wire between two copies, a self-loop, or two different wires landing on one
+    # input keep the copies involved (repeat until the mapping is stable).
+    hand_wires = [w for w in document['wires'] if not w.get('agentOwner')]
+    while True:
+        target = {cid: entry[1]['id'] for cid, entry in merged.items()}
+        drop, landing = set(), {}
+        for wire in hand_wires:
+            ends = [wire['from']['node'], wire['to']['node']]
+            copies = [end for end in ends if end in target]
+            new = _remapped(wire, target)
+            if len(copies) == 2 or new['from']['node'] == new['to']['node']:
+                drop.update(copies)
+                continue
+            landing.setdefault((new['to']['node'], new['to']['socket']), {}).setdefault(_signature(new), set()).update(copies)
+        for kinds in landing.values():
+            if len(kinds) > 1:                         # one input takes one wire
+                for owners in kinds.values():
+                    drop.update(owners)
+        if not drop:
+            break
+        merged = {cid: entry for cid, entry in merged.items() if cid not in drop}
+    if not merged:
+        return
+    from .session_files import checkpoint_document
+    # The checkpoint is the file as it was before this projection touched it.
+    snapshot = copy.deepcopy(before)
+    checkpoint_document(snapshot, 'Before merging repeated steps')
+    document.setdefault('properties', {}).setdefault('checkpoints', []).append(snapshot['properties']['checkpoints'][-1])
+    target = {cid: entry[1]['id'] for cid, entry in merged.items()}
+    wires, seen = [], set()
+    for wire in document['wires']:
+        new = wire if wire.get('agentOwner') else _remapped(wire, target)
+        if not wire.get('agentOwner'):
+            key = (new['to']['node'], new['to']['socket'], _signature(new))
+            if key in seen:
+                continue                               # the same wire arriving twice lands once
+            seen.add(key)
+        wires.append(new)
+    document['wires'] = wires
+    gone = set(merged)
+    for _copy, survivor, joins in merged.values():
+        for kind, ref in joins:
+            if kind == 'parent':
+                survivor['parent'] = ref
+            for group in document.get('groups', []) if kind == 'group' else []:
+                if group.get('id') == ref and survivor['id'] not in group['nodes']:
+                    group['nodes'].append(survivor['id'])
+            for row in document['nodes'] if kind == 'node' else []:
+                if row['id'] == ref and survivor['id'] not in row['children']:
+                    row['children'].append(survivor['id'])
+    document['nodes'] = [n for n in document['nodes'] if n['id'] not in gone]
+    for group in document.get('groups', []):
+        group['nodes'] = [i for i in group.get('nodes', []) if i not in gone]
+    for row in document['nodes']:
+        if 'children' in row:
+            row['children'] = [i for i in row['children'] if i not in gone]
 
 
 def fork(document, identity):

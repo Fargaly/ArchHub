@@ -435,6 +435,27 @@ def _finite_point(value):
     return number
 
 
+# A card's footprint on the canvas plus a gap; the Studio draws a node about 268 x 240.
+CARD_W, CARD_H, CARD_GAP = 280, 240, 40
+
+
+def free_spot(document, x=0, y=0, *, parent=None, columns=6):
+    """The first place at or after (x, y) where a new card overlaps no card at its level (R31: no stacked junk)."""
+    x, y = _finite_point(x), _finite_point(y)
+    boxes = [(float(n['position'].get('x', 0)), float(n['position'].get('y', 0)))
+             for n in document.get('nodes') or []
+             if isinstance(n.get('position'), dict) and n.get('parent') == parent]
+    clear = lambda px, py: not any(px < bx + CARD_W + CARD_GAP and px + CARD_W + CARD_GAP > bx and
+                                   py < by + CARD_H + CARD_GAP and py + CARD_H + CARD_GAP > by for bx, by in boxes)
+    step_x, step_y = CARD_W + CARD_GAP, CARD_H + CARD_GAP
+    for row in range(64):
+        for col in range(columns):
+            px, py = x + col * step_x, y + row * step_y
+            if clear(px, py):
+                return {'x': px, 'y': py}
+    return {'x': x, 'y': max([by for _, by in boxes] + [y]) + step_y}
+
+
 def _source_socket(group):
     ports = group.get('ports') if isinstance(group.get('ports'), dict) else {}
     source = ports.get('source') if isinstance(ports.get('source'), list) else []

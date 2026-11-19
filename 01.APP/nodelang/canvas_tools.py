@@ -116,6 +116,8 @@ def register_canvas_tools(server):
                 placed = insert_session(document, node['params']['session_file'], x, y)
                 node['id'] = placed['id']
                 return [placed['id']]
+            from .canvas_documents import free_spot
+            node['position'] = free_spot(document, x, y)  # an agent's node never lands on top of another card
             document['nodes'].append(node)
             return [node['id']]
         document, solved = docs.edit(_path(path), _who(ctx), 'add %s' % item['title'], change)

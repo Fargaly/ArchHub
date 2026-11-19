@@ -652,8 +652,9 @@ def record_step(history, task, owner, label, title, status, result="", request="
         node = next((n for n in steps if n['id'] == identity), None)
         if node is None:
             previous = steps[-1] if steps else next((n for n in document['nodes'] if n['id'] == 'start'), None)
+            from .canvas_documents import free_spot
             node = {'id': identity, 'type': 'thing.agent', 'title': title or row['title'], 'params': {},
-                    'position': {'x': (previous['position']['x'] + 384) if previous else 80, 'y': 80}}
+                    'position': free_spot(document, (previous['position']['x'] + 384) if previous else 80, 80)}
             document['nodes'].append(node)
             if previous:
                 document['wires'].append({'id': 'wire-' + identity,

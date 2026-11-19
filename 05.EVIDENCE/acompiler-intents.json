@@ -11929,6 +11929,28 @@
         "02.TESTS/tests_replica/test_daily_work_nodes.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "SOCIALCONNECT": {
+      "source": "Founder requests R75, R74, R204, R101: social and chat apps linked; agents read and draft replies, send or post after one approval; no keys asked of him: his own logged-in Chrome through an ArchHub extension in a background tab; secrets only in Windows Credential Manager.",
+      "scope": [
+        "01.APP/nodelang/social_surface.py",
+        "01.APP/nodelang/social_connectors.py",
+        "01.APP/nodelang/social_web.py",
+        "01.APP/nodelang/social_connections.py",
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/command_registry.py",
+        "01.APP/browser/archhub-chrome/manifest.json",
+        "01.APP/browser/archhub-chrome/background.js",
+        "01.APP/browser/archhub-chrome/page-kit.js",
+        "05.EVIDENCE/graphout/origin-main-tools.json",
+        "02.TESTS/tests_replica/test_social_inbox_reply.py",
+        "02.TESTS/tests_replica/test_social_web.py",
+        "02.TESTS/tests_js/archhub_chrome.test.cjs",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "03.TOOLS/installer/ArchHub.iss",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

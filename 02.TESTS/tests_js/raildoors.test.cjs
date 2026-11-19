@@ -265,11 +265,13 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('[data-design="home.card"]').filter({hasText: 'Selected task'}).dblclick();
         await page.getByRole('tab', {name:'Selected task',exact:true}).waitFor();
-        await page.getByRole('region', {name:'Conversation',exact:true}).waitFor();
+        // One face for every task (the layout never changes between sessions): the Canvas chosen on one task holds on the next.
+        await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
+        assert.equal(await page.getByRole('region', {name:'Conversation',exact:true}).count(), 0);
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('[data-design="home.card"]').filter({hasText: 'Recent task'}).dblclick();
         await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
-        console.log('PASS per-task faces: new task Workshop; selected Workshop; recent Canvas');
+        console.log('PASS one face: new task Workshop; the Canvas chosen on one task holds on every task');
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.getByRole('region', {name:'Resumed session',exact:true}).waitFor();
         await page.locator('body').press('/');

@@ -569,11 +569,14 @@ class NoGraphServer:
             if not known:
                 raise Refused('desktop bootstrap is required', 403)
             from .library_engines import LIBRARY_ITEM_ENGINES
+            from .settings_owner import dock_layout
             raw = raw.replace(b'/*__ARCHHUB_BOOT__*/ null', json.dumps({
                 'token': self.browser_session_token, 'csrf': self.browser_csrf_token,
                 'first_run': self.studio_first_run is True,
                 'mouse_double_click_ms': _mouse_double_click_ms(),
                 'home_load_ms': LIBRARY_ITEM_ENGINES['tool_workshop']['params'].get('home_load_ms', 3000),
+                # The dock is drawn from his one saved layout at the first frame: no default layout shows first.
+                'dock_layout': dock_layout(settings=self.files['settings'])['dockLayout'],
                 'workshop': {'root': 'app:workshop', 'scope': 'app:workshop'}, 'nograph': True}).encode('utf-8'))
             headers += [('Content-Security-Policy', "default-src 'none'; connect-src 'self'; img-src 'self' data:; "
                          "style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline' "
@@ -1648,10 +1651,11 @@ def r_settings_action(s, req):
         if function == 'setAppearance':
             return {'ok': True, 'result': appearance}
     if function == 'readControls':
+        from .settings_owner import dock_layout as one_dock_layout
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {},
                   'appearanceSettings': rows, 'homeLayout': settings.read().get('homeLayout', {}),
-                  'dockLayout': settings.read().get('dockLayout', {})}
+                  'dockLayout': one_dock_layout(settings=settings)['dockLayout']}
         try:
             result['secrets'] = _secrets()
         except Exception:  # noqa: BLE001

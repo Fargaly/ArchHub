@@ -1194,11 +1194,12 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 
 /* Home 1: a floating single row; extra actions remain in its context menu. */
 .screen-with-composer:has([data-home-page]) .global-composer form{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"scope message tools";align-items:center;min-height:48px;padding:8px 10px!important;gap:10px}
-.screen-with-composer:has([data-home-page]) .composer-scope{margin:0!important;max-width:none}
+.screen-with-composer:has([data-home-page]) .composer-scope{margin:0!important;min-width:0;max-width:220px}
 .screen-with-composer:has([data-home-page]) .composer-scope>button+button,.screen-with-composer:has([data-home-page]) .composer-tools>button:not([aria-label="Add context"]):not([type="submit"]){display:none}
 .screen-with-composer:has([data-home-page]) .composer-input{min-height:28px;height:28px;resize:none;padding:4px 0}
 .screen-with-composer:has([data-home-page]) .composer-tools{flex-wrap:nowrap;gap:6px}
-.screen-with-composer:has([data-home-page]) .composer-scope .tab-button{font-size:12px;max-width:none;white-space:nowrap}
+/* The scope chip is capped and ellipsed, so with both docks open at 1009 px the message box keeps its room. */
+.screen-with-composer:has([data-home-page]) .composer-scope .tab-button{font-size:12px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .resume-session-scroll>.shelf-tabs{position:sticky;top:0;background:var(--color-bg-panel);z-index:2;display:flex;flex-wrap:wrap;flex:none;padding:8px 0}
 .resume-session-scroll>.shelf-tabs button{white-space:nowrap;padding:5px 7px;font-size:11px;flex:none}
 .sessions-rail .resume-session-scroll>.shelf-tabs,.sessions-rail .home-section-heading,.sessions-rail .resume-continue,.sessions-rail .resume-members{display:none}

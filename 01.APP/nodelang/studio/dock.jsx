@@ -11,7 +11,7 @@
   // Workshop over Library|Map on the left; the Inspector on the right, open as before the dock.
   const defaultLayout = width => ({
     left: {w: LEFT.base, c: false, st: [{p: ['workshop'], a: 'workshop', h: 1.15, c: false}, {p: ['library', 'map'], a: 'library', h: 1, c: false}]},
-    right: {c: width < NARROW, st: [slot('insp')]}});
+    right: {c: false, st: [slot('insp')]}});
   // A held record becomes a layout where every known panel sits in exactly one place.
   const normalize = (held, width) => {
     if (!held || !held.left || !held.right) return defaultLayout(width);
@@ -95,38 +95,45 @@
   // "Claude Code / 00.ARCHUB / session-62fdf0706b09" reads "Claude Code · 62fdf0": two sessions of one app are told apart, no raw id.
   const shortName = name => { const [app, , id] = String(name || '').split(' / '); return id ? app + ' \u00b7 ' + id.replace(/^session-/, '').slice(0, 6) : String(name || ''); };
   const onResize = notify => { window.addEventListener('resize', notify); return () => window.removeEventListener('resize', notify); };  // the window width as a React store
+  // Below 1280 px he may open the folded right dock. That choice lives outside any one Dock, so going Home and back (two Dock
+  // mounts) keeps it; it ends when the window is wide again (read as closed from then on) or on Reset.
+  const narrowOpen = {held: false, listeners: new Set(),
+    subscribe(notify) { narrowOpen.listeners.add(notify); return () => narrowOpen.listeners.delete(notify); },
+    read() { if (window.innerWidth >= NARROW) narrowOpen.held = false; return narrowOpen.held; },
+    set(value) { if (value === narrowOpen.read()) return; narrowOpen.held = value; narrowOpen.listeners.forEach(notify => notify()); }};
 
-  // onSave(session, project, layout | null) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
+  // onSave(layout | null) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
   function Dock({face, rightWidth, onRightWidth, onSave, onLayout, panels, controls, onMapHost, children}) {
     const {useData} = window.UI, s = useData();
     // The layout is one user setting (founder 2026-11-18): Home and every session show the same docks, widths and folds.
-    const sessionId = 'all', projectId = '';
-    // Before the one layout was saved, his arrangement lived per session: the most recently saved one (the owner keeps them in save order) is his layout.
-    const kept = s.dockLayout?.sessions || {};
-    const record = kept[sessionId] || Object.values(kept).at(-1) || Object.values(s.dockLayout?.projects || {}).at(-1) || null;
-    // The user's edits show at once; the owner's record is adopted for a session until the first edit there.
+    // The owner holds that one record (and reads an older per-session record as the layout he arranged last).
+    const record = s.dockLayout?.layout || null;
+    // The user's edits show at once and stay while he moves between Home and sessions; the owner holds the same record.
     const [local, setLocal] = React.useState(null);
-    // The default follows the window: crossing 1280 px folds or opens a right dock he has not arranged.
+    // Below 1280 px the right dock is SHOWN folded so the canvas keeps its room. That is display only: it is never saved folded,
+    // and it is back as he set it when the window is wide again. He can still open it while the window is narrow.
     const narrow = React.useSyncExternalStore(onResize, () => window.innerWidth < NARROW, () => false);
-    const layout = React.useMemo(() => local && local.session === sessionId ? local.layout || defaultLayout(window.innerWidth) : normalize(record, window.innerWidth),
-      [local, sessionId, JSON.stringify(record), narrow]);
-    const current = React.useRef(layout);
-    current.current = layout;
-    const save = value => { if (sessionId) onSave(sessionId, projectId, value); };
+    const opened = React.useSyncExternalStore(narrowOpen.subscribe, narrowOpen.read, () => false);
+    const kept = React.useMemo(() => local ? local.layout || defaultLayout(window.innerWidth) : normalize(record, window.innerWidth), [local, JSON.stringify(record)]);
+    const current = React.useRef(kept);
+    current.current = kept;
+    const layout = narrow && !opened && !kept.right.c ? {...kept, right: {...kept.right, c: true}} : kept;
     const change = (next, keep = true) => {
-      if (next === current.current) return;
+      // Until the owner's record has arrived a change would replace his saved layout with the default: it waits for the record.
+      if (next === current.current || !s.dockLayout) return;
       current.current = next;
-      setLocal({session: sessionId, layout: next});
-      if (keep) save(next);
+      setLocal({layout: next});
+      if (keep) onSave(next);
     };
-    const reset = () => { setLocal({session: sessionId, layout: null}); save(null); };  // no layout of its own: the default for this window width
+    const reset = () => { narrowOpen.set(false); setLocal({layout: null}); onSave(null); };  // no layout of his own: the default
+    const reveal = id => { if (narrow && where(current.current, id)?.side === 'right') narrowOpen.set(true); change(show(current.current, id)); };
+    const fold = side => { if (side === 'right' && narrow && !current.current.right.c) narrowOpen.set(!narrowOpen.read()); else change(toggleDock(current.current, side)); };
     React.useImperativeHandle(controls, () => ({
-      show: id => change(show(current.current, id)),
+      show: reveal,
       hide: id => change(hide(current.current, id)),
-      visible: id => visible(current.current, id),
+      visible: id => visible(layout, id),
       reset,
-    }));
-    // The thread beside the canvas needs the room: open docks fold while it shows and come back after (not saved).
+    }));    // The thread beside the canvas needs the room: open docks fold while it shows and come back after (not saved).
     const folded = React.useRef(null);
     React.useLayoutEffect(() => {
       const held = current.current;
@@ -239,7 +246,7 @@
     const tab = (id, side, on, stacked) => <button key={id} type="button" className={'dtab' + (on ? ' on' : '')} role={stacked ? 'tab' : undefined} aria-selected={stacked ? on : undefined} aria-label={stacked ? undefined : 'Open ' + PANELS[id][0]} data-tab={id}
       title={PANELS[id][0] + (stacked ? ': drag onto a panel to tab with it, or onto its upper or lower half to stack' : '')}
       onPointerDown={event => grab(event, {kind: 'tab', id, element: event.currentTarget, x: event.clientX, y: event.clientY, moved: false})}
-      onClick={event => executeAction('ui.select', () => { if (!event.currentTarget.dataset.dragged) change(show(current.current, id)); }, event)}>
+      onClick={event => executeAction('ui.select', () => { if (!event.currentTarget.dataset.dragged) reveal(id); }, event)}>
       <Icon name={PANELS[id][1]} size={14} /><span>{PANELS[id][0]}</span></button>;
     const dock = side => {
       const d = layout[side];
@@ -247,7 +254,7 @@
       const id = side === 'right' ? 'params' : undefined;  // the Properties column keeps its id
       if (d.c) return <div id={id} className={'dock ' + side + ' col'} data-dock={side}>
         <div className="dtabs" role="toolbar" aria-label={side + ' panels'}>{d.st.flatMap(sl => sl.p).map(id => tab(id, side, false, false))}
-          <button type="button" className="icon-btn dcol" aria-label={'Open the ' + side + ' dock'} title="Open" onClick={event => executeAction('ui.select', () => change(toggleDock(current.current, side)), event)}><Icon name="arrow" size={14} /></button></div>
+          <button type="button" className="icon-btn dcol" aria-label={'Open the ' + side + ' dock'} title="Open" onClick={event => executeAction('ui.select', () => fold(side), event)}><Icon name="arrow" size={14} /></button></div>
       </div>;
       return <div id={id} className={'dock ' + side + ' stacked'} data-dock={side}><div className="dstack">{d.st.map((sl, index) => <React.Fragment key={index}>
         {index > 0 && <div className="ssash" role="separator" aria-orientation="horizontal" aria-label={'Resize ' + PANELS[d.st[index - 1].a][0] + ' and ' + PANELS[sl.a][0]}
@@ -255,7 +262,7 @@
         <section className={'dslot' + (sl.c ? ' c' : '')} data-slot={side + ':' + index} aria-label={PANELS[sl.a][0]} style={{flex: sl.c ? '0 0 auto' : sl.h + ' 1 0'}}>
           <div className="dtabs st" role="tablist" aria-label={side + ' panel ' + (index + 1)}>{sl.p.map(id => tab(id, side, id === sl.a, true))}<span className="fill" />
             <button type="button" className="icon-btn scol" aria-label={(sl.c ? 'Open ' : 'Fold ') + PANELS[sl.a][0]} title={sl.c ? 'Open' : 'Fold to its header'} onClick={event => executeAction('ui.select', () => change(toggleSlot(current.current, side, index)), event)}><Icon name={sl.c ? 'arrow' : 'minus'} size={13} /></button>
-            {index === 0 && <button type="button" className="icon-btn dcol" aria-label={'Fold the ' + side + ' dock to icons'} title="Fold the dock to icons" onClick={event => executeAction('ui.select', () => change(toggleDock(current.current, side)), event)}><Icon name="arrange" size={13} /></button>}
+            {index === 0 && <button type="button" className="icon-btn dcol" aria-label={'Fold the ' + side + ' dock to icons'} title="Fold the dock to icons" onClick={event => executeAction('ui.select', () => fold(side), event)}><Icon name="arrange" size={13} /></button>}
           </div>
           <div className="dbody" ref={element => { bodies.current[side + ':' + index] = element; }} />
         </section></React.Fragment>)}</div></div>;

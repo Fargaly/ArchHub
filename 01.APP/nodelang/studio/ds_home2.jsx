@@ -350,7 +350,7 @@
     const inspect = value => {
       // Decided on the latest inspection, not this render's: a deferred select then clear must end cleared.
       setInspection(old => !value.nodeId&&!value.wireId&&!old.nodeId&&!old.wireId ? old : value);
-      if(value.nodeId || value.wireId)dockRef.current?.show('insp');  // the Inspector is a dock panel
+      // Selecting a node never changes his layout: the Inspector shows the selection where he keeps it, and opens only when he opens it.
       setPropertyTab(value.nodeId || value.wireId ? 'Selection' : 'Task');
     };
     React.useEffect(() => {setPropertyTab('Task');}, [fileWorkspace]);
@@ -451,7 +451,7 @@
     };
     const persistWidth = value => persist(() => writeInspectorWidth(value), 'Could not save the Properties width.');
     // Dock layout edits are written in the order they were made; a refused write shows here with Retry.
-    const saveDock = (session, project, layout) => { dockWrites.current = dockWrites.current.then(() => persist(() => api.setDockLayout(session, project, layout), 'Could not save the panel layout.')); };
+    const saveDock = layout => { dockWrites.current = dockWrites.current.then(() => persist(() => api.setDockLayout(layout), 'Could not save the panel layout.')); };
     const showWork = async ({task: target, nodeId, approvalId}) => {
       if (!target) { if (approvalId) u.show('Approve', {id: approvalId}); return; }
       if (target.id !== task?.id) await u.openTaskFile(target.id);

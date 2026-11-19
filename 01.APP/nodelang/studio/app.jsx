@@ -40,7 +40,7 @@
     const [route, setRoute] = React.useState('home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
       [canvasOpened, setCanvasOpened] = React.useState(false),
       [task, setTask] = React.useState(''),
-      [taskFaces, setTaskFaces] = React.useState(() => new Map()),
+      [taskFace, setTaskFace] = React.useState('canvas'),  // the thread pane beside the canvas: one value, the same from one session to the next
       [composerDraft, setComposerDraft] = React.useState({}),
       [modal, setModal] = React.useState(null),
       [toast, setToast] = React.useState(''),
@@ -240,16 +240,14 @@
         return null;
       }
     };
-    const taskFace = taskFaces.get(task) || 'canvas';
-    const setTaskFace = face => setTaskFaces(current => new Map(current).set(task, face));
-    const openTaskFile = async (id, face = taskFaces.get(id) || 'canvas') => {
+    const openTaskFile = async (id, face = taskFace) => {
       const opened = await act(() => api.openTaskGraph(id));
       if (!opened || opened.cancelled) return;
       const held = tabsRef.current;
       const tabs = held.tabs.some(tab => tab.id === id) ? held.tabs : [...held.tabs.filter(tab => tab.kept || tab.id === held.split), {id, kept: false}];
       await act(() => saveCanvasTabs({...held, tabs, active: id, split: held.split === id ? '' : held.split}));
       setTask(id);
-      setTaskFaces(current => new Map(current).set(id, face === 'workshop' ? 'split' : face));
+      setTaskFace(face === 'workshop' ? 'split' : face);
       go('task-file');
     };
     const keepTaskTab = id => saveCanvasTabs({...tabsRef.current, tabs: tabsRef.current.tabs.map(tab => tab.id === id ? {...tab, kept: true} : tab)});

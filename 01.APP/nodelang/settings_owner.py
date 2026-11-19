@@ -720,20 +720,26 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
 DOCK_PANELS = ('workshop', 'library', 'map', 'insp')
 
 
+def _one_dock_layout(held):
+    """The user's one dock layout. A record from when each session kept its own gives the one he arranged last (the last entry)."""
+    if 'layout' in held or not held.get('sessions'):
+        return held.get('layout')
+    return list(held['sessions'].values())[-1]
+
+
 def dock_layout(function='readDockLayout', args=(), settings=None):
-    """Canvas dock layout: one record per session, its project's last one as the fallback, in the Settings owner file.
+    """Canvas dock layout: ONE record for the user, in the Settings owner file. Every session opens with it;
+    switching session, going Home and back, or a restart leave it as he set it.
 
     The right dock's width is the existing 'Appearance.Inspector width' parameter, so it is not stored here."""
     from .nograph_server import JsonFile
     from .session_files import profile_directory
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     if function == 'setDockLayout':
-        session, project, layout = args if len(args) == 3 else (None, None, None)
-        def valid_id(item):
-            return type(item) is str and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}', item))
-        if not valid_id(session) or project != '' and not valid_id(project):
-            raise ValueError('Choose the session this dock layout belongs to.')
-        if layout is not None:  # None is Reset: this session and its project go back to the default layout
+        if len(args) != 1:
+            raise ValueError('Choose one dock layout.')
+        layout = args[0]
+        if layout is not None:  # None is Reset: back to the default layout
             if type(layout) is not dict or set(layout) != {'left', 'right'}:
                 raise ValueError('Choose a left and a right dock.')
             placed = []
@@ -753,17 +759,8 @@ def dock_layout(function='readDockLayout', args=(), settings=None):
             if any(panel not in DOCK_PANELS for panel in placed) or len(set(placed)) != len(placed):
                 raise ValueError('Each dock panel can sit in one place only.')
         with settings.lock:
-            held = settings.read().get('dockLayout', {})
-            sessions = {key: value for key, value in held.get('sessions', {}).items() if key != session}
-            projects = {key: value for key, value in held.get('projects', {}).items() if key != project}
-            if layout is not None:
-                sessions[session] = layout
-                if project:
-                    projects[project] = layout
-            # shortcut: keeps the 200 most recently changed sessions; older ones fall back to their project's layout
-            settings.update({'dockLayout': {'sessions': dict(list(sessions.items())[-200:]), 'projects': projects}})
-    held = settings.read().get('dockLayout', {})
-    return {'dockLayout': {'sessions': held.get('sessions', {}), 'projects': held.get('projects', {})}}
+            settings.update({'dockLayout': {'layout': layout}})  # the one record replaces any per-session records
+    return {'dockLayout': {'layout': _one_dock_layout(settings.read().get('dockLayout', {}))}}
 
 
 def appearance_settings(function='readControls', args=(), settings=None):

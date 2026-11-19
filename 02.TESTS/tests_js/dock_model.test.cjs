@@ -19,7 +19,7 @@ test('default layout: Workshop over Library|Map on the left, Inspector on the ri
   assert.deepEqual(tabs(wide, 'right'), ['insp']);
   assert.equal(wide.right.c, false);
   assert.equal(dock.defaultLayout(1366).right.c, false, 'the Inspector stays open where it is open today');
-  assert.equal(dock.defaultLayout(1009).right.c, true, 'the right dock starts folded to icons on a narrow window');
+  assert.equal(dock.defaultLayout(1009).right.c, false, 'a narrow window folds the right dock for display only: the layout itself never holds that fold');
   assert.equal(dock.defaultLayout(1009).left.c, false);
 });
 
@@ -58,7 +58,7 @@ test('an emptied dock takes a panel back from its edge', () => {
 });
 
 test('collapse to the header, fold the dock, show and hide', () => {
-  const start = dock.defaultLayout(1009);
+  const start = dock.toggleDock(dock.defaultLayout(1009), 'right');  // a right dock he folded
   assert.equal(dock.visible(start, 'insp'), false);
   const shown = dock.show(start, 'insp');
   assert.equal(shown.right.c, false);

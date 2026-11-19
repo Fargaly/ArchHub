@@ -97,9 +97,13 @@ const {chromium} = require('playwright');
       await shot('dock-collapsed-' + width);
 
       // The layout is the owner's record: it is still there after a reload (the write is back in the owner before the reload).
-      await page.waitForFunction(() => (window.ArchHubAPI.getSnapshot().dockLayout?.sessions?.all?.right?.st || []).some(slot => slot.p.includes('map') && slot.c));
+      await page.waitForFunction(() => (window.ArchHubAPI.getSnapshot().dockLayout?.layout?.right?.st || []).some(slot => slot.p.includes('map') && slot.c));
       await page.reload();
       await openCanvas();
+      await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().dockLayout?.layout);  // the owner's record has arrived
+      await settle();
+      // Below 1280 the right dock shows folded again after a reload (display only); the layout under it is what he set.
+      if (narrow) { assert.equal(await folded('right'), true); await page.getByRole('button', {name: 'Open Inspector', exact: true}).click(); await page.waitForFunction(() => document.querySelectorAll('[data-dock-workspace] .dock.right .dslot').length === 2); await settle(); }
       assert.deepEqual(await slots('right'), ['map* (collapsed)', 'insp*'], width + ': the layout survives a reload');
       assert.deepEqual(await slots('left'), ['workshop|library*']);
       await shot('dock-after-reload-' + width);

@@ -65,13 +65,28 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
                  for key, item, x in [('list', 'n_list', 800), ('slice', 's_slice', 1140), ('count', 's_count', 1480)]]
         nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
         nodes[1]['params']['count'] = '3'
+        # Row 11: a step really running for the session's named agent carries that agent's presence chip.
+        nodes[1]['result'] = {'status': 'Running'}
         view = client.workshop('openTaskGraph', opened_task)
         opened = client.files('read', path=view['path'], id=view['id'])
+        for node in opened['document']['nodes']:
+            if node['type'] == 'thing.agent':
+                node['params']['agent'] = 'Drawing coordinator'
         opened['document']['nodes'] = [*opened['document']['nodes'], *nodes]
         opened['document']['wires'] = [
             {'id': 'first', 'from': {'node': 'list', 'socket': 'value'}, 'to': {'node': 'slice', 'socket': 'items'}},
             {'id': 'second', 'from': {'node': 'slice', 'socket': 'items_out'}, 'to': {'node': 'count', 'socket': 'items'}}]
         client.files('save', path=view['path'], document=opened['document'])
+        # Row 11: the other session has one step waiting for approval, on the same named agent.
+        other = client.workshop('openTaskGraph', working_task)
+        held = client.files('read', path=other['path'], id=other['id'])
+        for node in held['document']['nodes']:
+            if node['type'] == 'thing.agent':
+                node['params']['agent'] = 'Drawing coordinator'
+        waiting = copy.deepcopy(nodes[2])
+        waiting['result'] = {'status': 'Waiting for approval'}
+        held['document']['nodes'] = [*held['document']['nodes'], waiting]
+        client.files('save', path=other['path'], document=held['document'])
         client.workshop('openTaskGraph', opened_task)
         result = subprocess.run(
             ['node', '02.TESTS/tests_js/design_canvas_live.cjs'],

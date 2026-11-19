@@ -1404,6 +1404,12 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .node-canvas[data-flow] [data-ds-node]>:not(.node-header){display:none!important}
 .node-canvas .flow-socket{width:10px;height:10px;border-radius:50%;background:var(--color-bg-panel);border:2px solid var(--color-ink-muted)}
 .canvas-toolbar [data-design="canvas.flow"][aria-pressed=true]{background:var(--color-bg-hover);color:var(--color-ink)}
+/* DESIGNCANVAS row 11, agent presence: a named chip on the step, with Follow. */
+.v48-presence{pointer-events:all;display:flex;align-items:center;gap:6px;height:24px;padding:0 10px 0 3px;border-radius:999px;background:var(--color-accent);color:var(--color-on-fill);font:600 12px var(--type-family-ui);white-space:nowrap;box-shadow:var(--e1)}
+.v48-presence[data-state=waiting]{background:var(--color-warn)}
+.v48-presence em{font-style:normal;font-weight:500}
+.v48-presence button{margin-left:6px;height:20px;padding:0 8px;border-radius:999px;border:1px solid currentColor;background:transparent;color:inherit;font:600 10.5px var(--type-family-ui);opacity:.85}
+.v48-presence button:hover,.v48-presence button[aria-pressed=true]{opacity:1;background:color-mix(in srgb,currentColor 18%,transparent)}
 /* ONE BABOOM panel (spec 5, as measured on the design prototype): 380 wide, radius 10. Its header: his sprite at .4 (the 192 px atlas cell drawn 32 x 35), his name 14 bold, his role 12, a 30 px close. */
 .pet-bubble{--baboom-panel-width:380px;width:min(var(--baboom-panel-width),calc(100vw - 32px));max-width:none;border-radius:var(--radius-xl)}
 .bbm-ph b{display:block;font-size:calc(14px * var(--text-scale,1));font-weight:700}.bbm-ph b+span{font-size:calc(12px * var(--text-scale,1));color:var(--color-ink-soft)}

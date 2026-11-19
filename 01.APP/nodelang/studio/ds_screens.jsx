@@ -805,6 +805,19 @@
     const canvasTouched = React.useRef(false);
     React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
     const stopAutoFrame = () => { canvasTouched.current = true; };
+    // Follow: the view moves with the agent's step (a view only); wheel, a canvas press or Esc stops it.
+    const [following, setFollowing] = React.useState(false);
+    const stopFollow = () => { if (following) { setFollowing(false); u.setToast('Stopped following.'); } };
+    // The step's centre goes to the centre of the canvas area no dock covers, under the zoom band and above what floats at its foot,
+    // the composer and the zoom bar, measured (design panTo).
+    const centreOn = n => {
+      const box = area.current?.getBoundingClientRect(); if (!box?.width) return;
+      let x0 = box.left, x1 = box.right, y1 = box.bottom; const y0 = box.top + 56;
+      for (const foot of [zoomBar.current, window.document.querySelector('.v22g-composer-dock>form')]) { const b = foot?.getBoundingClientRect(); if (b?.width && b.top < box.bottom && b.bottom > y0 && b.right > box.left && b.left < box.right) y1 = Math.min(y1, b.top); }
+      for (const dock of window.document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
+      const card = area.current.querySelector('[data-graph-node="' + n.id + '"]'), z = view.current.zoom;
+      updateView({zoom: z, pan: {x: (x0 + x1) / 2 - box.left - (n.x + (card?.offsetWidth || 268) / 2) * z, y: (y0 + y1) / 2 - box.top - (n.y + (card?.offsetHeight || 240) / 2) * z}}, false);
+    };
     // Flow view is this open tab's own view state (Settings owner, canvasTabs); the session file never changes.
     const flowTab = embedded && !preview ? (u.canvasTabs?.tabs || []).find(tab => tab.id === u.canvasTabs.active) : null, flowView = !!flowTab?.flow;
     const toggleFlow = () => u.act(() => u.saveCanvasTabs({...u.canvasTabs, tabs: u.canvasTabs.tabs.map(tab => tab === flowTab ? {...tab, flow: !flowView} : tab)}))
@@ -1243,6 +1256,22 @@
     const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
     const shownIds = new Set(visible.map(n => n.id));
     const sessionNode = visible.find(n => n.fixed && n.type === 'thing.session');
+    // Agent presence: a named chip on the step an agent is on. Only a step that is really running or waiting, with a named agent, shows one.
+    const busyStep = embedded && !preview ? s.graph.nodes.find(n => !n.fixed && n.status === 'Running') || s.graph.nodes.find(n => !n.fixed && /approval|waiting/i.test(n.status)) : null;
+    // A step inside a collapsed group carries its chip on the group shown at this level (design: the outer collapsed group).
+    const presenceStep = (() => { const seen = new Set(); for (let at = busyStep; at && !seen.has(at.id); at = s.graph.nodes.find(row => row.id === at.parent)) { seen.add(at.id); const shown = visible.find(row => row.id === at.id); if (shown) return shown; } return null; })();
+    const presenceTask = presenceStep && (s.tasks || []).find(row => row.id === u.canvasTabs?.active);
+    const presenceAgent = presenceStep ? s.graph.nodes.find(row => row.id === busyStep.agentWork?.owner)?.params?.agent || sessionNode?.params?.agent || visible.find(n => n.fixed && n.type === 'thing.agent')?.params?.agent || presenceTask?.agents?.[0] || presenceTask?.owner || '' : '';
+    React.useEffect(() => {
+      if (following && presenceStep) centreOn(presenceStep);
+    }, [following, presenceStep?.id, presenceStep?.x, presenceStep?.y]);
+    // Esc stops Follow wherever the focus is (design): one window listener, only while following.
+    React.useEffect(() => {
+      if (!following) return;
+      const esc = event => { if (event.key === 'Escape') stopFollow(); };
+      window.addEventListener('keydown', esc, true);
+      return () => window.removeEventListener('keydown', esc, true);
+    }, [following]);
     const scopeNodes = parent ? new Map(s.graph.nodes.map(n=>[n.id,n])) : null;
     const scopeEnd = (id,port,ports) => {
       if(shownIds.has(id))return {node:id,port};
@@ -1430,7 +1459,7 @@
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <WorkPanel id="canvas-work" minSize={240}>
    <div ref={attachArea} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
-        onPointerDownCapture={event=>{stopAutoFrame();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
+        onPointerDownCapture={event=>{stopAutoFrame();if(!event.target.closest?.('.react-flow__node,.v48-presence,[data-follow]'))stopFollow();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={()=>{stopAutoFrame();stopFollow();}} onDragStartCapture={stopAutoFrame}
         onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
@@ -1474,10 +1503,12 @@
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionMode={crossing?'partial':'full'} onSelectionEnd={event=>setSelected(boxSelection(flowNodes.map(f=>({id:f.id,x:f.position.x,y:f.position.y,w:f.measured?.width||0,h:f.measured?.height||0})),boxFrom.current.at,toFlow(event),event.clientX<boxFrom.current.x))}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}</FlowStage>
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
+       {presenceAgent && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-presence nodrag nopan" data-design="canvas.presence" data-state={busyStep.status==='Running'?'working':'waiting'} data-on={presenceStep.id} style={{position:'absolute',left:presenceStep.x,top:presenceStep.y-32}}><window.UI.Av id={presenceAgent} size={18}/><b>{presenceAgent}</b><em>{busyStep.status==='Running'?'working':'needs you'}</em>
+         <button type="button" data-design="canvas.follow" data-follow="" aria-pressed={following} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setFollowing(!following);u.setToast(following?'Stopped following.':'Following '+presenceAgent+': the view moves with it. Scroll, click the canvas or press Esc to stop.');}},event)}>{following?'Following · Stop':'Follow'}</button></div></RF.ViewportPortal>}</FlowStage>
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
-    {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(areaWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).length} more steps →</button>}
+    {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(areaWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{(count=>count+' more step'+(count>1?'s':'')+' →')(visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).length)}</button>}
     <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
 
    </div>

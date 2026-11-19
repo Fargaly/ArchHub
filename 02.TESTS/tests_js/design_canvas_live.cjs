@@ -55,8 +55,52 @@ const {chromium} = require('playwright');
       await page.waitForFunction(count => document.querySelectorAll('[aria-label="Workflow canvas"] [data-port-key]').length === count && !document.querySelector('[data-flow-socket]'), sockets);
       // Off is written to the owner before the next width: the open tab holds no Flow view.
       for (let tries = 0; (await snapshot(() => window.ArchHubAPI.readCanvasTabs())).canvasTabs.tabs.some(tab => tab.flow); tries++) assert.ok(tries < 200, width + ': the owner keeps the Flow view off');
-    }
+      // Row 11: steps past the right edge are counted on the edge pill, in the singular for one.
+      const more = page.locator('[data-design="canvas.more"]');
+      if (await more.count()) assert.match(await more.innerText(), /^(1 more step|[2-9]\d* more steps) →$/);    }
 
+    // Row 11: the running step shows its agent's presence chip, working.
+    await page.setViewportSize({width: 1440, height: 900});
+    const presence = canvas.locator('[data-design="canvas.presence"]'), follow = presence.locator('[data-design="canvas.follow"]');
+    await presence.waitFor();
+    assert.equal(await presence.getAttribute('data-state'), 'working');
+    assert.equal(await presence.getAttribute('data-on'), 'slice');
+    assert.match(await presence.innerText(), /Drawing coordinator\s*working/);
+    // Follow centres the step in the canvas area no dock covers: under the 56 px zoom band, above the composer and zoom bar as measured.
+    const centred = id => page.waitForFunction(id => {
+      const pane = document.querySelector('[aria-label="Workflow canvas"]').getBoundingClientRect(), card = document.querySelector('[aria-label="Workflow canvas"] [data-graph-node="' + id + '"]').getBoundingClientRect();
+      let x0 = pane.left, x1 = pane.right, y1 = pane.bottom; const y0 = pane.top + 56;
+      for (const foot of [document.querySelector('[aria-label="Workflow canvas"] .canvas-toolbar'), document.querySelector('.v22g-composer-dock>form')]) { const b = foot?.getBoundingClientRect(); if (b?.width && b.top < pane.bottom && b.bottom > y0 && b.right > pane.left && b.left < pane.right) y1 = Math.min(y1, b.top); }
+      for (const dock of document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
+      return Math.abs(card.left + card.width / 2 - (x0 + x1) / 2) < 4 && Math.abs(card.top + card.height / 2 - (y0 + y1) / 2) < 4;
+    }, id);
+    await page.getByRole('button', {name: 'Fit', exact: true}).click();
+    await follow.click();
+    assert.equal(await follow.getAttribute('aria-pressed'), 'true');
+    await centred('slice');
+    // A press on a node keeps Follow on; Esc with the focus in the composer stops it.
+    await canvas.locator('[data-graph-node="count"] .node-header').first().click();
+    assert.equal(await follow.getAttribute('aria-pressed'), 'true', 'a press on a node keeps Follow on');
+    await page.locator('textarea:visible').first().press('Escape');
+    await page.waitForFunction(() => document.querySelector('[data-design="canvas.follow"]').getAttribute('aria-pressed') === 'false');
+    // A wheel on the canvas stops it too.
+    await follow.click();
+    await page.waitForFunction(() => document.querySelector('[data-design="canvas.follow"]').getAttribute('aria-pressed') === 'true');
+    await canvas.dispatchEvent('wheel', {deltaY: 120});  // a wheel on the canvas element, not page-wide input
+    await page.waitForFunction(() => document.querySelector('[data-design="canvas.follow"]').getAttribute('aria-pressed') === 'false');
+    await shot('design-canvas-presence-1440');
+    // In a collapsed group the chip sits on the group.
+    const group = await snapshot(() => window.ArchHubAPI.groupNodes(['slice']).then(node => node.id));
+    await page.waitForFunction(id => document.querySelector('[data-design="canvas.presence"]')?.dataset.on === id, group);
+    await follow.click();
+    await centred(group);
+    await follow.click();
+
+    // Row 11: the other session's step waits for approval: its chip says the agent needs you.
+    await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
+    await page.locator('[data-design="home.card"]').filter({hasText: 'Model view audit'}).dblclick();
+    await page.waitForFunction(() => document.querySelector('[data-design="canvas.presence"]')?.dataset.state === 'waiting');
+    assert.match(await presence.innerText(), /Drawing coordinator\s*needs you/);
     assert.deepEqual(errors, []);
     console.log('PASS design_canvas_live at 1009, 1440 and 1920');
   } finally {

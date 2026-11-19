@@ -681,6 +681,10 @@
       <div style={cap}>Output</div>
       {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}
       <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
+      {/* Rerun and Fork, the node menu's own commands (window.UI.nodeCommand): one click from Properties too (Book). */}
+      {!n.fixed && !(n.agentWork?.runnable === false || n.agentWork?.role === 'session') && <div className="flex" data-node-commands="" style={{gap: 6, marginTop: 12}}>
+        {['menu.rerun', 'menu.fork'].map(id => <Btn sm key={id} data-command={id} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => window.UI.nodeCommand(id, n)).then(done => { if (done?.approvalId) u.show('Approve', {id: done.approvalId}); })}, event)}>{(window.ArchHubCommandRegistry?.commands || []).find(row => row.id === id)?.label || (id === 'menu.rerun' ? 'Rerun' : 'Fork')}</Btn>)}
+      </div>}
       {(s.libraryPorts || []).some(item => item.engine === n.type && item.available === false && item.ports?.source?.some(p => p.id === 'problems')) && <window.UI.CheckProblems />}
     </Tag>;
   }

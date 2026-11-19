@@ -1,5 +1,9 @@
 // Menus stay anchored to the object. Dialogs are reserved for a decision/form.
 (() => {
+  // One owner for a node's Rerun and Fork (registry ids menu.rerun / menu.fork): the node menu and the Properties pane
+  // call these same actions. Rerun is Run again (F10): again=true does not reuse cached step results.
+  const NODE_COMMANDS = {'menu.rerun': n => api.runNode(n.id, true), 'menu.fork': n => api.forkNode(n.id)};
+  (window.UI = window.UI || {}).nodeCommand = (id, n) => NODE_COMMANDS[id](n);
   // COMMANDREGISTRY: both menu and palette use this bounded, data-only reader.
   const contextNames = {'Node menu':'node','Group menu':'group','Wire menu':'wire',
     'Port menu':'socket','Selection menu':'selection','Canvas menu':'canvas','Task tab menu':'session',
@@ -148,6 +152,7 @@
       });else if (result !== null) close();
     };
     const bind = (id, action, label = null, disabled = false) => ({id, action, label, disabled});
+    const command = id => () => run(() => window.UI.nodeCommand(id, n));
     let groups = [];
     if (kind === 'Open tasks') {
       groups = [s.tasks.filter(row => row.status !== 'ARCHIVED' && !u.canvasTabs.tabs.some(tab => tab.id === row.id)).map(row =>
@@ -200,7 +205,7 @@
       else groups=[[bind('menu.properties', ()=>{close();u.setSelectedNodeId(n.id);}, null, false),
         ...(!n.fixed||n.type==='thing.session'?[bind('menu.add.parameter', ()=>u.show('Add parameter',{id:n.id}), null, false)]:[]),
         bind('menu.show.output', ()=>u.show('Node output',{id:n.id}), null, false),bind('menu.ask.the.agent', ()=>{close();u.setSelectedNodeId(n.id);u.setTaskFace('split');}, null, false)],
-        [bind('menu.rerun', ()=>run(()=>api.runNode(n.id)), null, false),bind('menu.run.to.here', ()=>run(()=>api.runToHere(n.id)), null, false),
+        [bind('menu.rerun', command('menu.rerun'), null, false),bind('menu.run.to.here', ()=>run(()=>api.runToHere(n.id)), null, false),
         bind('menu.unfreeze', ()=>run(()=>api.setNodeFlags(n.id,{frozen:!n.frozen})), n.frozen?'Unfreeze':'Freeze', false),
         bind('menu.unbypass', ()=>run(()=>api.setNodeFlags(n.id,{bypassed:!n.bypassed})), n.bypassed?'Unbypass':'Bypass', false)],
         [bind('menu.duplicate', ()=>run(()=>api.duplicateNodes([n.id])), null, false),bind('menu.copy', ()=>run(()=>api.copyNodes([n.id])), null, false),bind('menu.cut', ()=>run(()=>api.cutNodes([n.id])), null, false),
@@ -227,7 +232,7 @@
       const names = Object.fromEntries(window.ArchHubCommandRegistry.commands.filter(c => c.menuPage).sort((a,b)=>a.menu_order-b.menu_order).map(c => [c.action.route, c.label]));
       groups = [Object.keys(names).map(route => bind('page.' + route, () => u.go(route))), [bind('menu.settings', () => u.go('settings/Account'), null, false)]];
     }
-    if(more&&kind==='Node menu'&&n)groups=[[bind('menu.back', ()=>setMore(false), null, false)],[bind('menu.unpin.output', ()=>run(()=>api.setNodeFlags(n.id,{pinned:!n.pinned})), n.pinned?'Unpin output':'Pin output', false),bind('menu.fork', ()=>run(()=>api.forkNode(n.id)), null, false),bind('menu.repeat.this', ()=>{close();u.schedule(n.id);}, null, false)],[bind('menu.trace.back', ()=>{close();u.trace(n.id,'back');}, null, false),bind('menu.trace.forward', ()=>{close();u.trace(n.id,'forward');}, null, false)]];
+    if(more&&kind==='Node menu'&&n)groups=[[bind('menu.back', ()=>setMore(false), null, false)],[bind('menu.unpin.output', ()=>run(()=>api.setNodeFlags(n.id,{pinned:!n.pinned})), n.pinned?'Unpin output':'Pin output', false),bind('menu.fork', command('menu.fork'), null, false),bind('menu.repeat.this', ()=>{close();u.schedule(n.id);}, null, false)],[bind('menu.trace.back', ()=>{close();u.trace(n.id,'back');}, null, false),bind('menu.trace.forward', ()=>{close();u.trace(n.id,'forward');}, null, false)]];
     if (n?.agentWork?.runnable === false || n?.agentWork?.role === 'session') groups = groups.map(group=>group.filter(row=>!['Rerun','Run to here','Repeat this'].includes(row.label || window.ArchHubCommandRegistry.commands.find(c=>c.id===row.id)?.label)));
     groups = window.UI.commandGroups(kind, groups);
     return groups;

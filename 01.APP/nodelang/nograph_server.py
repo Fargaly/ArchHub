@@ -206,6 +206,9 @@ class NoGraphServer:
         self.thread = None
         self.cloud_relay = None
         self._relay_lock = threading.Lock()
+        # Who holds the relay and the trigger service: taken briefly by close() and by the warm-up when it hands over
+        # what it made, never while a relay is being started (close() must not wait for a slow start).
+        self._owned_lock = threading.Lock()
 
     def busy_reason(self):
         """Why an update restart must wait now, read from this desktop's own live work; None when idle.
@@ -241,19 +244,51 @@ class NoGraphServer:
         self._messages.value = _list_messages()
         self._messages.at = time.time()
         self._session.value = self._read_session()
+        self.triggers = None  # F38: TriggerService scans session files; build it after listen
         self.thread = threading.Thread(target=self.httpd.serve_forever, name='archhub-nograph-http', daemon=True)
         self.thread.start()
         port_file = self.state_dir / "nograph-http-port"
         port_file.write_text("%d\n" % self.port, encoding="ascii")
+        # Hosts and local probes are Cached: start their background refresh without blocking listen.
         self._hosts.get()
         self._local.get()
-        self.ensure_cloud_relay()
-        from .canvas_triggers import TriggerService
-        self.triggers = TriggerService(pause_settings=self.files['settings'])
-        threading.Thread(target=self.triggers.refresh, name='archhub-triggers', daemon=True).start()
+        # F38 / SLOWHOME: cloud relay and TriggerService must not hold "server up" for tens of seconds.
+        threading.Thread(target=self._warm_after_listen, name='archhub-nograph-warm', daemon=True).start()
         threading.Thread(target=_refresh_opencode_plugin, args=(self.state_dir,), name='archhub-opencode-plugin',
                          daemon=True).start()
         return self
+
+    def _warm_after_listen(self):
+        """Finish non-admission work after HTTP is already answering Home."""
+        try:
+            self.ensure_cloud_relay()
+        except Exception as refused:  # noqa: BLE001 - Home stays up; relay is optional warm-up
+            print('  cloud relay: warm-up skipped -- %s' % refused, flush=True)
+        try:
+            if self._closing.is_set():
+                return  # closing: the warm-up makes nothing more
+            from .canvas_triggers import TriggerService
+            service = TriggerService(pause_settings=self.files['settings'])
+            if not self._own('triggers', service):
+                return
+            service.refresh()
+        except Exception as refused:  # noqa: BLE001 - schedules arm when ready; boot must not wait
+            print('  triggers   : warm-up skipped -- %s' % refused, flush=True)
+
+    def _own(self, name, made):
+        """Hand what the warm-up made to the server (relay or trigger service); True when the server now owns it.
+
+        Owned by the server's lifecycle: once close() has started, nothing is attached and what was made is closed
+        here, since close() has already passed it by."""
+        with self._owned_lock:
+            if not self._closing.is_set():
+                setattr(self, name, made)
+                return True
+        try:
+            made.close(**({'timeout_seconds': RELAY_NODE['params']['close_timeout_seconds']} if name == 'cloud_relay' else {}))
+        except Exception as stuck:  # noqa: BLE001 - closing the app goes on
+            print('  %s: made during close, did not stop -- %s' % (name, stuck), flush=True)
+        return False
 
     def health_check(self):
         import sqlite3
@@ -281,6 +316,8 @@ class NoGraphServer:
         Workshop send/read are claimed. Each claimed call still passes decide().
         """
         with self._relay_lock:
+            if self._closing.is_set():
+                return None  # closing: no relay is started or attached any more
             held = self.cloud_relay
             if held is not None and not restart and not held._stop.is_set():
                 return held
@@ -293,22 +330,28 @@ class NoGraphServer:
                 from .cloud_relay import HOST_EFFECT, HOST_READ, McpWorkshopAgents, start_cloud_relay
                 from .workshop_mailbox import profile_database
                 agents = McpWorkshopAgents(mailbox_path=profile_database())
-                self.cloud_relay = start_cloud_relay(
+                made = start_cloud_relay(
                     state_dir=self.state_dir, respond=lambda _text: {}, execute=lambda _text: {},
                     app_kinds=(HOST_READ, HOST_EFFECT), workshop_caller=agents.call)
             except Exception as refused:  # noqa: BLE001
                 print('  cloud relay: not started -- %s' % refused, flush=True)
-                self.cloud_relay = None
-            return self.cloud_relay
+                made = None
+            if made is None:
+                with self._owned_lock:
+                    self.cloud_relay = None
+                return None
+            return made if self._own('cloud_relay', made) else None
 
     def close(self):
         self._closing.set()   # admission is closed for good, and every admitted request is cancelled
         self._stop_epoch += 1
         from .acp_client import close_all
         close_all()   # no agent this app started outlives it
-        if getattr(self, 'triggers', None) is not None:
-            self.triggers.close()
-        relay, self.cloud_relay = self.cloud_relay, None
+        with self._owned_lock:  # after this, the warm-up attaches nothing (_own closes what it makes)
+            triggers, self.triggers = getattr(self, 'triggers', None), None
+            relay, self.cloud_relay = self.cloud_relay, None
+        if triggers is not None:
+            triggers.close()
         if relay is not None:
             try:
                 relay.close(timeout_seconds=RELAY_NODE['params']['close_timeout_seconds'])

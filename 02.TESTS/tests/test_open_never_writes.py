@@ -1,4 +1,5 @@
-"""Opening a saved workflow on the Canvas changes nothing on disk; only his own edit, Tidy up or Save writes it."""
+"""Opening a saved workflow on the Canvas changes nothing on disk; only his own edit, Tidy up or Save writes it, and an
+edit never writes an arrangement over his saved places."""
 import copy
 import json
 import os
@@ -27,7 +28,7 @@ def test_opening_the_canvas_keeps_the_file_and_his_tidy_up_saves(tmp_path, monke
         items = {row['id']: row for row in catalogue()}
         nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                   'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
-                 # Cards on top of each other: a file without places of its own gets the tidy first view (saved places are shown as saved).
+                 # Cards close together and no canvasLayout: still shown and kept exactly where they were saved.
                  for key, item, x in [('list', 'n_list', 800), ('slice', 's_slice', 860), ('count', 's_count', 920)]]
         view = client.workshop('openTaskGraph', task)
         opened = client.files('read', path=view['path'], id=view['id'])
@@ -52,6 +53,12 @@ def test_opening_the_canvas_keeps_the_file_and_his_tidy_up_saves(tmp_path, monke
 
         studio('open')
         assert path.read_bytes() == before and path.stat().st_mtime_ns == stamp, 'opening the Canvas wrote the saved workflow'
+        places = {node['id']: node['position'] for node in json.loads(before)['nodes']}
+        studio('edit')
+        edited = json.loads(path.read_bytes())
+        assert {node['id']: node['position'] for node in edited['nodes']} == places, 'an edit moved saved places'
+        assert 'canvasLayout' not in edited['properties'], 'an edit wrote an arrangement'
+        assert next(node for node in edited['nodes'] if node['id'] == 'slice')['params']['count'] == 3, 'the edit reached the file'
         studio('arrange')
         saved = json.loads(path.read_bytes())
         assert saved['properties']['canvasLayout'] == 'v48'

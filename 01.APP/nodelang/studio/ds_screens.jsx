@@ -949,15 +949,7 @@
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
     const groupMenuTimer=React.useRef(null);
     React.useEffect(()=>()=>clearTimeout(groupMenuTimer.current),[active,scope,u.modal?.kind]);
-    React.useLayoutEffect(() => {
-      if (!active || preview || parent || requestState !== 'loaded' || s.graph.canvasLayout === 'v48' || canvasTouched.current) return;
-      // Decided once at open: saved positions are shown as saved; only a file whose cards really lie on top of each
-      // other (less than one card width apart, 256 px) gets the first tidy view. Library adds place cards 280 px apart.
-      const placed = sourceNodes.filter(n => !n.fixed);
-      if (!placed.some((a, i) => placed.some((b, j) => j > i && Math.abs(a.x - b.x) < 256 && Math.abs(a.y - b.y) < 160))) return;
-      const frame = window.requestAnimationFrame(() => u.act(() => api.arrangeGraph(true)));
-      return () => window.cancelAnimationFrame(frame);
-    }, [active, requestState, scope, s.graph.canvasLayout]);
+    // A file opens showing its saved places, never an arrangement over them (only Tidy up arranges).
     // A card keeps its object while its node and its shown place are the same objects (stable props for the engine).
     const shownCards = React.useRef(new Map());
     const visible = sourceNodes.map(n => {

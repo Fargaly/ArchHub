@@ -279,8 +279,7 @@ async function court() {
     await open.click();
     await flow.locator('.react-flow__node[data-id="n0"]').waitFor({timeout: 30000});
     await page.waitForTimeout(1500);
-    // What the file holds after the reload (read from the file, not the view: a reopened file can be shown arranged,
-    // and the next edit then keeps that arrangement, as an open-then-edit does).
+    // What the file holds after the reload, read from the file itself.
     out.dropKept[0].saved = await page.evaluate(async nodeId => { const g = window.ArchHubAPI.getSnapshot();
       const task = g.tasks.find(t => t.sessionPath === g.sessionFile); const file = await window.ArchHubAPI.readTaskPreview(task.id);
       const n = file.nodes.find(r => r.id === nodeId); return {x: n.x, y: n.y}; }, out.dropKept[0].id);

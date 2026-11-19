@@ -1569,7 +1569,6 @@ api.saveResearchDecision=async values=>{
 
 // Canvas state is the portable file document; gestures never round-trip a graph.
 let systemProjection=null;
-let shownLayout=null;  // {id, positions}: the on-screen first arrangement of the open file, not in the document until his first edit
 let sessionDocument=null, sessionPath='', fileDirectory='', fileHistory=[], fileFuture=[], autosaveTimer=null, fileWrites=Promise.resolve(), runEpoch=0, fileNavigation=0;
 let sessionBreadcrumbs=[];
 api.enterSession=async id=>{
@@ -1693,19 +1692,19 @@ function projectGroups(nodes,wires){
 let projectedNodes=new Map();
 function projectFile(){
  if(!sessionDocument)return;
- const properties=sessionDocument.properties||{}, shown=shownLayout?.id===sessionDocument.id&&properties.canvasLayout!=='v48'?shownLayout.positions:null;
+ const properties=sessionDocument.properties||{};
  // Groups, bound values and dataset columns read other nodes (and groups are completed in place below): always fresh.
  // Members are only read by their group, so they keep their projection like any other card.
  const readsOthers=node=>node.children||node.frameMembers||node.bind||node.type==='data.field';
  const context=JSON.stringify([properties.taskContext?.task||'',state.libraryPorts.length]), kept=new Map();
  const nodes=sessionDocument.nodes.map(node=>{
-  if(shown||readsOthers(node))return fileNode(shown?.[node.id]?{...node,position:shown[node.id]}:node);
+  if(readsOthers(node))return fileNode(node);
   const stamp=context+JSON.stringify(node), held=projectedNodes.get(node.id);
   const projected=held&&held.stamp===stamp&&held.ports===state.libraryPorts?held.node:fileNode(node);
   kept.set(node.id,{stamp,ports:state.libraryPorts,node:projected});return projected;
  });
  projectedNodes=kept;
- const graph={...properties,...(shown?{canvasLayout:'v48'}:{}),id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
+ const graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   ...projectGroups(nodes,sessionDocument.wires.map(w=>projectSessionWire(w,nodes))),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
 }
@@ -1721,9 +1720,6 @@ let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], sol
 let projectAfterPaint=0;
 function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false,afterPaint=false){
  if(!sessionDocument)throw Error('Open a session first.');
- // His first edit keeps what he sees: the on-screen arrangement becomes the document with it.
- if(shownLayout?.id===sessionDocument.id&&sessionDocument.properties?.canvasLayout!=='v48'){for(const n of sessionDocument.nodes)if(shownLayout.positions[n.id])n.position=shownLayout.positions[n.id];sessionDocument.properties={...sessionDocument.properties,canvasLayout:'v48'};}
- shownLayout=null;
  const before=copy(sessionDocument);
  if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
  try{edit(sessionDocument);}catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
@@ -2068,12 +2064,8 @@ const arrangeDocument=d=>{
  for(const n of nodes){const p=was.get(n.id);if(!n.fixed&&n.children?.length&&(n.position.x!==p.x||n.position.y!==p.y))follow(n.id,n.position.x-p.x,n.position.y-p.y);}
  d.properties={...d.properties,canvasLayout:'v48'};
 };
-api.arrangeGraph=async(initial=false)=>{
- if(!initial)return fileEdit(arrangeDocument,null,null,true,true);
- if(!sessionDocument)throw Error('Open a session first.');
- const d=copy(sessionDocument);arrangeDocument(d);
- shownLayout={id:d.id,positions:Object.fromEntries(d.nodes.map(n=>[n.id,n.position]))};projectFile();return {ok:true};
-};
+// Only his Tidy up arranges: an open shows the saved places, and no edit writes an arrangement he did not ask for.
+api.arrangeGraph=async()=>fileEdit(arrangeDocument,null,null,true,true);
 api.groupNodes=async ids=>{
  if(!Array.isArray(ids))throw Error('Choose nodes to group.');
  const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));

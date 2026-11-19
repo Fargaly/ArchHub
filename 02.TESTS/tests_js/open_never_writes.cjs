@@ -1,4 +1,5 @@
-// Opening a saved workflow in the compiled Studio shows a tidy first view and leaves the file alone; his own Tidy up saves.
+// Opening a saved workflow in the compiled Studio shows its saved places and leaves the file alone; an edit writes only
+// that edit (never an arrangement); his own Tidy up saves.
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -26,14 +27,19 @@ const {chromium} = require('playwright');
       shown: Object.fromEntries(window.ArchHubAPI.getSnapshot().graph.nodes.map(node => [node.id, [node.x, node.y]])),
       held: Object.fromEntries(window.ArchHubAPI.getSessionDocument().nodes.map(node => [node.id, [node.position.x, node.position.y]])),
       layout: window.ArchHubAPI.getSnapshot().graph.canvasLayout, dirty: window.ArchHubAPI.getSnapshot().sessionDirty}));
-    await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().graph.canvasLayout === 'v48');
     await page.waitForTimeout(2500);  // well past the autosave debounce
     const opened = await read();
     if (input.step === 'open') {
-      assert.notDeepEqual(opened.shown.list, [800, 0], 'the first view shows the tidy layout');
+      assert.deepEqual(opened.shown.list, [800, 0], 'the canvas shows the saved place, not an arrangement');
       assert.deepEqual(opened.held.list, [800, 0], 'the open document keeps the saved position');
+      assert.notEqual(opened.layout, 'v48', 'nothing was arranged');
       assert.equal(opened.dirty, false, 'nothing is waiting to be saved');
       assert.deepEqual(writes, [], 'opening sends no save');
+    } else if (input.step === 'edit') {
+      // One edit to one node: the file gets that edit, every place stays as saved.
+      await page.evaluate(() => window.ArchHubAPI.setNodeParam('slice', 'count', 3));
+      await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().sessionDirty === false);
+      assert.ok(writes.length >= 1, 'the edit is saved');
     } else {
       await page.getByRole('button', {name: 'Tidy up', exact: true}).click();
       await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().properties.canvasLayout === 'v48' && window.ArchHubAPI.getSnapshot().sessionDirty === false);

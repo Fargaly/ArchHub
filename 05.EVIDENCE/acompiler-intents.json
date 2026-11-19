@@ -11841,6 +11841,20 @@
         "02.TESTS/tests/test_host_exec.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "SESSIONPROPS": {
+      "source": "Founder request R28 (asked 21 times): node properties ARE the settings. Design gaps 3 and 7: the Session card's Parameters, Tools and Context are editable values with sockets, and the Inspector has the Session group (Done when, who works on it, inputs from other sessions, run budget). One value, one owner.",
+      "scope": [
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_session_properties.py",
+        "02.TESTS/tests_js/session_properties_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -200,7 +200,7 @@
       else groups=[[bind('menu.properties', ()=>{close();u.setSelectedNodeId(n.id);}, null, false),
         ...(!n.fixed||n.type==='thing.session'?[bind('menu.add.parameter', ()=>u.show('Add parameter',{id:n.id}), null, false)]:[]),
         bind('menu.show.output', ()=>u.show('Node output',{id:n.id}), null, false),bind('menu.ask.the.agent', ()=>{close();u.setSelectedNodeId(n.id);u.setTaskFace('split');}, null, false)],
-        [bind('menu.rerun', ()=>run(()=>api.runNode(n.id)), null, false),bind('menu.run.to.here', ()=>run(()=>api.runToHere(n.id)), null, false),
+        [bind('menu.rerun', ()=>run(()=>api.runNode(n.id, true)), null, false),bind('menu.run.to.here', ()=>run(()=>api.runToHere(n.id)), null, false),
         bind('menu.unfreeze', ()=>run(()=>api.setNodeFlags(n.id,{frozen:!n.frozen})), n.frozen?'Unfreeze':'Freeze', false),
         bind('menu.unbypass', ()=>run(()=>api.setNodeFlags(n.id,{bypassed:!n.bypassed})), n.bypassed?'Unbypass':'Bypass', false)],
         [bind('menu.duplicate', ()=>run(()=>api.duplicateNodes([n.id])), null, false),bind('menu.copy', ()=>run(()=>api.copyNodes([n.id])), null, false),bind('menu.cut', ()=>run(()=>api.cutNodes([n.id])), null, false),

@@ -34,12 +34,14 @@ async function open() {
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
       let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: []};
-      if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
+      // COMMANDREGISTRY: api.js loads the owner catalogue before the first session file.
+      if (url === '/api/commands') data = {commands: []};
+      else if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
       else if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: file(), path: 'C:/isolated/group.archhub'};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: (body.document.properties?.revision || 0) + 1, document: body.document};
       else if (url === '/api/session-files' && body?.action === 'solve') data = {ok: true, results: {}, solved: [], stale: [], ms: 0};
       else if (url === '/api/universal/workshop' && body?.function === 'listWorkshopMessages') data = {ok: true, result: {messages: []}};
-      return {ok: true, status: 200, json: async () => data};
+      return {ok: true, status: 200, headers: {get: () => null}, json: async () => data};
     },
   };
   context.window = context;

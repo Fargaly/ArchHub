@@ -11791,6 +11791,30 @@
         "01.APP/nodelang/studio/ds_screens.jsx",
         "01.APP/nodelang/studio/api.js"
       ]
+    },
+    "ZOOMKEEP": {
+      "source": "Founder 2026-11-19: after he zooms, the view jumps back to Fit by itself. Fit happens only on his Fit press or the first open of a never-viewed canvas.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests/test_home_look.py",
+        "02.TESTS/tests_js/home_look.cjs",
+        "02.TESTS/tests/test_design_canvas.py",
+        "02.TESTS/tests_js/design_canvas_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "APPROVALCONTEXT": {
+      "source": "Founder 2026-11-19: a waiting approval shows no context and Show opens Settings Models. The card says what changes, where, who asked and why with the draft preview; Show opens that node in its own canvas.",
+      "scope": [
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_design_canvas.py",
+        "02.TESTS/tests_js/design_canvas_live.cjs",
+        "02.TESTS/tests_js/dock_model.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

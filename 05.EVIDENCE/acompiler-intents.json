@@ -8848,7 +8848,12 @@
         "02.TESTS/tests_js/studio_workspace_selection.test.cjs",
         "02.TESTS/tests_js/studio_workspaces_settings.test.cjs",
         "02.TESTS/tests_js/wire_settings.test.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/app_agents.test.cjs",
+        "02.TESTS/tests_js/studio_designmatch.test.cjs",
+        "02.TESTS/tests_js/studio_footerretry.test.cjs",
+        "02.TESTS/tests_js/wire_agents.test.cjs",
+        "02.TESTS/tests_js/wsadd.test.cjs"
       ]
     },
     "STUDIOFIX": {
@@ -12114,7 +12119,9 @@
         "01.APP/nodelang/hook_decision.py",
         "01.APP/nodelang/notion_mcp.py",
         "03.TOOLS/packaging/preflight_imports.py",
-        "05.EVIDENCE/graphout/origin-main-tools.json"
+        "05.EVIDENCE/graphout/origin-main-tools.json",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/integration-states.jsx"
       ]
     },
     "BACKUPSSMALL": {

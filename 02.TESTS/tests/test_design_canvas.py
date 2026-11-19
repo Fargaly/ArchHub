@@ -80,6 +80,9 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
         working_task = client.workshop('createTask', 'Model view audit')['taskId']
         with application_history() as history:
             workshop_tasks.claim(history, working_task, 'canvas-test-agent', 'Drawing coordinator', lease_seconds=3600)
+            # DESIGNROWS2 row 4: one line in the open session's thread, as an agent writes it into the room with the task's ref.
+            from nodelang.workshop_mailbox import ROOM
+            history.append(ROOM, author='Drawing coordinator', content='I checked the sheet list.', refs=[opened_task], idempotency_key='rows2-thread-line')
             # Row 12: an agent declared working on the other task right now (a live process: this one), so the toolbar pill must show it.
             with history._transaction(write=True):
                 history._db.execute('CREATE TABLE IF NOT EXISTS workshop_declarations(root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT')
@@ -114,9 +117,19 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
         waiting['result'] = {'status': 'Waiting for approval'}
         held['document']['nodes'] = [*held['document']['nodes'], waiting]
         client.files('save', path=other['path'], document=held['document'])
+        from nodelang import hook_decision
+        # DESIGNROWS2: one held step of the open session (count), for its thread card and its tab's needs count.
+        def hold_step(path):
+            held = hook_decision._read_holds(path)
+            held['holds']['app:ask:rows2-step'] = {
+                'id': 'app:ask:rows2-step', 'input_digest': 'rows2-step', 'status': 'pending', 'at': 3.0,
+                'title': 'Run', 'who': 'Drawing coordinator', 'text': '', 'textLabel': '', 'summary': 'Count the sheets', 'permit_open': False,
+                'replay': {'kind': 'canvas', 'payload': {'node': {'id': 'count'}, 'continuation': {'path': view['path'], 'document': {'properties': {'taskContext': {'task': opened_task}}}}}},
+                'record': {'asked': {'who': 'Drawing coordinator', 'when': '', 'what': 'Count the sheets'}, 'decided': None}}
+            hook_decision._write_holds(path, held)
+        hook_decision._with_ask_file(os.environ, hold_step)
         client.workshop('openTaskGraph', opened_task)
         # APPROVALCONTEXT: one held Outlook reply draft, in the shape the Outlook connector holds it (a fake: nothing is sent).
-        from nodelang import hook_decision
         def hold(path):
             held = hook_decision._read_holds(path)
             held['holds']['app:ask:canvas-test-draft'] = {
@@ -141,6 +154,9 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
+        # Delete task archived the other session: it left the list, and its session file is still on disk.
+        assert 'ARCHIVED=' + working_task in result.stdout
+        assert Path(other['path']).is_file(), 'archiving never deletes the session file'
         # What the screen changed is in the owner's own file: the Flow view on the open tab, switched off again.
         saved = json.loads((state / 'settings' / 'settings.json').read_text(encoding='utf8'))
         tab = next(row for row in saved['canvasTabs']['tabs'] if row['id'] == opened_task)

@@ -1422,3 +1422,10 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .bbm-ph b{display:block;font-size:calc(14px * var(--text-scale,1));font-weight:700}.bbm-ph b+span{font-size:calc(12px * var(--text-scale,1));color:var(--color-ink-soft)}
 .bbm-mini{flex:none;width:32px;height:35px;background:url(/assets/baboom/spritesheet.png) 0 0/256px auto no-repeat}
 .bbm-x{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-md);font-size:18px;color:var(--color-ink-soft);cursor:pointer}.bbm-x:hover{background:var(--color-bg-soft);color:var(--color-ink)}
+/* DESIGNROWS2: tab needs count and saving dot, the approval card in the thread, Workshop threads. */
+.v22g-tab-needs{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--color-warn);color:var(--color-on-fill);font:600 10px/16px var(--type-family-ui);text-align:center}
+.v22g-tab-saving{width:6px;height:6px;border-radius:50%;background:var(--color-accent);opacity:.8}
+.v48-thread-approval{display:grid;gap:6px;margin:12px 0;padding:10px;border:1px solid color-mix(in srgb,var(--color-warn) 55%,var(--color-line));border-radius:8px;background:var(--color-bg-soft)}
+.v48-thread-approval>span{font:600 11px var(--type-family-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--color-warn)}.v48-thread-approval p{margin:0;font-size:12.5px;color:var(--color-ink-soft)}
+.dockws .wst{display:flex;align-items:center;gap:6px}.dockws .wst .wsl{flex:1;min-width:0}.dockws .wsraw{flex:none;font-size:11px}
+.v48-archive-ask{position:absolute;right:8px;top:8px;z-index:21;display:grid;gap:8px;max-width:320px;padding:10px;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg-panel);box-shadow:var(--e1)}.v48-archive-ask p{margin:0;font-size:12.5px;color:var(--color-ink-soft)}

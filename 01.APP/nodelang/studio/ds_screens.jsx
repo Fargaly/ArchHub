@@ -1434,7 +1434,22 @@
       });
       return () => window.cancelAnimationFrame(frame);
     }, [paneWidth < 480, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire)]);
-    const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
+    const menuTask = embedded && !preview ? (s.tasks || []).find(row => row.id === u.canvasTabs?.active) : null;
+    // Delete task archives it (the task owner's archive): it leaves the active list and Home; its session file stays on disk and
+    // The owner has no unarchive, so the confirm says where it goes instead of offering an Undo.
+    const [archiveAsk, setArchiveAsk] = React.useState(false);
+    const archiveTask = () => u.act(async () => {
+      const result = await api.archiveTask(menuTask.id);
+      if (result?.ok === false) throw Error(result.error);
+      setArchiveAsk(false);
+      await u.closeTaskTab(menuTask.id);
+      u.setToast(menuTask.title + ' is archived. Its file stays on disk: Open… in this menu opens it again.');
+      return result;
+    });
+    const archiveConfirm = archiveAsk && menuTask && <div role="alertdialog" aria-label="Delete task" data-design="task.archive" className="v48-archive-ask">
+      <p><b>Delete {menuTask.title}?</b> It is archived: it leaves the active list and Home. Its file stays on disk and Open… opens it again. Nothing is deleted.</p>
+      <div className="flex"><Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => setArchiveAsk(false)}, event)}>Cancel</Btn><Btn p sm onClick={event => executeAction('projects.controls.activate', {handler: archiveTask}, event)}>Archive</Btn></div></div>;
+    const actionsMenu = <> {archiveConfirm}{more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}><div aria-label="Workflow status" style={{padding:'6px 8px',color:A.inkSoft,fontSize:11}}>{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div>{[
             ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
             ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
@@ -1450,8 +1465,17 @@
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
-          ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
-            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>} </>;
+            // This task (design More menu): each item uses the task owner's own action; parts no owner runs yet are shown inert (UI.Soon).
+            ...(menuTask ? [
+              ['Rename…', () => u.show('Rename task', {id: menuTask.id, text: menuTask.title || ''})],
+              ['Show on Home', () => { u.setTask(menuTask.id); return u.go('home'); }],
+              [menuTask.homePinned ? 'Stop keeping at the top of Home' : 'Keep at the top of Home', () => u.act(() => api.setTaskSession(menuTask.id, {homePinned: !menuTask.homePinned}))],
+              ['Connection checks', null, true, true], ['Test this workflow', null, true, true], ['Publish to Community', null, true, true],
+              ['Keyboard shortcuts', null, true, true], ['Delete task…', () => setArchiveAsk(true)],
+            ] : []),
+          ].map(([label, run, disabled, soon]) => { const item = <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
+            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>;
+            return soon ? <window.UI.Soon key={label} block label={label}>{item}</window.UI.Soon> : item; })}</div>} </>;
     const single = docked && externalInspector, Panes = single ? SinglePanes : CanvasGroup, WorkPanel = single ? SingleWork : CanvasPanel;
     const body = <div ref={paneBox} data-screen="canvas" style={{
       display: 'grid',

@@ -53,6 +53,34 @@ const {chromium} = require('playwright');
     await page.waitForTimeout(30000);
     assert.equal((await free()).zoom, zoomed, 'after 30 s of polls and autosave his zoom is unchanged');
 
+    // DESIGNROWS2 row 22: the open tab counts the held run that needs him.
+    await page.locator('[data-design="tab.active"] [data-design="tab.needs"]').waitFor();
+    assert.equal((await page.locator('[data-design="tab.active"] [data-design="tab.needs"]').innerText()).trim(), '1');
+    // Row 5: the held step is answered inside the thread too; Ask why puts the question in the composer.
+    await page.getByRole('button', {name: 'Thread', exact: true}).click();
+    const inThread = page.locator('[data-design="thread.approval"][data-approval="app:ask:rows2-step"]');
+    await inThread.waitFor();
+    assert.match(await inThread.innerText(), /Needs your approval[\s\S]*Drawing coordinator asked · Count the sheets/i);  // the label is shown in capitals
+    for (const name of ['Review on the node', 'Approve', 'Ask why', 'Reject']) assert.equal(await inThread.getByRole('button', {name, exact: true}).count(), 1, name);
+    await inThread.getByRole('button', {name: 'Ask why', exact: true}).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('textarea')].some(area => /^Why do you need to run /.test(area.value)));
+    await page.getByRole('button', {name: 'Close thread', exact: true}).click();
+    // Row 4: the Workshop panel lists every task with messages, with its Raw log.
+    const threads = page.locator('[data-dock-workshop] [aria-label="Threads"]');
+    await threads.waitFor({state: 'attached'});
+    const withMessages = await snapshot(() => window.ArchHubAPI.getSnapshot().tasks.filter(task => task.status !== 'ARCHIVED' && (window.UI.homeTaskMessages?.(task) || []).length).length);
+    assert.ok(withMessages >= 1, 'the seeded thread line is in a task');
+    assert.equal(await threads.locator('[data-ws-thread]').count(), Math.min(8, withMessages));
+    assert.equal(await threads.locator('.wsraw').count(), Math.min(8, withMessages));
+    const row = threads.locator('[data-ws-thread]').filter({hasText: 'Drawing set review'});
+    assert.match(await row.innerText(), /Drawing coordinator: I checked the sheet list\.[\s\S]*\b1\b/);
+    // Row 23: the More menu carries this task's actions; each acts, or is drawn inert as coming soon.
+    await page.getByRole('button', {name: 'More canvas actions', exact: true}).click();
+    const more = page.getByRole('menu', {name: 'Canvas actions', exact: true});
+    for (const name of ['Rename…', 'Show on Home', 'Keep at the top of Home', 'Delete task…']) assert.equal(await more.getByRole('menuitem', {name, exact: true}).isEnabled(), true, name);
+    for (const name of ['Connection checks', 'Test this workflow', 'Publish to Community', 'Keyboard shortcuts']) assert.equal(await more.locator('[data-soon][aria-label^="' + name + '."]').count(), 1, name + ' is coming soon');
+    await more.getByRole('menuitem', {name: 'Keep at the top of Home', exact: true}).click();
+    await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().tasks.find(task => task.title === 'Drawing set review').homePinned === true);
     for (const width of [1009, 1440, 1920]) {
       await page.setViewportSize({width, height: 900});
       await page.getByRole('button', {name: 'Fit', exact: true}).click();
@@ -215,7 +243,23 @@ const {chromium} = require('playwright');
       for (const foot of [document.querySelector('[aria-label="Workflow canvas"] .canvas-toolbar'), document.querySelector('.v22g-composer-dock>form')]) { const b = foot?.getBoundingClientRect(); if (b?.width && b.top < pane.bottom && b.bottom > y0 && b.right > pane.left && b.left < pane.right) y1 = Math.min(y1, b.top); }
       for (const dock of document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
       return Math.abs(card.left + card.width / 2 - (x0 + x1) / 2) < 4 && Math.abs(card.top + card.height / 2 - (y0 + y1) / 2) < 60 && card.left >= x0 && card.right <= x1 && card.top >= y0 && card.bottom <= y1;
-    });    assert.deepEqual(errors, []);
+    });
+    // Row 23: Delete task archives it after a confirm; the tab closes, the task leaves the list, its file stays (checked by the driver).
+    const archived = await snapshot(() => window.ArchHubAPI.getSnapshot().tasks.find(task => task.title === 'Model view audit')?.id);
+    if (!await page.locator('.app-header .header-here').filter({hasText: 'Model view audit'}).count()) {
+      await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
+      await page.locator('[data-design="home.card"]').filter({hasText: 'Model view audit'}).dblclick();
+      await page.locator('.app-header .header-here').filter({hasText: 'Model view audit'}).waitFor();
+    }
+    await page.getByRole('button', {name: 'More canvas actions', exact: true}).click();
+    await page.getByRole('menu', {name: 'Canvas actions', exact: true}).getByRole('menuitem', {name: 'Delete task…', exact: true}).click();
+    const ask = page.getByRole('alertdialog', {name: 'Delete task', exact: true});
+    assert.match(await ask.innerText(), /archived[\s\S]*leaves the active list and Home[\s\S]*file stays on disk[\s\S]*Nothing is deleted/);
+    await ask.getByRole('button', {name: 'Archive', exact: true}).click();
+    // The Studio reads archived tasks too (listTasks with archived): the task is now marked ARCHIVED, off the active list and Home.
+    await page.waitForFunction(id => window.ArchHubAPI.getSnapshot().tasks.find(task => task.id === id)?.status === 'ARCHIVED', archived);
+    console.log('ARCHIVED=' + archived);
+    assert.deepEqual(errors, []);
     console.log('PASS design_canvas_live at 1009, 1440 and 1920');
   } finally {
     await browser.close();

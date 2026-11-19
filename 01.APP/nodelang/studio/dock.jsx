@@ -360,6 +360,13 @@
         {working.map(({key, name, task}) => { const step = (task?.activity || []).find(row => row.status === 'Running'); return <button type="button" className="wsl" key={key} data-ws-working={key}
           onClick={event => executeAction('ui.select', () => task ? onShow({task}) : u.go('settings/Agents'), event)} title={name}><Av id={shortName(name)} size={22} /><span><b>{shortName(name)}</b>{task ? ' · ' + task.title : ''}<em>{step ? 'On: ' + stepTitle(task, step.id) : 'Working'}</em></span><i className="wsd" /></button>; })}
         {!working.length && <p className="hint">No one is working right now.</p>}</section>
+      {/* Threads (design): every task with messages, the other side's last line and the count; a row opens its thread, Raw log its full record. */}
+      {(threads => <section className="wssec" aria-label="Threads"><span className="eyebrow"><Icon name="workshop" size={12} />Threads · {threads.length}</span>
+        {threads.slice(0, 8).map(({task, messages}) => { const last = [...messages].reverse().find(row => row.who !== 'You') || messages.at(-1);
+          return <div className="wst" key={task.id} data-ws-thread={task.id}><button type="button" className="wsl" onClick={event => executeAction('ui.select', () => onShow({task}), event)}>
+            <span><b>{task.title}</b><em>{(last.who === 'You' ? 'You' : last.who) + ': ' + last.text}</em></span><span className="note">{messages.length}</span></button>
+            <button type="button" className="dx-link wsraw" onClick={event => executeAction('ui.select', () => u.show('Task details', {id: task.id}), event)}>Raw log</button></div>; })}
+        {!threads.length && <p className="hint">No thread has messages yet.</p>}</section>)(tasks.map(task => ({task, messages: window.UI.homeTaskMessages?.(task) || []})).filter(row => row.messages.length))}
     </div>;
   }
 

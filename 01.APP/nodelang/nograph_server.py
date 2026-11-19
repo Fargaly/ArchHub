@@ -1287,6 +1287,19 @@ def _set_task_status(task, status):
     return next(row for row in _list_tasks() if row['id'] == task)
 
 
+def _archive_task(task):
+    """Delete task in the Canvas menu: the task owner's archive. It leaves the active list; its session file stays readable."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import archive, TaskNotFound
+    try:
+        with application_history() as history:
+            if not archive(history, str(task)):
+                return {'ok': False, 'error': 'The task changed while archiving it. Retry.'}
+    except TaskNotFound:
+        return {'ok': False, 'error': 'No such Workshop task'}
+    return {'ok': True, 'task': str(task)}
+
+
 def _list_agents():
     from .agent_runtime_registry import RUNTIMES
     observed = _SERVER._live_agents.get() or {'processes': [], 'complete': False}
@@ -1502,6 +1515,7 @@ WORKSHOP_READS = {
     'checkpointTask': lambda task, label=None: _checkpoint_task(task, label=label),
     'restoreTaskCheckpoint': lambda task, checkpoint: _checkpoint_task(task, checkpoint, restore=True),
     'setTaskStatus': _set_task_status,
+    'archiveTask': _archive_task,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: (_SERVER._messages.get()
         if before is None else _list_messages(before)),

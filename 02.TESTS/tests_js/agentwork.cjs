@@ -94,7 +94,9 @@ finally:
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(input.url);await page.locator('[data-home-ready]').waitFor({state:'attached',timeout:60000});
   for(const vendor of ['codex','claude']){
-   await page.getByRole('button',{name:/^\d+ working · \d+ idle ·/}).click();
+   // The agents' own list opens from "Agents on this PC" (design app.js:313, 599); the header counts filter Home.
+   await page.getByRole('button',{name:'Agents on this PC',exact:true}).click();
+   await page.waitForFunction(()=>/^\d+ working · \d+ idle$/.test(window.ArchHubAPI.getSnapshot().agentSummary));
    await page.locator('[data-agent-task="'+input.tasks[vendor].taskId+'"]').dblclick();
    try{await page.locator('.react-flow__node[data-id="start"]').waitFor();}
    catch(e){console.log(JSON.stringify(await page.evaluate(()=>{const s=window.ArchHubAPI.getSnapshot();return {file:s.sessionFile,opening:s.graphOpening,notice:s.connectionNotice,nodes:s.graph.nodes.map(n=>({id:n.id,title:n.title})),text:document.body.innerText.slice(-1500)};})));console.log(JSON.stringify(errors));throw e;}
@@ -166,7 +168,8 @@ finally:
    await inspector.getByRole('button',{name:'Fork from here',exact:true}).click();
    await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.filter(n=>!n.agentWork&&!n.workflowStart&&!n.fixed).length===7);
    // Return to the graph via the existing task route after inspecting the approval.
-   await page.getByRole('button',{name:'Home',exact:true}).click();
+   // The rail's Home (the header path "Home › session" also reads Home since the map Home).
+   await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Home',exact:true}).click();
    await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().tasks.filter(t=>t.description?.startsWith('BA details')).length===2);
    console.log('PASS '+vendor+': 7 typed steps within 2s, edited read Run, History by id, dashed dependency, shell has no Run, write held then approved, Fork copies 7 normal nodes, secret-free file, Home one task per session');
   }

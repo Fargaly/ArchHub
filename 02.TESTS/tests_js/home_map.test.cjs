@@ -39,7 +39,7 @@ const at = (chart, id) => cards(chart).find(card => card.id === id);
 
 test('a card is one whole session: who works on it, its state word, where it stands and what it needs', () => {
   const chart = draw();
-  assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['No project 1', 'Office 3', 'Site 1', 'Tower 3']);
+  assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['No project 1', 'Office 3', 'Tower 3']);
   const model = at(chart, 'model');
   assert.deepEqual([model.title, model.agent, model.state, model.now, model.w], ['Model', 'Claude Code · Tower', 'Working', 'Step 2 of 3 · Check the walls', 300]);
   assert.deepEqual(model.steps.map(step => step.kind), ['done', 'working', 'unreported']);
@@ -54,14 +54,28 @@ test('a card is one whole session: who works on it, its state word, where it sta
     assert.ok(card.x >= group.x && card.y >= group.y && card.x + card.w <= group.x + group.w && card.y + card.h <= group.y + group.h, card.title + ' sits inside ' + group.title);
 });
 
-test('the map shows what the header counts: a row with no file and a held run with no session are cards too', () => {
+test('a card is work: a held run with no session is a card; an agent is a member of work, never a card of its own', () => {
   const chart = draw(), rows = homeRows(state, {hidden: [], order: []});
-  const loose = at(chart, 'row:live:r9'), orphan = at(chart, 'approval:b');
-  assert.deepEqual([loose.title, loose.project, loose.agent, loose.state], ['Live work of live:r9', 'Site', 'Codex · Site', 'Working']);
+  const orphan = at(chart, 'approval:b');
+  assert.equal(at(chart, 'row:live:r9'), undefined, 'a live agent with no session is present in the Workshop, not a card');
   assert.deepEqual([orphan.title, orphan.state, orphan.agent, orphan.need], ['Send the transmittal', 'Needs you', 'Codex · Site', {text: 'Send the transmittal needs your approval', approval: 'b'}]);
   assert.equal(cards(chart).filter(card => card.state === 'Needs you').length, rows.needsYou);
-  assert.equal(cards(chart).filter(card => card.state === 'Working').length, rows.running);
-  assert.deepEqual([rows.needsYou, rows.running, chart.total, chart.armed], [2, 2, 8, 1]);
+  // The header still counts every agent at work; the map shows the one that works on a session, on that session's card.
+  assert.equal(cards(chart).filter(card => card.state === 'Working').length, 1);
+  assert.deepEqual([rows.needsYou, rows.running, chart.total, chart.armed], [2, 2, 7, 1]);
+});
+
+test('a retired declare-made session (its row archived) is no card, from its file or its row; an unretired one stays', () => {
+  const extra = {groups: [...listed.groups, {project: {id: 'Tower', label: 'Tower'}, sessions: [session('review7', 'independently reviewed build 11', 'Tower', {task: 'session-1f2e'})]}]};
+  const tasks = [...state.tasks, {id: 'session-9a8b', title: '7/7 complete on Build 11', status: 'ARCHIVED', updated_at: today, plan: [], progress: {}},
+    {id: 'session-1f2e', title: 'independently reviewed build 11', status: 'ARCHIVED', updated_at: today, sessionPath: 'C:/s/review7.archhub', plan: [], progress: {}}];
+  const chart = plain(homeMap({listed: extra, rows: homeRows({...state, tasks}, {hidden: [], order: []}), params: DEFAULT, titleOf: row => row.title}));
+  assert.equal(cards(chart).some(card => /independently|7\/7/.test(card.title)), false);
+  assert.equal(chart.total, 7, 'the work cards are unchanged');
+  // One the retire left (a person wrote in its thread) is still a session and still a card.
+  const kept = [...state.tasks, {id: 'session-5c6d', title: 'Review he answered in', status: 'PLANNED', updated_at: today, plan: [], progress: {}}];
+  const again = plain(homeMap({listed, rows: homeRows({...state, tasks: kept}, {hidden: [], order: []}), params: DEFAULT, titleOf: row => row.title}));
+  assert.ok(cards(again).some(card => card.title === 'Review he answered in'));
 });
 
 test('an input link is one wire from card edge to card edge, laid left to right, with the design\'s default type and what it carries', () => {
@@ -79,7 +93,7 @@ test('group, order, card, density, finished and the filter are parameters', () =
   assert.deepEqual(office(draw({order: 'Name'})), ['Export package', 'Sheet index', 'Standard check']);
   assert.equal(cards(draw({done: 'Hide'})).some(card => card.id === 'std'), false, 'a finished session can be hidden');
   assert.deepEqual(cards(draw({filter: 'Needs you'})).map(card => card.id).sort(), ['approval:b', 'exp']);
-  assert.deepEqual(cards(draw({filter: 'Running'})).map(card => card.state), ['Working', 'Working']);
+  assert.deepEqual(cards(draw({filter: 'Running'})).map(card => card.state), ['Working']);  // the agent on its session; an agent with no session is no card
   const gap = chart => at(chart, 'model').x - at(chart, 'survey').x;
   assert.ok(gap(draw({density: 'Compact'})) < gap(draw()), 'Compact brings the cards closer; a card stays 300 wide');
   assert.ok(cards(draw({card: 'State only'}))[0].h < cards(draw())[0].h);

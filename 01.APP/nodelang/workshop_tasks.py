@@ -515,10 +515,11 @@ def _request_of(request_id):
 def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True, kind="refresh"):
     """An agent's declare joins one session (a piece of work) and returns its task id, or False.
 
-    A declare with a request (a task id, a founder or plan request id) is a real step: it joins that work
-    or starts it and records the step. A declare without one (a start, Stop or refresh) only keeps or
-    joins work that already exists; it never creates a row or file, never records a step, and a "done"
-    without a request changes nothing. A re-declare that changes nothing only renews the lease.
+    Founder 2026-11-19: a session is the work; agents join it, they are never sessions. A declare only joins work
+    that already exists (its task id, the open session of its project started for that request, its own or its
+    starter's session); otherwise it stays a declaration and the agent is present on no session (False). It never
+    creates a task row or an .archhub file: new work starts only from task_create or Home's "New session".
+    With a request it records the step in the session it joined. A re-declare that changes nothing only renews the lease.
     """
     title = _text(title, "title", 2000)
     request = _request_of(request_id)
@@ -530,11 +531,7 @@ def declared(history, root, request_id, title, status, owner, label, project="",
             _ensure(history)
             task = _session_for(history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"], kind)
             if not task:
-                if not request or status == "done":
-                    return False
-                task = SESSION_PREFIX + uuid4().hex
-                history._db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
-                                    "VALUES(?,?,'open',?,?,?,?,?)", (task, title, label, _now(), _now(), request, project or None))
+                return False  # no such work: a declaration only, never a new session row or file
     if status == 'done':
         row = get(history, task)
         won = complete(history, task, owner)
@@ -549,6 +546,48 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     if request and (changed or not already):
         record_step(history, task, owner, label, title, status, request=request_id)
     return task if won else False
+
+
+_PEOPLE = {"you", "founder"}
+
+
+def _human_spoke(path):
+    """Whether a person wrote in this session's thread (its file's notes). An unreadable file counts as yes: it stays."""
+    from .session_files import read_document
+    try:
+        return any(str(note.get("who") or "").strip().casefold() in _PEOPLE for note in _file_messages(read_document(path)))
+    except Exception:
+        return True
+
+
+def retire_declared_sessions(history):
+    """One-time action (founder 2026-11-19): archive the sessions an agent's declare minted in older builds.
+
+    A row qualifies only when a declare made it (id session-..., a purpose that is the declare's request, an agent as
+    creator) and no person wrote in its thread. Sessions he started (task_create, Home, "Open another task") are never
+    touched, nor any file. A live member of a retired row is re-joined to its own real work session when it has one,
+    else it is declared only. Returns the retired task ids.
+    """
+    with history._transaction(write=True):
+        _ensure(history)
+        found = [dict(zip(("id", "project", "session_path"), row)) for row in history._db.execute(
+            "SELECT id, project, session_path FROM workshop_tasks WHERE id LIKE 'session-%' AND IFNULL(archived,0)=0 "
+            "AND IFNULL(trim(purpose),'')!='' AND IFNULL(created_by,'') NOT IN ('', 'founder', 'You')").fetchall()]
+    retired = []
+    for row in found:
+        if row["session_path"] and _human_spoke(row["session_path"]):
+            continue
+        live = _live((get(history, row["id"]) or {}).get("members") or [])
+        with history._transaction(write=True):
+            history._db.execute("UPDATE workshop_tasks SET archived=1, lease_until=NULL, updated_at=?, revision=revision+1 "
+                                "WHERE id=? AND IFNULL(archived,0)=0", (_now(), row["id"]))
+        retired.append(row["id"])
+        for member in live:
+            with history._transaction(write=True):
+                again = _session_for(history, member["owner"], row["project"] or "", "", "", TASKS_NODE["params"]["stale_hours"])
+            if again:
+                claim(history, again, member["owner"], member.get("label") or member["owner"])
+    return retired
 
 
 def record_step(history, task, owner, label, title, status, result="", request=""):
@@ -1135,8 +1174,10 @@ def _start_session(task, title, zoom=1, *, purpose='', generation='', agent='', 
 def backfill_sessions(history):
     """Prepare files without a mailbox write lock, then bind all missing rows atomically."""
     _ensure(history)
+    retire_declared_sessions(history)
     missing = history._db.execute(
-        "SELECT id,title,purpose,created_at FROM workshop_tasks WHERE session_path IS NULL OR trim(session_path)=''"
+        "SELECT id,title,purpose,created_at FROM workshop_tasks WHERE (session_path IS NULL OR trim(session_path)='') "
+        "AND IFNULL(archived,0)=0"
     ).fetchall()
     prepared = [(task, _start_session(task, title, purpose=purpose or '', generation=created)) for task, title, purpose, created in missing]
     if not prepared:

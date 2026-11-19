@@ -192,7 +192,11 @@
         members: [...new Set((row?.members || []).map(member => member.name).filter(Boolean))].slice(1),
         state: row && rows.needs(row) ? 'Needs you' : failed ? 'Failed' : row && rows.working(row) ? 'Working' : 'Idle'};
     };
-    const files = (listed?.groups || []).flatMap(group => group.sessions).filter(session => session.state !== 'archived' && !hidden.includes(session.task)).map(session => {
+    // A card is a piece of work (founder 2026-11-19): agents are members of it, never cards. A session whose task row is
+    // archived (the one-time retire of declare-made sessions, or his own archive) is no card; its file stays where it is.
+    const work = session => session.state !== 'archived' && !hidden.includes(session.task)
+      && rows.sessionRows.find(item => item.id === session.task)?.status !== 'ARCHIVED';
+    const files = (listed?.groups || []).flatMap(group => group.sessions).filter(work).map(session => {
       const row = rows.sessionRows.find(item => item.id === session.task), fact = facts(row, session.context?.plan);
       return {id: session.id, path: session.path, task: session.task || '', title: session.title, project: session.project?.label || 'No project',
         kind: row?.kind || session.kind || 'agent-session', older: !!row && rows.sectionOf(row) === 'Older / archived',
@@ -201,7 +205,8 @@
     });
     const filed = new Set(files.flatMap(card => [card.task, card.path]).filter(Boolean));
     // An archived row (a refused start the owner archived, an old run) is not work on the map.
-    const loose = rows.sessionRows.filter(row => row.status !== 'ARCHIVED' && !filed.has(row.id) && !filed.has(row.sessionPath || row.path || '')).map(row => ({id: row.approval ? row.id : 'row:' + row.id, path: row.sessionPath || '',
+    // A live agent with no session is present in the Workshop dock, not a card.
+    const loose = rows.sessionRows.filter(row => row.status !== 'ARCHIVED' && !row.runtimeAgent && !filed.has(row.id) && !filed.has(row.sessionPath || row.path || '')).map(row => ({id: row.approval ? row.id : 'row:' + row.id, path: row.sessionPath || '',
       task: row.runtimeAgent ? row.runtimeAgent.task || '' : row.fileOnly || row.approval ? '' : row.id, title: row.approval ? row.title : titleOf(row),
       project: row.runtimeAgent ? String(row.runtimeAgent.name || '').split(' / ')[1] || 'No project' : row.workspace || row.project || 'No project',
       agent: humanLabel(row.runtimeAgent?.name || (row.members || [])[0]?.name || row.owner || row.who || ''), pinned: !!row.homePinned, ...facts(row, null), armed: 0, links: [],
@@ -634,7 +639,8 @@
       if (published && published !== JSON.stringify(homeRef.current)) { homeRef.current = JSON.parse(published); setHomeLayout(homeRef.current); }
     }, [published]);
     const heldMap = homeLayout.map || {};
-    const sessionKind = s.sessionListFilters?.home || 'all', olderOpen = !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
+    // The map holds work only (design app.js:345): no "Agent sessions" filter; an agent's own chat is under Agents on this PC.
+    const sessionKind = s.sessionListFilters?.home === 'workflow' ? 'workflow' : 'all', olderOpen = !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
     const chart = homeMap({listed: listing, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: row => row.runtimeAgent ? liveName(row) : workTitle(row),
       params: {...Object.fromEntries(Object.entries(mapChoices || {}).map(([key, options]) => [key, options[0]])), ...heldMap}});
     const writeMap = (next, from, to) => {
@@ -725,7 +731,7 @@
               {[['Running', rows.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
               {chart.armed > 0 && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {chart.armed} automation{chart.armed === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
               <span className="fill" />
-              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ['workflow', 'Workflows'], ['agent-session', 'Agent sessions']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => u.act(() => api.setSessionListFilter('home', value)), event)}>{label}</button>)}</div>
+              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ['workflow', 'Workflows']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => u.act(() => api.setSessionListFilter('home', value)), event)}>{label}</button>)}</div>
               {[['Undo', 'undo', 'past', 'future'], ['Redo', 'redo', 'future', 'past']].map(([label, icon, from, to]) => <button key={label} type="button" className="dx-quiet" aria-label={label} title={label + ' the last Home change'} disabled={!mapHistory.current[from].length} onClick={event => executeAction('ui.select', () => stepMap(from, to), event)}><Icon name={icon} size={14} /></button>)}
             </div></div>
             <window.UI.Dock face="canvas" rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}

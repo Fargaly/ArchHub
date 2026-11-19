@@ -123,7 +123,9 @@ def test_a_blocked_declaration_needs_the_founder(tmp_path, monkeypatch, legacy):
     declare = server._tool_manager.get_tool("declare").fn
     context = SimpleNamespace(request_context=SimpleNamespace(
         meta=types.RequestParams.Meta(**{"threadId": "baboom-declaration-fixture"})))
-    result = declare("Hold the sheet", [str(tmp_path)], "blocked", "req-9", context)
+    with application_history() as history:  # agents join his work; they never make it
+        work = workshop_tasks.create(history, "Hold the sheet", "founder")
+    result = declare("Hold the sheet", [str(tmp_path)], "blocked", work["id"], context)
     declaration = result["declaration"]
     with application_history() as history:
         if legacy:
@@ -216,12 +218,12 @@ def test_dead_declaration_does_not_resurrect_work_and_done_wins(tmp_path, monkey
     history._db.close()
     history._db = sqlite3.connect(database)
     try:
-        workshop_tasks.declared(history, "room:old", "old", "Old work", "working", "old-agent", "Old agent")
-        task = workshop_tasks.rows(history)[0]["id"]
+        task = workshop_tasks.create(history, "Old work", "founder")["id"]
+        workshop_tasks.declared(history, "room:old", task, "Old work", "working", "old-agent", "Old agent")
         history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (task,))
         history._db.execute("CREATE TABLE workshop_declarations(root TEXT PRIMARY KEY, record TEXT)")
         history._db.execute("INSERT INTO workshop_declarations VALUES(?,?)", ("room:old", json.dumps({
-            "root": "room:old", "request_id": "old", "session": "old-agent", "status": "working", "agent": "Old agent",
+            "root": "room:old", "request_id": task, "session": "old-agent", "status": "working", "agent": "Old agent",
         })))
         history._db.commit()
         assert baboom_work_presence(read_workshop_task_rows()).state == "idle"
@@ -244,7 +246,8 @@ def test_verified_baboom_availability_is_not_a_running_task(tmp_path, monkeypatc
     database.parent.mkdir()
     history = _History(database)
     try:
-        workshop_tasks.declared(history, "room:baboom", "BABOOM", "BABOOM is available", "working", "app-baboom", "BABOOM")
+        # An availability declaration names no work: it makes no task row at all (agents are not sessions).
+        assert not workshop_tasks.declared(history, "room:baboom", "BABOOM", "BABOOM is available", "working", "app-baboom", "BABOOM")
         history._db.execute("CREATE TABLE workshop_declarations(root TEXT PRIMARY KEY, record TEXT)")
         history._db.execute("INSERT INTO workshop_declarations VALUES(?,?)", ("room:baboom", json.dumps({
             "root": "room:baboom", "request_id": "BABOOM", "session": "app-baboom", "status": "working", "agent": "BABOOM",
@@ -256,7 +259,7 @@ def test_verified_baboom_availability_is_not_a_running_task(tmp_path, monkeypatc
         shown = baboom_work_presence(read_workshop_task_rows())
         assert shown.state == "thinking" and shown.task_id == task["id"]
         monkeypatch.setattr(baboom_nograph, "own_session", lambda state_dir=None: None)
-        assert len(read_workshop_task_rows()) == 2
+        assert len(read_workshop_task_rows()) == 1
     finally:
         history._db.close()
 

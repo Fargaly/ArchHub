@@ -105,7 +105,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       await nav.waitFor();
       const filter = page.getByRole('group', {name:'Saved document filter',exact:true});
       await filter.waitFor();
-      assert.deepEqual(await filter.getByRole('button').allTextContents(), ['All', 'Workflows', 'Agent sessions']);
+      assert.deepEqual(await filter.getByRole('button').allTextContents(), ['All', 'Workflows']);
       assert.equal(await filter.getByRole('button', {name:'All',exact:true}).getAttribute('aria-pressed'), 'true');
       const labels = ['Home', 'Canvas', 'Docs', 'Settings', 'Your account'];
       assert.deepEqual(await nav.getByRole('button').evaluateAll(buttons => buttons.map(b => b.getAttribute('aria-label'))), labels);

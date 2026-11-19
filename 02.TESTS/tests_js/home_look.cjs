@@ -62,28 +62,10 @@ const {chromium} = require('playwright');
       assert.ok(seen.cards.length >= 3 && seen.groups.length >= 1, 'cards in groups' + at + ': ' + JSON.stringify([seen.cards, seen.groups]));
       assert.ok(seen.wires >= 1, 'the input link is drawn as a wire' + at);
       assert.doesNotMatch(seen.text, /session-[0-9a-f]{6,}/i, 'no raw session id on Home' + at);
-      // Two live sessions of one app in one folder are two cards told apart by name (design v61 C2), never identical.
-      await page.waitForFunction(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].filter(b => b.textContent.startsWith('Claude Code')).length === 2);
-      const liveTitles = await page.evaluate(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].map(b => b.textContent).filter(t => t.startsWith('Claude Code')).sort());
-      assert.deepEqual(liveTitles, ['Claude Code · 62fdf0', 'Claude Code · 8dff5b'], 'live sessions are told apart' + at);
-      if (width === 1440) {
-        // ZOOMKEEP (founder: "when I zoom, after a while it fits"): his zoom stays when the map's arrangement changes (a live agent comes).
-        const zoomOf = () => page.evaluate(() => new window.DOMMatrix(window.getComputedStyle(document.querySelector('[data-home-map] .react-flow__viewport')).transform).a);
-        const box = await page.locator('[data-home-map] .react-flow__pane').boundingBox(), cdp = await context.newCDPSession(page);  // input on this headless page only
-        const before = await zoomOf();
-        await cdp.send('Input.dispatchMouseEvent', {type: 'mouseWheel', x: box.x + box.width / 2, y: box.y + box.height / 2, deltaX: 0, deltaY: -600});
-        await page.waitForFunction(was => new window.DOMMatrix(window.getComputedStyle(document.querySelector('[data-home-map] .react-flow__viewport')).transform).a > was * 1.05, before);
-        const zoomed = await zoomOf();
-        await page.unroute('**/api/universal/agents-canvas');
-        await page.route('**/api/universal/agents-canvas', route => route.fulfill({status: 200, contentType: 'application/json',
-          body: JSON.stringify({agents: [], sessions: [...live, 'Codex / 00.ARCHUB / session-0a1b2c3d4e5f'].map((name, index) => ({id: 'live' + index, name, status: 'working', task: null}))})}));
-        await page.waitForFunction(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].some(b => b.textContent.startsWith('Codex')), null, {timeout: 60000});
-        assert.equal(await zoomOf(), zoomed, 'his zoom stays when a session comes onto the map' + at);
-        await page.unroute('**/api/universal/agents-canvas');
-        await page.route('**/api/universal/agents-canvas', route => route.fulfill({status: 200, contentType: 'application/json',
-          body: JSON.stringify({agents: [], sessions: live.map((name, index) => ({id: 'live' + index, name, status: 'working', task: null}))})}));
-        await page.waitForFunction(() => ![...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].some(b => b.textContent.startsWith('Codex')), null, {timeout: 60000});
-      }
+      // Agents are not sessions (AGENTSJOIN): two live agents with no work are members of nothing, so they are no cards on the map.
+      const agentCards = await page.evaluate(() => [...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].filter(b => b.textContent.startsWith('Claude Code')).length);
+      assert.equal(agentCards, 0, 'a live agent with no work is no Home card' + at);
+      assert.equal(await page.locator('[data-home-kind], .home-map-kind button').filter({hasText: 'Agent sessions'}).count(), 0, 'the map has no Agent sessions filter' + at);
       // Every name on Home, the docks included, is readable: no raw session id; the map's bar words do not overlap.
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /session-[0-9a-f]{6,}/i, 'no raw session id anywhere on Home' + at);
       const bar = await page.evaluate(() => [...document.querySelectorAll('.home-map-bar>button')].filter(b => b.getClientRects().length).map(b => { const r = b.getBoundingClientRect(); return [r.left, r.right, b.scrollWidth <= b.clientWidth + 1]; }));

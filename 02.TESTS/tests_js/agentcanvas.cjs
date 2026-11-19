@@ -143,9 +143,9 @@ main()
     page.on('pageerror',error=>errors.push(error.message));
     await page.goto(input.url);
     await page.locator('[data-home-ready]').waitFor({state:'attached',timeout:60000});
-    await page.getByRole('button',{name:'4 working · 0 idle · Nothing waiting for you',exact:true}).click();
+    await page.getByRole('button',{name:'Agents on this PC',exact:true}).click();
     const view=page.locator('[data-screen="agents"]');
-    await page.getByRole('button',{name:'4 working · 0 idle · Nothing waiting for you',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Agents on this PC',exact:true}).waitFor();
     await view.locator('[data-agent-session]').first().waitFor();
     await page.waitForFunction(()=>document.querySelectorAll('[data-agent-session]').length===5);
     assert.equal(await view.locator('[data-agent-session]').count(),5);
@@ -173,7 +173,7 @@ main()
     await page.getByRole('region',{name:'Conversation',exact:true}).waitFor();
     console.log('PASS Open thread lands on the real task Workshop thread');
     await page.locator('button[title="Home"][aria-label="Home"]').click();
-    await page.getByRole('button',{name:'4 working · 0 idle · Nothing waiting for you',exact:true}).click();
+    await page.getByRole('button',{name:'Agents on this PC',exact:true}).click();
     await page.locator(`[data-agent-task="${input.task}"]`).dblclick();
     await page.locator('.react-flow__node[data-id="start"]').waitFor();
     await nodeCount(7);
@@ -236,13 +236,13 @@ main()
     console.log('PASS automatic legacy migration is undoable through real CtrlZ with group membership and notes restored');
     await command('empty');
     await page.locator('button[title="Home"][aria-label="Home"]').click();
-    await page.getByRole('button',{name:/working ·.*idle ·|No agents are running\. ·/}).click();
+    await page.getByRole('button',{name:'Agents on this PC',exact:true}).click();
     await view.getByText('No agent sessions are running.',{exact:true}).waitFor();
     await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().agentSummary==='No agents are running.');
     assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().agentWorkingCount),0);
-    await page.getByRole('button',{name:'No agents are running. · Nothing waiting for you',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Agents on this PC',exact:true}).waitFor();
     await page.locator('button[title="Home"][aria-label="Home"]').click();
-    await page.getByRole('button',{name:'No agents are running. · Nothing waiting for you',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Agents on this PC',exact:true}).waitFor();
     await page.screenshot({path:'05.EVIDENCE/agentcanvas/agents-empty.png'});
     assert.deepEqual(errors,[]);
     console.log('PASS empty roster; no browser errors; derived view never saved');

@@ -1,4 +1,4 @@
-"""F337 SESSION-IS-THE-WORK: one session per piece of work, joined by every agent of any vendor.
+"""F337 SESSION-IS-THE-WORK, AGENTSJOIN: one session per piece of work, started by the founder and joined by every agent.
 
 Real Workshop SQLite mailbox, real task owner and real session files, in a disposable profile only.
 Two vendors' start paths are their own declare calls: a Claude context and a Codex context.
@@ -56,16 +56,25 @@ def work_rows():
         return [row for row in tasks.rows(history) if not row['id'].startswith('declared-')]
 
 
+def start(title='Coordinate the tower drawings', workspace='tower'):
+    """Work starts from the founder (Home, task_create); agents join it by its task id."""
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        return tasks.create_session(history, title, select=False, workspace=workspace)['taskId']
+
+
 def steps(path):
     from nodelang.session_files import read_document
     return [n for n in read_document(path)['nodes'] if n.get('params', {}).get('workshop_step')]
 
 
-def test_two_vendors_on_the_same_request_in_one_project_join_one_session(project):
-    first = declare(CLAUDE('a'), project, 'F337')['declaration']
-    second = declare(CODEX('b'), project, 'F337', task='Review the tower sheets')['declaration']
+def test_two_vendors_naming_one_task_join_one_session(project):
+    work = start()
+    first = declare(CLAUDE('a'), project, work)['declaration']
+    second = declare(CODEX('b'), project, work, task='Review the tower sheets')['declaration']
     rows = work_rows()
-    assert len(rows) == 1 and first['work'] == second['work'] == rows[0]['id']
+    assert len(rows) == 1 and first['work'] == second['work'] == rows[0]['id'] == work
     assert len(sessions()) == 1
     assert sorted(m['owner'] for m in rows[0]['members']) == sorted([first['session'], second['session']])
     agents = sorted(step['params']['agent'] for step in steps(rows[0]['session_path']))
@@ -73,29 +82,32 @@ def test_two_vendors_on_the_same_request_in_one_project_join_one_session(project
     assert first['runtime'] != second['runtime']
 
 
-def test_two_agents_on_different_requests_in_one_project_get_two_sessions(project):
-    first = declare(CLAUDE('a'), project, 'APP-BUILD', path=project / 'app.txt')['declaration']
-    second = declare(CODEX('b'), project, 'REVIT-RIBBON', path=project / 'ribbon.txt')['declaration']
-    assert first['work'] != second['work']
+def test_two_agents_on_two_tasks_stay_in_two_sessions_and_a_bare_request_makes_none(project):
+    facade, core = start('Tower facade'), start('Tower core')
+    first = declare(CLAUDE('a'), project, facade, path=project / 'app.txt')['declaration']
+    second = declare(CODEX('b'), project, core, path=project / 'ribbon.txt')['declaration']
+    assert (first['work'], second['work']) == (facade, core)
+    assert declare(CLAUDE('c'), project, 'REVIT-RIBBON', path=project / 'r.txt')['declaration'].get('work') is None
     assert len(work_rows()) == 2 and len(sessions()) == 2
 
 
-def test_a_new_request_moves_the_agent_and_ends_its_old_membership(project):
+def test_a_new_task_moves_the_agent_and_ends_its_old_membership(project):
     from nodelang import workshop_tasks as tasks
     from nodelang.workshop_mailbox import application_history
-    first = declare(CLAUDE('a'), project, 'REQ-1')['declaration']
+    one, two = start('Tower facade'), start('Tower core')
+    first = declare(CLAUDE('a'), project, one)['declaration']
     with application_history() as history:
         old_path = Path(tasks.get(history, first['work'])['session_path'])
     before = old_path.read_bytes()
-    moved = declare(CLAUDE('a'), project, 'REQ-2', task='Next step')['declaration']['work']
-    assert moved != first['work']
+    moved = declare(CLAUDE('a'), project, two, task='Next step')['declaration']['work']
+    assert moved == two != first['work']
     with application_history() as history:
         old = tasks.get(history, first['work'])
         assert old['status'] == 'open' and not old['archived']              # left as it is, never archived
         assert [m['lease_until'] for m in old['members'] if m['owner'] == first['session']] == [None]
         assert tasks.get(history, moved)['status'] == 'claimed'
     assert old_path.read_bytes() == before                                 # the old file is untouched
-    assert declare(CLAUDE('a'), project, 'REQ-1')['declaration']['work'] == first['work']   # back to that work
+    assert declare(CLAUDE('a'), project, one)['declaration']['work'] == first['work']   # back to that work
 
 
 def test_without_a_request_never_guess_and_never_wake_a_30_hour_old_session(project):
@@ -113,20 +125,14 @@ def test_without_a_request_never_guess_and_never_wake_a_30_hour_old_session(proj
         tasks.rows(history)                                                 # an app restart settles the lapsed lease
         assert tasks.get(history, quiet)['updated_at'] == old              # settling never refreshes activity
         assert tasks.declared(history, 'root-c', '', 'Tower again', 'working', 'agent-c', 'Agent C', 'Tower', kind='start') != quiet
-        # A session that carries a request is never joined by a declare without one.
-        asked = tasks.declared(history, 'root-d', 'F337', 'Request work', 'working', 'agent-d', 'Agent D', 'Villa')
-        assert tasks.declared(history, 'root-e', '', 'Villa work', 'working', 'agent-e', 'Agent E', 'Villa', kind='start') != asked
+        # A request no task carries joins nothing and makes nothing.
+        assert tasks.declared(history, 'root-d', 'F337', 'Request work', 'working', 'agent-d', 'Agent D', 'Villa') is False
 
 
-def test_two_open_sessions_mean_a_new_one_never_a_guess(project):
-    from nodelang import workshop_tasks as tasks
-    from nodelang.workshop_mailbox import application_history
-    with application_history() as history:
-        one = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
-        two = tasks.create_session(history, 'Tower core', select=False, workspace='tower')['taskId']
-    third = declare(CODEX('c'), project, 'F337')['declaration']['work']
-    assert third not in (one, two)
-    assert len(work_rows()) == 3 and len(sessions()) == 3
+def test_two_open_sessions_and_a_bare_request_mean_no_session_never_a_guess(project):
+    start('Tower facade'), start('Tower core')
+    assert declare(CODEX('c'), project, 'F337')['declaration'].get('work') is None
+    assert len(work_rows()) == 2 and len(sessions()) == 2
 
 
 def test_explicit_session_id_always_wins(project):
@@ -150,26 +156,27 @@ def test_old_per_run_rows_and_files_are_never_joined_or_rewritten(project):
         path = Path(tasks.get(history, old)['session_path'])
         before_row = tasks.get(history, old)
     before = path.read_bytes()
-    work = declare(CLAUDE('a'), project, 'F337')['declaration']['work']
-    declare(CODEX('b'), project, 'F337')
-    assert work != old and path.read_bytes() == before
+    tower = start()
+    work = declare(CLAUDE('a'), project, tower)['declaration']['work']
+    declare(CODEX('b'), project, tower)
+    assert work == tower != old and path.read_bytes() == before
     with application_history() as history:
         assert tasks.get(history, old) == before_row
 
 
-def test_ten_agent_starts_on_ten_requests_make_ten_sessions(project):
+def test_ten_agent_starts_on_ten_requests_no_task_carries_make_no_session(project):
     for number in range(10):
         declare((CLAUDE, CODEX)[number % 2]('agent-%d' % number), project, 'request-%d' % number,
                 path=project / ('part-%d.txt' % number))
-    assert len(sessions()) == 10 and len(work_rows()) == 10
+    assert sessions() == [] and work_rows() == []
 
 
 def test_ten_agent_starts_on_one_request_make_one_session_file(project, capsys):
     vendors = (CLAUDE, CODEX)
-    timings = []
+    timings, tower = [], start()
     for number in range(10):
         started = time.perf_counter()
-        declare(vendors[number % 2]('agent-%d' % number), project, 'F337')
+        declare(vendors[number % 2]('agent-%d' % number), project, tower)
         timings.append(time.perf_counter() - started)
     files = sessions()
     with capsys.disabled():
@@ -180,7 +187,8 @@ def test_ten_agent_starts_on_one_request_make_one_session_file(project, capsys):
 
 def test_two_members_write_steps_at_once_and_none_is_lost(project):
     from concurrent.futures import ThreadPoolExecutor
-    work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
+    work = start()
+    assert declare(CLAUDE('a'), project, work, path=project / 'a.txt')['declaration']['work'] == work
     # Separate paths: the overlap notice is not under test here, only the one file both write.
     with ThreadPoolExecutor(2) as pool:
         joined = list(pool.map(lambda pair: declare(pair[0], project, work, task=pair[1],
@@ -214,16 +222,17 @@ def test_agent_started_by_another_agent_inherits_only_the_same_work(project):
         child.kill()
         child.wait(timeout=10)
     assert inherited['declaration']['work'] == facade                       # no request: the starter's work
-    assert other['declaration']['work'] != facade                           # a different request is different work
+    assert other['declaration'].get('work') != facade                       # a different request is not this work
     # A sibling with no starter above it never inherits: two open sessions means a new one.
-    sibling = declare(CODEX('sibling'), project, 'other-work', path=project / 'other.txt')['declaration']['work']
+    sibling = declare(CODEX('sibling'), project, 'other-work', path=project / 'other.txt')['declaration'].get('work')
     assert sibling != facade
 
 
 def test_interrupted_session_stays_open_and_another_vendor_continues_with_plan_and_handover(project):
     from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
     from nodelang.workshop_mailbox import application_history
-    first = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')
+    tower = start()
+    first = declare(CLAUDE('a'), project, tower, path=project / 'a.txt')
     work, me = first['declaration']['work'], CLAUDE('a')
     mailbox.call('task_set_session', {'id': work, 'plan': ['Check sheets', 'Tag doors', 'Publish set'],
                                       'handover': {'done': 'Sheets checked', 'next': 'Tag the doors',
@@ -233,7 +242,7 @@ def test_interrupted_session_stays_open_and_another_vendor_continues_with_plan_a
         lapsed = tasks.get(history, work)
         path = lapsed['session_path']
     assert lapsed['status'] == 'open' and lapsed['outcome'] == 'interrupted' and not lapsed['archived']
-    taken = declare(CODEX('b'), project, 'F337', path=project / 'b.txt')
+    taken = declare(CODEX('b'), project, tower, path=project / 'b.txt')
     assert taken['declaration']['work'] == work                             # the same session, file and thread
     assert taken['session']['path'] == path
     assert taken['session']['plan'] == ['Check sheets', 'Tag doors', 'Publish set']
@@ -244,19 +253,20 @@ def test_interrupted_session_stays_open_and_another_vendor_continues_with_plan_a
     assert shown['handover']['next'] == 'Tag the doors'
     assert shown['status'] == 'WIP' and not shown['stale']
     # Only done or archive ends it.
-    declare(CODEX('b'), project, 'F337', status='done', path=project / 'b.txt')
+    declare(CODEX('b'), project, tower, status='done', path=project / 'b.txt')
     with application_history() as history:
         assert tasks.get(history, work)['status'] == 'done'
-    assert declare(CLAUDE('c'), project, 'new-work', path=project / 'c.txt')['declaration']['work'] != work
+    assert declare(CLAUDE('c'), project, 'new-work', path=project / 'c.txt')['declaration'].get('work') != work
 
 
 def test_archive_ends_a_session(project):
     from nodelang import workshop_tasks as tasks
     from nodelang.workshop_mailbox import application_history
-    work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
+    work = start()
+    assert declare(CLAUDE('a'), project, work, path=project / 'a.txt')['declaration']['work'] == work
     with application_history() as history:
         tasks.archive(history, work)
-    assert declare(CODEX('b'), project, 'F337', path=project / 'b.txt')['declaration']['work'] != work
+    assert declare(CODEX('b'), project, work, path=project / 'b.txt')['declaration'].get('work') != work
 
 
 def tasks_column():
@@ -302,8 +312,12 @@ def test_two_starters_at_the_same_depth_mean_no_inheritance(project):
 def test_dead_session_leaves_the_open_list_but_one_waiting_for_the_founder_stays(project):
     from datetime import datetime, timedelta, timezone
     from nodelang.workshop_mailbox import application_history
-    dead = declare(CLAUDE('a'), project, 'DEAD', path=project / 'dead.txt')['declaration']['work']
-    held = declare(CODEX('b'), project, 'HELD', status='blocked', path=project / 'held.txt')['declaration']['work']
+    # Sessions an older build's declares made (still open until the one-time retire); a declare naming their request joins them.
+    dead, held = 'session-dead', 'session-held'
+    _legacy(dead, 'DEAD', None)
+    _legacy(held, 'HELD', None)
+    assert declare(CLAUDE('a'), project, 'DEAD', path=project / 'dead.txt')['declaration']['work'] == dead
+    assert declare(CODEX('b'), project, 'HELD', status='blocked', path=project / 'held.txt')['declaration']['work'] == held
     old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
     with application_history() as history:
         history._db.execute("UPDATE workshop_tasks SET updated_at=?, lease_until=0 WHERE id IN (?,?)", (old, dead, held))
@@ -317,7 +331,8 @@ def test_handover_note_drops_user_paths_environment_values_and_secrets(project, 
     import os
     from nodelang import workshop_mailbox as mailbox
     monkeypatch.setenv('SESSIONWORK_FIXTURE_VALUE', 'fixture-environment-value-123')
-    work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
+    work = start()
+    declare(CLAUDE('a'), project, work, path=project / 'a.txt')
     private = os.path.join(os.environ['USERPROFILE'], 'Desktop', 'notes.txt')
     inside = str(project / 'sheets' / 'checked.pdf')
     token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2'
@@ -359,7 +374,7 @@ def test_upgrade_a_live_agents_old_row_is_one_working_row(project):
                      "created_at,updated_at,purpose,project) VALUES(?,'Old build work','claimed',?,'Live agent',?,"
                      "'Live agent',?,?,'OLD','Tower')", (old, owner, time.time() + 600, tasks._now(), tasks._now()))
         before = tasks.get(history, old)
-    work = declare(me, project, 'F337', path=project / 'live.txt')['declaration']['work']
+    work = declare(me, project, start(), path=project / 'live.txt')['declaration']['work']
     with application_history() as history:
         history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (old,))   # its old lease lapses
         tasks.rows(history)
@@ -421,49 +436,43 @@ def test_real_starts_without_a_request_join_a_session_started_from_home(project)
     assert declare(CODEX('home'), project, 'n/a', path=project / 'h2.txt', kind='start')['declaration']['work'] == home   # placeholder id
 
 
-def test_same_request_in_an_unregistered_folder_never_joins(project, tmp_path):
+def test_a_bare_request_in_an_unregistered_folder_makes_nothing(project, tmp_path):
     loose = tmp_path / 'Loose'
     loose.mkdir()
     first = declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']
     second = declare(CODEX('loose'), loose, 'F337', path=loose / 'b.txt')['declaration']
-    assert first['project'] == '' and first['work'] != second['work']
-    from nodelang.workshop_mailbox import application_history
-    with application_history() as history:
-        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (first['work'],))
-    rows, files = len(work_rows()), len(sessions())                        # the lease lapsed (settled on read)
-    assert declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']['work'] == first['work']
-    assert len(work_rows()) == rows and len(sessions()) == files
+    assert first['project'] == '' and first.get('work') is None and second.get('work') is None
+    assert work_rows() == [] and sessions() == []
 
 
 def test_stop_declare_keeps_the_current_work_and_never_returns_to_an_old_one(project):
     agent = CLAUDE('stop')
-    old = declare(agent, project, 'B-WORK', path=project / 'b.txt')['declaration']['work']
-    current = declare(agent, project, 'A-WORK', path=project / 'a.txt')['declaration']['work']
+    b_work, a_work = start('B work'), start('A work')
+    old = declare(agent, project, b_work, path=project / 'b.txt')['declaration']['work']
+    current = declare(agent, project, a_work, path=project / 'a.txt')['declaration']['work']
     assert current != old
-    declare(CODEX('other'), project, 'B-WORK', path=project / 'b2.txt')          # touches the old session later
+    declare(CODEX('other'), project, b_work, path=project / 'b2.txt')          # touches the old session later
     stop = declare(agent, project, 'unassigned', task='Session start', path=project / 'a.txt')['declaration']
     assert stop['work'] == current
 
 
-def test_child_with_its_own_request_stays_in_its_own_session_on_stop(project):
+def test_child_with_its_own_task_stays_in_its_own_session_on_stop(project):
     import subprocess
     import sys
-    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
-    from nodelang.workshop_mailbox import application_history
-    with application_history() as history:
-        facade = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    from nodelang import workshop_mailbox as mailbox
+    facade, panels = start('Tower facade'), start('Panel check')
     declare(CLAUDE('starter'), project, facade, path=project / 'facade.txt')
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
-        body = {'task': 'Panel check', 'paths': [str(project / 'panels.txt')], 'status': 'working', 'request_id': 'panel-check'}
+        body = {'task': 'Panel check', 'paths': [str(project / 'panels.txt')], 'status': 'working', 'request_id': panels}
         own = mailbox.call('declare', body, CODEX('child'), peer=peer)['declaration']['work']
         stop = mailbox.call('declare', {**body, 'task': 'Session start', 'request_id': 'unassigned'}, CODEX('child'), peer=peer)
     finally:
         child.kill()
         child.wait(timeout=10)
-    assert own != facade and stop['declaration']['work'] == own
+    assert own == panels != facade and stop['declaration']['work'] == own
 
 
 def test_parent_in_another_project_is_not_inherited(project, tmp_path):
@@ -512,12 +521,13 @@ def test_startup_alias_pair_changes_nothing(project):
         assert tasks.get(history, home)['status'] == 'done'                # no ghost member keeps it open
 
 
-def test_request_from_another_project_never_stays_in_this_projects_session(project, tmp_path):
+def test_work_in_another_project_never_stays_in_this_projects_session(project, tmp_path):
     villa_folder = tmp_path / 'Work' / 'Villa'
     agent = CLAUDE('mover')
-    tower = declare(agent, project, 'F337', path=project / 'a.txt')['declaration']['work']
-    villa = declare(agent, villa_folder, 'F337', path=villa_folder / 'a.txt')['declaration']['work']
-    assert villa != tower
+    tower_work, villa_work = start('Tower facade'), start('Villa roof', 'villa')
+    tower = declare(agent, project, tower_work, path=project / 'a.txt')['declaration']['work']
+    villa = declare(agent, villa_folder, villa_work, path=villa_folder / 'a.txt')['declaration']['work']
+    assert (tower, villa) == (tower_work, villa_work)
 
 
 def test_no_request_starts_spray_no_files(project, tmp_path):
@@ -576,7 +586,7 @@ def test_no_change_stop_declare_with_500_rows_is_fast(project, capsys):
                                 "VALUES(?,?,'open','founder',?,?,?,?)", ('session-bulk-%d' % number, 'Bulk %d' % number,
                                 tasks._now(), tasks._now(), 'BULK-%d' % number, ('Tower', 'Villa', None)[number % 3]))
     agent = CLAUDE('timed')
-    work = declare(agent, project, 'F337', path=project / 'timed.txt')['declaration']['work']
+    work = declare(agent, project, start(), path=project / 'timed.txt')['declaration']['work']
     declare(agent, project, 'unassigned', task='Session start', path=project / 'timed.txt')
     started = time.perf_counter()
     stop = declare(agent, project, 'unassigned', task='Session start', path=project / 'timed.txt')['declaration']
@@ -594,7 +604,7 @@ def test_stop_after_a_lapsed_lease_renews_its_own_work_and_joins_nothing_else(pr
     with application_history() as history:
         home = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
     agent = CLAUDE('lapsed')
-    work = declare(agent, project, 'F337', path=project / 'f.txt')['declaration']['work']
+    work = declare(agent, project, start('Tower core'), path=project / 'f.txt')['declaration']['work']
     with application_history() as history:
         history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (work,))
         tasks.rows(history)                                                  # the lease lapses: interrupted
@@ -677,3 +687,109 @@ def test_each_real_caller_states_its_declare_kind(project, monkeypatch, capsys):
     kinds = [(body['status'], body.get('kind')) for body in bodies]
     assert ('done', 'alias') in kinds and ('working', 'alias') in kinds     # retire_bootstrap and the startup alias
     assert any(body.get('kind') == 'refresh' and body['request_id'] == 'F337' for body in bodies)   # the repeat
+
+
+
+# Founder 2026-11-19: a session is the work; agents join it and are never sessions. A declare only joins work that exists.
+def test_a_declare_with_a_message_id_request_creates_no_task_and_no_file(project):
+    for name, request in (('a', 'msg-7f3e2c1d9b'), ('b', '109/318 independently reviewed'), ('c', 'F419')):
+        declare(CLAUDE(name), project, request)
+    assert work_rows() == [] and sessions() == []
+
+
+def test_a_declare_naming_a_task_joins_that_work_and_adds_nothing(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        task = tasks.create_session(history, 'Review build 11', select=False)['taskId']
+    before = sessions()
+    declare(CLAUDE('a'), project, task, task='Review pass 1')
+    declare(CODEX('b'), project, task, task='Review pass 2')
+    rows = work_rows()
+    assert [row['id'] for row in rows] == [task] and sessions() == before, 'one piece of work, one file'
+    assert len(rows[0]['members']) == 2, 'both agents are members of the one session'
+
+
+def _legacy(task, purpose, path, created_by='Agent', members=None, project='Tower'):
+    """A row an older build's declare minted (id session-..., the request as purpose, an agent as creator)."""
+    import json
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history, history._transaction(write=True):
+        tasks._ensure(history)
+        history._db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,purpose,project,members) "
+                            "VALUES(?,?,'open',?,?,?,?,?,?,?)", (task, purpose + ' work', created_by, tasks._now(), tasks._now(),
+                                                                 str(path) if path else None, purpose, project, json.dumps(members or [])))
+
+
+def test_the_one_time_retire_archives_only_declare_made_sessions_and_never_a_file(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    from nodelang.session_files import sessions_directory, read_document, write_document
+    # His own session with two agents in it: never touched.
+    mine = start('Tower facade')
+    declare(CLAUDE('a'), project, mine, path=project / 'a.txt')
+    declare(CODEX('b'), project, mine, path=project / 'b.txt')
+    # Two sessions older declares minted: one nobody spoke in, one he answered in.
+    sessions_directory().mkdir(parents=True, exist_ok=True)
+    from nodelang.session_files import new_document
+    quiet, answered = sessions_directory() / 'independent review.archhub', sessions_directory() / 'review he answered.archhub'
+    write_document(quiet, new_document('109/318 independently reviewed'))
+    kept_bytes = quiet.read_bytes()
+    with application_history() as history:
+        document = read_document(tasks.get(history, mine)['session_path'])
+    document.setdefault('notes', []).append({'id': 'n1', 'who': 'You', 'text': 'Check the north elevation', 'role': tasks._TASK_ROLE})
+    write_document(answered, document)
+    _legacy('session-legacy1', '109/318 independently reviewed', quiet)
+    _legacy('session-legacy2', 'msg-7f3e', answered)
+    # A row that only looks old but a person made: never touched.
+    _legacy('session-legacy3', 'F337', None, created_by='founder')
+    with application_history() as history:
+        before = {row['id']: row for row in tasks.rows(history)}
+        assert tasks.retire_declared_sessions(history) == ['session-legacy1']
+        after = {row['id']: row for row in tasks.rows(history)}
+        assert after['session-legacy1']['archived']
+        for kept in (mine, 'session-legacy2', 'session-legacy3'):
+            assert not after[kept]['archived'] and after[kept]['members'] == before[kept]['members'], kept
+        assert tasks.retire_declared_sessions(history) == [], 'once is enough; a second run changes nothing'
+    assert quiet.read_bytes() == kept_bytes, 'the file is never touched'
+
+
+def test_a_live_agent_in_a_retired_session_rejoins_its_own_real_work_else_none(project):
+    import time as clock
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    mine = start('Tower facade')
+    worker = declare(CLAUDE('a'), project, mine, path=project / 'a.txt')['declaration']['session']
+    lease = clock.time() + 600
+    _legacy('session-old-a', 'msg-1', None, members=[{'owner': worker, 'label': 'Agent A', 'lease_until': lease}])
+    _legacy('session-old-b', 'msg-2', None, members=[{'owner': 'agent-without-work', 'label': 'Agent B', 'lease_until': lease}])
+    with application_history() as history:
+        assert sorted(tasks.retire_declared_sessions(history)) == ['session-old-a', 'session-old-b']
+        assert [m['owner'] for m in tasks._live(tasks.get(history, mine)['members'])] == [worker], 'back in his real work'
+        assert all('agent-without-work' not in [m['owner'] for m in row['members']]
+                   for row in tasks.rows(history, include_archived=False)), 'no real work: declared only'
+
+
+def test_preexisting_open_declare_sessions_are_retired_at_runtime_and_excluded_from_home_map(project):
+    """Already-existing open agent-declare session rows in DB are retired at runtime and excluded from Home map."""
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    real = start('Structural frame check')
+    # Pre-existing open declare session created by an agent
+    _legacy('session-old-declare-card', '12/40 reviewed', None, created_by='Claude Code', project='Tower')
+    with application_history() as history:
+        raw = tasks.get(history, 'session-old-declare-card')
+        assert raw and not raw['archived'], 'seeded as unarchived declare session'
+        # Runtime path: backfill_sessions on startup automatically retires open declare sessions
+        tasks.backfill_sessions(history)
+        after = tasks.get(history, 'session-old-declare-card')
+        assert after['archived'], 'retired and archived at runtime'
+        # Excluded from Home map tasks
+        home_tasks = tasks.column(history, include_archived=False)
+        assert 'session-old-declare-card' not in [t['id'] for t in home_tasks]
+        assert real in [t['id'] for t in home_tasks]
+        # Even with include_archived=True, status is ARCHIVED so Home map ignores it
+        all_tasks = tasks.column(history, include_archived=True)
+        archived_entry = next(t for t in all_tasks if t['id'] == 'session-old-declare-card')
+        assert archived_entry['status'] == 'ARCHIVED'

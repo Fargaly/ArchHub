@@ -12017,6 +12017,31 @@
         "06.CLOUD/cloud_backend/tests/test_founder_backend_health.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "UPDATEKEEPSDATA": {
+      "source": "Founder request R178: an update never erases user data; a test fails any build whose installer would write into settings, Workshop, sessions, profile or sign-in.",
+      "scope": [
+        "02.TESTS/tests_replica/test_an_update_never_lands_on_user_data.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "COLLEAGUESETUP": {
+      "source": "Founder requests R13, R12: installing for colleagues connects their AI assistants: the installer tick gives Claude Code and Codex the ArchHub tools when installed.",
+      "scope": [
+        "01.APP/colleague_setup.py",
+        "01.APP/nodelang/assistant_registration.py",
+        "02.TESTS/tests_replica/test_opencode_is_recognised_and_connected.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "PRIVACYNOTICES": {
+      "source": "Founder request R196: privacy, notices and licences page in Docs, opened from Settings Privacy; says where data lives and what leaves the machine; unwritten legal texts listed as not published yet.",
+      "scope": [
+        "01.APP/nodelang/site_export.py",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_replica/test_privacy_and_licences_page.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -563,3 +563,15 @@ Request: F14 and F20. Keep ArchHub current and correct the image dependency expo
 Prior art: GitHub Dependabot -> identifies five critical runtime advisories fixed in Pillow 13.0.0 (#113, #122, #139, #144 and #153). PyPI -> provides the CPython 3.14 Windows x64 wheel that the existing offline installer can load.
 Replaces: the desktop requirements pin Pillow 12.1.1 with Pillow 13.0.0.
 Evidence: the 7,281,830-byte wheel matched SHA-256 f7cbb7a64e7ec664775195e4f81923bc8a93d9451b963f844e59118f63147a7a. An isolated offline install reopened PNG, JPEG and WebP images. ArchHub revision_compare found one changed page in two synthetic PDFs and wrote a 160 x 120 overlay. Packaged and installed readback belongs to the release.
+
+## D-040 Update the router tracing API and Studio test dependencies (2026-11-19)
+
+Request: F14 and F20. Keep the existing desktop router and Studio development dependencies current and fix their reported advisories.
+Prior art: GitHub Dependabot -> identifies affected versions and patched ranges; PyPI -> publishes the CPython-compatible wheel and SHA-256; npm -> publishes the development packages and their integrity digests.
+Replaces: the current three version pins in the desktop requirements and Studio development lock.
+
+Build 19 replaces opentelemetry-api 1.45.1 with 1.45.2 on the desktop. The Studio development lock moves source-map-js from 1.2.1 to 1.2.4 and undici from 7.28.0 to 7.30.2 within the existing parent packages' allowed ranges. GitHub dependency advisories identified the affected versions.
+
+The Windows x64 CPython 3.14 wheelhouse selected the universal wheel, and Python 3.14.3 imported it after an offline installation. The 60,335-byte PyPI wheel matched SHA-256 2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34. In isolation the ArchHub router emitted client spans for a successful request and a timeout, retained the input and output token counts, and propagated the error. The published npm archives matched the lock and all 228 installed development package files. A source mapping resolved to its original line and column, and the HTTP dispatcher returned the expected local response.
+
+Studio compiled with these versions. An edit on its session card and a second edit in its Inspector survived saving and reopening in Chromium. The existing jsdom test group returned the same 131 failures before and after the lock update. That investigation is tracked separately. Installed acceptance belongs to the release.

@@ -230,3 +230,18 @@ def test_optimize_and_schedule_wired_feeds_override_params():
     out_s, _ = schedule({'crews': 1}, {'in': tasks, 'crews': 2, 'time_limit': 1.0})
     assert out_s['finish'] == 2 and out_s['status'] == 'Optimal'
 
+
+
+@pytest.mark.parametrize('node', ['optimize', 'schedule'])
+def test_engine_refuses_a_file_injected_time_limit(node):
+    """F15: a time limit written straight into the .archhub file (no parameter check on the way) is refused by the engine."""
+    pytest.importorskip('highspy')
+    from nodelang import decision_engines
+    call = getattr(decision_engines, node)
+    params = {'objective': 'cost', 'time_limit': 999} if node == 'optimize' else {'time_limit': 999}
+    rows = [{'cost': 1}] if node == 'optimize' else [{'name': 'A', 'duration': 1}]
+    with pytest.raises(ValueError, match='at most 30 seconds'):
+        call(params, {'in': rows})
+    wired = {'in': rows, 'time_limit': 999}   # a wired value goes through the same check
+    with pytest.raises(ValueError, match='at most 30 seconds'):
+        call({'objective': 'cost'} if node == 'optimize' else {}, wired)

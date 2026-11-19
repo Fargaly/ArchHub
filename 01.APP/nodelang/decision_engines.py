@@ -75,7 +75,10 @@ def _seconds(params):
         value = math.nan
     if not math.isfinite(value) or value <= 0:
         raise ValueError('Time limit must be a positive number of seconds')
-    return min(value, MAX_SOLVE_CAP)
+    # F15: the engine bounds every solve itself; a value written straight into the file is refused here too.
+    if value > MAX_SOLVE_CAP:
+        raise ValueError('Time limit is at most %g seconds' % MAX_SOLVE_CAP)
+    return value
 
 
 def _whole(value, default, what, low):

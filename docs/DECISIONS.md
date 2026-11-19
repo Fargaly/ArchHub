@@ -22,3 +22,8 @@ Replaces: the .githooks/pre-commit deleted in 458fb512 (2026-07-27); this interi
 Request: F12
 Prior art: Chromium/VS Code Credential Manager -> keep bearer tokens in process env/memory only; SQLite in-place header scrub -> sanitize legacy rows without touching user messages
 Replaces: inline Authorization headers persisted in Goose sessions.sqlite3 extension_data (no new store is created; opens existing Goose sessions.sqlite3 strictly to scrub retained headers)
+
+## D-022 Add highspy (HiGHS) solver dependency for Optimize and Schedule pure nodes (2026-11-19, Antigravity coordinator / Codex e988)
+Request: F19
+Prior art: SciPy linprog/milp (HiGHS backend) -> open-source MIT linear/MIP solver; OR-Tools -> bounded optimization nodes
+Replaces: nothing exists (adds bounded MIT-licensed HiGHS wheel for pure Optimize and Schedule nodes)

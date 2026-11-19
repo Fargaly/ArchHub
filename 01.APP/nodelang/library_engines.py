@@ -2754,6 +2754,8 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
         interfaces = {'in':{'type':'list','direction':'input'},'criteria':{'type':'list','direction':'input'},
                       'method':{'type':'string','direction':'input'},
                       'out':{'type':'list','direction':'output'}}
+    if engine in DECISION_INTERFACES:
+        interfaces = DECISION_INTERFACES[engine]
     return _interface_ports(interfaces, sockets)
 
 
@@ -2843,6 +2845,51 @@ for _engine, _spec in _COORDINATION_NODES.items():
     _coordination_rows.append((_item, _label, _label))
 LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('office', tuple(_coordination_rows)))
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Decision score','Rank wired options by weighted criteria (TOPSIS or weighted sum); re-ranks as you edit'),)),)
+
+# Decision nodes: pure, time-bounded solvers over wired rows (decision_engines.py).
+from .decision_engines import optimize as _decide_optimize, schedule as _decide_schedule, SENSES as _DECISION_SENSES, MAX_SOLVE_CAP as _DECISION_MAX_SOLVE_CAP
+LIBRARY_ENGINES['decide.optimize'] = _decide_optimize
+LIBRARY_ENGINES['decide.schedule'] = _decide_schedule
+ENGINE_SOCKETS['decide.optimize'] = {
+    'source': ('out', 'objective', 'status'),
+    'target': ('in', 'objective', 'sense', 'constraints', 'max_each', 'whole_amounts', 'time_limit'),
+}
+ENGINE_SOCKETS['decide.schedule'] = {
+    'source': ('out', 'finish', 'status'),
+    'target': ('in', 'crews', 'time_limit'),
+}
+DECISION_INTERFACES = {
+    'decide.optimize': {
+        'in': {'type': 'list', 'direction': 'input'},
+        'constraints': {'type': 'list', 'direction': 'input'},
+        'objective': {'type': 'string', 'direction': 'input'},
+        'sense': {'type': 'choice', 'direction': 'input'},
+        'max_each': {'type': 'number', 'direction': 'input'},
+        'whole_amounts': {'type': 'boolean', 'direction': 'input'},
+        'time_limit': {'type': 'number', 'direction': 'input'},
+        'out': {'type': 'list', 'direction': 'output'},
+        'status': {'type': 'string', 'direction': 'output'},
+    },
+    'decide.schedule': {
+        'in': {'type': 'list', 'direction': 'input'},
+        'crews': {'type': 'number', 'direction': 'input'},
+        'time_limit': {'type': 'number', 'direction': 'input'},
+        'out': {'type': 'list', 'direction': 'output'},
+        'finish': {'type': 'number', 'direction': 'output'},
+        'status': {'type': 'string', 'direction': 'output'},
+    },
+}
+LIBRARY_ITEM_ENGINES['decide_optimize'] = {'engine': 'decide.optimize', 'params': {
+    'objective': 'cost', 'sense': 'Minimize', 'constraints': '[]', 'max_each': 1.0, 'whole_amounts': True, 'time_limit': 2.0},
+    'paramDefs': [{'id': 'sense', 'name': 'Sense', 'type': 'choice', 'options': list(_DECISION_SENSES)},
+                  {'id': 'time_limit', 'name': 'Time limit (s)', 'type': 'number', 'min': 0.1, 'max': _DECISION_MAX_SOLVE_CAP}]}
+LIBRARY_ITEM_ENGINES['decide_schedule'] = {'engine': 'decide.schedule', 'params': {'crews': 2, 'time_limit': 2.0},
+    'paramDefs': [{'id': 'crews', 'name': 'Crews', 'type': 'integer', 'min': 1},
+                  {'id': 'time_limit', 'name': 'Time limit (s)', 'type': 'number', 'min': 0.1, 'max': _DECISION_MAX_SOLVE_CAP}]}
+LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (
+    ('decide_optimize', 'Optimize', 'Best amount of each wired row under your limits (HiGHS); re-solves as you edit'),
+    ('decide_schedule', 'Schedule', 'Start and end per task from durations, after-links and crews (HiGHS)'),
+)),)
 
 # Two generic nodes. Limits live here as parameters; host_exec reads them.
 from .host_exec import host_exec as _host_exec, connector_call as _connector_call

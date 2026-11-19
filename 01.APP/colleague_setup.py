@@ -44,6 +44,8 @@ PACKAGES = (
     ("rpds-py", "rpds"),
     ("ezdxf", "ezdxf"),
     ("numpy", "numpy"),
+    # The Optimize and Schedule nodes' solver (imported when a card solves, not at boot).
+    ("highspy", "highspy"),
     ("psutil", "psutil"),
     ("keyring", "keyring"),
     ("mcp", "mcp"),

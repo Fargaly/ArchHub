@@ -59,7 +59,7 @@ def is_pure(engine, params=None):
             _PURITY.active = active
     if engine == 'thing.agent' and (params or {}).get('reference') is True:
         return True
-    if engine in STEM_RUN_ENGINES or engine in ('note', 'data.convert', 'param.value', 'data.dataset', 'data.field', 'research.weighted'):
+    if engine in STEM_RUN_ENGINES or engine in ('note', 'data.convert', 'param.value', 'data.dataset', 'data.field', 'research.weighted', 'decide.optimize', 'decide.schedule'):
         return True
     if engine in THING_ENGINES:
         return THING_ENGINES[engine]['pure']

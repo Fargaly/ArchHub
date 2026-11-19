@@ -33,6 +33,9 @@ PyQt6-WebEngine>=6.11,<6.12
 # without it still boots and reports the engine as absent.
 ezdxf>=1.4,<2
 numpy>=2.4,<3
+# Decision nodes (decision_engines.py): Optimize and Schedule both run on HiGHS (MIT, 3.2 MB wheel, needs only numpy).
+# The import is guarded: without it the two cards refuse with a plain reason and the app still boots.
+highspy==1.16.0
 # Windows Office host brokers attach to Classic Outlook and other Office COM hosts.
 # Match the packaged Windows runtime; New Outlook does not expose this interface.
 pywin32==311; sys_platform == "win32"

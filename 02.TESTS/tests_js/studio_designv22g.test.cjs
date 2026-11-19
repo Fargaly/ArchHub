@@ -137,10 +137,14 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
   await t.test('New task creates one file with four fixed nodes and never runs on open',async()=>{
     await create('Canvas UI first');first=await current();
     assert.equal(await page.locator('.react-flow').count(),1);
-    assert.equal(await page.locator('[data-graph-node][data-fixed]').count(),4);
+    // Four fixed nodes in the file; folded into the one Session card by default, as the design draws it.
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.filter(node=>node.fixed).length),4);
+    assert.equal(await page.locator('[data-graph-node][data-fixed]').count(),1);
+    assert.equal(await page.locator('[data-design="session.pins"]').getAttribute('aria-label'),'On every canvas · Expand');
     assert.equal(await page.locator('[aria-label="Task view"]').count(),0);
     assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.some(node=>node.result)),false);
-    assert.equal(await page.locator('[data-graph-node="start"] [data-node-footer-status]').innerText(),'Idle');
+    // The Session card (design v48) has no footer: its state is the store's, and a new task's session is Idle.
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id==='start').status),'Idle');
     assert.ok(await page.locator('[data-design="composer.msg"]').isVisible());
     assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).count(),0);
     await page.locator('.react-flow__pane').click({button:'right',position:{x:700,y:520}});
@@ -148,11 +152,11 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.locator('[data-design="menu.paste-here"]').getAttribute('title'),'Copy nodes first.');
     await page.locator('.context-dismiss').click({position:{x:10,y:10}});
     assert.equal(await page.getByRole('tab',{name:'Canvas UI first',exact:true}).getAttribute('data-preview'),'false');
-    const profile=page.locator('[data-graph-node="fixed-you"]');
-    await profile.getByRole('button',{name:'Parameters',exact:true}).click();
-    await profile.getByRole('button',{name:'Fewer',exact:true}).waitFor();
-    assert.ok(await profile.getByRole('button',{name:'Settings › You',exact:true}).isVisible());
-    await profile.getByRole('button',{name:'Fewer',exact:true}).click();
+    // Folded, the profile is the Session card's You panel.
+    const you=page.locator('[data-design="session.panel.you"]');
+    await you.click();
+    assert.ok(await page.locator('[data-design="session.node"]').getByRole('button',{name:'Settings › You',exact:true}).isVisible());
+    await you.click();
   });
   await t.test('Legacy view frames without writes; pan and explicit Save restore exact views',async()=>{
     await page.evaluate(()=>window.ArchHubAPI.saveSession());await page.waitForTimeout(400);
@@ -296,13 +300,22 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.getByRole('button',{name:'Close thread',exact:true}).click();
   });
   await t.test('Pinned-node collapse changes view metadata and retains all four nodes',async()=>{
-    await page.getByRole('button',{name:'On every canvas · Collapse',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelectorAll('[data-graph-node][data-fixed]').length===1);
-    assert.equal(await page.locator('[data-graph-node][data-fixed]').count(),1);
-    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.filter(node=>node.fixed).length),4);
+    // Expand and fold are a view (the open tabs' state): the file keeps the same four fixed nodes and is not written.
+    const file=()=>page.evaluate(()=>JSON.stringify(window.ArchHubAPI.getSessionDocument().nodes));
+    const before=await file();
     await page.getByRole('button',{name:'On every canvas · Expand',exact:true}).click();
     await page.waitForFunction(()=>document.querySelectorAll('[data-graph-node][data-fixed]').length===4);
-    assert.equal(await page.locator('[data-graph-node][data-fixed]').count(),4);
+    assert.equal((await page.evaluate(()=>window.ArchHubAPI.readCanvasTabs())).canvasTabs.expanded,true);
+    // Expanded, the profile is its own card again, and the Session card no longer repeats it as a panel.
+    await page.locator('[data-graph-node="fixed-you"]').getByText('Profile · every agent reads it',{exact:true}).waitFor();
+    assert.equal(await page.locator('[data-design="session.panel.you"]').count(),0);
+    // None of the four can be deleted.
+    await assert.rejects(page.evaluate(()=>window.ArchHubAPI.deleteNode('fixed-you')),/four fixed nodes stay/);
+    await page.getByRole('button',{name:'On every canvas · Collapse',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('[data-graph-node][data-fixed]').length===1);
+    assert.equal((await page.evaluate(()=>window.ArchHubAPI.readCanvasTabs())).canvasTabs.expanded,false);
+    assert.equal(await file(),before,'expand and fold change no node in the file');
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.filter(node=>node.fixed).length),4);
   });
   await t.test('Open beside reads a different task file and keeps the active file selected',async()=>{
     await page.getByRole('tab',{name:'Canvas UI first',exact:true}).click({button:'right'});

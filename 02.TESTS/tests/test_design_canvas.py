@@ -38,6 +38,17 @@ def test_flow_view_is_kept_on_its_open_tab_and_refuses_a_value_that_is_not_on_or
     assert canvas_tabs(settings=held)['canvasTabs'] == flow, 'a refused write changes nothing'
 
 
+def test_fixed_nodes_expanded_is_a_view_on_the_open_tabs_and_refuses_a_value_that_is_not_on_or_off():
+    from nodelang.settings_owner import canvas_tabs
+    held = _Held()
+    plain = {'tabs': [{'id': 'one', 'kept': True}], 'active': 'one', 'split': '', 'collapsed': False}
+    assert canvas_tabs('setCanvasTabs', [plain], settings=held)['canvasTabs'].get('expanded', False) is False, 'folded by default'
+    shown = {**plain, 'expanded': True}
+    assert canvas_tabs('setCanvasTabs', [shown], settings=held)['canvasTabs'] == shown
+    with pytest.raises(ValueError):
+        canvas_tabs('setCanvasTabs', [{**plain, 'expanded': 'yes'}], settings=held)
+    assert canvas_tabs(settings=held)['canvasTabs'] == shown, 'a refused write changes nothing'
+
 def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
     """Compiled Studio on a seeded temporary Workshop at 1009, 1440 and 1920."""
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')

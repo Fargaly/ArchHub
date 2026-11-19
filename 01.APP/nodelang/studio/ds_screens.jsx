@@ -506,6 +506,7 @@
     const thread = fixed.find(row => row.type === 'thing.workshop');
     const name = agent?.params.agent || task?.agents?.[0] || 'Session';
     const live = (s.liveAgents || []).find(row=>[row.agent,row.name,row.handle].includes(name));
+    const expanded = !!u.canvasTabs?.expanded;
     const panels = [
       ['Agent', 'user', name, agent],
       ['You', 'user', [s.profile.name, s.profile.role].filter(Boolean).join(' · ') || 'Your profile', you],
@@ -514,14 +515,16 @@
       ['Context', 'folder', task?.references?.join(' · ') || task?.scope || 'Task context'],
       ['Thread', 'workshop', messages.length + ' messages · opens beside the canvas', thread]
     ];
-    const usedPorts = (owner, side) => (owner?.[side === 'out' ? 'outputs' : 'inputs'] || []).filter(p => s.graph.wires.some(w => side === 'out' ? w.from === owner.id && w.fromPort === p.id && !s.graph.nodes.find(r => r.id === w.to)?.fixed && !sessionAgents.some(row=>row.id===w.to) : w.to === owner.id && w.toPort === p.id && !s.graph.nodes.find(r => r.id === w.from)?.fixed && !sessionAgents.some(row=>row.id===w.from)));
+    const usedPorts = (owner, side) => (owner?.[side === 'out' ? 'outputs' : 'inputs'] || []).filter(p => s.graph.wires.some(w => side === 'out' ? w.from === owner.id && w.fromPort === p.id && !(s.graph.nodes.find(r => r.id === w.to)?.fixed && !expanded) && !sessionAgents.some(row=>row.id===w.to) : w.to === owner.id && w.toPort === p.id && !(s.graph.nodes.find(r => r.id === w.from)?.fixed && !expanded) && !sessionAgents.some(row=>row.id===w.from)));
     const panelSocket = (owner, p, side) => socket({...p, id: owner.id === n.id ? p.id : owner.id + ':' + p.id}, side);
     const edit = owner => (owner?.parameterSchema || []).filter(p => p.editable).map(p => <label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={owner} p={p} value={owner.params[p.key]} u={u}/></label>);
     return <div className={'v48-session' + (selected ? ' selected' : '')} data-design="session.node">
-      <header className="node-header"><window.UI.Av id={name} size={24}/><div><b>{name}</b><small>{agent?.params.agent ? 'Agent session' : 'Session'}</small></div><span className="v48-state-dot"/></header>
+      <header className="node-header"><window.UI.Av id={name} size={24}/><div><b>{name}</b><small>{agent?.params.agent ? 'Agent session' : 'Session'}</small></div><span className="v48-state-dot"/>
+        {/* Folded by default as the design draws it; he can show the profile, thread and agent as their own cards and fold them again. A view, never a file write. */}
+        <button type="button" className="button-reset nodrag v48-session-pins" data-design="session.pins" aria-expanded={expanded} aria-label={'On every canvas · ' + (expanded ? 'Collapse' : 'Expand')} title={expanded ? 'Fold the profile, thread and agent into this card' : 'Show the profile, thread and agent as their own cards'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs, expanded: !expanded}))},event)}><window.AHIcon name={expanded ? 'minus' : 'plus'} size={12}/></button></header>
       <div className="v48-session-body"><div><span>Task</span><b>{task?.title || s.graph.name}</b></div><div><span>Runs</span><b>{n.params.model || sessionAgents.find(row=>row.params.model)?.params.model || agent?.params.model || live?.model || 'No active agent'}</b></div>{messages.length > 0 && <p>{messages.at(-1).text}</p>}<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button></div>
       {(usedPorts(n, 'out').length > 0 || usedPorts(n, 'in').length > 0) && <div className="v48-session-ports">{['in','out'].map(side => usedPorts(n,side).map(p => <span key={side+p.id} data-side={side}>{panelSocket(n,p,side)}{p.id === 'value' ? 'task' : p.name}</span>))}</div>}
-      <div className="v48-session-panels">{panels.map(([label, icon, summary, owner]) => <section key={label} className="v48-session-panel">
+      <div className="v48-session-panels">{panels.filter(([,,,owner]) => !expanded || !owner?.fixed || owner === n).map(([label, icon, summary, owner]) => <section key={label} className="v48-session-panel">
         <button type="button" data-design={'session.panel.' + label.toLowerCase()} className="button-reset nodrag v48-session-panel-head" aria-expanded={label === 'Thread' ? undefined : !!open[label]} onClick={event=>executeAction('projects.controls.activate',{handler:()=>label === 'Thread' ? u.setTaskFace(u.taskFace === 'split' ? 'canvas' : 'split') : setOpen(v => ({...v,[label]:!v[label]}))},event)}>
           {label==='Agent'?<window.UI.Av id={name} size={22}/>:<span className="v48-panel-tile"><window.AHIcon name={icon} size={12}/></span>}<b>{label}</b><em>{summary}</em><span>{open[label] ? '⌄' : '→'}</span>
         </button>
@@ -931,7 +934,8 @@
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     const hasSession = s.graph.nodes.some(n=>n.fixed&&n.type==='thing.session');
-    const foldedOwner = n => n && (n.fixed || hasSession&&n.agentWork?.role==='session'&&(!n.agentStep||s.graph.nodes.some(row=>row.agentWork?.owner===n.id))&&!n.parent);
+    // The profile, thread and agent nodes fold into the Session card (the design) unless he expanded them (a view, the open tabs' state).
+    const foldedOwner = n => n && (n.fixed && !u.canvasTabs?.expanded || hasSession&&n.agentWork?.role==='session'&&(!n.agentStep||s.graph.nodes.some(row=>row.agentWork?.owner===n.id))&&!n.parent);
     // A node whose group is not a node at this level is drawn here, never dropped.
     const atLevel = n => {
       if(foldedOwner(n)&&n.type!=='thing.session'||s.graph.system||n.application)return false;
@@ -1122,7 +1126,7 @@
             position};
         });
       });
-    }, [s.graph, layout, parent, selected.join(','), requestState, u.canvasTabs?.collapsed]);
+    }, [s.graph, layout, parent, selected.join(','), requestState, u.canvasTabs?.expanded]);
     const onNodesChange = changes => {
       setFlowNodes(nodes => RF.applyNodeChanges(changes.filter(c => c.type !== 'remove'), nodes));
       const picks = changes.filter(c => c.type === 'select');
@@ -1305,7 +1309,7 @@
           data: {color, inferred:w.inferred||w.enabled===false, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint'||w.enabled===false ? .2 : .9}};
       });
-    }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId]);
+    }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId, u.canvasTabs?.expanded]);
     // Flow view (a view: no file, wire or socket changes): one wire per pair of steps, drawn between the two flow sockets.
     const flowEdges = flowView ? edges.filter((edge,index,all) => ![edge.source,edge.target].some(id => { const end = visible.find(n => n.id === id); return !end || end.fixed || expandedGroup(end); }) && all.findIndex(row => row.source === edge.source && row.target === edge.target) === index)
       .map(edge => ({...edge, sourceHandle: 'flow:out', targetHandle: 'flow:in'})) : edges;

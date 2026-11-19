@@ -136,6 +136,24 @@ const {chromium} = require('playwright');
     await page.locator('[data-design="home.card"]').filter({hasText: 'Model view audit'}).dblclick();
     await page.waitForFunction(() => document.querySelector('[data-design="canvas.presence"]')?.dataset.state === 'waiting');
     assert.match(await presence.innerText(), /Drawing coordinator\s*needs you/);
+    // PINSFOLD: folded, no wire of a fixed node is drawn; expanded, the three fixed-node wires into the Session card are drawn and attached.
+    const fixedWires = await snapshot(() => { const d = window.ArchHubAPI.getSessionDocument(), fixed = new Set(d.nodes.filter(n => n.fixed && n.type !== 'thing.session').map(n => n.id)), session = d.nodes.find(n => n.type === 'thing.session').id; return d.wires.filter(w => fixed.has(w.from.node) && w.to.node === session).map(w => w.id); });
+    assert.equal(fixedWires.length, 3, 'the agent, profile and thread each feed the Session in the file');
+    const drawn = () => page.evaluate(ids => ids.map(id => { const path = document.querySelector('[aria-label="Workflow canvas"] .react-flow__edge[data-id="' + id + '"] path'); return path ? path.getAttribute('d') || '' : null; }), fixedWires);
+    const broken = () => page.evaluate(() => [...document.querySelectorAll('[aria-label="Workflow canvas"] .react-flow__edge path')].filter(path => !path.getAttribute('d') || /NaN/.test(path.getAttribute('d'))).length);
+    assert.deepEqual(await drawn(), [null, null, null], 'folded: the fixed-node wires are not drawn');
+    assert.equal(await broken(), 0);
+    const pins = page.locator('[data-design="session.pins"]');
+    await pins.click();
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Workflow canvas"] [data-graph-node][data-fixed]').length === 4);
+    await page.waitForFunction(ids => ids.every(id => /^M\s*-?\d/.test(document.querySelector('[aria-label="Workflow canvas"] .react-flow__edge[data-id="' + id + '"] path')?.getAttribute('d') || '')), fixedWires);
+    // Each wire ends on the Session card: its last point lies on the card's edge box.
+    const ends = await page.evaluate(ids => { const card = document.querySelector('[aria-label="Workflow canvas"] [data-graph-node="start"]').getBoundingClientRect(); return ids.map(id => { const path = document.querySelector('[aria-label="Workflow canvas"] .react-flow__edge[data-id="' + id + '"] path'), end = path.getPointAtLength(path.getTotalLength()), m = path.getScreenCTM(), x = m.a * end.x + m.c * end.y + m.e, y = m.b * end.x + m.d * end.y + m.f; return x >= card.left - 12 && x <= card.right + 12 && y >= card.top - 4 && y <= card.bottom + 4; }); }, fixedWires);
+    assert.deepEqual(ends, [true, true, true], 'expanded: the three wires end on the Session card');
+    assert.equal(await broken(), 0);
+    await pins.click();
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Workflow canvas"] [data-graph-node][data-fixed]').length === 1);
+    assert.deepEqual(await drawn(), [null, null, null]);
     assert.deepEqual(errors, []);
     console.log('PASS design_canvas_live at 1009, 1440 and 1920');
   } finally {

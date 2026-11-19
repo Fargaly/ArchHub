@@ -655,7 +655,8 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     if function == 'setCanvasTabs':
         value = args[0] if len(args) == 1 else None
-        if type(value) is not dict or set(value) != {'tabs', 'active', 'split', 'collapsed'}:
+        # expanded: the profile, thread and agent nodes show as their own cards; folded into the Session card by default. A view.
+        if type(value) is not dict or set(value) - {'expanded'} != {'tabs', 'active', 'split', 'collapsed'}:
             raise ValueError('Choose open task tabs and their view state.')
         tabs = value['tabs']
         if type(tabs) is not list or len(tabs) > 100:
@@ -668,7 +669,7 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
                     type(tab['kept']) is not bool or type(tab.get('flow', False)) is not bool or tab['id'] in identities):
                 raise ValueError('Each open task tab needs a unique task identity.')
             identities.add(tab['id'])
-        if (type(value['collapsed']) is not bool or
+        if (type(value['collapsed']) is not bool or type(value.get('expanded', False)) is not bool or
                 any(type(value[key]) is not str or value[key] and value[key] not in identities for key in ('active', 'split')) or
                 value['split'] and value['split'] == value['active']):
             raise ValueError('Select different open task tabs for split view.')

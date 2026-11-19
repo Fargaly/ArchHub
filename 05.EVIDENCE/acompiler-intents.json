@@ -12224,6 +12224,9 @@
         "02.TESTS/tests_js/studio_group_document.test.cjs",
         "02.TESTS/tests_js/studio_rerun_again.test.cjs",
         "02.TESTS/tests_replica/test_f38_listen_first.py",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests/test_properties_rerun_fork.py",
+        "02.TESTS/tests_js/properties_rerun_fork_live.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

@@ -194,10 +194,14 @@ const place=()=>document.querySelectorAll('.bbm-bub').forEach(b=>{b.classList.ad
 setInterval(place,400);addEventListener('scroll',place,{passive:true});
 const mb=document.getElementById('menubtn');if(mb)mb.onclick=()=>{const o=document.getElementById('top').classList.toggle('sheet-open');mb.setAttribute('aria-expanded',o)};
 const here=location.pathname;document.querySelectorAll('#top .nav > a,#top .nav .dd > button').forEach(a=>{const h=a.getAttribute('href')||'/baboom/';if(h==='/'?here==='/':here.startsWith(h))a.setAttribute('aria-current','page')});
-fetch('https://api.github.com/repos/Fargaly/ArchHub/releases/latest').then(r=>r.ok?r.json():null).then(r=>{if(!r)return;const a=(r.assets||[]).find(x=>x.name==='ArchHub-Setup-0.exe');
-const id=(/^BUILD_ID: ([A-Za-z0-9._-]+)$/m.exec(r.body||'')||[])[1],sha=(/^SHA256 ArchHub-Setup-0.exe: ([0-9a-f]{64})$/m.exec(r.body||'')||[])[1];if(!a||!id)return;
-const v={tag:id,date:new Date(r.published_at).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}),size:a.name+', '+Math.round(a.size/1048576)+' MB',sha:sha||'',url:a.browser_download_url};
-document.querySelectorAll('[data-rel]').forEach(e=>{const k=e.dataset.rel;if(!(k in v))return;if(k==='url')e.href=v.url;else e.textContent=v[k]})}).catch(()=>{})})()</script>"""
+const paintRel=v=>{document.querySelectorAll('[data-rel]').forEach(e=>{const k=e.dataset.rel;if(!(k in v))return;if(k==='url')e.href=v.url;else e.textContent=v[k]});
+document.querySelectorAll('a[data-dl]').forEach(e=>e.href=v.url);document.querySelectorAll('[data-build]').forEach(e=>e.textContent=v.tag);
+const meta=document.querySelector('meta[name="archhub-build"]');if(meta)meta.setAttribute('content',v.tag);
+const note=document.querySelector('[data-rel-note]');if(note)note.hidden=true};
+const fromOffer=d=>{if(!d||!d.build_id||!d.asset_name||!d.asset_bytes)return null;return{tag:d.build_id,date:d.built_at?new Date(d.built_at).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}):'',size:d.asset_name+', '+Math.round(d.asset_bytes/1048576)+' MB',sha:d.asset_sha256||'',url:'https://github.com/Fargaly/ArchHub/releases/latest/download/'+d.asset_name}};
+const fromGitHub=r=>{if(!r)return null;const a=(r.assets||[]).find(x=>x.name==='ArchHub-Setup-0.exe');const id=(/^BUILD_ID: ([A-Za-z0-9._-]+)$/m.exec(r.body||'')||[])[1],sha=(/^SHA256 ArchHub-Setup-0.exe: ([0-9a-f]{64})$/m.exec(r.body||'')||[])[1];if(!a||!id)return null;return{tag:id,date:new Date(r.published_at).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}),size:a.name+', '+Math.round(a.size/1048576)+' MB',sha:sha||'',url:a.browser_download_url}};
+// Same-origin /download.json always follows releases/latest (Caddy redirect); GitHub API is the fallback.
+fetch('/download.json').then(r=>r.ok?r.json():null).then(d=>{const v=fromOffer(d);if(v){paintRel(v);return null}return fetch('https://api.github.com/repos/Fargaly/ArchHub/releases/latest').then(r=>r.ok?r.json():null)}).then(r=>{if(r==null)return;const v=fromGitHub(r);if(v)paintRel(v);else{const note=document.querySelector('[data-rel-note]');if(note)note.hidden=false}}).catch(()=>{const note=document.querySelector('[data-rel-note]');if(note)note.hidden=false})})()</script>"""
 
 
 def design():
@@ -300,8 +304,19 @@ def account_page():
 COMPANION = '<link rel="stylesheet" href="https://baboom.archhub.io/companion/baboom-companion.css"><script src="https://baboom.archhub.io/companion/baboom-pages.js" defer></script>'
 # GitHub serves the newest release's installer at this fixed address, so the link follows every release.
 LATEST_INSTALLER = "https://github.com/Fargaly/ArchHub/releases/latest/download/ArchHub-Setup-0.exe"
-# Follow the latest GitHub release at load time; the pinned build stays when GitHub does not answer.
-LATEST = """<script>fetch('https://api.github.com/repos/Fargaly/ArchHub/releases/latest').then(r=>r.ok?r.json():null).then(r=>{if(!r)return;var a=(r.assets||[]).find(x=>x.name==='ArchHub-Setup-0.exe'),b=/^BUILD_ID: ([A-Za-z0-9._-]+)$/m.exec(r.body||'');if(!a||!b||a.browser_download_url.indexOf(b[1])<0)return;document.querySelectorAll('a[data-dl]').forEach(e=>e.href=a.browser_download_url);document.querySelectorAll('[data-build]').forEach(e=>e.textContent=b[1])}).catch(()=>{})</script>"""
+# Changelog: baked CHANGELOG.md is the fallback; at load time GitHub releases replace the list so a
+# redeploy is not required for every published build. Release bodies that only carry the Build block
+# are shown as published-build rows (no invented product notes).
+CHANGELOG_SCRIPT = """<script>(()=>{const root=document.getElementById('changelog-live');if(!root)return;
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const bid=tag=>String(tag||'').replace(/^build-/,'');
+const text=body=>String(body||'').replace(/\\r\\n/g,'\\n');
+const section=(body,name)=>{const src=text(body);const mark='## '+name+'\\n';const i=src.indexOf(mark);if(i<0)return null;const rest=src.slice(i+mark.length);const j=rest.search(/\\n## /);const block=j<0?rest:rest.slice(0,j);return(block.match(/^- .+$/mg)||[]).map(l=>l.slice(2).trim())};
+const meta=body=>{const o={};text(body).split(/\\n/).forEach(line=>{const m=/^(BUILD_ID|BUILT_AT|SOURCE_REVISION):\\s*(.+)$/.exec(line);if(m)o[m[1]]=m[2].trim();const s=/^SHA256 ArchHub-Setup-0\\.exe:\\s*([0-9a-fA-F]{64})/.exec(line);if(s)o.SHA256=s[1].toLowerCase()});return o};
+const title=id=>{const d=/^(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})/.exec(id);return d?d[1]+'-'+d[2]+'-'+d[3]+' \\u00b7 '+d[4]+':'+d[5]:id};
+const entry=(id,body)=>{const changed=section(body,'What changed'),g=section(body,'Known gaps')||[],m=meta(body);let items;if(changed&&changed.length){items=changed.map(esc);if(g.length)items.push(esc('Known gaps: '+g.join('; ')));}else{items=['Published build '+esc(id)+(m.SOURCE_REVISION?' (source '+esc(m.SOURCE_REVISION.slice(0,7))+').':'')];if(m.SHA256)items.push('Installer SHA-256: '+esc(m.SHA256)+'.');if(m.BUILT_AT)items.push('Built at '+esc(m.BUILT_AT)+'.');}return '<h2>'+esc(title(id))+'</h2><ul>'+items.map(x=>'<li>'+x+'</li>').join('')+'</ul>'};
+let page=1,rows=[];const load=()=>fetch('https://api.github.com/repos/Fargaly/ArchHub/releases?per_page=100&page='+page).then(r=>r.ok?r.json():Promise.reject(r.status)).then(batch=>{rows.push(...(batch||[]).filter(x=>!x.draft&&!x.prerelease));if(batch&&batch.length===100){page+=1;return load()}return rows});
+load().then(list=>{if(!list.length)return;root.innerHTML=list.map(r=>entry(bid(r.tag_name),r.body||'')).join('')}).catch(()=>{})})()</script>"""
 
 
 def build_site(output, build_id, installer_url, sha256):
@@ -323,8 +338,9 @@ def build_site(output, build_id, installer_url, sha256):
     pages = {"account/index.html": ("Your account", account_page()),
              "docs/nodes/index.html": ("Node reference", nodes_index(data)),
              "search/index.html": ("Search", search_page())}
-    pages["changelog/index.html"] = ("Changelog", '<section class="page"><h1>Changelog</h1><p class="lede">Every released build, newest first.</p>'
-                                     + "".join(markdown("## " + title + "\n\n" + body) for title, body in entries) + "</section>")
+    pages["changelog/index.html"] = ("Changelog", '<section class="page"><h1>Changelog</h1><p class="lede">Every released build, newest first. This page follows GitHub releases when they answer.</p>'
+                                     + '<div id="changelog-live">' + "".join(markdown("## " + title + "\n\n" + body) for title, body in entries) + "</div>"
+                                     + CHANGELOG_SCRIPT + "</section>")
     for route, markup in look["pages"].items():
         if route in DESIGN_SKIP or route.startswith("/baboom/") or route == "/changelog":
             continue
@@ -342,7 +358,7 @@ def build_site(output, build_id, installer_url, sha256):
     output = Path(output)
     for path, (title, body) in pages.items():
         description = "A visual node application where people, AI agents and programs work together across engineering work."
-        document = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="archhub-build" content="' + esc(build_id, quote=True) + '"><title>' + esc(title) + ' | ArchHub</title><meta name="description" content="' + description + '"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="any"><meta property="og:type" content="website"><meta property="og:title" content="' + esc(title, quote=True) + ' | ArchHub"><meta property="og:description" content="' + description + '"><meta property="og:image" content="' + esc(by_kind["site"]["url"].rstrip("/") + '/og.png', quote=True) + '"><meta property="og:url" content="' + esc(by_kind["site"]["url"].rstrip("/") + ('/' if path == 'index.html' else '/' + path.removesuffix('index.html')), quote=True) + '"><style>' + look['css'] + COMPONENT_CSS + '</style></head><body><a class="skip" href="#main">Skip to content</a>' + from_design(look["header"]) + '<main id="main" class="wrap">' + body + '</main>' + from_design(look["footer"]) + LATEST + COMPANION + UI_SCRIPT + '</body></html>'
+        document = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="archhub-build" content="' + esc(build_id, quote=True) + '"><title>' + esc(title) + ' | ArchHub</title><meta name="description" content="' + description + '"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="any"><meta property="og:type" content="website"><meta property="og:title" content="' + esc(title, quote=True) + ' | ArchHub"><meta property="og:description" content="' + description + '"><meta property="og:image" content="' + esc(by_kind["site"]["url"].rstrip("/") + '/og.png', quote=True) + '"><meta property="og:url" content="' + esc(by_kind["site"]["url"].rstrip("/") + ('/' if path == 'index.html' else '/' + path.removesuffix('index.html')), quote=True) + '"><style>' + look['css'] + COMPONENT_CSS + '</style></head><body><a class="skip" href="#main">Skip to content</a>' + from_design(look["header"]) + '<main id="main" class="wrap">' + body + '</main>' + from_design(look["footer"]) + COMPANION + UI_SCRIPT + '</body></html>'
         target = output / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(document, encoding="utf-8")

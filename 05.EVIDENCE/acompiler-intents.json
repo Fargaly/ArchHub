@@ -12149,6 +12149,16 @@
         "02.TESTS/tests_replica/test_goose_auth_and_workshop.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CODEMODE": {
+      "source": "Founder request R192: code mode for Revit/AutoCAD folded writes held for Approve and dispatched via <program>_run with type validation.",
+      "scope": [
+        "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/native_host_tools.py",
+        "02.TESTS/tests/test_brokers_restored.py",
+        "02.TESTS/tests_replica/test_graphout.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

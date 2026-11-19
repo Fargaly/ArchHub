@@ -11933,7 +11933,10 @@
         "01.APP/nodelang/social_surface.py",
         "02.TESTS/tests_replica/test_meeting_agent.py",
         "02.TESTS/tests_replica/test_daily_work_nodes.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/outlook_graph.py",
+        "01.APP/nodelang/outlook_graph.ps1"
       ]
     },
     "SOCIALCONNECT": {

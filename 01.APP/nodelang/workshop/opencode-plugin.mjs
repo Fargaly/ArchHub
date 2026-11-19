@@ -96,14 +96,23 @@ export async function collectOpenCodeTurn(client, {sessionId, directory, reply, 
  return result;
 }
 
-export function createWorkshopPlugin({stateDirectory}){
+// The person's own MCP servers reach OpenCode as one local MCP server (nodelang/custom_mcp_gateway.py):
+// V1 through the config hook, V2 through ctx.mcp.transform. tools = {command:[...], cwd}.
+const TOOLS_NAME='archhub-tools';
+function toolsConfig(tools){
+ if(!tools||!Array.isArray(tools.command)||!tools.command.length||tools.command.some(part=>typeof part!=='string'))return null;
+ return {type:'local',command:[...tools.command],...(typeof tools.cwd==='string'?{cwd:tools.cwd}:{})};
+}
+export function createWorkshopPlugin({stateDirectory,tools}){
  if(typeof stateDirectory!=='string'||!path.isAbsolute(stateDirectory))throw new Error('Explicit application transport state directory required');
  const runtimeDir=path.join(stateDirectory,'opencode-runtimes');
  const runtime=path.join(runtimeDir,process.pid+'.json');
  return async ({client,directory})=>{
  const symbol=Symbol.for('archhub.workshop.opencodeserver');
  if(globalThis[symbol]&&globalThis[symbol].stateDirectory!==stateDirectory)throw new Error('This OpenCode process is attached to another transport state directory');
- if(globalThis[symbol]){globalThis[symbol].clients.set(directory,client);return {};}
+ const mcp=toolsConfig(tools);
+ const hooks=mcp?{config:async config=>{config.mcp={...(config.mcp||{}),[TOOLS_NAME]:{...mcp,enabled:true}};}}:{};
+ if(globalThis[symbol]){globalThis[symbol].clients.set(directory,client);return hooks;}
  const clients=new Map([[directory,client]]),busy=new Set(),queues=new Map(),seen=new Set();
  const peer=new PeerEndpoint({name:'opencode-workshop-'+process.pid,cwd:directory});await peer.start();
  const control='\\\\.\\pipe\\LOCAL\\opencode-workshop-'+crypto.randomUUID();
@@ -183,7 +192,84 @@ export function createWorkshopPlugin({stateDirectory}){
  });});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(control,resolve);});
  fs.mkdirSync(runtimeDir,{recursive:true});fs.writeFileSync(runtime,JSON.stringify({pid:process.pid,control,keyPath:peer.keyPath}));
- globalThis[symbol]={clients,server,peer,stateDirectory};return {};
+ globalThis[symbol]={clients,server,peer,stateDirectory};return hooks;
 };
 
+}
+
+// OpenCode 2 (setup(ctx)): the same Workshop transport over the V2 session API. ctx.session speaks
+// {sessionID,text,delivery}; this adapter answers the V1 client calls the transport makes, so one
+// transport serves both runtimes. Types: @opencode/client 2.3.2 promise/generated/types.d.ts.
+const V2_MESSAGE_BOUND=MESSAGE_READ_BOUND;
+function v2Rows(sessionID,messages,steered=new Set()){
+ // V1 rows: {info:{id,role,sessionID,parentID,time,finish,providerID,modelID},parts:[...]}; an assistant's
+ // parent is the turn it belongs to (V2 keeps order, not parent links). A message steered into a running
+ // turn joins that turn: it does not start a new one, so the turn's reply stays the turn's own.
+ const rows=[];let parent=null;
+ for(const m of Array.isArray(messages)?messages:[]){
+  if(m?.type==='user'){
+   if(!steered.has(m.id)||parent===null)parent=m.id;
+   rows.push({info:{id:m.id,role:'user',sessionID,parentID:null,time:{created:m.time?.created}},
+    parts:[{id:m.id+':0',messageID:m.id,sessionID,type:'text',text:String(m.text??'')}]});
+  }else if(m?.type==='assistant'){
+   const parts=(Array.isArray(m.content)?m.content:[]).map((c,i)=>c?.type==='text'
+    ?{id:m.id+':'+i,messageID:m.id,sessionID,type:'text',text:String(c.text??'')}
+    :c?.type==='tool'?{id:m.id+':'+i,messageID:m.id,sessionID,type:'tool',tool:c.name,
+      state:{status:c.state?.status==='completed'?'completed':c.state?.status==='error'?'error':'running',
+       input:typeof c.state?.input==='object'?c.state.input:{},time:{start:c.time?.created,end:c.time?.completed}}}
+    :{id:m.id+':'+i,messageID:m.id,sessionID,type:String(c?.type||'other')});
+   rows.push({info:{id:m.id,role:'assistant',sessionID,parentID:parent,
+    time:{created:m.time?.created,...(m.time?.completed?{completed:m.time.completed}:{})},
+    finish:m.finish,providerID:m.model?.providerID,modelID:m.model?.id},parts});
+  }
+ }
+ return rows;
+}
+export function v1ClientFromV2(ctx){
+ const s=ctx.session, home=ctx.location?.directory;
+ const where=info=>info?.location?.directory||home;
+ const steered=new Set();  // ids of messages this plugin steered into running turns
+ const rowsOf=async id=>v2Rows(id,await s.context({sessionID:id}),steered);
+ const promptV2=async(id,body,delivery)=>{
+  const text=body?.parts?.[0]?.text;
+  if(body?.model)await s.switchModel({sessionID:id,model:{id:body.model.modelID,providerID:body.model.providerID}});
+  return await s.prompt({sessionID:id,text,delivery});
+ };
+ return {session:{
+  list:async({query})=>({data:(await s.list({directory:query?.directory||home})).data
+   .map(info=>({id:info.id,title:info.title,directory:where(info)}))}),
+  get:async({path:p})=>{const info=await s.get({sessionID:p.id});return {data:{id:info.id,title:info.title,directory:where(info)}};},
+  // V2 queues a prompt for a busy session itself (delivery 'queue'); the transport's busy set still serialises its own.
+  status:async()=>({data:{}}),
+  messages:async({path:p})=>({data:(await rowsOf(p.id)).slice(-V2_MESSAGE_BOUND)}),
+  promptAsync:async({path:p,body})=>{
+   const user=await promptV2(p.id,body,'steer');
+   if(typeof user?.id==='string'){steered.add(user.id);if(steered.size>2000)steered.delete(steered.values().next().value);}
+   return {data:{}};
+  },
+  // V1 prompt returns the final assistant message of the turn; V2 returns the accepted user message, so wait for idle.
+  prompt:async({path:p,body})=>{
+   const user=await promptV2(p.id,body,'queue');
+   if(typeof user?.id!=='string')throw new Error('OpenCode 2 did not return the message id; not read');
+   await s.wait({sessionID:p.id});
+   const rows=await rowsOf(p.id);
+   // The turn's own message id, never the latest user message.
+   const final=[...rows].reverse().find(r=>r.info.role==='assistant'&&r.info.parentID===user.id);
+   if(!final)throw new Error('OpenCode 2 turn ended with no reply');
+   return {data:final};
+  },
+ }};
+}
+export function createWorkshopPluginV2({stateDirectory,tools}){
+ const attach=createWorkshopPlugin({stateDirectory});
+ const mcp=toolsConfig(tools);
+ return async ctx=>{
+  if(mcp&&typeof ctx.mcp?.transform==='function'){
+   // A tools failure never keeps the Workshop out of OpenCode.
+   try{await ctx.mcp.transform(editor=>editor.set(TOOLS_NAME,mcp));}catch(error){console.error('ArchHub tools not added to OpenCode: '+error.message);}
+  }
+  const directory=ctx.location?.directory;
+  if(typeof directory!=='string'||!directory){console.error('ArchHub Workshop: OpenCode gave no workspace folder; not attached');return;}
+  await attach({client:v1ClientFromV2(ctx),directory});
+ };
 }

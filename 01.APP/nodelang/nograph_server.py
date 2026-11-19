@@ -104,6 +104,29 @@ class JsonFile:
             return self.write(value)
 
 
+def _refresh_opencode_plugin(state_dir, environment=None):
+    """An older ArchHub Workshop plugin for OpenCode is rewritten in the current format at start.
+
+    Only the installed app's own server does it: a server on any other state folder (a test, a second
+    copy) never touches the person's OpenCode folder. Returns the registration row, or None when skipped."""
+    from .assistant_registration import refresh_opencode_plugin
+    from .client_mcp_installation import RegistrationRefused
+    from .user_paths import state_directory
+    env = dict(os.environ if environment is None else environment)
+    if 'ARCHHUB_TEST_STATE_DIR' in env or 'ARCHHUB_STATE_DIR' in env:
+        return None
+    if os.path.normcase(os.path.abspath(str(state_dir))) != os.path.normcase(os.path.abspath(str(state_directory(env)))):
+        return None
+    try:
+        result = refresh_opencode_plugin(env)
+    except (OSError, ValueError, RegistrationRefused) as failed:
+        print('OpenCode Workshop plugin refresh failed: %s' % failed, flush=True)
+        return None
+    if result.get('state') == 'registration_unconfirmed':
+        print('OpenCode Workshop plugin refresh unconfirmed: %s' % result.get('reason'), flush=True)
+    return result
+
+
 class Cached:
     """A probe refreshed off the request path; None until its first answer."""
 
@@ -228,6 +251,8 @@ class NoGraphServer:
         from .canvas_triggers import TriggerService
         self.triggers = TriggerService(pause_settings=self.files['settings'])
         threading.Thread(target=self.triggers.refresh, name='archhub-triggers', daemon=True).start()
+        threading.Thread(target=_refresh_opencode_plugin, args=(self.state_dir,), name='archhub-opencode-plugin',
+                         daemon=True).start()
         return self
 
     def health_check(self):

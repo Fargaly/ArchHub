@@ -376,6 +376,10 @@ def _opencode_installed(env) -> bool:
     return bool((folder is not None and folder.is_dir()) or find_assistant("opencode", env))
 
 
+GATEWAY_LOADER = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+                  "runpy.run_module('nodelang.custom_mcp_gateway',run_name='__main__')")
+
+
 def render_opencode_plugin(install_root, state_root) -> str:
     """The portable Workshop plugin for OpenCode; the same for every user of one install."""
     import hashlib
@@ -385,10 +389,19 @@ def render_opencode_plugin(install_root, state_root) -> str:
     revision = hashlib.sha256(module.read_bytes()).hexdigest()
     state = str(Path(state_root) / "workshop").replace("\\", "/")
     literal = lambda value: json.dumps(value, ensure_ascii=True)
+    # OpenCode 1.18.29+ and 2.x read one default export {id, server, setup}: V1 calls server(), V2 calls
+    # setup() and refuses a module without it. The named export stays for OpenCode before 1.18.29; a second
+    # load in one process only adds its client (createWorkshopPlugin's per-process guard).
+    # The person's own MCP servers (custom_mcp) as one local MCP server in OpenCode, from this install's venv.
+    root = Path(install_root)
+    tools = {"command": [str(root / ".venv" / "Scripts" / "python.exe"), "-I", "-B", "-c", GATEWAY_LOADER, str(root)],
+             "cwd": str(root)}
+    options = "{stateDirectory:%s,tools:%s}" % (literal(state), json.dumps(tools, ensure_ascii=True))
     return ("// ArchHub Workshop for OpenCode, written by ArchHub on your consent.\n"
-            "import {createWorkshopPlugin} from %s;\n"
-            "export const Workshop = createWorkshopPlugin({stateDirectory:%s});\n"
-            % (literal(module.as_uri() + "?revision=" + revision), literal(state)))
+            "import {createWorkshopPlugin, createWorkshopPluginV2} from %s;\n"
+            "export const Workshop = createWorkshopPlugin(%s);\n"
+            "export default {id:\"archhub-workshop\", server:Workshop, setup:createWorkshopPluginV2(%s)};\n"
+            % (literal(module.as_uri() + "?revision=" + revision), options, options))
 
 
 def _archhub_workshop_loader(raw: bytes) -> bool:
@@ -460,6 +473,17 @@ def register_opencode(install_root, state_root, *, consent, environment=None) ->
     return after
 
 
+def refresh_opencode_plugin(environment=None) -> dict:
+    """App start: replace an older ArchHub Workshop plugin in place. The consent that wrote it covers its
+    update; a missing plugin is never written here and a foreign one is left alone."""
+    env = os.environ if environment is None else environment
+    root, state = install_roots(env)
+    before = opencode_readiness(root, state, env)
+    if before["state"] != "ready_to_register" or not before.get("config_exists"):
+        return before
+    return register_opencode(root, state, consent=True, environment=env)
+
+
 def _remove_opencode_plugin(receipt) -> dict:
     """Uninstall: delete the plugin only while it still holds exactly the bytes ArchHub wrote."""
     import hashlib
@@ -522,7 +546,7 @@ def register(client: str, *, consent, environment=None) -> dict:
 
 __all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_server_spec",
            "migrate_codex", "opencode_readiness", "readiness", "register", "register_codex",
-           "register_opencode", "render_opencode_plugin"]
+           "refresh_opencode_plugin", "register_opencode", "render_opencode_plugin"]
 
 
 

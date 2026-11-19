@@ -31,7 +31,9 @@
         "06.CLOUD/public_site/README.md",
         "03.TOOLS/packaging/README.md",
         "02.TESTS/test_site_links.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        ".github/workflows/site-release-sync.yml",
+        "03.TOOLS/packaging/website/sync_changelog.py"
       ]
     },
     "COMMANDREGISTRY": {
@@ -12168,6 +12170,18 @@
       "scope": [
         "01.APP/nodelang/baboom_native_companion.py",
         "02.TESTS/tests_replica/test_baboom_native_alive.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_replica/test_baboom_native_companion.py"
+      ]
+    },
+    "SETTINGS5": {
+      "source": "Founder 2026-11-19: Settings > Agents live roster showing every connected agent on this PC.",
+      "scope": [
+        "01.APP/nodelang/agent_runtime_registry.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests_js/settings5_agents_sheet.test.cjs",
+        "02.TESTS/tests_replica/test_settings5_agent_roster.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

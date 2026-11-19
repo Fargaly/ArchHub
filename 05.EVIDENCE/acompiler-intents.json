@@ -11876,7 +11876,9 @@
         "02.TESTS/tests_replica/test_chat_works.py",
         "02.TESTS/tests_replica/test_graphout.py",
         "05.EVIDENCE/acompiler-intents.json",
-        "01.APP/nodelang/studio/ui.jsx"
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_replica/test_baboom_persona_standard_reactions.py",
+        "02.TESTS/tests_replica/test_baboom_site_fit.py"
       ]
     },
     "DESIGNROWS2": {

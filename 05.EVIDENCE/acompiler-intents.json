@@ -12131,6 +12131,14 @@
         "02.TESTS/tests/test_wrong_decisions_never_return.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "PUBLICREADME": {
+      "source": "Founder request 2026-11-19: redesign public GitHub README.md into a clean flagship product page with formatted PUBLIC LINKS list.",
+      "scope": [
+        "README.md",
+        "03.TOOLS/packaging/links.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

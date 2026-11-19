@@ -1226,6 +1226,17 @@ def mode_verdict(event: dict, action: str, permissions: dict, environment):
     tool = event["tool"].lower()
     action_name = _draft_action(event["tool"], event["input"]).lower()  # connector.call is judged by its action too
     names = {tool, action_name, tool.split("__")[-1], action_name.split("__")[-1]}  # mcp__<server>__<tool>: also its leaf
+    data = event["input"]
+    if tool == "connector.call" and isinstance(data, dict) and str(data.get("connector") or "").startswith("mcp:"):
+        # The person's own MCP server: every call waits for Approve in every run mode, unless his own
+        # per-tool rule names it (mcp:<server>/<tool>, wildcards allowed). The server's hints never count.
+        named = str(data.get("mcp_tool") or "").lower()
+        for pattern, mode in permissions["tools"].items():
+            if named and fnmatch.fnmatchcase(named, pattern.lower()):
+                return None if mode == "Allowed" else ("refuse", "tool-off") if mode == "Off" else ("ask", "tool-ask")
+        if permissions["runMode"] == "Plan only":
+            return "refuse", "plan-only"
+        return "ask", "mcp-tool-approval"
     for pattern, mode in permissions["tools"].items():
         if any(fnmatch.fnmatchcase(name, pattern.lower()) for name in names):
             return None if mode == "Allowed" else ("refuse", "tool-off") if mode == "Off" else ("ask", "tool-ask")
@@ -1333,7 +1344,16 @@ def cedar_forbids(action: str, context: dict, vendor: str):
     try:
         import cedarpy
     except ImportError:
-        return "unavailable", []
+        # No Cedar engine: the same forbids, read straight from POLICY's when-clauses, so harm is never let through.
+        leaves = action in ("publish", "send")
+        named = [rule for rule, hit in (
+            ("secret-going-public", leaves and context.get("secret")),
+            ("client-data-going-public", leaves and context.get("client_data")),
+            ("delete-founder-data", action == "delete" and context.get("founder_data")),
+            ("use-founder-screen", action == "screen"),
+            ("lethal-trifecta", leaves and context.get("trifecta")),
+            ("banned-package", context.get("banned_package"))) if hit]
+        return "unavailable", named
     policies = POLICY
     request = {"principal": 'Agent::"%s"' % vendor, "action": 'Action::"%s"' % action,
                "resource": 'Target::"tool"', "context": context}
@@ -1549,6 +1569,7 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "plan-only": "Plan only is on in Settings, so nothing changes",
             "tool-ask": "this tool is set to Ask in Settings",
             "host-effect-approval": "running code in a program requires approval",
+            "mcp-tool-approval": "a tool of your own MCP server can change or send something outside ArchHub",
             "ask-first": "Ask first is on in Settings and this deletes, publishes, sends or works outside your folders"}
 
 
@@ -1752,6 +1773,8 @@ def _ask_card(row: dict) -> dict:
             "description": row.get("summary") or "", "status": row.get("status") or "pending",
             "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
     replay = row.get('replay') or {}
+    if str(replay.get('connector') or '').startswith('mcp:'):
+        replay = {**replay, 'arguments': {}}  # his own MCP server's tool: what it does is its own, never a draft or send label
     arguments = replay.get('arguments') if isinstance(replay.get('arguments'), dict) else {}
     if replay.get('kind') == 'connector' and any(isinstance(arguments.get(key), str) for key in ('to', 'subject', 'body')):
         # What the held connector call will write, in its own words: who it goes to, the subject and the text (never other arguments).
@@ -1799,6 +1822,8 @@ def _release_draft_cards(environment):
         return
     for row in rows:
         replay = row.get("replay") or {}
+        if str(replay.get("connector") or "").startswith("mcp:"):
+            continue  # his own MCP server's tool waits for his Approve whatever its name says (save_draft, draft_sql)
         names = {str(replay.get("action") or "").lower(), str(replay.get("connector") or "").lower()}
         names |= {name.split("__")[-1] for name in names}
         held_by_setting = any(mode != "Allowed" and any(fnmatch.fnmatchcase(name, pattern.lower()) for name in names)

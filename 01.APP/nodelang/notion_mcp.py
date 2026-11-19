@@ -70,8 +70,8 @@ def _json_or_sse(raw: str) -> dict:
     raise ValueError("Notion MCP answered with no JSON body")
 
 
-def _load_grant(load: Callable[[str], str | None]) -> dict | None:
-    raw = load(GRANT_KEY)
+def _load_grant(load: Callable[[str], str | None], grant_key: str = GRANT_KEY) -> dict | None:
+    raw = load(grant_key)
     if not raw:
         return None
     try:
@@ -106,11 +106,20 @@ def _pkce() -> tuple[str, str]:
     return verifier, challenge
 
 
+NOTION_ENDPOINTS = {"register": REGISTER_URL, "authorize": AUTHORIZE_URL, "token": TOKEN_URL}
+
+
 def connect(*, timeout: float = 300.0, open_browser: Callable[[str], object] = webbrowser.open,
-            opener: Callable | None = None, load: Callable | None = None, save: Callable | None = None) -> dict:
-    """Run Notion's consent once and keep the grant. Returns {ok, workspace?}."""
+            opener: Callable | None = None, load: Callable | None = None, save: Callable | None = None,
+            endpoints: Mapping[str, str] | None = None, grant_key: str = GRANT_KEY, label: str = "Notion",
+            resource: str | None = None) -> dict:
+    """Run the service's consent once and keep the grant (Notion unless endpoints name another MCP server).
+
+    ``resource`` is the MCP server URL (RFC 8707), sent when the endpoints came from discovery."""
     if load is None or save is None:
         load, save = _secrets()
+    ep = dict(endpoints or NOTION_ENDPOINTS)
+    extra = {"resource": resource} if resource else {}
     received: dict[str, str] = {}
     done = threading.Event()
     state = secrets.token_urlsafe(24)
@@ -130,12 +139,12 @@ def connect(*, timeout: float = 300.0, open_browser: Callable[[str], object] = w
             # Only the pending sign-in's own answer counts, and only once; a stray or
             # replayed callback neither ends the sign-in nor claims anything.
             if query.get("state") != state or done.is_set():
-                self._page(400, "This answer does not belong to ArchHub's pending Notion sign-in.")
+                self._page(400, "This answer does not belong to ArchHub's pending %s sign-in." % label)
                 return
             received.update(query)
             done.set()
-            self._page(200, "Notion answered. ArchHub is finishing the sign-in; you can close this tab."
-                       if "code" in query else "Notion sign-in was not allowed. You can close this tab.")
+            self._page(200, "%s answered. ArchHub is finishing the sign-in; you can close this tab." % label
+                       if "code" in query else "%s sign-in was not allowed. You can close this tab." % label)
 
         def log_message(self, *args):  # silence
             return
@@ -145,7 +154,9 @@ def connect(*, timeout: float = 300.0, open_browser: Callable[[str], object] = w
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        raw, _ = _post(REGISTER_URL, {
+        if not ep.get("register"):
+            return {"ok": False, "error": "%s does not let ArchHub register itself; it cannot sign in from here" % label}
+        raw, _ = _post(ep["register"], {
             "client_name": "ArchHub",
             "redirect_uris": [redirect_uri],
             "grant_types": ["authorization_code", "refresh_token"],
@@ -155,64 +166,67 @@ def connect(*, timeout: float = 300.0, open_browser: Callable[[str], object] = w
         client = json.loads(raw)
         client_id = str(client.get("client_id") or "")
         if not client_id:
-            return {"ok": False, "error": "Notion did not register ArchHub as a client"}
+            return {"ok": False, "error": "%s did not register ArchHub as a client" % label}
         verifier, challenge = _pkce()
-        open_browser(AUTHORIZE_URL + "?" + urllib.parse.urlencode({
+        open_browser(ep["authorize"] + "?" + urllib.parse.urlencode({
             "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
-            "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
+            "code_challenge": challenge, "code_challenge_method": "S256", "state": state, **extra,
         }))
         if not done.wait(timeout):
-            return {"ok": False, "error": "Notion sign-in was not completed in time"}
+            return {"ok": False, "error": "%s sign-in was not completed in time" % label}
         if "code" not in received:
             return {"ok": False, "error": received.get("error_description") or received.get("error")
-                    or "Notion sign-in answered without a code"}
+                    or "%s sign-in answered without a code" % label}
         try:
-            raw, _ = _post(TOKEN_URL, urllib.parse.urlencode({
+            raw, _ = _post(ep["token"], urllib.parse.urlencode({
                 "grant_type": "authorization_code", "code": received["code"], "redirect_uri": redirect_uri,
-                "client_id": client_id, "code_verifier": verifier,
+                "client_id": client_id, "code_verifier": verifier, **extra,
             }), opener=opener)
             token = json.loads(raw)
         except urllib.error.HTTPError as exc:
-            return {"ok": False, "error": "Notion refused the sign-in code (HTTP %s)" % exc.code}
+            return {"ok": False, "error": "%s refused the sign-in code (HTTP %s)" % (label, exc.code)}
         except ValueError:
-            return {"ok": False, "error": "Notion answered the sign-in with no readable grant"}
+            return {"ok": False, "error": "%s answered the sign-in with no readable grant" % label}
         if not token.get("access_token"):
-            return {"ok": False, "error": "Notion returned no access grant"}
+            return {"ok": False, "error": "%s returned no access grant" % label}
         grant = {"client_id": client_id, "access_token": token["access_token"],
+                 **({"token_url": ep["token"]} if endpoints else {}), **extra,
                  "refresh_token": token.get("refresh_token") or "",
                  "expires_at": time.time() + float(token.get("expires_in") or 3600)}
-        save(GRANT_KEY, json.dumps(grant))
+        save(grant_key, json.dumps(grant))
         return {"ok": True}
     finally:
         server.shutdown()
         server.server_close()
 
 
-def _refused(grant: dict, save: Callable, why: str):
-    save(GRANT_KEY, json.dumps({**grant, "refused": True}))
+def _refused(grant: dict, save: Callable, why: str, grant_key: str = GRANT_KEY):
+    save(grant_key, json.dumps({**grant, "refused": True}))
     return NotionNotConnected(why)
 
 
-def _refresh(grant: dict, save: Callable, opener: Callable | None) -> dict:
+def _refresh(grant: dict, save: Callable, opener: Callable | None, grant_key: str = GRANT_KEY) -> dict:
     if not grant.get("refresh_token"):
-        raise _refused(grant, save, "the Notion sign-in expired; connect Notion again")
+        raise _refused(grant, save, "the Notion sign-in expired; connect Notion again", grant_key)
+    extra = {"resource": grant["resource"]} if grant.get("resource") else {}
     try:
-        raw, _ = _post(TOKEN_URL, urllib.parse.urlencode({
+        raw, _ = _post(grant.get("token_url") or TOKEN_URL, urllib.parse.urlencode({
             "grant_type": "refresh_token", "refresh_token": grant["refresh_token"], "client_id": grant["client_id"],
+            **extra,
         }), opener=opener)
         token = json.loads(raw)
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 401, 403):
-            raise _refused(grant, save, "Notion refused the saved sign-in; connect Notion again") from exc
+            raise _refused(grant, save, "Notion refused the saved sign-in; connect Notion again", grant_key) from exc
         raise
     except ValueError as exc:
         raise NotionToolError("Notion answered the refresh with no readable grant") from exc
     if not token.get("access_token"):
-        raise _refused(grant, save, "the Notion sign-in expired; connect Notion again")
+        raise _refused(grant, save, "the Notion sign-in expired; connect Notion again", grant_key)
     grant = {**grant, "access_token": token["access_token"],
              "refresh_token": token.get("refresh_token") or grant["refresh_token"],
              "expires_at": time.time() + float(token.get("expires_in") or 3600)}
-    save(GRANT_KEY, json.dumps(grant))
+    save(grant_key, json.dumps(grant))
     return grant
 
 

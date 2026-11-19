@@ -18,7 +18,7 @@ READ_TOOLS = frozenset(('read', 'task.list', 'hosts.status', 'hosts_state',
     'canvas.list_open', 'canvas.open', 'canvas.read', 'library.search', 'native.hook_stop',
     'revit_ping', 'revit_info', 'acad_ping', 'acad_info', 'max_ping', 'max_info',
     'blender_ping', 'rhino_ping', 'office_read', 'outlook_inbox', 'notion_search', 'dropbox_list',
-    'revit_search', 'autocad_search'))
+    'revit_search', 'autocad_search', 'mcp_tools'))
 
 
 def describe_agent_tools(tools):

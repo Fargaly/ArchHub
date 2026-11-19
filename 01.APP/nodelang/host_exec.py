@@ -828,6 +828,8 @@ def _ensure_registry():
     if "notion" not in LISTERS:
         LISTERS["notion"] = _notion_tools
         INVOKERS["notion"] = _notion_invoke
+    from .custom_mcp import register_all as _custom_mcp_servers
+    _custom_mcp_servers()  # the person's own MCP servers (Settings > Connections), on or off as saved
     from .host_brokers import ENGINES
     seen = []
     for name in ENGINES:
@@ -908,15 +910,26 @@ def connector_call(params, feeds=None):
     action = str(params.get("action") or "")
     wired = feeds if isinstance(feeds, Mapping) else {}
     args = _action_args(params.get("args"), params, wired)
+    tool_name, extra, replay = action, {}, None
+    if connector.startswith("mcp:"):
+        # The person's own MCP server names and annotates its own tools (create_issue, readOnlyHint...): neither
+        # decides anything. Every call is a connector call (send) held for Approve unless his own per-tool rule
+        # in Settings (mcp:<server>/<tool>) allows it. MCP: clients must not trust a server's annotations.
+        tool_name = "connector.call"
+        extra = {"mcp_tool": connector + "/" + action}
+        # Approve releases the server's own tool, never the decision name connector.call.
+        replay = {"kind": "connector", "connector": connector, "action": action,
+                  "arguments": dict(args) if isinstance(args, Mapping) else {"value": args}}
     decision = hook_decision.decide({
-        "tool_name": action,
+        "tool_name": tool_name,
         "tool_input": {
             "text": _preview_text(args),
             "connector": connector,
             "arguments": dict(args) if isinstance(args, Mapping) else {"value": args},
+            **extra,
         },
         "cwd": os.getcwd(),
-    })
+    }, replay=replay)
     preview = _preview_text(args) if decision["action"] in ("send", "publish") else ""
     if decision["verdict"] not in _ADMITTED:
         return _held(decision, preview)

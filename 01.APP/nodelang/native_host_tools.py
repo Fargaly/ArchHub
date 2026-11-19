@@ -11,6 +11,7 @@ from typing import Callable
 
 import inspect
 
+from .custom_mcp_gateway import register_tools as register_mcp_tools
 from .host_brokers import BROKER_ACTIONS, ENGINES, EXEC_WAIT_LIMIT
 
 # Reads must answer inside the founder <2s budget; never sit on a hung signed /info.
@@ -108,6 +109,8 @@ def register_host_tools(server, control=None, *, read_only=False) -> None:
 
     if read_only:
         return
+
+    register_mcp_tools(server)  # the person's own MCP servers: mcp_tools, mcp_call (one definition)
 
     @server.tool(name="revit_ping")
     def revit_ping() -> dict:

@@ -1,6 +1,6 @@
 {
   "revision": "9a1a3a7974e99d3e311ba34973b37b53f34e90e0",
-  "count": 157,
+  "count": 159,
   "tools": [
     "acad_execute_csharp",
     "acad_info",
@@ -57,6 +57,8 @@
     "max_execute_python",
     "max_info",
     "max_ping",
+    "mcp_call",
+    "mcp_tools",
     "native.hook_stop",
     "native.hook_user_prompt_submit",
     "notion_connect",

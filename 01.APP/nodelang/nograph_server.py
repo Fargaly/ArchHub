@@ -1056,7 +1056,17 @@ def r_canvas_op(s, req):
     from .community_owner import CommunityOwner
     if op in CommunityOwner.PUBLIC:
         return {'ok': True, 'result': CommunityOwner(s.files['community']).dispatch(op, list(args))}
-    reads = {'list_skills': [], 'mcp_servers': [],
+    if op == 'provider_sign_in':
+        from .model_router import ModelRouteRefused, sign_in_launch
+        try:
+            return {'ok': True, 'result': sign_in_launch(str(args[0] if args else ''))}
+        except (ModelRouteRefused, OSError) as refused:
+            raise Refused(str(refused))
+    if op in _MCP_OPS:
+        if op not in ('mcp_servers',) and s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        return {'ok': True, 'result': _mcp_op(op, list(args))}
+    reads = {'list_skills': [],
              'project_state': {'versions': [], 'modelReview': {'operation': '', 'results': [], 'issues': []}, 'dismissed': []}}
     if op in reads:
         return {'ok': True, 'result': reads[op]}
@@ -1149,6 +1159,107 @@ def r_hosts(s, req):
     return {'ok': True, 'connectors': rows, 'operations': operations,
             'hosts': [{'id': r['id'], 'name': r['name'], 'port': '', 'state': r['state'], 'file': r.get('detail', '')}
                       for r in rows if r.get('drive') and r.get('state') in ('connected', 'listening')]}
+
+
+# -- Custom MCP servers: owner custom_mcp, file settings/mcp_servers.json, secrets in Credential Manager --
+_MCP_OPS = ('mcp_servers', 'add_mcp_server', 'remove_mcp_server', 'set_mcp_server_enabled',
+            'discover_mcp_tools', 'reconnect_mcp', 'import_mcp_tool', 'sign_in_mcp_server')
+_MCP_SEEN = {}  # id -> (status, tools) from the last Discover; a view cache, the file stays the truth
+
+
+def _mcp_rows():
+    from . import custom_mcp
+    rows = []
+    for row in custom_mcp.servers():
+        status, tools = _MCP_SEEN.get(row['id'], ('Not checked', []))
+        rows.append({'id': row['id'], 'name': row['name'], 'transport': row['transport'],
+                     'where': row.get('url') or ' '.join([row.get('command', ''), *row.get('args', [])]),
+                     'enabled': row.get('enabled', True), 'secrets': len(row.get('env', [])) + len(row.get('headers', [])),
+                     'signedIn': row.get('auth') == 'oauth',
+                     'status': status if row.get('enabled', True) else 'Off', 'tools': tools})
+    return rows
+
+
+def _mcp_op(op, args):
+    from . import custom_mcp
+    try:
+        if op == 'add_mcp_server':
+            added = custom_mcp.add(args[0] if args else '')
+            checks = {}
+            for row in added:
+                try:  # saved either way; the row and this answer say Sign in needed or why it failed
+                    _mcp_discover(row['id'])
+                    checks[row['id']] = 'ok'
+                except custom_mcp.McpRefused as failed:
+                    checks[row['id']] = str(failed)
+            return {'added': [row['id'] for row in added], 'checks': checks, 'servers': _mcp_rows()}
+        if op == 'remove_mcp_server':
+            custom_mcp.remove(str(args[0] if args else ''))
+            _MCP_SEEN.pop(str(args[0] if args else ''), None)
+        elif op == 'set_mcp_server_enabled':
+            custom_mcp.set_enabled(str(args[0]), bool(args[1]) if len(args) > 1 else True)
+        elif op in ('discover_mcp_tools', 'reconnect_mcp'):
+            if len(args) > 1 and args[1] not in ('Tools', None, ''):
+                raise custom_mcp.McpRefused('Only tools become nodes. Resources and prompts are not imported yet.')
+            _mcp_discover(str(args[0] if args else ''))
+        elif op == 'import_mcp_tool':
+            return _mcp_import(str(args[0]), str(args[1]))
+        elif op == 'sign_in_mcp_server':
+            server_id = str(args[0] if args else '')
+            _MCP_SEEN[server_id] = ('Signing in… finish it in your browser', [])
+            threading.Thread(target=_mcp_sign_in, args=(server_id,), name='archhub-mcp-sign-in', daemon=True).start()
+    except (custom_mcp.McpRefused, IndexError) as refused:
+        raise Refused(str(refused) or 'Name the tool server.')
+    return _mcp_rows()
+
+
+def _mcp_discover(server_id):
+    from . import custom_mcp
+    row = next((r for r in custom_mcp.servers() if r['id'] == server_id), None)
+    if row is None:
+        raise custom_mcp.McpRefused('No such tool server.')
+    try:
+        tools = custom_mcp.list_tools(row)
+        _MCP_SEEN[server_id] = ('%d tools' % len(tools), [{'id': t['name'], 'name': t['title'] or t['name'],
+                                                            'inputs': t['inputs']} for t in tools])
+    except custom_mcp.McpRefused as failed:
+        needs = custom_mcp.SIGN_IN_NEEDED in str(failed)
+        _MCP_SEEN[server_id] = ('Sign in needed' if needs else 'Connection failed', [])
+        raise custom_mcp.McpRefused(str(failed) if needs else 'Connection failed: %s' % failed)
+
+
+def _mcp_sign_in(server_id):
+    """Browser sign-in off the request path (it waits for the person); the status row tells the outcome."""
+    from . import custom_mcp
+    try:
+        custom_mcp.sign_in(server_id)
+        _mcp_discover(server_id)
+    except custom_mcp.McpRefused as failed:
+        if _MCP_SEEN.get(server_id, ('',))[0].startswith('Signing in'):
+            _MCP_SEEN[server_id] = ('Sign-in failed: %s' % failed, [])
+
+
+def _mcp_import(server_id, tool):
+    """Place one Connector action node already pointed at this server's tool on the open canvas."""
+    from uuid import uuid4
+    from . import canvas_documents, session_files
+    from .custom_mcp import PREFIX
+    path = session_files.SessionFiles().current_path()
+    if not path:
+        raise Refused('Open a canvas before adding a tool.')
+    item = next(row for row in session_files.catalogue() if row['id'] == 'connector_call')
+    identity = str(uuid4())
+
+    def place(document):
+        document['nodes'].append({
+            'id': identity, 'type': item['engine'], 'item': item['id'], 'title': tool,
+            'params': {**item['params'], 'connector': PREFIX + server_id, 'action': tool},
+            'paramDefs': item.get('paramDefs', []), 'position': {'x': 80, 'y': 100},
+        })
+        return [identity]
+
+    canvas_documents.edit(path, 'Studio', 'Add ' + tool, place, solve_changed=False)
+    return {'id': identity}
 
 
 def _plain_status(state):

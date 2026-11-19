@@ -1000,6 +1000,64 @@ def probe_opencode_status(executable: str) -> dict[str, object]:
     return status
 
 
+# Each subscription is used through its own sign-in, never a key typed into ArchHub.
+# The command that starts the provider's own sign-in (it opens the browser itself);
+# None: the sign-in lives inside the app, so the app is opened.
+CLI_SIGN_IN = {
+    "claude-code": ("auth", "login"),
+    "codex": ("login",),
+    "copilot": ("login",),
+    "gemini-cli": (),          # the first run asks how to sign in (Google account)
+    "opencode": ("auth", "login"),
+    "antigravity": None,
+    "cursor": None,
+}
+# Where each CLI keeps its own sign-in. Only existence is checked; the file is never read.
+_SIGN_IN_FILES = {
+    "claude-code": ((".claude", ".credentials.json"),),
+    "codex": ((".codex", "auth.json"),),
+    "gemini-cli": ((".gemini", "oauth_creds.json"),),
+    "opencode": ((".local", "share", "opencode", "auth.json"),),
+}
+
+
+def cli_signed_in(row_id, environ=None):
+    """True when the CLI's own sign-in is on this PC, False when it is not, None when ArchHub cannot tell."""
+    env = os.environ if environ is None else environ
+    home = env.get("USERPROFILE") or env.get("HOME")
+    if not home:
+        return None
+    if row_id == "codex" and env.get("CODEX_HOME"):
+        return Path(env["CODEX_HOME"], "auth.json").is_file()
+    if row_id == "copilot":
+        try:  # the CLI's own settings file names who is signed in; the token is in the OS store
+            data = json.loads(Path(home, ".copilot", "config.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return bool(isinstance(data, dict) and data.get("logged_in_users"))
+    files = _SIGN_IN_FILES.get(row_id)
+    if files is None:
+        return None
+    return any(Path(home, *parts).is_file() for parts in files)
+
+
+def sign_in_launch(row_id, *, environ=None, popen=None, startfile=None):
+    """Open the provider's own sign-in on his click: its CLI login in a console, or its app."""
+    import subprocess
+    known = {row: executable for row, _name, executable in SUBSCRIPTION_CLIS}
+    if row_id not in known:
+        raise ModelRouteRefused("ArchHub has no sign-in for %s." % row_id)
+    found = find_assistant(known[row_id], environ)
+    if not found:
+        raise ModelRouteRefused("Install %s first, then sign in." % row_id)
+    command = CLI_SIGN_IN.get(row_id)
+    if command is None:
+        (startfile or os.startfile)(found)
+        return {"ok": True, "opened": "app"}
+    (popen or subprocess.Popen)(["cmd.exe", "/c", "start", "ArchHub sign-in", "cmd.exe", "/k", found, *command])
+    return {"ok": True, "opened": "console"}
+
+
 def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
                   local_probe=None, cli_probe=None, version_probe=None,
                   opencode_status_probe=None) -> list:
@@ -1099,10 +1157,13 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
                    OPENCODE_DEFAULT_CLI_MODEL)
             )
             rows.append({"id": row_id, "name": name, "state": state,
+                         "signedIn": cli_signed_in(row_id, environ), "signIn": True,
                          "source": source, "sets": ""})
             continue
         unverified = _unverified_reason(route, version_probe or _broker_version) if found else ""
         rows.append({"id": row_id, "name": name,
+                     "signedIn": cli_signed_in(row_id, environ) if found else None,
+                     "signIn": bool(found),
                      "state": "installed" if found else "not installed",
                      "source": ("installed on this machine; %schoose local-cli/%s to chat "
                                 "through it: sent to %s through your subscription%s"
@@ -1111,6 +1172,9 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
                                if found else
                                "not found on PATH or in its install folder",
                      "sets": ""})
+    # Grok: no CLI route in this build; shown so the list names every subscription he has.
+    rows.append({"id": "grok", "name": "Grok", "state": "not supported", "signedIn": None, "signIn": False,
+                 "source": "no Grok route in this build yet", "sets": ""})
     return rows
 
 

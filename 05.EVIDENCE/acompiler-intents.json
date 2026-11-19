@@ -11767,6 +11767,17 @@
         "05.EVIDENCE/acompiler-intents.json",
         "02.TESTS/tests_js/studio_designv22g.test.cjs"
       ]
+    },
+    "PINSFOLD": {
+      "source": "Founder rule 2026-11-07: each task canvas carries fixed Workshop, User profile, Session and Agent nodes, collapsible, not deletable; fe371217 folded them permanently. Default folded into the Session card as the design draws them; the user can expand and fold again; a view setting, never a file write.",
+      "scope": [
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_design_canvas.py",
+        "02.TESTS/tests_js/studio_designv22g.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

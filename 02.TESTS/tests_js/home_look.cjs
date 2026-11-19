@@ -81,12 +81,30 @@ const {chromium} = require('playwright');
       // Nothing selected: the Inspector holds the map's parameters. Group by State re-arranges the map, in the owner record.
       const inspector = page.locator('[data-home-inspector]');
       if (!await inspector.isVisible()) await page.locator('.dock.right [data-tab="insp"]').click();
+      // 1009 with both docks open (left 268, right 320): the composer's message box keeps a real width with a picked session
+      // (its name on the scope chip, the agent picker beside it) and, below, with nothing picked.
+      const messageWidth = () => page.locator('.home-map-stage .global-composer textarea').evaluate(element => element.getBoundingClientRect().width);
+      if (width === 1009) {
+        const openRight = page.getByRole('button', {name: 'Open the right dock', exact: true});
+        if (await openRight.count()) { await openRight.click(); await page.waitForTimeout(450); }
+        await page.waitForFunction(() => (document.querySelector('.dockws > .dock.right')?.getBoundingClientRect().width || 0) > 200, null, {timeout: 5000}).catch(() => {});  // the dock eases open
+        const docks = await page.evaluate(() => [...document.querySelectorAll('.dockws > .dock')].map(dock => dock.className + ' ' + Math.round(dock.getBoundingClientRect().width)));
+        assert.equal(docks.filter(text => !text.split(' ').includes('col') && Number(text.split(' ').at(-1)) > 200).length, 2, 'both docks are open at 1009: ' + JSON.stringify(docks));
+        await map.locator('.home-card.sel').first().waitFor();
+        await page.locator('.home-map-stage .global-composer [data-design="composer.to"]').filter({hasText: input.echo}).waitFor();
+        const picked = await messageWidth();
+        assert.ok(picked >= 160, 'the message box is usable beside a picked session at 1009 with both docks: ' + picked + ' px');
+      }
       // The owner's record selects a session on open (Home's saved selection); a click on the empty map clears it.
       await map.locator('.home-card.sel').first().waitFor();
       await map.locator('.react-flow__pane').click({position: (await page.evaluate(() => { const pane = document.querySelector('[data-home-map] .react-flow__pane'), r = pane.getBoundingClientRect(); for (let y = r.top + 4; y < r.bottom; y += 12) for (let x = r.left + 4; x < r.right; x += 12) if (document.elementFromPoint(x, y) === pane) return {x: x - r.left, y: y - r.top}; return {x: 4, y: 4}; }))});  // an empty spot of the map clears the pick
       await map.locator('.home-card.sel').waitFor({state: 'detached'});
       if (!await inspector.isVisible()) await page.locator('.dock.right [data-tab="insp"]').click();  // a folded dock's peek closes on a click outside it
       await inspector.getByRole('heading', {name: 'Map of the work', exact: true}).waitFor();
+      if (width === 1009) {
+        const empty = await messageWidth();
+        assert.ok(empty >= 160, 'the message box is usable with nothing picked at 1009 with both docks: ' + empty + ' px');
+      }
       for (const label of ['Group by', 'Order', 'Card', 'Density', 'Finished sessions', 'Show']) await inspector.getByLabel(label, {exact: true}).waitFor();
       const projects = seen.groups;
       await inspector.getByLabel('Group by', {exact: true}).selectOption('State');

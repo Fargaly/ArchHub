@@ -1198,6 +1198,10 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .screen-with-composer:has([data-home-page]) .composer-scope>button+button,.screen-with-composer:has([data-home-page]) .composer-tools>button:not([aria-label="Add context"]):not([type="submit"]){display:none}
 .screen-with-composer:has([data-home-page]) .composer-input{min-height:28px;height:28px;resize:none;padding:4px 0}
 .screen-with-composer:has([data-home-page]) .composer-tools{flex-wrap:nowrap;gap:6px}
+/* A narrow Home composer (both docks open at 1009): the message takes the whole first row; the scope chip and the tools share
+   the second. Same selectors as the one-row rules above, so they win inside the container query. */
+@container (max-width:460px){.screen-with-composer:has([data-home-page]) .global-composer form{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"message message" "scope tools"}
+.screen-with-composer:has([data-home-page]) .composer-scope{max-width:100%}}
 /* The scope chip is capped and ellipsed, so with both docks open at 1009 px the message box keeps its room. */
 .screen-with-composer:has([data-home-page]) .composer-scope .tab-button{font-size:12px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .resume-session-scroll>.shelf-tabs{position:sticky;top:0;background:var(--color-bg-panel);z-index:2;display:flex;flex-wrap:wrap;flex:none;padding:8px 0}

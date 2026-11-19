@@ -438,6 +438,37 @@ def _asset_url_allowed(url, tag, *, stable_feed) -> bool:
             and asset.path.endswith("/" + ASSET_NAME) and not asset.username and not asset.query)
 
 
+_RELEASE_RETRY_WAITS = (2, 8)
+
+
+def _read_cause(exc):
+    """Name why the feed read failed, for the update log. Never includes a URL or header value."""
+    code = getattr(exc, "code", None)
+    if type(code) is int:
+        headers = getattr(exc, "headers", None)
+        limited = code in (403, 429) and headers is not None and headers.get("X-RateLimit-Remaining") == "0"
+        return "HTTP %d%s" % (code, " rate limited" if limited else "")
+    reason = getattr(exc, "reason", None)
+    return type(reason if isinstance(reason, BaseException) else exc).__name__
+
+
+def _transient(exc):
+    code = getattr(exc, "code", None)
+    return type(code) is not int or code in (403, 408, 429) or code >= 500
+
+
+def read_latest_release_retrying(opener, waits, wait, **options):
+    """The feed read, retried quietly on network faults, rate limits and server errors."""
+    latest = read_latest_release(opener, **options)
+    for pause in waits:
+        if latest is not None or not read_latest_release.transient:
+            break
+        if wait(pause) is True:  # Event.wait: the desktop is closing; no further feed request
+            break
+        latest = read_latest_release(opener, **options)
+    return latest
+
+
 def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> dict | None:
     """Return validated release identity and build time, or None.
 
@@ -447,6 +478,7 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
     same response, so auto-update can ignore it without a second request.
     """
     read_latest_release.saw_prerelease = False
+    read_latest_release.cause, read_latest_release.transient = "release unreadable", False
     try:
         if channel not in ("stable", "preview"):
             raise ValueError("update channel must be stable or preview")
@@ -492,9 +524,14 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
         if (not _asset_url_allowed(url, tag, stable_feed=stable_feed)
                 or (size is not None and (type(size) is not int or not 0 < size <= _INSTALLER_BYTES))):
             return None
+        read_latest_release.cause = ""
         return {"build_id": builds[0], "built_at": built_at,
                 "sha256": hashes[0].lower(), "url": url, "tag": tag}
-    except (OSError, ValueError, TypeError):
+    except OSError as exc:
+        read_latest_release.saw_prerelease = False
+        read_latest_release.cause, read_latest_release.transient = _read_cause(exc), _transient(exc)
+        return None
+    except (ValueError, TypeError):
         read_latest_release.saw_prerelease = False
         return None
 
@@ -741,7 +778,9 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             # replaced and is not a reason to call the release feed.
             if held["staged"] and held["status"] in ("applying", "awaiting_boot"):
                 return held
-            latest = read_latest_release(opener) if channel == "stable" else read_latest_release(opener, channel=channel)
+            wait = cancellation_event.wait if cancellation_event is not None else time.sleep
+            options = {} if channel == "stable" else {"channel": channel}
+            latest = read_latest_release_retrying(opener, _RELEASE_RETRY_WAITS, wait, **options)
             current = installed_build_id(app_dir)
             check_cancelled()
             # A staged installer older than GitHub Latest must not block it.
@@ -751,7 +790,8 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
                 if channel == "stable" and _published_prerelease(opener):
                     return {"staged": False, "applied": False, "build_id": "", "status": "ignored",
                             "reason": "pre-release ignored"}
-                return {"staged": False, "build_id": "", "reason": "no release information"}
+                return {"staged": False, "build_id": "", "reason": "no release information",
+                        "cause": read_latest_release.cause}
             if channel != "stable" and _published_prerelease(opener, channel):
                 # A preview may be staged for the Update button. Auto-install refuses it.
                 latest = {**latest, "prerelease": True}
@@ -808,6 +848,9 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             partial.unlink(missing_ok=True)
 
 
+_LAUNCHER_HOLDS_INSTALL = "An in-folder launcher must release the install before Setup"
+
+
 def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: float = 5.0) -> list:
     """Stop every other process started from the install folder before the installer copies.
 
@@ -837,7 +880,7 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
                     and executable == Path(sys.executable).resolve()
                     and not Path(updater.exe()).resolve().is_relative_to(root)):
                 continue
-            raise ValueError("An in-folder launcher must release the install before Setup")
+            raise ValueError(_LAUNCHER_HOLDS_INSTALL)
         candidates.append(process)
     stopped = []
     for process in candidates:
@@ -923,8 +966,10 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                     for line in raw.decode(encoding, errors='replace').splitlines():
                         if 'ArchHub Setup refused: ' in line:
                             reason = "installer failed: " + line.split('ArchHub Setup refused: ', 1)[1]
-                _marker(updates, {**data, "phase": "staged"})
-                return {"staged": True, "applied": False, "rolled_back": False, "status": "failed",
+                # Recorded as failed for this build: the next start opens the installed build
+                # instead of running the same installer again; a newer release replaces it.
+                _marker(updates, {**data, "phase": "rolled_back", "rollback_reason": reason})
+                return {"staged": False, "applied": False, "rolled_back": False, "status": "failed",
                         "build_id": data["build_id"], "reason": reason}
             _marker(updates, {**data, "phase": "awaiting_boot"})
             return {"applied": True, "build_id": data["build_id"], "status": "awaiting_boot",
@@ -1119,7 +1164,8 @@ def note_check(state_dir: Path, app_dir: Path, result: dict) -> dict:
     if result.get("downloaded") and result.get("build_id"):
         append_update_log(state_dir, "update: staged %s" % result["build_id"])
     if result.get("status") in ("unavailable", "failed") or result.get("reason") == "no release information":
-        append_update_log(state_dir, "update: error %s" % (result.get("reason") or result.get("status")))
+        cause = " (%s)" % result["cause"] if result.get("cause") else ""
+        append_update_log(state_dir, "update: error %s%s" % (result.get("reason") or result.get("status"), cause))
     return result
 
 
@@ -1216,13 +1262,28 @@ def _claim_maintainer(app_dir: Path) -> bool:
     return True
 
 
-def _relaunch(app_dir: Path):
+def spawn_detached(argv):
+    """Start a hidden process outside the caller's job object.
+
+    The venv redirector holds its child in a kill-on-close job. A helper left in it
+    dies with the desktop it outlives. Breakaway is refused when the job forbids it;
+    the plain hidden start is then the fallback.
+    """
+    hidden = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    try:
+        return subprocess.Popen(argv, close_fds=True, creationflags=hidden | breakaway)
+    except OSError:
+        return subprocess.Popen(argv, close_fds=True, creationflags=hidden)
+
+
+def _relaunch(app_dir: Path, tray: bool = False):
     system = os.environ.get("SystemRoot", r"C:\Windows")
-    return subprocess.Popen([str(Path(system) / "System32" / "wscript.exe"), str(Path(app_dir) / "ArchHub.vbs")],
-                            close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return spawn_detached([str(Path(system) / "System32" / "wscript.exe"), str(Path(app_dir) / "ArchHub.vbs")]
+                          + (["--tray"] if tray else []))
 
 
-def _reopen_after_update(state: Path, app_dir: Path, build_id: str, *, sleep) -> bool:
+def _reopen_after_update(state: Path, app_dir: Path, build_id: str, *, sleep, tray: bool = False) -> bool:
     """Use the desktop's existing boot acknowledgment to settle the update."""
     from nodelang.canvas_triggers import TRIGGER_NODE
 
@@ -1231,7 +1292,7 @@ def _reopen_after_update(state: Path, app_dir: Path, build_id: str, *, sleep) ->
         launcher = None
         if not _desktop_running():
             try:
-                launcher = _relaunch(app_dir)
+                launcher = _relaunch(app_dir, tray) if tray else _relaunch(app_dir)
             except OSError as error:
                 append_update_log(state, "update: error relaunch failed (%s)" % type(error).__name__)
                 continue
@@ -1290,26 +1351,65 @@ def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) 
     return 0
 
 
+def hand_off(app_dir: Path, *, relaunch: bool, tray: bool = False, sleep=time.sleep,
+             wait_seconds: float = 120.0) -> int:
+    """Install the staged build once the desktop that asked for it has fully exited.
+
+    The desktop starts this hidden helper and then quits. Its profile mutex and its
+    in-folder launcher outlive the request by seconds; installing or relaunching
+    before they are gone lost the update and left ArchHub closed. Setup runs hidden
+    with /NOCLOSEAPPLICATIONS; Revit and AutoCAD are never stopped.
+    """
+    app_dir, state = Path(app_dir), state_directory()  # also puts the app root on sys.path for a file-path start
+    from nodelang.canvas_triggers import TRIGGER_NODE
+
+    poll = TRIGGER_NODE["params"]["file_poll_floor_seconds"]
+    waited, applied = 0.0, {}
+    while True:
+        if not _desktop_running():
+            applied = apply_staged(state, app_dir, stop_runtime=stop_runtime_processes)
+            if applied.get("reason") != _LAUNCHER_HOLDS_INSTALL:
+                break
+        if waited >= wait_seconds:
+            append_update_log(state, "update: desktop still open after %ds; install waits for the next start"
+                              % wait_seconds)
+            return 0
+        sleep(poll)
+        waited += poll
+    if applied.get("applied"):
+        append_update_log(state, "update: installed %s" % applied.get("build_id"))
+        if not relaunch:
+            return 0
+        if _reopen_after_update(state, app_dir, applied["build_id"], sleep=sleep, tray=tray):
+            append_update_log(state, "update: confirmed %s" % applied["build_id"])
+            return 0
+        append_update_log(state, "update: error installed build did not confirm Studio boot; installer retained")
+        return 1
+    if applied.get("reason"):
+        append_update_log(state, "update: error %s" % applied["reason"])
+    if relaunch:
+        # A restart was asked for: ArchHub comes back on the build it had, where it was (window or tray).
+        try:
+            _relaunch(app_dir, tray) if tray else _relaunch(app_dir)
+        except OSError as error:
+            append_update_log(state, "update: error relaunch failed (%s)" % type(error).__name__)
+    return 0 if applied.get("status") != "failed" else 1
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Recover a failed update or keep checking GitHub Latest.")
     parser.add_argument("--recover-failed-launch", type=Path)
     parser.add_argument("--maintain", type=Path, help="Application directory. Check now, then every N minutes.")
     parser.add_argument("--apply-staged", type=Path, help="Install a staged build when the desktop is not open, then exit.")
+    parser.add_argument("--relaunch", action="store_true", help="With --apply-staged: reopen ArchHub afterwards.")
+    parser.add_argument("--tray", action="store_true", help="With --relaunch: reopen in the tray, no window.")
     parser.add_argument("--state-dir", type=Path)
     args = parser.parse_args(argv)
     if args.state_dir is not None:
         os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
     if args.apply_staged is not None:
-        if _desktop_running():
-            append_update_log(state_directory(), "update: desktop is open; install waits until quit or the next start")
-            return 0
-        applied = apply_staged(state_directory(), args.apply_staged, stop_runtime=stop_runtime_processes)
-        if applied.get("applied"):
-            append_update_log(state_directory(), "update: installed %s" % applied.get("build_id"))
-        elif applied.get("reason"):
-            append_update_log(state_directory(), "update: %s" % applied.get("reason"))
-        return 0 if applied.get("applied") or applied.get("status") != "failed" else 1
+        return hand_off(args.apply_staged, relaunch=args.relaunch, tray=args.tray)
     if args.maintain is not None:
         return maintain(args.maintain)
     if args.recover_failed_launch is None or args.state_dir is None:

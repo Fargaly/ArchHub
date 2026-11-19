@@ -174,6 +174,7 @@ class NoGraphServer:
         self._workshop_agents = Cached(5.0, self._probe_workshop_agents)
         self._messages = Cached(1.0, _list_messages)
         self._opencode = {}
+        self._chat_turns = set()  # threads answering /api/router/chat right now; an update waits for them
         self._terminals = None
         self._agents_api = None
         self.httpd = QuietThreadingHTTPServer((host, port), self._handler())
@@ -182,6 +183,20 @@ class NoGraphServer:
         self.thread = None
         self.cloud_relay = None
         self._relay_lock = threading.Lock()
+
+    def busy_reason(self):
+        """Why an update restart must wait now, read from this desktop's own live work; None when idle.
+
+        Workshop agents run around the clock in their own processes; counting them
+        would mean the update never installs. They get the normal restart notice.
+        """
+        if getattr(self, '_canvas_jobs', 0):
+            return 'A canvas run is in progress; the update waits for it to finish.'
+        if getattr(getattr(self, 'triggers', None), 'running', None):
+            return 'An automation is running; the update waits for it to finish.'
+        if self._chat_turns:
+            return 'A chat answer is still arriving; the update waits for it to finish.'
+        return None
 
     # -- lifecycle (same surface the launcher used) ------------------------
     @property
@@ -505,7 +520,12 @@ class NoGraphServer:
                     if not self.admitted():
                         raise Refused('Browser session required. Reopen ArchHub.', 403)
                     if path == '/api/router/chat':
-                        owner._router_chat(self)
+                        turn = threading.get_ident()
+                        owner._chat_turns.add(turn)
+                        try:
+                            owner._router_chat(self)
+                        finally:
+                            owner._chat_turns.discard(turn)
                         return
                     route = ROUTES.get(path) or (BRAIN if path.startswith('/api/universal/brain-') else None)
                     if route is None:

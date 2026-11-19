@@ -28,6 +28,8 @@ def _native_boot_document():
 
 def _open_launch(arguments, companion, show_home, show_unavailable):
     """Route both initial and handed-off argv through the existing windows."""
+    if '--tray' in arguments:
+        return None  # an update relaunch that was in the tray stays there
     if '--baboom' not in arguments:
         show_home()
         return None
@@ -71,7 +73,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     stage_app_folder(state_dir)
     atexit.register(finish_app_folder, state_dir, healthy=False)
     migrate_sessions(state_dir)
-    restart = {'requested': False, 'quit': None}
+    restart = {'requested': False, 'quit': None, 'tray': False}
     app = window = view = icon = title_bar = None
     if not os.environ.get('ARCHHUB_TEST_NO_OPEN'):
         # Cold start shows the loading card before the server and pipeline import.
@@ -137,11 +139,14 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         if restart['quit'] is None:
             raise RuntimeError('no desktop window to close')
         restart['requested'] = True
+        restart['tray'] = window is not None and not window.isVisible()  # an idle install from the tray stays there
         restart['quit']()
     try:
         from .application_update import ApplicationUpdate
+        # Restart, Quit-install and idle/tray auto-install all ask this first; live work is never interrupted.
         server.application_update = ApplicationUpdate(Path(state_dir), app_root, request_restart=request_restart,
-                                                      report=lambda line: print('  update     : ' + line, flush=True))
+                                                      report=lambda line: print('  update     : ' + line, flush=True),
+                                                      restart_refusal=lambda: _update_refusal(server))
     except Exception as refusal:  # noqa: BLE001 - updates say unavailable, the app still opens
         print('  update     : unavailable (%s: %s)' % (type(refusal).__name__, refusal), flush=True)
 
@@ -327,10 +332,12 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     landing = QTimer()
     landing.timeout.connect(land_companion)
     landing.start(1000)
-    window.show()
+    in_tray = '--tray' in sys.argv[1:] and QSystemTrayIcon.isSystemTrayAvailable()
+    if not in_tray:
+        window.show()
     if '--baboom' in sys.argv[1:]:
         QTimer.singleShot(0, lambda: open_launch(sys.argv[1:]))
-    seen_open = {"value": False}
+    seen_open = {"value": in_tray}
     def consider_update():
         update = server.application_update
         if update is None:
@@ -372,26 +379,31 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     code = app.exec()
     del window_commands
     server.close()
-    _arm_staged_update(server.application_update, Path(state_dir), app_root, instance_lock, relaunch=restart['requested'])
+    _arm_staged_update(server.application_update, Path(state_dir), app_root, instance_lock, relaunch=restart['requested'],
+                       tray=restart['tray'])
     return code
 
 
-def _apply_staged_after_quit(app_root):
-    """Install the staged build after Quit, without opening the window and without waiting for machine idle."""
-    import subprocess
+def _update_refusal(server):
+    """Why an update must wait: only the NoGraph server's own live work (chat turns, canvas runs, automations)."""
+    return server.busy_reason()
+
+
+def _apply_staged_after_quit(app_root, *, relaunch=False, tray=False):
+    """A hidden helper waits for this process to exit, installs the staged build, and reopens it on Restart."""
     import sys
     python = Path(sys.executable)
     if python.name.lower() == "python.exe":
         windowless = python.with_name("pythonw.exe")
         if windowless.is_file():
             python = windowless
-    subprocess.Popen(
-        [str(python), "-E", "-s", str(Path(app_root) / "nodelang" / "quiet_update.py"),
-         "--apply-staged", str(app_root)],
-        close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    from .quiet_update import spawn_detached
+    spawn_detached([str(python), "-E", "-s", str(Path(app_root) / "nodelang" / "quiet_update.py"),
+                    "--apply-staged", str(app_root)] + (["--relaunch"] if relaunch else [])
+                   + (["--tray"] if relaunch and tray else []))
 
 
-def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch):
+def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch, tray=False):
     """After the last window closed: arm the staged build. Restart relaunches into it.
     Quit installs it in a helper that does not open the window."""
     if update is None:
@@ -402,12 +414,7 @@ def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch):
             # verifies the installer under its existing exclusive lock.
             if instance_lock is not None:
                 instance_lock.close()
-            import subprocess
-            if relaunch:
-                subprocess.Popen(['wscript.exe', str(app_root / 'ArchHub.vbs')], close_fds=True,
-                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            else:
-                _apply_staged_after_quit(app_root)
+            _apply_staged_after_quit(app_root, relaunch=relaunch, tray=tray)
     except Exception as refused:  # noqa: BLE001 - the staged package stays; the next check offers it again
         print('  update     : not armed (%s: %s)' % (type(refused).__name__, refused), flush=True)
     finally:

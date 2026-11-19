@@ -682,3 +682,205 @@ def test_postinstall_failure_is_reported_and_stale_identity_never_applied(tmp_pa
     assert result['reason'] == 'installer failed: Post-install failed: Product prune failed.'
     assert (app / 'BUILD_ID').read_text() == '20260923-1945-72bcaae'
     assert _state_fingerprint(state) == before
+
+
+@pytest.mark.parametrize("outcome", ["installed", "failed"])
+def test_hand_off_waits_for_the_closing_desktop_then_installs_or_reopens_the_old_build(tmp_path, monkeypatch, outcome):
+    """UPDATERWORKS: Restart used to relaunch while the old desktop still held its profile; the
+    new launch gave up and ArchHub stayed closed. The helper waits for the desktop and its
+    in-folder launcher, installs once, and always leaves ArchHub open after a Restart."""
+    state, app = tmp_path / "state", tmp_path / "ArchHub"
+    desktop = iter([True, True, False, False, False])
+    attempts, relaunched, reopened = [], [], []
+
+    def apply(*_args, **_kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:  # the old launcher is still exiting
+            return {"applied": False, "status": "failed", "reason": qu._LAUNCHER_HOLDS_INSTALL}
+        if outcome == "installed":
+            return {"applied": True, "build_id": "20261120-0100-aaaaaaa"}
+        return {"applied": False, "status": "failed", "reason": "installer failed (exit 5)"}
+
+    monkeypatch.setattr(qu, "state_directory", lambda: state)
+    monkeypatch.setattr(qu, "_desktop_running", lambda: next(desktop))
+    monkeypatch.setattr(qu, "apply_staged", apply)
+    monkeypatch.setattr(qu, "_relaunch", lambda directory: relaunched.append(directory))
+    monkeypatch.setattr(qu, "_reopen_after_update",
+                        lambda _state, directory, build, sleep, tray=False: reopened.append(build) or True)
+    code = qu.hand_off(app, relaunch=True, sleep=lambda _seconds: None)
+    log = (state / "logs" / "updates.log").read_text(encoding="utf-8")
+    assert len(attempts) == 2
+    if outcome == "installed":
+        assert (code, reopened, relaunched) == (0, ["20261120-0100-aaaaaaa"], [])
+        assert "update: installed 20261120-0100-aaaaaaa" in log and "update: confirmed" in log
+    else:
+        assert (code, reopened, relaunched) == (1, [], [app])
+        assert "update: error installer failed (exit 5)" in log
+
+
+def test_hand_off_never_installs_over_a_desktop_that_stays_open(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setattr(qu, "state_directory", lambda: state)
+    monkeypatch.setattr(qu, "_desktop_running", lambda: True)
+    monkeypatch.setattr(qu, "apply_staged", lambda *_a, **_k: pytest.fail("installed over an open desktop"))
+    monkeypatch.setattr(qu, "_relaunch", lambda _d: pytest.fail("second desktop started"))
+    assert qu.hand_off(tmp_path / "ArchHub", relaunch=True, sleep=lambda _s: None, wait_seconds=2) == 0
+    assert "install waits for the next start" in (state / "logs" / "updates.log").read_text(encoding="utf-8")
+
+
+def test_restart_and_quit_hand_the_install_to_one_hidden_helper(tmp_path, monkeypatch):
+    from nodelang import nograph_launcher
+
+    started = []
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **options: started.append((argv, options)))
+    for relaunch in (True, False):
+        update = SimpleNamespace(apply_on_quit=lambda: True, close=lambda: None)
+        lock = SimpleNamespace(close=lambda: None)
+        nograph_launcher._arm_staged_update(update, tmp_path, tmp_path / "ArchHub", lock, relaunch=relaunch)
+    hidden = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    assert len(started) == 2
+    for (argv, options), relaunch in zip(started, (True, False)):
+        assert argv[4:6] == ["--apply-staged", str(tmp_path / "ArchHub")]
+        assert ("--relaunch" in argv) is relaunch
+        assert "wscript" not in " ".join(argv).lower()
+        assert options["creationflags"] & hidden == hidden
+
+
+def test_feed_read_retries_quietly_and_logs_why_it_failed(tmp_path):
+    import urllib.error
+
+    calls, waits = [], []
+
+    def limited(request, timeout=0):
+        calls.append(request.full_url)
+        raise urllib.error.HTTPError(request.full_url, 403, "rate limit", {"X-RateLimit-Remaining": "0"}, None)
+
+    assert qu.read_latest_release_retrying(limited, (2, 8), waits.append) is None
+    assert (len(calls), waits, qu.read_latest_release.cause) == (3, [2, 8], "HTTP 403 rate limited")
+
+    def gone(request, timeout=0):
+        calls.append(request.full_url)
+        raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
+
+    calls.clear()
+    assert qu.read_latest_release_retrying(gone, (2, 8), waits.append) is None
+    assert (len(calls), qu.read_latest_release.cause) == (1, "HTTP 404")
+    state, app = tmp_path / "state", tmp_path / "app"
+    app.mkdir()
+    qu.note_check(state, app, {"staged": False, "build_id": "", "reason": "no release information",
+                               "cause": "HTTP 403 rate limited"})
+    assert ("update: error no release information (HTTP 403 rate limited)"
+            in (state / "logs" / "updates.log").read_text(encoding="utf-8"))
+
+
+def test_review1_busy_desktop_refuses_every_restart_path(monkeypatch):
+    """Only the desktop's own live work holds the update: chat turns, canvas runs, running automations.
+    Workshop agents work around the clock; counting them would mean the update never installs."""
+    import threading
+    from nodelang import nograph_server
+    from nodelang.application_update import ApplicationUpdate, UpdateRestartRefused
+    from nodelang.nograph_launcher import _update_refusal
+
+    monkeypatch.setattr(nograph_server, "_declarations",
+                        lambda: [{"current": True, "status": "working"}] * 5)  # agents busy all day
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    server.busy_reason = lambda: nograph_server.NoGraphServer.busy_reason(server)
+    assert _update_refusal(server) is None
+    for change, words in ((lambda: setattr(server, "_canvas_jobs", 1), "canvas run"),
+                          (lambda: server.triggers.running.add("job"), "automation"),
+                          (lambda: server._chat_turns.add(7), "chat answer")):
+        server._canvas_jobs, server.triggers.running, server._chat_turns = 0, set(), set()
+        change()
+        assert words in _update_refusal(server)
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update._closed, update._state, update._worker, update._lock = False, "ready", None, threading.RLock()
+    update._prerelease = False
+    update._policy = lambda: {"auto_apply_on_quit": True}
+    update._request_restart = lambda: pytest.fail("restarted over live work")
+    update._restart_refusal = lambda: _update_refusal(server)
+    assert update.apply_on_quit() is False  # Quit and idle/tray auto-install wait too
+    with pytest.raises(UpdateRestartRefused, match="chat answer"):
+        update.reload()
+
+
+def test_review2_helper_and_relaunch_break_away_from_the_job_with_a_fallback(monkeypatch):
+    hidden = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    seen = []
+
+    def refusing_job(argv, **options):
+        seen.append(options["creationflags"])
+        if breakaway and options["creationflags"] & breakaway:
+            raise PermissionError("job forbids breakaway")
+        return SimpleNamespace(argv=argv)
+
+    monkeypatch.setattr(subprocess, "Popen", refusing_job)
+    assert qu.spawn_detached(["x.exe"]).argv == ["x.exe"]
+    assert seen == ([hidden | breakaway, hidden] if breakaway else [hidden])
+    started = []
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **options: started.append((argv, options["creationflags"])))
+    qu._relaunch(Path("C:/ArchHub"), True)
+    assert started[0][0][-2:] == [str(Path("C:/ArchHub") / "ArchHub.vbs"), "--tray"]
+    assert started[0][1] == hidden | breakaway
+
+
+def test_review3_failed_setup_is_recorded_and_never_rerun_by_the_next_start(tmp_path):
+    release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20260923-1945-72bcaae", "2026-09-23T15:57:49Z")
+    state = tmp_path / "state"
+    downloads = []
+    opener = _local_github(release, downloads=downloads)
+    assert qu.stage_if_newer(state, app, opener=opener)["staged"] is True
+    failed = qu.apply_staged(state, app, runner=lambda argv, **o: SimpleNamespace(returncode=1), stop_runtime=None)
+    assert failed["applied"] is False and failed["status"] == "failed"
+    marker = json.loads((state / "updates" / "staged.json").read_text(encoding="utf-8"))
+    assert marker["phase"] == "rolled_back" and "installer failed (exit 1)" in marker["rollback_reason"]
+    # launcher.py runs apply_staged at start only for {"staged": True, "status": "staged"}.
+    boot = qu.begin_update_boot(state, app)
+    assert not (boot.get("staged") and boot.get("status") == "staged")
+    assert qu.apply_staged(state, app, runner=lambda *a, **o: pytest.fail("Setup ran again"))["applied"] is False
+    # The failed build id is skipped on every later check: no re-download, nothing staged.
+    for _check in range(3):
+        assert qu.stage_if_newer(state, app, opener=opener)["staged"] is False
+    assert len(downloads) == 1
+    # A strictly newer release replaces it and is staged normally.
+    newer = _build_output(tmp_path / "release2", "20260925-0900-def5678", "2026-09-25T05:00:00Z")
+    fresh = qu.stage_if_newer(state, app, opener=_local_github(newer, downloads=downloads))
+    assert fresh["staged"] is True and fresh["build_id"] == "20260925-0900-def5678" and len(downloads) == 2
+
+
+def test_review4_closing_desktop_stops_feed_retries_at_once():
+    import threading
+    import urllib.error
+
+    calls = []
+
+    def offline(request, timeout=0):
+        calls.append(1)
+        raise urllib.error.URLError(OSError("offline"))
+
+    closing = threading.Event()
+    closing.set()
+    assert qu.read_latest_release_retrying(offline, (2, 8), closing.wait) is None
+    assert len(calls) == 1
+
+
+def test_review5_an_update_from_the_tray_reopens_in_the_tray(tmp_path, monkeypatch):
+    from nodelang import nograph_launcher
+
+    shown = []
+    assert nograph_launcher._open_launch(["--tray"], {}, lambda: shown.append(1), lambda _d: shown.append(2)) is None
+    assert shown == []
+    started = []
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **options: started.append(argv))
+    update = SimpleNamespace(apply_on_quit=lambda: True, close=lambda: None)
+    nograph_launcher._arm_staged_update(update, tmp_path, tmp_path / "ArchHub", SimpleNamespace(close=lambda: None),
+                                        relaunch=True, tray=True)
+    assert started[0][-2:] == ["--relaunch", "--tray"]
+    reopened = []
+    monkeypatch.setattr(qu, "state_directory", lambda: tmp_path / "state")
+    monkeypatch.setattr(qu, "_desktop_running", lambda: False)
+    monkeypatch.setattr(qu, "apply_staged", lambda *a, **k: {"applied": True, "build_id": "b"})
+    monkeypatch.setattr(qu, "_reopen_after_update", lambda *a, sleep, tray: reopened.append(tray) or True)
+    assert qu.hand_off(tmp_path / "ArchHub", relaunch=True, tray=True, sleep=lambda _s: None) == 0
+    assert reopened == [True]

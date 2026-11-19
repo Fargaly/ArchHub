@@ -11833,6 +11833,14 @@
         "02.TESTS/tests/test_home_look.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DRAFTNOASK": {
+      "source": "Founder 2026-11-19: why does it ask whether to make a draft? Just make the draft. A draft never asks; sending still asks; his explicit per-tool Off/Ask and Plan only still win.",
+      "scope": [
+        "01.APP/nodelang/hook_decision.py",
+        "02.TESTS/tests/test_host_exec.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

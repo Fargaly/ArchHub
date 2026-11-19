@@ -57,9 +57,14 @@ def test_host_receipt_overrules_model_prose(status, expected):
     assert host_outcome([{'status': 'ok', 'result': {'structuredContent': {'ok': False}}}]) == 'A tool failed. Open the task for its status.'
 
 
+class _UnusedBrain:
+    def ask(self, *args, **kwargs):
+        raise AssertionError('a local answer never asks the model')
+
+
 def test_non_founder_identity_is_deterministic_without_a_model(monkeypatch):
     from nodelang import baboom_nograph
-    monkeypatch.setitem(baboom_nograph._STATE, 'brain', None)
+    monkeypatch.setitem(baboom_nograph._STATE, 'brain', _UnusedBrain())
     assert baboom_nograph.ask('Are you a human?')['text'] == 'I am BABOOM, an AI assistant.'
     assert baboom_persona.public_reply('I am a human.') == baboom_persona.IDENTITY + ' Open the task for details.'
     assert not baboom_standard.is_standard_question('Apply the standard to the sheets')
@@ -113,6 +118,7 @@ def test_shared_index_http_answer_and_unknown_rule(tmp_path, monkeypatch):
     try:
         assert baboom_standard.ask_standard(question) == expected
         from nodelang import baboom_nograph
+        monkeypatch.setitem(baboom_nograph._STATE, 'brain', _UnusedBrain())
         assert baboom_nograph.ask(question)['text'] == expected['answer']
     finally:
         server.shutdown()

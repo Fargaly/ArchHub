@@ -70,7 +70,7 @@ def start(state_dir, app_root, url=''):
         runtime = GooseRuntime(app_root=app_root, state_dir=state_dir, control=None).start()
         _STATE.update(runtime=runtime, brain=GooseAdapter(runtime), error='')
     except Exception as refused:  # noqa: BLE001 - the face stays honest about why it cannot answer
-        _STATE['error'] = 'BABOOM brain unavailable: %s' % refused
+        _STATE['error'] = 'BABOOM brain unavailable (Goose): %s' % refused
         print('  BABOOM     : %s' % _STATE['error'], flush=True)
         return None
     try:
@@ -93,13 +93,19 @@ def brain():
 
 
 def reason():
-    return _STATE['error'] or 'BABOOM is starting.'
+    return _STATE['error'] or 'BABOOM brain (Goose) is not running yet: it is starting or was never started.'
 
 
 def ask(prompt, context=''):
-    """One BABOOM turn with its tools; returns {'text', 'steps', 'via', 'actions'}."""
+    """One BABOOM turn with its tools; returns {'text', 'steps', 'via', 'actions'}.
+    Off or without its brain, BABOOM answers nothing (its local persona and standard answers included) and says why."""
     from .baboom_persona import host_outcome, identity_answer, speech
     from .baboom_standard import ask_standard, is_standard_question
+    if _STATE.get('state_dir') is not None and startup_choice(_STATE['state_dir']) == 'off':
+        raise RuntimeError('BABOOM is turned off in Settings.')
+    current = _STATE['brain']
+    if current is None:
+        raise RuntimeError(reason())
     identity = identity_answer(prompt)
     if identity:
         return {'text': identity, 'steps': [], 'via': {'family': 'local', 'provider': 'BABOOM', 'model': 'persona'}, 'actions': []}
@@ -110,9 +116,6 @@ def ask(prompt, context=''):
             grounded = {'answer': 'The standard index did not answer. Try again later.', 'links': []}
         return {'text': grounded['answer'], 'links': grounded['links'], 'steps': [],
                 'via': {'family': 'standard', 'provider': 'BABOOM', 'model': 'shared-index'}, 'actions': []}
-    current = _STATE['brain']
-    if current is None:
-        raise RuntimeError(reason())
     from .agent_budget import paused
     from .model_router import ModelRouteRefused, resolve_model_route
     from .nograph_server import _SERVER

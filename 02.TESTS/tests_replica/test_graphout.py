@@ -105,7 +105,6 @@ def test_every_route_lazily_imports_no_retired_modules(tmp_path, monkeypatch):
         if cache is not None:
             monkeypatch.setattr(cache, 'get', lambda: {})
     monkeypatch.setattr(ng, '_list_messages', lambda before=None: {'messages': [], 'more': False})
-    monkeypatch.setattr(ng, '_baboom_brain', lambda: {'ok': False})
     from nodelang import notion_mcp
     monkeypatch.setattr(notion_mcp, 'connect', lambda: {'ok': False, 'error': 'Not connected in this court'})
     visited = []

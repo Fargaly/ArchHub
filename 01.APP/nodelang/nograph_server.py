@@ -691,12 +691,7 @@ class NoGraphServer:
             return ''
 
 
-def _baboom_brain():
-    from .baboom_nograph import brain
-    return brain()
-
-
-def _ask_baboom(prompt):
+def _ask_baboom(prompt, context=''):
     """The composer's BABOOM turn: Goose with its tools; a profiling row like any model route."""
     import uuid
     from .baboom_nograph import ask
@@ -705,7 +700,7 @@ def _ask_baboom(prompt):
     record = {'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': 'BABOOM', 'model': 'goose', 'provider': 'Goose',
               'tokens': None, 'ms': 0, 'outcome': 'refused'}
     try:
-        result = ask(prompt)
+        result = ask(prompt, context)
         record.update(model=result['via'].get('model', 'goose'), outcome='answered')
     finally:
         record['ms'] = int((time.monotonic() - started) * 1000)
@@ -722,12 +717,16 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
     from .model_router import composer_chat
     prompt = str(body.get('prompt') or '')
     task = body.get('task') or None
+    task_context = ''
     if task is not None:
         from .workshop_mailbox import application_history
         from .workshop_tasks import get
         with application_history() as history:
             if type(task) is not str or get(history, task) is None:
                 raise ValueError('This session is no longer in the Workshop. Reopen it from Home.')
+            from .workshop_tasks import _bound_messages
+            messages = _bound_messages(history, task)
+            task_context = '\n\n'.join('%s: %s' % (m['who'], m['text']) for m in messages if m['text'])
     handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
     from .acp_client import agent_for
     if agent_for(body.get('agent')) and (body.get('continue') is True or not handles):
@@ -744,8 +743,14 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
     if handles:
         return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step,
                                 cancelled=cancelled)
-    if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
-        result = _ask_baboom(prompt)
+    if body.get('agent', 'BABOOM') == 'BABOOM':
+        # BABOOM answers or says why it cannot (which brain, what failed); it never falls through to another model
+        try:
+            result = _ask_baboom(prompt, task_context)
+        except Exception:
+            if task is not None and body.get('fresh') is True:
+                _archive_if_empty(task)   # like a refused agent start: no empty session made for this start is left behind
+            raise
     else:
         result = composer_chat(body, on_delta=on_delta)
     try:

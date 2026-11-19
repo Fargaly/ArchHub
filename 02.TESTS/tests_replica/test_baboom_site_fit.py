@@ -138,6 +138,7 @@ def test_desktop_rejects_prepared_signin_prose_even_with_a_citation(sites, monke
         expected = {'answer': 'The standard answer is unavailable. Open the standard site.', 'links': []}
         assert baboom_standard.ask_standard('project folders') == expected
         from nodelang import baboom_nograph
+        monkeypatch.setitem(baboom_nograph._STATE, 'brain', object())   # enabled; a standard answer never asks it
         assert baboom_nograph.ask('where do project folders go?')['text'] == expected['answer']
         original_answer = candidate.answer
 

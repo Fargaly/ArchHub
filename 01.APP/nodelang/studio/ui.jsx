@@ -236,9 +236,8 @@
         if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
         if (t) {
           if(u.route==='home'&&!taskId&&!onSent){
-            if(agent==='BABOOM'){await u.openTaskFile(t.taskId);await u.act(()=>api.sendChatTurn(turn,undefined,t.taskId));await api.listTasks?.();return;}
-            // a start opens its session only once the chat answered; a refused start leaves nothing behind (the server
-            // archives the empty session), Home stays, the typed text comes back and the refusal is the toast
+            // BABOOM or a chat agent: a start opens its session only once it answered; a refused start leaves nothing behind
+            // (the server archives the empty session), Home stays, the typed text comes back and the refusal is the toast
             const answered=await u.act(()=>api.sendChatTurn({...turn,fresh:true},undefined,t.taskId));   // fresh: this session was made for this start
             await api.listTasks?.();
             if(answered){await u.openTaskFile(t.taskId);return;}

@@ -11923,7 +11923,8 @@
         "03.TOOLS/packaging/windows/goose/patches/0001-telemetry-off-by-default.patch",
         "03.TOOLS/packaging/windows/goose/patches/0002-archhub-config-path.patch",
         "03.TOOLS/packaging/windows/goose/patches/0003-baboom-identity.patch",
-        "03.TOOLS/packaging/windows/goose/patches/0004-archhub-default-extension.patch"
+        "03.TOOLS/packaging/windows/goose/patches/0004-archhub-default-extension.patch",
+        "03.TOOLS/packaging/windows/goose/patches/0005-archhub-advisory-dependencies.patch"
       ]
     },
     "UPDATERWORKS": {

@@ -153,6 +153,9 @@ BANNED_REASON = ("LiteLLM is banned (PyPI litellm 1.82.7 and 1.82.8, March 2026,
                  "route models through nodelang/model_router.py instead")
 # House mail (founder, 2026-10-14): agents do not drive Outlook COM. The Email draft
 # node fills the Dear, / Thank you and best regards, skeleton. Sending stays his ask.
+# R193: specs and reports cost less as text; the read still runs (organize, never obstruct).
+PDF_TEXT_NOTE = ("For a spec or report PDF, call ArchHub's pdf_extract_text instead: it returns the page text and "
+                 "caches it in app state, far cheaper than page images. Keep this read for drawings.")
 RAW_OUTLOOK_REASON = (
     "Use the Email draft node (it fills his signature template); sending only when he asks.")
 _HTMLBODY_SET = re.compile(r"(?i)(?:\.|\b)HTMLBody\s*=")
@@ -319,7 +322,8 @@ def classify(event: dict, environment) -> tuple[str, dict]:
              "untrusted": _untrusted_content(tool),
              "private": bool(_PRIVATE_PATH.search(text)),
              "others": bool(_OTHERS_PATH.search(text)),
-             "raw_outlook": _raw_outlook_mail(tool, command)}
+             "raw_outlook": _raw_outlook_mail(tool, command),
+             "pdf_read": bool(re.fullmatch(r"(?i)read|read_file|view", tool) and target.lower().endswith(".pdf"))}
     if _SCREEN_TOOL.search(tool):
         return "screen", facts
     if _SHELL.match(tool):
@@ -1384,6 +1388,8 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
         if "raw-outlook-mail" not in rules:
             rules = [*rules, "raw-outlook-mail"]
         notes.append(RAW_OUTLOOK_REASON)
+    if facts.get("pdf_read"):
+        notes.append(PDF_TEXT_NOTE)
     permissions = read_permissions(environment)
     mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
     hold_id = ""

@@ -403,7 +403,40 @@ def _write_coordination_cells(params, *, owner_admitted=False):
 _PDF_LOCK = threading.Lock()
 
 
+PDF_TEXT_KEEP = 200
+
+
+def _pdf_text_cache(params):
+    """R193: extracted text is kept in app state (never beside his file), keyed by path, size, mtime and pages."""
+    import hashlib
+    from .user_paths import state_directory
+    source = Path(params['path']).resolve()
+    info = source.stat()
+    key = hashlib.sha256(json.dumps([str(source).casefold(), info.st_size, info.st_mtime_ns,
+                                     [int(n) for n in params['pages'] or []]]).encode('utf-8')).hexdigest()
+    return state_directory() / 'pdf-text' / (key + '.json')
+
+
 def _pdf_coordination(operation, params, *, owner_admitted=False):
+    if operation == 'pdf.extract_text':
+        cache = _pdf_text_cache(params)
+        try:
+            return {'out': json.loads(cache.read_text(encoding='utf-8')), 'cached': True}
+        except (OSError, ValueError):
+            result = _pdf_read(operation, params, owner_admitted=owner_admitted)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache.with_suffix('.tmp')
+        temporary.write_text(json.dumps(result['out'], ensure_ascii=False), encoding='utf-8')
+        os.replace(temporary, cache)
+        # R171: the cache keeps only the newest PDF_TEXT_KEEP entries, so it never grows without bound.
+        kept = sorted(cache.parent.glob('*.json'), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        for stale in kept[PDF_TEXT_KEEP:]:
+            stale.unlink(missing_ok=True)
+        return result
+    return _pdf_read(operation, params, owner_admitted=owner_admitted)
+
+
+def _pdf_read(operation, params, *, owner_admitted=False):
     import pypdfium2 as pdfium
     with _PDF_LOCK, pdfium.PdfDocument(params['path']) as document:
         if operation == 'pdf.extract_text':

@@ -12008,6 +12008,15 @@
         "02.TESTS/tests_replica/test_native_stop_local_idle.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "COCKPITRELEASE": {
+      "source": "Founder request R68: the cockpit online controls everything; Cockpit System shows the website's live status and the app release (latest tag, publish time, downloads), read live from the deployed server.",
+      "scope": [
+        "06.CLOUD/cloud_backend/founder_cockpit.py",
+        "06.CLOUD/cloud_backend/cockpit_assets/admin.html",
+        "06.CLOUD/cloud_backend/tests/test_founder_backend_health.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

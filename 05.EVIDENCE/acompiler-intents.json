@@ -12265,7 +12265,9 @@
         "06.CLOUD/cloud_backend/main.py",
         "06.CLOUD/cloud_backend/db.py",
         "06.CLOUD/cloud_backend/tests/test_community_membership.py",
-        "06.CLOUD/cloud_backend/tests/join_signing.py"
+        "06.CLOUD/cloud_backend/tests/join_signing.py",
+        "06.CLOUD/cloud_backend/tests/test_brain_fanout.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_reads_the_community.py"
       ]
     },
     "CRYPTO50": {

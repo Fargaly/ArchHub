@@ -451,12 +451,21 @@
   const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2};
   const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
-  function ValueWidget({n, p, value, u}) {
+  function ValueWidget({n, p, value, u, onSave}) {
     const [draft, setDraft] = React.useState(null), [focused,setFocused] = React.useState(false), raw = draft ?? value,
       shown = !focused && ['file','folder'].includes(p.dataType) && typeof raw==='string' ? raw.split(/[\\/]/).filter(Boolean).pop() || raw : raw, label = n.title + ' ' + p.key;
-    const save = v => { setDraft(v); return u.act(() => api.setNodeParam(n.id, p.key, v)).then(() => setDraft(null)); };
+    // onSave: a field inside a record saves through its record (one write of the whole value).
+    const save = v => { setDraft(v); return Promise.resolve(onSave ? onSave(v) : u.act(() => api.setNodeParam(n.id, p.key, v))).then(() => setDraft(null)); };
     if (!p.editable) return <span title={String(shown)}>{summary(shown)}</span>;
     if (Array.isArray(raw) && raw.every(item=>typeof item==='string')) return <details className="v48-list-widget nodrag nowheel"><summary>{raw.length} {raw.length===1?'item':'items'}</summary><div>{raw.map((item,index)=><label key={index}><input aria-label={label+' item '+(index+1)} value={item} onChange={event=>save(raw.map((value,i)=>i===index?event.target.value:value))}/><button type="button" className="button-reset" aria-label={'Remove '+label+' item '+(index+1)} onClick={event=>executeAction('projects.controls.activate',{handler:()=>save(raw.filter((_,i)=>i!==index))},event)}>×</button></label>)}<button type="button" className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>save([...raw,''])},event)}>Add item</button></div></details>;
+    // R35: a record is edited field by field, each field in this same widget (numbers, yes/no, text, text lists and
+    // nested records); a field it cannot edit (null, mixed lists) is shown and kept exactly as it is.
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return <details className="v48-object-widget nodrag nowheel"><summary>{Object.keys(raw).length} {Object.keys(raw).length===1?'field':'fields'}</summary><div>{Object.entries(raw).map(([key,item])=>{
+      const kind = typeof item==='number' ? 'number' : typeof item==='boolean' ? 'boolean' : typeof item==='string' ? 'text' : '';
+      const editable = kind || (Array.isArray(item) && item.every(x=>typeof x==='string')) || (item!==null && typeof item==='object' && !Array.isArray(item));
+      return <label key={key} data-object-field={key}><span>{key}</span>{editable
+        ? <ValueWidget n={n} p={{key:p.key+' '+key, editable:true, type:kind||'text'}} value={item} u={u} onSave={v=>save({...raw,[key]:v})}/>
+        : <span data-kept="" title={JSON.stringify(item)}>{summary(item)}</span>}</label>;})}</div></details>;
     if (p.type === 'json') return <input className="nodrag" aria-label={label} defaultValue={JSON.stringify(raw)} key={JSON.stringify(value)} onChange={event=>event.target.setCustomValidity('')} onBlur={event=>{try{const parsed=JSON.parse(event.target.value);if(p.dataType==='list'&&!Array.isArray(parsed))throw Error('Enter a list.');save(parsed);}catch(error){event.target.setCustomValidity(error.message);event.target.reportValidity();}}}/>;
     if (p.type === 'boolean') return <D.Toggle label={label} checked={!!shown} onCheckedChange={save} />;
     if (['file','folder'].includes(p.dataType)) return <span className="v48-file-widget"><input className="nodrag" aria-label={label} title={String(raw || '')} value={shown || ''} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>save(e.target.value)}/><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.pickNodeParameter(n.id,p.key,p.dataType))},event)}>Browse</button></span>;

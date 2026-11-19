@@ -87,6 +87,47 @@ async function main() {
     await card.waitFor({timeout: 60000});  // a cold first open on a busy machine
     out.reopened = await values();
 
+    // TYPEDRECORD (R35): a record parameter on the session is edited field by field in the same widget, a nested
+    // field too, on the Session card and in the Inspector; after save and reopen the values hold and the fields it
+    // cannot edit (null, a mixed list) are byte-for-byte what they were.
+    const record = {sheets: 12, revision: 'P01', issued: false, frame: {depth: 0.1, material: 'steel'}, note: null, mixed: [1, 'a']};
+    const disk = JSON.parse(fs.readFileSync(input.file, 'utf8'));
+    const start = disk.nodes.find(row => row.id === 'start');
+    start.params.drawing_set = record;
+    start.paramDefs = [...(start.paramDefs || []), {id: 'drawing_set', name: 'Drawing set', type: 'object', group: 'Context'}];
+    fs.writeFileSync(input.file, JSON.stringify(disk, null, 2));
+    const reopen = async () => {
+      await page.reload({waitUntil: 'domcontentloaded'});
+      await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot') && document.querySelector('[data-home-ready]'), null, {timeout: 60000});
+      await openCanvas();
+      await card.waitFor({timeout: 60000});
+    };
+    const stored = () => page.evaluate(() => window.ArchHubAPI.getSessionDocument().nodes.find(row => row.id === 'start').params.drawing_set);
+    await reopen();
+    await panel('context').click();
+    const onCard = card.locator('label.v48-session-param', {hasText: 'Drawing set'});
+    await onCard.locator('summary').first().click();
+    await onCard.getByRole('spinbutton', {name: /drawing_set sheets$/}).fill('14');
+    await onCard.locator('[data-object-field="frame"] summary').first().click();
+    await onCard.getByRole('spinbutton', {name: /drawing_set frame depth$/}).fill('0.12');
+    await page.waitForFunction(() => { const v = window.ArchHubAPI.getSessionDocument().nodes.find(row => row.id === 'start').params.drawing_set; return v?.sheets === 14 && v?.frame?.depth === 0.12; });
+    out.recordCard = await stored();
+    // The Inspector's Properties for the same node edits the same value with the same widget.
+    await page.locator('.react-flow__node[data-id="start"] .node-header, .react-flow__node[data-id="start"] [data-design="session.node"]').first().click();
+    const inspector = page.locator('[data-node-inspector="start"]').first();
+    await inspector.waitFor({timeout: 20000});
+    const inInspector = inspector.locator('label', {hasText: /Drawing set|drawing set/}).first();
+    await inInspector.locator('summary').first().click();
+    await inInspector.getByRole('textbox', {name: /drawing_set revision$/}).fill('P02');
+    await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().nodes.find(row => row.id === 'start').params.drawing_set?.revision === 'P02');
+    await page.evaluate(file => window.ArchHubAPI.saveSession(file), input.file);
+    await reopen();
+    out.recordReopened = await stored();
+    out.recordOnDisk = JSON.parse(fs.readFileSync(input.file, 'utf8')).nodes.find(row => row.id === 'start').params.drawing_set;
+    out.recordExpected = {...record, sheets: 14, revision: 'P02', frame: {depth: 0.12, material: 'steel'}};
+    assert.deepEqual(out.recordReopened, out.recordExpected);
+    assert.deepEqual(out.recordOnDisk, out.recordExpected);
+
     // Inspector > This task > Session: error -> Retry -> waiting -> loaded; empty on a later read.
     const fold = page.getByRole('button', {name: 'Open Inspector', exact: true}).first();
     if (await fold.isVisible()) await fold.click();

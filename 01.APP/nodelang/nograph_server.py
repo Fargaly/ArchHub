@@ -138,6 +138,7 @@ class Cached:
 
 class NoGraphServer:
     def __init__(self, state_dir, *, host='127.0.0.1', port=0, engines=None, agent_source=None):
+        _STORE_VERSION_CLOSED[0] = False  # a new server may keep a store watcher again
         self.state_dir = Path(state_dir)
         self.settings_dir = self.state_dir / 'settings'
         self.settings_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +274,7 @@ class NoGraphServer:
                 relay.close(timeout_seconds=RELAY_NODE['params']['close_timeout_seconds'])
             except Exception as stuck:  # noqa: BLE001 - closing the app goes on
                 print('  cloud relay: did not stop -- %s' % stuck, flush=True)
+        _close_store_version()  # its sqlite connection must be closed on the thread that opened it
         self.httpd.shutdown()
         self.httpd.server_close()
         try:
@@ -1095,6 +1097,28 @@ _COLUMN_GENERATION = [0]  # moves on every drop: a column built across a write i
 # built. Its sqlite connection belongs to the thread that opened it, so one worker thread owns it and answers reads.
 _STORE_VERSION_WORKER = None
 _STORE_WATCH = []
+_STORE_VERSION_CLOSED = [False]  # set by server close: a late poll builds no new worker or watcher
+
+
+def _close_store_version():
+    """Close the kept store watcher on its own worker thread, then stop the worker (app close, test teardown)."""
+    global _STORE_VERSION_WORKER
+    with _COLUMN_LOCK:
+        _STORE_VERSION_CLOSED[0] = True
+        worker, _STORE_VERSION_WORKER = _STORE_VERSION_WORKER, None
+        _COLUMN.clear()
+    if worker is None:
+        return
+    from .library_engines import LIBRARY_ITEM_ENGINES
+
+    def close():
+        while _STORE_WATCH:
+            _STORE_WATCH.pop()[1].close()
+    try:
+        worker.submit(close).result(timeout=LIBRARY_ITEM_ENGINES['tool_workshop']['params']['worker_join_ms'] / 1000)
+    except Exception as stuck:  # noqa: BLE001 - closing the app goes on; the worker is still stopped below
+        logging.getLogger(__name__).warning('Workshop store watcher did not close: %s', stuck)
+    worker.shutdown(wait=True)
 
 
 def _store_version():
@@ -1119,6 +1143,8 @@ def _store_version():
             raise
 
     with _COLUMN_LOCK:
+        if _STORE_VERSION_CLOSED[0]:
+            return None  # closing or closed: the column is built fresh and not shared
         if _STORE_VERSION_WORKER is None:
             _STORE_VERSION_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='archhub-store-version')
         worker = _STORE_VERSION_WORKER

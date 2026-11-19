@@ -113,3 +113,24 @@ def test_shared_work_column_shows_another_connections_commit_at_once(tmp_path, m
     finally:
         client.close()
         server.close()
+
+
+def test_closing_the_server_closes_the_store_watcher_on_its_thread(tmp_path, monkeypatch):
+    """The kept store watcher is closed on the worker thread that opened it when the server closes, so nothing is
+    freed later on another thread ("SQLite objects created in a thread can only be used in that same thread")."""
+    _isolate(monkeypatch, tmp_path / 'desk')
+    from nodelang import nograph_server
+    state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+    state.mkdir()
+    server = nograph_server.NoGraphServer(state).start()
+    try:
+        assert nograph_server._store_version() is not None
+        assert nograph_server._STORE_WATCH
+    finally:
+        server.close()
+    assert nograph_server._STORE_WATCH == []
+    assert nograph_server._STORE_VERSION_WORKER is None
+    # A poll arriving after close builds no new worker or watcher (nothing left to be freed on the wrong thread).
+    assert nograph_server._store_version() is None
+    assert nograph_server._STORE_VERSION_WORKER is None
+    assert nograph_server._STORE_WATCH == []

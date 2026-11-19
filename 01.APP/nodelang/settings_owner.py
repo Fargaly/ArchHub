@@ -872,13 +872,12 @@ _APPLICATION_SETTING_SPECS = {
     "update_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "update_preview_channel": ("boolean", {"min": 0, "max": 1, "step": 1}),
-    "backup_location": ("text", {}),
 }
 
-def _application_setting_default(key: str) -> int | str:
+def _application_setting_default(key: str) -> int:
     from .library_engines import LIBRARY_ITEM_ENGINES
     value = LIBRARY_ITEM_ENGINES['tool_workshop']['params'][key]
-    return str(value) if key == 'backup_location' else int(value)
+    return int(value)
 
 
 THEME = {

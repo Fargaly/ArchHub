@@ -254,7 +254,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       padding: 16,
       display: 'grid',
       gap: 12
-    }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
+    }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<window.UI.Soon label="Cloud backup — coming"><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></window.UI.Soon></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
   // The one update card: current build, update state and Check for updates (api.checkForUpdates).
   function UpdateCard({runAction}) {

@@ -302,7 +302,7 @@ def archive_legacy_credentials() -> None:
         if raw is None or raw.startswith(_DPAPI_MARK):
             return
         digest = hashlib.sha256(raw).hexdigest()
-        directory = Path(_backup_location(APP_DIR.parent)['directory'])
+        directory = _local_backup_directory()
         archive = directory / ('secrets-legacy-' + digest + '.dat')
         receipt = archive.with_suffix('.sha256')
         # Validate every ancestor before mkdir or any archive/receipt write.
@@ -567,40 +567,16 @@ def list_keys() -> list[str]:
     return [name for name in names if isinstance(name, str) and not name.startswith("social-")]
 
 
-def _backup_location(profile):
-    """Installer-owned physical preference; Settings and Setup use this file."""
-    profile = Path(profile).resolve()
-    path = profile / 'ArchHub/backup-location.json'
-    if not path.exists():
-        return {'location': 'auto', 'directory': str(profile / 'ArchHub/backups')}
-    if path.is_symlink() or path.is_junction() or path.stat().st_size > 16384:
-        raise ValueError('installer backup location is not a bounded plain file')
-    record = json.loads(path.read_text(encoding='utf-8'))
-    if (type(record) is not dict or type(record.get('location')) is not str
-            or type(record.get('directory')) is not str):
-        raise ValueError('installer backup location is invalid')
-    history = record.get('managed_directories', [])
-    if type(history) is not list or any(type(item) is not str for item in history):
-        raise ValueError('installer backup directory history is invalid')
-    for directory in [record['directory'], *history]:
-        _owned_backup_directory(profile, directory)
-    return record
+def _local_backup_directory():
+    """The legacy-credential archive stays beside the app state, never on another drive.
 
-
-def _owned_backup_directory(profile, directory):
-    """Validate current and historical locations with the same ownership rule."""
-    selected = Path(directory)
-    identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
-    if (not selected.is_absolute() or str(selected).startswith(('\\\\', '//'))
-            or (selected != profile / 'ArchHub/backups' and
-                (selected.name != 'profile-' + identity or selected.parent.name != 'ArchHub-backups'))):
-        raise ValueError('installer backup directory is outside its owned container')
-    if selected != profile / 'ArchHub/backups' and any(selected.is_relative_to(profile / name)
-            for name in ('ArchHub', 'ArchHub-Test')):
-        raise ValueError('installer backup directory is outside its owned container')
+    F17: the retired installer backup preference ("auto") sent copies to another drive (E:) and to
+    the 100 MB System Reserved D: partition; it is no longer read (guarded by R136's never-return test).
+    """
+    selected = APP_DIR / 'backups'
     for ancestor in (selected, *selected.parents):
         if ancestor.is_symlink() or ancestor.is_junction():
-            raise ValueError('installer backup directory contains a link')
+            raise ValueError('backup directory contains a link')
     return selected
 
 

@@ -11876,6 +11876,18 @@
         "02.TESTS/tests_replica/test_graphout.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DESIGNROWS2": {
+      "source": "Founder request R114 (build exactly the design), design gap rows 4, 5, 22, 23: Workshop panel Threads list and Raw log, the approval card inside the thread, needs-you count and saving dot on tabs, and the Canvas More menu task actions; each acts or shows UI.Soon.",
+      "scope": [
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests/test_design_canvas.py",
+        "02.TESTS/tests_js/design_canvas_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -11815,6 +11815,22 @@
         "02.TESTS/tests_js/dock_model.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "AGENTSJOIN": {
+      "source": "Founder 2026-11-19: agent work is not a session; the same review run by agents shows as members and runs on one work session. A declare never creates a session or a Home card; it joins existing work or stays declared only. Agent-minted session cards leave Home without deleting files.",
+      "scope": [
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "02.TESTS/tests_replica/test_session_is_work.py",
+        "02.TESTS/tests/test_onetask.py",
+        "02.TESTS/tests/test_agentcanvas.py",
+        "02.TESTS/tests/test_baboom_work_presence.py",
+        "02.TESTS/tests/test_cloud_relay_offer.py",
+        "02.TESTS/tests_js/home_map.test.cjs",
+        "02.TESTS/tests_js/home_look.cjs",
+        "02.TESTS/tests/test_home_look.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

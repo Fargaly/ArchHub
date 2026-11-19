@@ -12092,7 +12092,8 @@
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/workshop/opencode-plugin.mjs",
         "02.TESTS/tests_replica/test_opencode_plugin_shape.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/opencode_v2_plugin.test.cjs"
       ]
     },
     "DECISIONNODES": {
@@ -12159,6 +12160,14 @@
         "01.APP/nodelang/native_host_tools.py",
         "02.TESTS/tests/test_brokers_restored.py",
         "02.TESTS/tests_replica/test_graphout.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "BABOOMALIVE": {
+      "source": "Founder 2026-11-19: Desktop BABOOM companion must be alive, freely draggable anywhere on screen, soft-land without snapping back to bottom-right, roam gently near active work (read-only F13-safe), and keep speech bubbles edge-safe; only website chat pins bottom-right.",
+      "scope": [
+        "01.APP/nodelang/baboom_native_companion.py",
+        "02.TESTS/tests_replica/test_baboom_native_alive.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

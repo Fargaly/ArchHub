@@ -15,6 +15,7 @@ for _name in ("USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP"):
     _path.mkdir(parents=True, exist_ok=True)
     os.environ[_name] = str(_path)
 
+from nodelang.hook_decision import draft_only
 from nodelang.library_engines import library_catalogue
 from nodelang.native_agent_mcp import build_server
 from nodelang.native_host_tools import FOLDED_PROGRAMS, RESTORED_BROKERS, _program
@@ -151,6 +152,11 @@ def test_restored_brokers_are_catalogue_cards_and_gated_mcp_tools(monkeypatch):
         elif body.get("status") == "Waiting for approval":
             assert spec["kind"] != "read" and body.get("approvalId"), (spec["id"], body)
             outcomes[spec["id"]] = "held"
+        elif draft_only(spec["id"]):
+            # DRAFTNOASK: a draft in his own mailbox asks the one decision directly (no card, no host permission);
+            # this court's decision refuses everything, so the draft is refused by its rule before any engine.
+            assert spec["kind"] != "read" and body.get("refused", "").endswith("Refused: court"), (spec["id"], body)
+            outcomes[spec["id"]] = "refused"
         else:
             assert spec["kind"] != "read" and "host effect permission" in body.get("refused", ""), (spec["id"], body)
             outcomes[spec["id"]] = "refused"
@@ -200,3 +206,34 @@ def test_a_folded_write_through_revit_run_is_held_for_approve_not_run(monkeypatc
             settings.unlink()
         else:
             settings.write_bytes(before)
+
+
+def test_an_outlook_draft_runs_without_approve_and_a_send_is_held_until_approved(monkeypatch):
+    """DRAFTNOASK at the agent door, real decision, stubbed Outlook boundary: under Ask first a reply draft runs once
+    with no card; the same draft aimed at a public target is held on one card, and only Approve sends it, once."""
+    from nodelang import hook_decision, native_host_tools
+    sent = []
+    monkeypatch.setattr(native_host_tools, "_run_engine", lambda engine, params: sent.append((engine, params["to"])) or {"ok": True})
+    folder = hook_decision._settings_dir(os.environ)
+    folder.mkdir(parents=True, exist_ok=True)
+    permissions = folder / "permissions.json"
+    before = permissions.read_bytes() if permissions.exists() else None
+    permissions.write_text(json.dumps({"runMode": "Ask first", "tools": {}}), encoding="utf-8")
+    try:
+        server = build_server(mailbox_call=lambda *args, **kwargs: {})
+        draft = {"to": "client@example.com", "subject": "Re: sheets", "body": "Dear client", "reply_to": "msg-1"}
+        cards = len(hook_decision.ask_reviews())
+        assert _payload(asyncio.run(server.call_tool("outlook_reply_draft", draft))) == {"ok": True}
+        assert sent == [("outlook.reply_draft", "client@example.com")] and len(hook_decision.ask_reviews()) == cards
+        public = {**draft, "to": "https://example.com/p"}
+        held = _payload(asyncio.run(server.call_tool("outlook_reply_draft", public)))
+        assert held.get("status") == "Waiting for approval" and held.get("approvalId"), held
+        assert len(sent) == 1, "a send never reaches Outlook before Approve"
+        [card] = [c for c in hook_decision.ask_reviews() if c["id"] == held["approvalId"]]
+        assert hook_decision.ask_apply(card["id"], card["input_digest"], "approve")["status"] == "approved"
+        assert sent[1:] == [("outlook.reply_draft", "https://example.com/p")]
+    finally:
+        if before is None:
+            permissions.unlink()
+        else:
+            permissions.write_bytes(before)

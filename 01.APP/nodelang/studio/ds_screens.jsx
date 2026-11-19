@@ -701,7 +701,8 @@
     const c = React.useContext(CanvasContext), box = React.useRef(null), updateInternals = RF.useUpdateNodeInternals();
     // xyflow caches Handle positions; re-measure when the card's rows/sockets change or its size changes (auto-height, field add/hide/reorder).
     // Layout only: nothing here runs a node.
-    const n = data.n, handles = [...n.inputs, ...n.outputs].map(p => p.id).join('|') + '#' + (n.parameterSchema || []).map(p => p.key).join('|');
+    const frame=expandedGroup(data.n), flow = c.flow && !data.n.fixed && !frame;  // Flow view: one socket in and one out, on steps only
+    const n = data.n, handles = [...n.inputs, ...n.outputs].map(p => p.id).join('|') + '#' + (n.parameterSchema || []).map(p => p.key).join('|') + (flow ? '#flow' : '');
     React.useLayoutEffect(() => {
       const measure = () => updateInternals(id);
       measure();
@@ -710,8 +711,8 @@
       return () => observer.disconnect();
     }, [id, handles, updateInternals]);
     const design = n.fixed ? ({'thing.session':'pin.session','thing.agent':'pin.agent','thing.you':'pin.you','thing.workshop':'pin.workshop'}[n.type]) : 'node.step';
-    const frame=expandedGroup(n);
-    return <div ref={box} data-graph-node={id} data-design={frame ? n.frameMembers ? 'frame.box' : 'group.frame' : !n.fixed&&n.children?.length ? 'group.node' : design} data-fixed={n.fixed || undefined} style={{fontSize:'calc('+(frame?13:12)+'px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{frame ? c.renderFrame(n,selected) : c.renderNode(n, selected)}</div></div>;
+    return <div ref={box} data-graph-node={id} data-design={frame ? n.frameMembers ? 'frame.box' : 'group.frame' : !n.fixed&&n.children?.length ? 'group.node' : design} data-fixed={n.fixed || undefined} style={{fontSize:'calc('+(frame?13:12)+'px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{frame ? c.renderFrame(n,selected) : c.renderNode(n, selected)}</div>
+      {flow && [['target',RF.Position.Left,'flow:in'],['source',RF.Position.Right,'flow:out']].map(([type,position,key])=><RF.Handle key={key} type={type} position={position} id={key} isConnectable={false} className="flow-socket" data-flow-socket={key} />)}</div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
@@ -802,6 +803,10 @@
     const canvasTouched = React.useRef(false);
     React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
     const stopAutoFrame = () => { canvasTouched.current = true; };
+    // Flow view is this open tab's own view state (Settings owner, canvasTabs); the session file never changes.
+    const flowTab = embedded && !preview ? (u.canvasTabs?.tabs || []).find(tab => tab.id === u.canvasTabs.active) : null, flowView = !!flowTab?.flow;
+    const toggleFlow = () => u.act(() => u.saveCanvasTabs({...u.canvasTabs, tabs: u.canvasTabs.tabs.map(tab => tab === flowTab ? {...tab, flow: !flowView} : tab)}))
+      .then(saved => { if (saved) u.setToast(flowView ? 'Every socket and wire is back.' : 'Flow view: one socket in and out per node. Every socket comes back when you switch it off.'); });
     // Where the pointer went down: a selection window is measured from it, and its direction picks containing or crossing.
     const boxFrom = React.useRef({x: 0, at: {x: 0, y: 0}}), [crossing, setCrossing] = React.useState(false);
     const paneBox = React.useRef(null), libraryPanel = React.useRef(null), inspectionPanel = React.useRef(null);
@@ -1261,6 +1266,9 @@
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint'||w.enabled===false ? .2 : .9}};
       });
     }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId]);
+    // Flow view (a view: no file, wire or socket changes): one wire per pair of steps, drawn between the two flow sockets.
+    const flowEdges = flowView ? edges.filter((edge,index,all) => ![edge.source,edge.target].some(id => { const end = visible.find(n => n.id === id); return !end || end.fixed || expandedGroup(end); }) && all.findIndex(row => row.source === edge.source && row.target === edge.target) === index)
+      .map(edge => ({...edge, sourceHandle: 'flow:out', targetHandle: 'flow:in'})) : edges;
     const fit = (persist = true) => {
       if (!visible.length || !area.current) return;
       const w = area.current.clientWidth, h = area.current.clientHeight;
@@ -1323,7 +1331,7 @@
     const cards = React.useRef(null);
     cards.current = {renderNode, renderFrame, openNode};
     const canvasContext = React.useMemo(() => ({renderNode: (...args) => cards.current.renderNode(...args), renderFrame: (...args) => cards.current.renderFrame(...args),
-      openNode: n => cards.current.openNode(n), preview: !!preview}), [s, u, rejected, preview, parent, layout, selected.join(','), requestState]);
+      openNode: n => cards.current.openNode(n), preview: !!preview, flow: flowView}), [s, u, rejected, preview, parent, layout, selected.join(','), requestState, flowView]);
     // COMMANDREGISTRY: expose this active Canvas's existing selection/actions to Ctrl K.
     React.useLayoutEffect(() => {
       if (preview || !active) return;
@@ -1412,7 +1420,7 @@
       {libraryRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Library" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='library'?'':'library')},event)}>Library</button> : <window.UI.LibraryShelf onClose={()=>u.setLibraryOpen(false)} />}
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <WorkPanel id="canvas-work" minSize={240}>
-   <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
+   <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         onPointerDownCapture={event=>{stopAutoFrame();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
         onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
@@ -1438,7 +1446,7 @@
           });
         }}>
     <CanvasContext.Provider value={canvasContext}>
-     <FlowStage nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
+     <FlowStage nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview&&!flowView} elevateNodesOnSelect={false}
        defaultViewport={{x: pan.x, y: pan.y, zoom}} onInit={inst => { flow.current = inst; inst.setViewport({x: view.current.pan.x, y: view.current.pan.y, zoom: view.current.zoom}); }}
        onMove={(event,v) => { if (event instanceof window.Event) { view.current = {zoom: v.zoom, pan: {x: v.x, y: v.y}}; viewSource.emit(); } }}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) { setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
@@ -1461,7 +1469,7 @@
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
     {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).length} more steps →</button>}
-    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
+    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
 
    </div>
    </WorkPanel>

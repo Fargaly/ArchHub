@@ -662,9 +662,10 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
             raise ValueError('Open at most 100 task tabs.')
         identities = set()
         for tab in tabs:
-            if (type(tab) is not dict or set(tab) != {'id', 'kept'} or
+            # flow: this tab shows the Flow view (one socket in and out per node); a view, no session file changes.
+            if (type(tab) is not dict or set(tab) - {'flow'} != {'id', 'kept'} or
                     type(tab['id']) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', tab['id']) or
-                    type(tab['kept']) is not bool or tab['id'] in identities):
+                    type(tab['kept']) is not bool or type(tab.get('flow', False)) is not bool or tab['id'] in identities):
                 raise ValueError('Each open task tab needs a unique task identity.')
             identities.add(tab['id'])
         if (type(value['collapsed']) is not bool or

@@ -1399,6 +1399,10 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 /* A window drag leaves xyflow's selection box over the nodes it picked; with one node or none selected (after Ctrl+G the new group is
    the one) the box is gone, so it never sits over a node and takes its clicks and double-clicks. */
 .node-canvas[data-single-pick] .react-flow__nodesselection{display:none}
+/* DESIGNCANVAS row 3, Flow view: a step shows only its header, with one socket in and one out. */
+.node-canvas[data-flow] [data-ds-node]>:not(.node-header){display:none!important}
+.node-canvas .flow-socket{width:10px;height:10px;border-radius:50%;background:var(--color-bg-panel);border:2px solid var(--color-ink-muted)}
+.canvas-toolbar [data-design="canvas.flow"][aria-pressed=true]{background:var(--color-bg-hover);color:var(--color-ink)}
 /* ONE BABOOM panel (spec 5, as measured on the design prototype): 380 wide, radius 10. Its header: his sprite at .4 (the 192 px atlas cell drawn 32 x 35), his name 14 bold, his role 12, a 30 px close. */
 .pet-bubble{--baboom-panel-width:380px;width:min(var(--baboom-panel-width),calc(100vw - 32px));max-width:none;border-radius:var(--radius-xl)}
 .bbm-ph b{display:block;font-size:calc(14px * var(--text-scale,1));font-weight:700}.bbm-ph b+span{font-size:calc(12px * var(--text-scale,1));color:var(--color-ink-soft)}

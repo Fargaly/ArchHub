@@ -11846,7 +11846,8 @@
       "scope": [
         "01.APP/nodelang/hook_decision.py",
         "02.TESTS/tests/test_host_exec.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/command_registry.py"
       ]
     },
     "SESSIONPROPS": {

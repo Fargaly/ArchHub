@@ -12,6 +12,12 @@ def profile(tmp_path, monkeypatch):
         monkeypatch.setenv(name, str(tmp_path / name))
         (tmp_path / name).mkdir()
     monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR', raising=False)
+    import contextlib
+    from nodelang import canvas_documents
+    @contextlib.contextmanager
+    def unlocked(path):
+        yield
+    monkeypatch.setattr(canvas_documents, 'locked', unlocked)
     yield tmp_path
 
 
@@ -55,15 +61,32 @@ def test_a_thread_message_reaches_two_vendors_and_both_replies_land_in_that_thre
 
 
 def test_a_thread_question_with_no_mention_is_answered_in_that_thread(monkeypatch):
-    from nodelang import model_router, nograph_server
-    monkeypatch.setattr(nograph_server, '_baboom_brain', lambda: None)
-    monkeypatch.setattr(model_router, 'composer_chat', lambda body, on_delta=None: {
-        'ok': True, 'answer': 'There are 12 sheets.', 'provider': 'Fake', 'model': 'fake-model'})
+    """BABOOM with its Goose brain up answers in the task thread; no composer fallthrough."""
+    from nodelang import baboom_nograph, model_router, nograph_server
+    monkeypatch.setattr(baboom_nograph, 'ask', lambda prompt, context='': {
+        'text': 'There are 12 sheets.', 'steps': [],
+        'via': {'family': 'openrouter', 'provider': 'Goose', 'model': 'openrouter/free'}, 'actions': []})
+    monkeypatch.setattr(model_router, 'composer_chat', lambda body, on_delta=None: (_ for _ in ()).throw(
+        AssertionError('BABOOM must not fall through to composer_chat')))
     task = _task('Review sheets')
     result = nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'BABOOM', 'task': task}, lambda text: None)
     assert result['answer'] == 'There are 12 sheets.'
+    assert result['provider'] == 'BABOOM (Goose)'
     thread = _thread(task)
     assert any('how many sheets?' in text for text in thread) and any('There are 12 sheets.' in text for text in thread)
+
+
+def test_baboom_brain_down_refuses_instead_of_composer_fallthrough(monkeypatch):
+    from nodelang import baboom_nograph, model_router, nograph_server
+    monkeypatch.setitem(baboom_nograph._STATE, 'brain', None)
+    monkeypatch.setitem(baboom_nograph._STATE, 'error', 'BABOOM brain unavailable: packaged Goose missing.')
+    called = []
+    monkeypatch.setattr(model_router, 'composer_chat', lambda *a, **k: called.append(1) or {
+        'ok': True, 'answer': 'fallthrough', 'provider': 'Fake', 'model': 'fake'})
+    task = _task('Brain down')
+    with pytest.raises(RuntimeError, match='packaged Goose missing'):
+        nograph_server._chat({'prompt': 'how many sheets?', 'agent': 'BABOOM', 'task': task}, lambda text: None)
+    assert called == []
 
 
 def test_reply_task_survives_open_and_busy_writer(monkeypatch):

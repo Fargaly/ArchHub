@@ -503,15 +503,19 @@
       const prompt = turn.prompt + (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(file=>({id:file.id,path:file.path}))) : '');
       const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');
+      const restoreDraft = () => u.setComposerDraft(current => {
+        const held = current[draftKey];
+        return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
+      });
       try {
         const result = await u.act(() => api.sendChatTurn({...turn, prompt}, undefined, task && !task.fileOnly ? task.id : undefined));
         if (result != null && turn.agent !== 'BABOOM') setTo(null);   // the thread's chat is now the default (threadDefault)
         if (result == null && turn.resume) setTo(null);               // ended: the default becomes Start again
-        if (result == null) u.setComposerDraft(current => {
-          const held = current[draftKey];
-          return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
-        });
+        if (result == null) restoreDraft();
         else {for(const file of files) await api.removeComposerAttachment(file.id);await api.listTasks?.();}
+      } catch (error) {
+        restoreDraft();
+        u.setToast?.(error instanceof Error ? error.message : String(error));
       } finally {
         sendingRef.current = false;
         setSending(false);

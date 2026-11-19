@@ -207,11 +207,11 @@
       ]
     },
     "models_tool_engine": {
-      "why": "BABOOM's adopted Goose ACP engine reaches the existing read-only host MCP; isolated fake-agent proof only",
+      "why": "BABOOM's adopted Goose ACP engine answers composer/Workshop asks; isolated fake-brain proof",
       "tests": [
-        "tests_replica/test_goose_brain.py::test_fake_goose_reads_actual_mcp_tool_and_returns_host_result",
-        "tests_replica/test_goose_brain.py::test_permission_cannot_spoof_safe_read_using_title",
-        "tests_replica/test_baboom5.py::test_ask_over_fake_transport_uses_goose_and_shows_host_result"
+        "tests_replica/test_baboom_ask_path.py::test_composer_baboom_ask_uses_goose_and_lands_in_the_task_thread",
+        "tests_replica/test_baboom_ask_path.py::test_baboom_without_brain_refuses_instead_of_composer_fallthrough",
+        "tests_replica/test_baboom_nograph.py::test_companion_ask_and_act_reach_the_goose_brain"
       ]
     },
     "models_registry": {

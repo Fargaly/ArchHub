@@ -220,10 +220,11 @@
       setDraft(current => ({text:'',revision:current.revision+1}));
       pending.current += 1;
       setSending(true);
+      const restoreDraft = () => setDraft(current => current.text ? current : {text,revision:current.revision+1});
       try {
         if (toSession) {
           const sent = await u.act(() => agent === 'BABOOM' ? api.sendToBaboom(message, {taskId: toSession.id, scope: s.graph.id}) : api.sendChatTurn(turn, undefined, toSession.id));
-          if (!sent) { setDraft(current => current.text ? current : {text,revision:current.revision+1}); return; }
+          if (!sent) { restoreDraft(); return; }
           await api.listTasks?.();
           u.setToast({text: 'Sent to ' + (toSession.sessionTitle || toSession.title) + '. It is in that session’s thread.', open: () => u.openTaskFile(toSession.id)});  // Home stays; Open goes in
           return;
@@ -233,16 +234,23 @@
           if ((!taskId || agent !== 'BABOOM') && typeof api.apiRouterChat === 'function') return api.sendChatTurn(turn, undefined, taskId || undefined);
           return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id});
         });
-        if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
+        if (!t) { restoreDraft(); return; }
         if (t) {
           if(u.route==='home'&&!taskId&&!onSent){
-            if(agent==='BABOOM'){await u.openTaskFile(t.taskId);await u.act(()=>api.sendChatTurn(turn,undefined,t.taskId));await api.listTasks?.();return;}
-            // a start opens its session only once the chat answered; a refused start leaves nothing behind (the server
-            // archives the empty session), Home stays, the typed text comes back and the refusal is the toast
-            const answered=await u.act(()=>api.sendChatTurn({...turn,fresh:true},undefined,t.taskId));   // fresh: this session was made for this start
-            await api.listTasks?.();
-            if(answered){await u.openTaskFile(t.taskId);return;}
-            setDraft(current => current.text ? current : {text,revision:current.revision+1});return;}
+            try {
+              if(agent==='BABOOM'){await u.openTaskFile(t.taskId);await u.act(()=>api.sendChatTurn(turn,undefined,t.taskId));await api.listTasks?.();return;}
+              // a start opens its session only once the chat answered; a refused start leaves nothing behind (the server
+              // archives the empty session), Home stays, the typed text comes back and the refusal is the toast
+              const answered=await u.act(()=>api.sendChatTurn({...turn,fresh:true},undefined,t.taskId));   // fresh: this session was made for this start
+              await api.listTasks?.();
+              if(answered){await u.openTaskFile(t.taskId);return;}
+              restoreDraft();return;
+            } catch (error) {
+              restoreDraft();
+              u.setToast?.(error instanceof Error ? error.message : String(error));
+              return;
+            }
+          }
           if (typeof t.answer === 'string') {
             onSent?.(t);
             return;
@@ -251,6 +259,9 @@
           onSent?.(t);
           if (!taskId && !onSent) u.go('workshop');
         }
+      } catch (error) {
+        restoreDraft();
+        u.setToast?.(error instanceof Error ? error.message : String(error));
       } finally {
         pending.current -= 1;
         if (!pending.current) setSending(false);

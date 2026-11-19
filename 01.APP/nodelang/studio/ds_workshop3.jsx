@@ -215,7 +215,7 @@
       {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} data-chat-start={c.key.startsWith('start') ? c.start || 'unavailable' : undefined} data-chat-continue={c.resume ? c.start : undefined} aria-selected={c.handle === to} disabled={c.handle === undefined && !c.act} className="listbutton spread" title={c.reason || (c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : (c.start && !c.resume ? 'Start a new ' : 'Send to ') + c.name)} onClick={() => executeAction("ui.select", () => { if (c.act) { c.act(); return; } setTo(c.handle); setListOpen(false); })}><span>{c.start && !c.resume ? 'Start ' + c.name : c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }
-  function TaskComposer({choices, to, setTo, sendRef, replyTo, setReplyTo, draft, setDraft, onSend, docked = false, thread = false, busy = false}) {
+  function TaskComposer({choices, to, setTo, sendRef, replyTo, setReplyTo, draft, setDraft, onSend, docked = false, thread = false, busy = false, taskId}) {
     const s = useData(), u = useApp();
     const [localText, setLocalText] = React.useState(''), [sending, setSending] = React.useState(false);
     const [expanded, setExpanded] = React.useState(false);
@@ -231,12 +231,17 @@
       if (body === text) setText('');
       setSending(true);
       try {
-        const sent = await u.act(() => api.sendChatTurn({...turn, prompt}, replyTo && replyTo.handle === to ? replyTo.id : undefined, undefined));
+        // Bind the ask to the selected Workshop task so BABOOM/Goose answers land in that thread.
+        const sent = await u.act(() => api.sendChatTurn({...turn, prompt}, replyTo && replyTo.handle === to ? replyTo.id : undefined, taskId || undefined));
         if (!sent) { if (body === text) setText(body); return null; }
         files.forEach(f => api.removeComposerAttachment(f.id));
         setReplyTo?.(null);
         await api.listTasks?.();
         return sent;
+      } catch (error) {
+        if (body === text) setText(body);
+        u.setToast?.(error instanceof Error ? error.message : String(error));
+        return null;
       } finally {
         setSending(false);
       }
@@ -359,7 +364,7 @@
       </>}
       <i ref={stickToEnd} aria-hidden="true" />
     </div></div>
-    <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} replyTo={replyTo} setReplyTo={setReplyTo} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
+    <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} replyTo={replyTo} setReplyTo={setReplyTo} taskId={task?.id} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
   </main>
   </Column>
   <Separator className="pane-splitter" aria-label="Resize the People and agents pane" />

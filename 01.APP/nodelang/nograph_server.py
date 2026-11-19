@@ -696,20 +696,29 @@ def _baboom_brain():
     return brain()
 
 
-def _ask_baboom(prompt):
-    """The composer's BABOOM turn: Goose with its tools; a profiling row like any model route."""
+def _ask_baboom(prompt, on_step=lambda step: None):
+    """The composer's BABOOM turn: Goose with its tools; a profiling row like any model route.
+
+    BABOOM never falls through to the free-model composer. Persona and standard answers still
+    work when the Goose brain is down; every other ask surfaces the real brain failure.
+    """
     import uuid
     from .baboom_nograph import ask
     from .model_router import request_profiles
     started = time.monotonic()
     record = {'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': 'BABOOM', 'model': 'goose', 'provider': 'Goose',
               'tokens': None, 'ms': 0, 'outcome': 'refused'}
+    result = None
     try:
         result = ask(prompt)
         record.update(model=result['via'].get('model', 'goose'), outcome='answered')
     finally:
         record['ms'] = int((time.monotonic() - started) * 1000)
         request_profiles(record)
+    if result is None:
+        raise RuntimeError('BABOOM could not complete this ask.')
+    for step in result.get('steps') or []:
+        on_step({'id': step.get('tool'), 'tool': step.get('tool'), 'status': step.get('status')})
     steps = ''.join('\n\u2022 %s: %s' % (s.get('tool'), s.get('status')) for s in result.get('steps', []))
     return {'ok': True, 'answer': result['text'] + steps, 'provider': 'BABOOM (Goose)', 'model': record['model'],
             'request_id': record['id'], 'applied': [], 'steps': result.get('steps', [])}
@@ -744,8 +753,9 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
     if handles:
         return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step,
                                 cancelled=cancelled)
-    if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
-        result = _ask_baboom(prompt)
+    # BABOOM is one owner (Goose-fitted brain + persona/standard). Never silent composer fallthrough.
+    if body.get('agent', 'BABOOM') == 'BABOOM':
+        result = _ask_baboom(prompt, on_step=on_step)
     else:
         result = composer_chat(body, on_delta=on_delta)
     try:

@@ -11754,6 +11754,18 @@
         "02.TESTS/tests_js/design_canvas_live.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DESIGNTABSTRIP": {
+      "source": "Founder design rows (Canvas design v61/v63, row 12): the session tab strip from the approved design, built into the live app; unbuilt parts inert through UI.Soon.",
+      "scope": [
+        "01.APP/nodelang/studio/dock.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/dock_model.test.cjs",
+        "02.TESTS/tests/test_design_canvas.py",
+        "02.TESTS/tests_js/design_canvas_live.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -11713,7 +11713,8 @@
         "01.APP/nodelang/command_registry.py",
         "03.TOOLS/installer/build_release.ps1",
         "03.TOOLS/installer/ArchHub.iss",
-        "01.APP/nodelang/studio/app.jsx"
+        "01.APP/nodelang/studio/app.jsx",
+        "02.TESTS/tests_js/open_never_writes.cjs"
       ]
     },
     "ONELAYOUT": {

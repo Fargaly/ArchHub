@@ -41,11 +41,14 @@ MAX = {"port": 48886, "pid": 3, "revit_version": None, "service_version": "0.2.0
 @pytest.fixture
 def rig(monkeypatch, tmp_path):
     from nodelang import host_brokers
+    from nodelang.user_paths import state_directory
     calls = []
-    settings = tmp_path / "ArchHub" / "settings.json"
-    settings.parent.mkdir()
-    settings.write_text(json.dumps({"host_effects": dict.fromkeys(["revit", "acad", "max", "rhino", "blender"], True)}))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path / "ArchHub"))
+    # The permission lives in the application state owner (state_directory), the file _allow_effect reads.
+    settings = state_directory() / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"host_effects": dict.fromkeys(["revit", "acad", "max", "rhino", "blender"], True)}))
     sessions = [REVIT.copy(), ACAD.copy()]
     monkeypatch.setattr(host_brokers, "broker_sessions", lambda service, **kw: [row for row in sessions
         if bool(row.get("revit_version")) == (service == "revit") and row.get("service") != "max-mcp"])
@@ -70,6 +73,21 @@ def payload(answer):
     return answer[1] if isinstance(answer, tuple) else json.loads(answer[0].text)
 
 
+def approved(rig, monkeypatch, name, arguments=None):
+    """An agent's host effect waits on one Approve card (F344); approving it runs the call once. Returns what it ran."""
+    from nodelang import hook_decision, host_exec
+    held = payload(tool(rig, name, arguments))
+    assert held["status"] == "Waiting for approval" and held["approvalId"], held
+    host_exec._ensure_registry()
+    release, ran = host_exec.INVOKERS["archhub.commands"], []
+    monkeypatch.setitem(host_exec.INVOKERS, "archhub.commands",
+                        lambda action, given: ran.append(release(action, given)) or ran[-1])
+    [card] = [c for c in hook_decision.ask_reviews() if c["id"] == held["approvalId"]]
+    assert hook_decision.ask_apply(card["id"], card["input_digest"], "approve")["status"] == "approved"
+    assert len(ran) == 1
+    return ran[0]
+
+
 def test_all_existing_tool_names_remain(rig):
     assert ARCHHUB_HOSTS_TOOLS <= {tool.name for tool in rig.server._tool_manager.list_tools()}
 
@@ -78,7 +96,8 @@ def test_reads_work_without_permission_or_graph(rig):
     rig.settings.unlink()
     for name in ("revit_ping", "revit_info", "acad_ping", "acad_info", "office_read", "outlook_inbox", "dropbox_list", "notion_search"):
         tool(rig, name, {"operation": "excel.list_workbooks"} if name == "office_read" else {})
-    assert rig.server.work_control.owner is None
+    # NOGRAPH (9afdeaa4): the server holds no Work enrolment at all; the reads above answered without one.
+    assert not hasattr(rig.server, "work_control")
 
 
 @pytest.mark.parametrize("name,args", [("revit_execute_csharp", {"code": "result=1;"}),
@@ -100,7 +119,7 @@ def test_effect_once_and_permission_recheck(rig, monkeypatch):
         rig.settings.write_text('{}')
         return {"work": "forged", "confirmed": True, "out": 1}, "ran"
     monkeypatch.setitem(host_brokers.ENGINES, "max.exec", changes)
-    result = payload(tool(rig, "max_execute_maxscript", {"script": "1"}))
+    result = approved(rig, monkeypatch, "max_execute_maxscript", {"script": "1"})
     assert result["confirmed"] is False and "may have run" in result["unconfirmed"]
     assert "work" not in result and rig.calls == ["once"]
 
@@ -111,7 +130,7 @@ def test_timeout_is_uncertain_never_retried(rig, monkeypatch):
         rig.calls.append("sent")
         raise TimeoutError("timeout")
     monkeypatch.setattr(clean_revit_adapter, "_call", silent)
-    result = payload(tool(rig, "revit_execute_csharp", {"code": "result=1;"}))
+    result = approved(rig, monkeypatch, "revit_execute_csharp", {"code": "result=1;"})
     assert result["confirmed"] is False and "Do not run it again" in result["unconfirmed"]
     assert rig.calls == ["sent"]
 
@@ -126,9 +145,9 @@ def test_ambiguity_and_wrong_host_refuse(rig):
     assert rig.calls == []
 
 
-def test_existing_payloads_timeouts_and_screenshot_default(rig):
-    tool(rig, "revit_execute_csharp", {"code": "open", "transaction": False})
-    tool(rig, "revit_screenshot")
+def test_existing_payloads_timeouts_and_screenshot_default(rig, monkeypatch):
+    approved(rig, monkeypatch, "revit_execute_csharp", {"code": "open", "transaction": False})
+    approved(rig, monkeypatch, "revit_screenshot")
     tool(rig, "revit_info")
     tool(rig, "acad_info")
     assert rig.calls[0] == ("broker", 48884, "/exec", {"code": "open", "transaction_name": "ArchHub", "transaction": False}, 240.0)
@@ -159,7 +178,7 @@ def test_reads_and_status_need_no_owner(rig, monkeypatch):
     payload(tool(rig, "revit_ping"))
     state = payload(tool(rig, "hosts_state"))
     assert state["ok"] is True and state["connectors"] == [] and state["operations"] == []
-    assert rig.server.work_control.owner is None
+    assert not hasattr(rig.server, "work_control")
 
 
 def test_host_tools_carry_no_development_era_code():

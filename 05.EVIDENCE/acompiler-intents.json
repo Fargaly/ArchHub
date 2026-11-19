@@ -11898,6 +11898,15 @@
         "01.APP/nodelang/studio/api.js"
       ]
     },
+    "DEPALERTS3": {
+      "source": "Build 19 security maintenance. Replace the affected desktop OpenTelemetry API and the two Studio development dependency versions confirmed by the current GitHub advisories. Verify the router and Studio on the corrected bytes.",
+      "scope": [
+        "requirements.txt",
+        "package-lock.json",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "PILLOW13": {
       "source": "Build 19 security maintenance: update the packaged Windows Pillow runtime to a version fixing GitHub critical alerts #113, #122, #139, #144 and #153. Verify the app image and PDF paths and the release wheel.",
       "scope": [

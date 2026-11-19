@@ -1360,7 +1360,8 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .dghost{position:fixed;left:0;top:0;z-index:1200;display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:6px;background:var(--color-bg-raised);border:1px solid var(--color-accent);color:var(--color-ink);font:500 12px/1 var(--type-family-ui),Inter,sans-serif;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 24px rgba(0,0,0,.45)}
 @media (prefers-reduced-motion:reduce){.dockws,.dockws .dslot,.dockws .dzp,.dockws .sash::after{transition:none}}
 /* The Thread peek opens beside the right dock, never over it. */
-.dockws .v22g-thread[data-thread-peek]{right:calc(var(--rw,0px) + var(--rs,0px))}
+/* The thread peek sits left of the right dock and never reaches over the 64 px rail (a narrow window kept Home unclickable). */
+.dockws .v22g-thread[data-thread-peek]{right:calc(var(--rw,0px) + var(--rs,0px));width:min(380px,calc(100vw - var(--rw,0px) - var(--rs,0px) - 72px))}
 /* The composer floats above both docks: centred on the area right of the rail, 620px wide or the window less 444px (design: 1009 -> 254-819, 1280 -> 362-982, 1440 -> 442-1062, 1920 -> 682-1302); 900px is the shell floor. The zoom control rises off it (ds_screens.jsx). */
 .dx-home-root[data-screen="task-file"]>.v22g-composer-dock{left:calc((max(100vw,900px) + var(--layout-rail-width)) / 2)!important;width:min(620px,calc(max(100vw,900px) - 444px))!important;min-width:0!important}
 /* On Home the To button sits at the composer's right end, so its list grows leftwards and stays inside the window. Home only: elsewhere the button is near the left end. */

@@ -8,8 +8,13 @@ const {execFileSync} = require('node:child_process');
 const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
+// The command registry (the palette's groups and commands) comes from its owner, as /api/commands serves it; agent tools are left out,
+// so reading it writes no catalogue cache. The Python is the court's (pytest's own, or the repo's venv).
+const python = process.env.ARCHHUB_TEST_PYTHON || process.env.ARCHHUB_COURT_PYTHON || [path.resolve(__dirname, '../../.venv/Scripts/python.exe'), path.resolve(__dirname, '../../../.venv/Scripts/python.exe')].find(file => fs.existsSync(file)) || 'python';
+const registry = JSON.parse(execFileSync(python, ['-c', 'import json, nodelang.command_registry as r; r.agent_commands = lambda: []; print(json.dumps(r.payload()))'],
+  {cwd: path.resolve(__dirname, '../../01.APP'), encoding: 'utf8', windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'ds_screens.jsx', 'ds_library.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'ds_screens.jsx', 'ds_library.jsx', 'surfaces.jsx', 'context-menus.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
@@ -34,6 +39,9 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.addScriptTag({path: path.join(studio, 'compiled/react-resizable-panels.js')});
         await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
         await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
+        // What api.js does at boot from /api/commands (the owner fetch is held here): the registry and the page names it routes to.
+        await page.evaluate(registry => { window.ArchHubCommandRegistry = registry;
+          Object.assign(window.ArchHubRouteNames, Object.fromEntries(registry.commands.filter(c => c.action.route).map(c => [c.action.route, c.label]))); }, registry);
         await page.evaluate(({mode, inspectorWidth}) => {
           window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
           const s = window.fixture;
@@ -43,6 +51,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             {id: 'selected', title: 'Selected task', status: 'WIP', sessionPath: 'selected.archhub', sessionOpen: mode === 'last', messages: []}
           ];
           s.focusedTask = ['selected', 'refused', 'cancelled', 'uxflow'].includes(mode) ? 'selected' : '';
+          // Each thread already talks to a chat (since SESSIONTARGET a thread with no joined agent refuses a send to "its agents").
+          s.chatThreads = {recent: 'claude-code', selected: 'claude-code'};
           if (mode === 'repeat') {
             s.tasks.forEach(t => { t.title = 'Same task'; });
             s.templates = s.tasks.map(t => ({...t, chain: []}));
@@ -71,6 +81,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             setHomeLayout: async () => ({ok:true}),
             setInspectorWidth: async value => { s.settings.find(row=>row.id==='Appearance.Inspector width').value=value; return {ok:true}; },
             refreshAgentSurface: async () => null, apiRouterChat: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
+            // The thread's composer sends through sendChatTurn (the chat router); held the same way so a late send can finish later.
+            sendChatTurn: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
             addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
             openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
         }, {mode, inspectorWidth});
@@ -159,7 +171,9 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.getByRole('option',{name:/BABOOM/}).click();
         assert.match(await page.getByRole('button',{name:'Recipient',exact:true}).innerText(),/BABOOM/);
         await page.setViewportSize({width:1680,height:900});
-        await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
+        // One dock layout (ONELAYOUT): the Inspector may already be open; open it only when it is folded.
+        await page.waitForTimeout(300);
+        if (await page.getByRole('button',{name:'Open Inspector',exact:true}).count()) await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
         await page.waitForFunction(()=>document.getElementById('params').offsetWidth>=280);
         const separator = page.getByRole('separator', {name: 'Resize the Properties pane'});
         const params = page.locator('#params');
@@ -182,7 +196,9 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.waitForFunction(() => window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value > 320);
         inspectorWidth = await page.evaluate(() => window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value);
         await page.reload(); await mount(); await open('Selected task');
-        await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
+        // One dock layout (ONELAYOUT): the Inspector may already be open; open it only when it is folded.
+        await page.waitForTimeout(300);
+        if (await page.getByRole('button',{name:'Open Inspector',exact:true}).count()) await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
         await page.waitForFunction(()=>document.getElementById('params').offsetWidth>=280);
         await page.waitForFunction(width=>Math.abs(document.getElementById('params').getBoundingClientRect().width-width)<1,after.width);
         await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
@@ -285,6 +301,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       }
       await nav.getByRole('button', {name: 'Home', exact: true}).click();
       if(mode==='empty') await page.getByRole('heading', {name:'What do you need?',exact:true}).waitFor();
+      // Nothing picked (the rail's Canvas just asked him to pick one): Home is the map with no session selected.
+      else if (['first', 'last'].includes(mode)) { await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor(); assert.equal(await page.locator('[data-home-map] .home-card.sel').count(), 0); }
       else await page.getByRole('region', {name:'Resumed session',exact:true}).waitFor();
       assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).count(), 0);
       assert.deepEqual(errors, []);

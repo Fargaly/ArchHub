@@ -8,7 +8,7 @@ joserfc>=1.4.2,<2
 # Keep the major capped; route-wrapper behavior is covered by integration tests.
 fastapi>=0.136.1,<1
 httpx>=0.28.1,<1
-cryptography>=48,<49
+cryptography>=50.0.2,<51
 # Shared Universal Cell authority. Credentials remain outside source and atoms.
 psycopg[binary]>=3.3,<4
 # Fly OIDC supplies short-lived AWS credentials; HMAC key bytes stay in KMS.

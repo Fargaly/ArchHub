@@ -575,3 +575,11 @@ Build 19 replaces opentelemetry-api 1.45.1 with 1.45.2 on the desktop. The Studi
 The Windows x64 CPython 3.14 wheelhouse selected the universal wheel, and Python 3.14.3 imported it after an offline installation. The 60,335-byte PyPI wheel matched SHA-256 2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34. In isolation the ArchHub router emitted client spans for a successful request and a timeout, retained the input and output token counts, and propagated the error. The published npm archives matched the lock and all 228 installed development package files. A source mapping resolved to its original line and column, and the HTTP dispatcher returned the expected local response.
 
 Studio compiled with these versions. An edit on its session card and a second edit in its Inspector survived saving and reopening in Chromium. The existing jsdom test group returned the same 131 failures before and after the lock update. That investigation is tracked separately. Installed acceptance belongs to the release.
+
+## D-042 Raise the Python cryptography floor for desktop and cloud (2026-11-20)
+
+Request: F14 and F20. The installed desktop imports cryptography 48.0.1. The dependency review found two active manifests that exclude the fixed major version and a third that still permits an affected version.
+Prior art: PyCA -> records the security fixes in releases 49 and 50; PyPI -> distributes Windows x64 stable-ABI wheels compatible with this desktop’s CPython 3.14.
+Replaces: the previous cryptography constraints in the desktop and cloud requirements.
+
+Evidence: CPython 3.14.3 selected the official 50.0.2 Windows x64 wheel offline. Its 3,824,692 bytes matched SHA-256 7afa5a6602a9f29af1f3a2965f831bae7c9d5d597b7cbb716d41ab3b7d89879c. ArchHub loaded its native extension. Valid Ed25519 invitations and signed marketplace contents verified. The marketplace rejected altered contents. The existing OAuth grant owner encrypted and decrypted a test value, and both local RSA login and cached-key verification passed. Windows DPAPI round-tripped disposable data. The Python TLS trust store accepted a generated certificate in memory. The checks used only local test data.

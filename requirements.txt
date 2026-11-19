@@ -10,7 +10,7 @@ joserfc>=1.4.2,<2
 httpx>=0.28.1,<1
 # Local asymmetric signing courts and provider-neutral KMS contract tests.
 # Cloud adapters remain optional integrations behind the same contract.
-cryptography>=48,<49
+cryptography>=50.0.2,<51
 # Immutable HAMT backing for Universal Cell revision snapshots.
 rpds-py>=0.30,<1
 # Structured parsing of the normative Markdown specification before Cell import.

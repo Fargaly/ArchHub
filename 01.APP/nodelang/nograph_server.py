@@ -218,17 +218,33 @@ class NoGraphServer:
         self._messages.value = _list_messages()
         self._messages.at = time.time()
         self._session.value = self._read_session()
+        self.triggers = None  # F38: TriggerService scans session files; build it after listen
         self.thread = threading.Thread(target=self.httpd.serve_forever, name='archhub-nograph-http', daemon=True)
         self.thread.start()
         port_file = self.state_dir / "nograph-http-port"
         port_file.write_text("%d\n" % self.port, encoding="ascii")
+        # Hosts and local probes are Cached: start their background refresh without blocking listen.
         self._hosts.get()
         self._local.get()
-        self.ensure_cloud_relay()
-        from .canvas_triggers import TriggerService
-        self.triggers = TriggerService(pause_settings=self.files['settings'])
-        threading.Thread(target=self.triggers.refresh, name='archhub-triggers', daemon=True).start()
+        # F38 / SLOWHOME: cloud relay and TriggerService must not hold "server up" for tens of seconds.
+        threading.Thread(target=self._warm_after_listen, name='archhub-nograph-warm', daemon=True).start()
         return self
+
+    def _warm_after_listen(self):
+        """Finish non-admission work after HTTP is already answering Home."""
+        try:
+            self.ensure_cloud_relay()
+        except Exception as refused:  # noqa: BLE001 - Home stays up; relay is optional warm-up
+            print('  cloud relay: warm-up skipped -- %s' % refused, flush=True)
+        try:
+            from .canvas_triggers import TriggerService
+            service = TriggerService(pause_settings=self.files['settings'])
+            if self._closing.is_set():
+                return
+            self.triggers = service
+            service.refresh()
+        except Exception as refused:  # noqa: BLE001 - schedules arm when ready; boot must not wait
+            print('  triggers   : warm-up skipped -- %s' % refused, flush=True)
 
     def health_check(self):
         import sqlite3

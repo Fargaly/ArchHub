@@ -1500,7 +1500,8 @@
     n,
     saved
   }, event) {
-    const handler = () => saved(() => api.runNode(n.id));
+    // Rerun is Run again (F10): again=true invalidates cached step results for this root.
+    const handler = () => saved(() => api.runNode(n.id, true));
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellFork61({

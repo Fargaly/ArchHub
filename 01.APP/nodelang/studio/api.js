@@ -98,7 +98,8 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  if((result?.root&&Array.isArray(result.nodes))||result?.canvas){
   if(requestEpoch!==scopeEpoch)throw Error('The graph changed while this request was in flight.');
  }
- if(readKey&&response.headers.get('ETag'))conditional.set(readKey,{etag:response.headers.get('ETag'),result});
+ const etag=readKey&&response.headers&&response.headers.get('ETag');
+ if(etag)conditional.set(readKey,{etag,result});
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}

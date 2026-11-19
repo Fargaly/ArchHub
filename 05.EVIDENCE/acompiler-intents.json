@@ -11776,14 +11776,16 @@
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests/test_design_canvas.py",
         "02.TESTS/tests_js/studio_designv22g.test.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/design_canvas_live.cjs"
       ]
     },
     "V22GCOURT": {
       "source": "The v22g design court is red on main (20 of 29 failing since fe371217 and HOMELOOK 3aa4b451); bring it back to the current product truth one failure at a time, a product fix where the founder rules say the product is wrong, a test update where the approved design moved.",
       "scope": [
         "02.TESTS/tests_js/studio_designv22g.test.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/library_engines.py"
       ]
     }
   }

@@ -57,6 +57,19 @@ def test_a_held_connector_draft_card_carries_its_recipient_subject_and_text_only
     assert card['draft'] == {'to': 'a@example.com', 'cc': 'b@example.com', 'subject': 'RE: x', 'body': 'Hello'}
     assert card['action'] == 'outlook_reply_draft' and 'secret' not in json.dumps(card)
     assert 'draft' not in _ask_card({'id': 'app:ask:y', 'input_digest': 'y', 'replay': {'kind': 'permit', 'tool': 'x', 'arguments': {}}})
+    # A real send is never a draft: it carries the same fields under send, and the card says Send email to <to>.
+    sent = _ask_card({'id': 'app:ask:z', 'input_digest': 'z', 'title': 'Send', 'who': 'Outlook',
+                      'replay': {'kind': 'connector', 'connector': 'outlook', 'action': 'send_email',
+                                 'arguments': {'to': 'c@example.com', 'subject': 'Site visit', 'body': 'See you at 9.'}}})
+    assert 'draft' not in sent and sent['send'] == {'to': 'c@example.com', 'cc': '', 'subject': 'Site visit', 'body': 'See you at 9.'}
+    # "draft" in the name is not enough: these send, submit, post or publish, so each is labelled a send.
+    for action in ('send_draft', 'submit_draft', 'post_draft', 'publish_draft', 'mcp__outlook__send_draft'):
+        held = _ask_card({'id': 'app:ask:s', 'input_digest': 's', 'replay': {'kind': 'connector', 'action': action,
+                                                                             'arguments': {'to': 'c@example.com', 'body': 'x'}}})
+        assert 'draft' not in held and held['send']['to'] == 'c@example.com', action
+    for action in ('outlook_forward_draft', 'mcp__archhub__outlook_reply_draft', 'draft_email'):
+        assert 'send' not in _ask_card({'id': 'app:ask:d', 'input_digest': 'd', 'replay': {'kind': 'connector', 'action': action,
+                                                                                           'arguments': {'to': 'c@example.com'}}}), action
 
 def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
     """Compiled Studio on a seeded temporary Workshop at 1009, 1440 and 1920."""
@@ -144,6 +157,10 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
                 'title': 'Run', 'who': 'Drawing coordinator', 'text': '', 'textLabel': '', 'summary': 'Count the sheets', 'permit_open': False,
                 'replay': {'kind': 'canvas', 'payload': {'node': {'id': 'count'}, 'continuation': {'path': other['path'], 'document': {'properties': {'taskContext': {'task': working_task}}}}}},
                 'record': {'asked': {'who': 'Drawing coordinator', 'when': '', 'what': 'Count the sheets'}, 'decided': None}}
+            # A real send held the same way (send_email): its card must say Send email to, never Draft.
+            held['holds']['app:ask:canvas-test-send'] = {**held['holds']['app:ask:canvas-test-draft'], 'id': 'app:ask:canvas-test-send', 'input_digest': 'canvas-test-send', 'at': 1.5,
+                'title': 'Send', 'summary': 'Confirm the site visit',
+                'replay': {'kind': 'connector', 'connector': 'outlook', 'action': 'send_email', 'arguments': {'to': 'client@example.com', 'subject': 'Site visit', 'body': 'See you at 9.'}}}
             hook_decision._write_holds(path, held)
         hook_decision._with_ask_file(os.environ, hold)
         result = subprocess.run(

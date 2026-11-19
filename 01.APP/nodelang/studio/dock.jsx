@@ -332,11 +332,11 @@
     });
     return <div className="wsb" data-dock-workshop="">
       <section className="wssec" aria-label="Waiting for you"><span className="eyebrow"><Icon name="shield" size={12} />Waiting for you · {waiting.length}</span>
-        {waiting.map(card => { const task = taskOf(card), draft = card.draft;
+        {waiting.map(card => { const task = taskOf(card), draft = card.draft || card.send;  // the held mail: a draft, or a real send
           // In plain words: what will change and where (the session or file, the step), who asked and why; a draft shows its own text.
           const where = task?.title || (card.path ? card.path.split(/[\\/]/).pop().replace(/\.archhub$/, '') : '');
           const step = card.nodeId && (task?.workflow || []).find(node => node.id === card.nodeId)?.title;
-          const what = draft ? (/reply/i.test(card.action || '') ? 'Draft a reply' : 'Draft a message') + (card.who ? ' in ' + card.who : '') : step ? 'Run ' + step : card.title;
+          const what = card.send ? 'Send email to ' + (card.send.to || 'no recipient') : draft ? (/reply/i.test(card.action || '') ? 'Draft a reply' : 'Draft a message') + (card.who ? ' in ' + card.who : '') : step ? 'Run ' + step : card.title;
           return <div className="wsc warn" key={card.id} data-ws-approval={card.id} data-ws-draft={draft ? '' : undefined} title="1 Approve · 2 Reject" tabIndex={0}
             // Keys 1 and 2 answer the card under the pointer (design): the card takes the focus on hover, never away from typing.
             onMouseEnter={event => { if (!window.document.activeElement?.closest?.('input, textarea, select, [contenteditable="true"]')) event.currentTarget.focus({preventScroll: true}); }}

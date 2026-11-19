@@ -211,6 +211,11 @@ const {chromium} = require('playwright');
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="Workflow canvas"] [data-graph-node][data-fixed]').length === 1);
     assert.deepEqual(await drawn(), [null, null, null]);
     // APPROVALCONTEXT: the Workshop's Waiting card says what will change and where, in plain words; Show opens the draft itself.
+    // A real send is labelled as one: Send email to <to>, never Draft.
+    const sending = page.locator('[data-ws-approval="app:ask:canvas-test-send"]');
+    await sending.waitFor();
+    assert.match(await sending.innerText(), /Send email to client@example\.com/);
+    assert.ok(!/Draft/.test(await sending.innerText()), 'a send is never called a draft');
     const held = page.locator('[data-ws-approval="app:ask:canvas-test-draft"]');
     await held.waitFor();
     const said = await held.innerText();

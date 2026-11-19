@@ -167,6 +167,8 @@ _OUTLOOK_COM = re.compile(
 _DRAFT_NODE_CALL = re.compile(
     r"(?i)\b(library\.draft_email|outlook\.reply_draft|outlook\.forward_draft)\b")
 _DRAFT_NODES = ("library.draft_email", "outlook.reply_draft", "outlook.forward_draft")
+# Connector actions that only create a draft in his mailbox; "draft" in a name is not enough (send_draft sends).
+_DRAFT_ONLY_ACTIONS = frozenset(_DRAFT_NODES + ("outlook_reply_draft", "outlook_forward_draft", "draft_email"))
 _PII_PUBLIC = {"EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "IBAN_CODE", "US_SSN", "US_PASSPORT", "UK_NHS"}
 
 
@@ -1753,8 +1755,10 @@ def _ask_card(row: dict) -> dict:
     arguments = replay.get('arguments') if isinstance(replay.get('arguments'), dict) else {}
     if replay.get('kind') == 'connector' and any(isinstance(arguments.get(key), str) for key in ('to', 'subject', 'body')):
         # What the held connector call will write, in its own words: who it goes to, the subject and the text (never other arguments).
-        card['draft'] = {key: str(arguments.get(key) or '')[:4000 if key == 'body' else 400] for key in ('to', 'cc', 'subject', 'body')}
+        mail = {key: str(arguments.get(key) or '')[:4000 if key == 'body' else 400] for key in ('to', 'cc', 'subject', 'body')}
         card['action'] = str(replay.get('action') or '')
+        # Only a known draft-only action is a draft; anything else with a recipient sends (send_email, send_draft): never labelled a draft.
+        card['draft' if card['action'].casefold().split('__')[-1] in _DRAFT_ONLY_ACTIONS else 'send'] = mail
         card['connector'] = str(replay.get('connector') or '')
     if continuation:
         refs, current, node = [], continuation, (row.get('replay') or {}).get('payload', {}).get('node', {})

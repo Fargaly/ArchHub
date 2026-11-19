@@ -54,6 +54,21 @@ def test_every_preexisting_agent_tool_keeps_its_schema_and_callable():
     previous = {tool.name: tool for tool in before._tool_manager.list_tools()}
     current = {tool.name: tool for tool in after._tool_manager.list_tools()}
     assert current.keys() == previous.keys()
+    # task.create gained one optional parent (Projects > tasks > subtasks); every other field of its schema is kept.
+    grown = previous.pop('task.create').parameters
+    now = current['task.create'].parameters
+    assert {**now, 'properties': {k: v for k, v in now['properties'].items() if k != 'parent'}} == grown
+    assert now['properties']['parent'] == {'default': '', 'title': 'Parent', 'type': 'string'}
+    assert 'parent' not in now.get('required', [])
+    sent = []
+    recording = build_server(mailbox_call=lambda method, body, context, **kwargs: sent.append((method, body, context)) or {})
+    create = recording._tool_manager.get_tool('task.create').fn
+    meta = types.SimpleNamespace(model_dump=lambda **kwargs: {'claude/sessionID': 'registry-test'})
+    ctx = types.SimpleNamespace(request_context=types.SimpleNamespace(meta=meta))
+    create(title='Tower drawings', ctx=ctx)
+    create(title='Sections', ctx=ctx, parent='abc123')
+    who = {'claude/sessionID': 'registry-test'}
+    assert sent == [('task_create', {'title': 'Tower drawings'}, who), ('task_create', {'title': 'Sections', 'parent': 'abc123'}, who)]
     for name, tool in previous.items():
         assert current[name].parameters == tool.parameters, name
         assert current[name].description == tool.description, name

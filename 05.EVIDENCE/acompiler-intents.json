@@ -11898,6 +11898,13 @@
         "01.APP/nodelang/studio/api.js"
       ]
     },
+    "PILLOW13": {
+      "source": "Build 19 security maintenance: update the packaged Windows Pillow runtime to a version fixing GitHub critical alerts #113, #122, #139, #144 and #153. Verify the app image and PDF paths and the release wheel.",
+      "scope": [
+        "requirements.txt",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "GOOSESOURCE": {
       "source": "Founder request via Codex 2026-11-19: build Goose from editable pinned source (aaif-goose v1.54.0 cd643d21 + our patches + Cargo.lock), keep its license, return upstream commit, ArchHub rev, build receipt and exe SHA-256; staging and the runtime verifier stop using the upstream release ZIP.",
       "scope": [

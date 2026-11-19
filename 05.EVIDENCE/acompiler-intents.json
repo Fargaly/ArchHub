@@ -11887,7 +11887,9 @@
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests/test_design_canvas.py",
         "02.TESTS/tests_js/design_canvas_live.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js"
       ]
     },
     "GOOSESOURCE": {
@@ -11902,6 +11904,16 @@
         ".github/workflows/release.yml",
         "03.TOOLS/installer/build_release.ps1",
         "02.TESTS/tests_replica/test_goose_source.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "UPDATERWORKS": {
+      "source": "Founder 2026-11-19: the most important thing is that the updater works. Restart and Quit hand off to one detached helper that waits for the desktop to exit, installs quietly, reopens on the new build and rolls back on failure; release reads retry with the cause logged; proven by a real hand-off court and on his machine with no hand install.",
+      "scope": [
+        "01.APP/nodelang/quiet_update.py",
+        "01.APP/nodelang/nograph_launcher.py",
+        "02.TESTS/tests_replica/test_update_real_handoff.py",
+        "02.TESTS/tests_replica/test_update_release_path.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

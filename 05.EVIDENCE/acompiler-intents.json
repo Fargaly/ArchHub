@@ -11800,7 +11800,8 @@
         "02.TESTS/tests_js/home_look.cjs",
         "02.TESTS/tests/test_design_canvas.py",
         "02.TESTS/tests_js/design_canvas_live.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/studio/style.css"
       ]
     },
     "APPROVALCONTEXT": {
@@ -11813,7 +11814,8 @@
         "02.TESTS/tests/test_design_canvas.py",
         "02.TESTS/tests_js/design_canvas_live.cjs",
         "02.TESTS/tests_js/dock_model.test.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/hook_decision.py"
       ]
     },
     "AGENTSJOIN": {

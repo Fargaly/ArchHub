@@ -530,7 +530,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.getByRole('dialog',{name:'Save as node type',exact:true}).getByRole('button',{name:'Save',exact:true}).click();
     await page.getByRole('dialog',{name:'Save as node type',exact:true}).waitFor({state:'hidden'});
     const item=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().libraryPorts.find(n=>n.title==='Reusable add'));
-    assert.ok(item);assert.equal(item.cat,'Checks');assert.equal(item.engine,'skill');
+    // Checks is filed under Checks and standards (governance), where the design files it.
+    assert.ok(item);assert.equal(item.cat,'governance');assert.equal(item.engine,'skill');
     const saved=JSON.parse(fs.readFileSync(item.path,'utf8'));
     assert.equal(saved.nodes.length,1);assert.equal(saved.nodes[0].id,scriptId);assert.equal(saved.properties.taskContext,undefined);
     assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().title),'Group b owners');

@@ -2517,6 +2517,17 @@ def _canvas_extra_items():
     return rows
 
 
+# The Save as node type dialog's words, filed where the design files them (archhub-directions catOf).
+SAVED_CATEGORIES = {'Checks': 'governance', 'Files': 'file', 'Project': 'input', 'Scripts': 'connectors', 'Skills: yours': 'skill'}
+
+
+def _saved_category(chosen):
+    """The category he chose when saving: kept when it is one of the Library's categories, else "skill"."""
+    known = {category for category, _ in LIBRARY_PRESENTATION}
+    category = SAVED_CATEGORIES.get(chosen, chosen)
+    return category if category in known else 'skill'
+
+
 def _skill_entry(loaded, items):
     from .session_files import skill_ports
     skill, path = loaded["skill"], loaded["path"]
@@ -2529,7 +2540,7 @@ def _skill_entry(loaded, items):
                 port['id'] = 'public_' + str(index)
     return {
         "id": "skill:" + skill["id"],
-        "cat": "skill",
+        "cat": _saved_category(definition.get('category')),
         "title": skill["title"],
         "sub": "Session · %d nodes" % len(skill["nodes"]),
         "engine": "skill",
@@ -2602,7 +2613,8 @@ def _complete_library(groups):
     categories = engine_categories([{'items': items}])
     buckets = {category: [] for category, _rows in LIBRARY_PRESENTATION}
     for item in items:
-        category = categories.get(item['engine'])
+        # A saved skill sits in the category he chose when saving (_saved_category); every other card sits with its engine.
+        category = item['cat'] if item.get('engine') == 'skill' and item.get('cat') in buckets else categories.get(item['engine'])
         if category not in buckets:
             raise ValueError('Uncategorised engine: ' + item['engine'])
         item['cat'] = category

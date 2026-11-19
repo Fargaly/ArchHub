@@ -21,11 +21,14 @@ AGENTS = {
                '---\ndescription: ArchHub product rules\nalwaysApply: true\n---\n', False),
     'opencode': ('.config/opencode', '.config/opencode/AGENTS.md', '', False),
     'goose': ('.config/goose', '.config/goose/.goosehints', '', False),
+    # GitHub Copilot CLI reads ~/.copilot/copilot-instructions.md in every session (GitHub docs, CLI custom instructions).
+    'copilot': ('.copilot', '.copilot/copilot-instructions.md', '', False),
 }
 CLIENTS = {'claude': 'claude-code', 'claude-code': 'claude-code', 'codex': 'codex',
            'gemini': 'gemini-cli', 'gemini-cli': 'gemini-cli', 'antigravity': 'antigravity',
            'antigravity-ide': 'antigravity', 'antigravity-cli': 'antigravity', 'cursor': 'cursor',
-           'cursor-agent': 'cursor', 'opencode': 'opencode', 'goose': 'goose'}
+           'cursor-agent': 'cursor', 'opencode': 'opencode', 'goose': 'goose',
+           'copilot': 'copilot', 'copilot-cli': 'copilot', 'github-copilot': 'copilot'}
 GATES = 'end-of-turn check, tool-call decision'
 _NAME = re.compile(r'[a-z0-9][a-z0-9._-]{0,40}')
 BEGIN = '<!-- ARCHHUB-PRODUCT:BEGIN -->'

@@ -23,6 +23,7 @@ CASES = [  # runtime name, client folder in the profile, instruction file it mus
     ("antigravity", ".gemini", ".gemini/GEMINI.md"),
     ("opencode", ".config/opencode", ".config/opencode/AGENTS.md"),
     ("goose", ".config/goose", ".config/goose/.goosehints"),
+    ("copilot", ".copilot", ".copilot/copilot-instructions.md"),
     ("kiro", ".kiro", ".kiro/AGENTS.md"),  # no row: the generic path
 ]
 

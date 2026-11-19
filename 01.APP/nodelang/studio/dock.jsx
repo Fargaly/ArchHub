@@ -88,7 +88,10 @@
   };
   const setLeftWidth = (layout, width) => ({...layout, left: {...layout.left, w: Math.max(LEFT.min, Math.min(LEFT.max, Math.round(width)))}});
   window.UI = window.UI || {};
-  window.UI.dockModel = {PANELS, LEFT, RIGHT, defaultLayout, normalize, where, visible, place, show, hide, toggleSlot, toggleDock, resizeSlots, setLeftWidth};
+  // The Build preset is the default layout. A layout is named by where its panels sit; widths and folds do not rename it.
+  const places = layout => JSON.stringify(SIDES.map(side => layout[side].st.map(sl => sl.p)));
+  const presetName = layout => places(layout) === places(defaultLayout(NARROW)) ? 'Build' : 'Build (changed)';
+  window.UI.dockModel = {PANELS, LEFT, RIGHT, defaultLayout, normalize, where, visible, place, show, hide, toggleSlot, toggleDock, resizeSlots, setLeftWidth, presetName};
   if (typeof React === 'undefined') return;  // the layout rules above also load alone, without a page
 
   const api = window.ArchHubAPI, {executeAction} = api, Icon = window.AHIcon, portal = window.ReactDOM.createPortal;

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 
+import psutil
 import pytest
 
 from test_task_session_roundtrip import _isolate, _Studio
@@ -59,6 +60,12 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
         working_task = client.workshop('createTask', 'Model view audit')['taskId']
         with application_history() as history:
             workshop_tasks.claim(history, working_task, 'canvas-test-agent', 'Drawing coordinator', lease_seconds=3600)
+            # Row 12: an agent declared working on the other task right now (a live process: this one), so the toolbar pill must show it.
+            with history._transaction(write=True):
+                history._db.execute('CREATE TABLE IF NOT EXISTS workshop_declarations(root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT')
+                history._db.execute('INSERT INTO workshop_declarations VALUES(?,?)', ('canvas-test-root', json.dumps({
+                    'root': 'canvas-test-root', 'agent': 'Wall checker', 'display_name': 'Wall checker', 'session': 'canvas-test-session',
+                    'status': 'working', 'runtime': 'codex', 'request_id': working_task, 'pid': os.getpid(), 'created_at': psutil.Process().create_time()})))
         items = {row['id']: row for row in catalogue()}
         nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                   'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}

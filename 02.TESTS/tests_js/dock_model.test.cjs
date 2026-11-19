@@ -97,3 +97,11 @@ test('a stored record is repaired: unknown and repeated panels go, missing ones 
   const kept = dock.place(dock.defaultLayout(1920), 'map', 'right', 0, 'above');
   assert.deepEqual(plain(dock.normalize(plain(kept), 1920)), plain(kept), 'a valid record comes back as it was saved');
 });
+
+test('the default layout is the Build preset; moving a panel renames it, a fold or a width does not', () => {
+  const start = dock.defaultLayout(1920);
+  assert.equal(dock.presetName(start), 'Build');
+  assert.equal(dock.presetName(dock.defaultLayout(1009)), 'Build', 'a narrow window is still Build');
+  assert.equal(dock.presetName(dock.setLeftWidth(dock.toggleDock(start, 'left'), 400)), 'Build');
+  assert.equal(dock.presetName(dock.place(start, 'map', 'right', 0, 'below')), 'Build (changed)');
+});

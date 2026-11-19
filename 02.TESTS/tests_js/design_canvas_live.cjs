@@ -57,8 +57,43 @@ const {chromium} = require('playwright');
       for (let tries = 0; (await snapshot(() => window.ArchHubAPI.readCanvasTabs())).canvasTabs.tabs.some(tab => tab.flow); tries++) assert.ok(tries < 200, width + ': the owner keeps the Flow view off');
       // Row 11: steps past the right edge are counted on the edge pill, in the singular for one.
       const more = page.locator('[data-design="canvas.more"]');
-      if (await more.count()) assert.match(await more.innerText(), /^(1 more step|[2-9]\d* more steps) →$/);    }
+      if (await more.count()) assert.match(await more.innerText(), /^(1 more step|[2-9]\d* more steps) →$/);
 
+      // Row 12: the tab strip and the layout preset.
+      assert.equal(await page.locator('[data-design="tab.add"]').getAttribute('aria-label'), 'Open another task');
+      const layoutButton = page.locator('[data-design="toolbar.layout"]');
+      assert.equal(await layoutButton.getAttribute('aria-label'), 'Layout: Build');
+      assert.equal(await layoutButton.getAttribute('aria-pressed'), 'true');
+      // "Wall checker" works on "Model view audit" right now: the pill must show it.
+      const pill = page.locator('[data-design="toolbar.agents.more"]');
+      assert.equal(await pill.getAttribute('aria-label'), '1 more agent working', width + ': the pill names the agent working elsewhere');
+      assert.equal(await pill.innerText(), '+1');
+    }
+
+    // Row 12: a row of the pill opens the task that agent works on; Home takes us back.
+    await page.locator('[data-design="toolbar.agents.more"]').click();
+    await page.getByRole('menu', {name: 'Agents working on other tasks', exact: true}).getByRole('menuitem', {name: 'Wall checker · working · Model view audit', exact: true}).click();
+    await page.locator('.app-header .header-here').filter({hasText: 'Model view audit'}).waitFor();
+    await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
+    await page.locator('[data-design="home.card"]').filter({hasText: 'Drawing set review'}).dblclick();
+    await canvas.locator('.react-flow__node[data-id="slice"]').waitFor({state: 'attached'});
+    // Row 12: moving a panel renames the layout; Layout: Build puts every panel back.
+    const cdp = await context.newCDPSession(page);  // input confined to this headless page, never the desktop pointer
+    const pointer = (type, x, y) => cdp.send('Input.dispatchMouseEvent', {type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1});
+    const dockTabs = () => page.evaluate(() => [...document.querySelectorAll('.dockws > .dock .dslot')].map(slot => [...slot.querySelectorAll('.dtab')].map(tab => tab.dataset.tab).join('|')).join(' / '));
+    const home = await dockTabs(), from = await ws.locator('.dtab[data-tab="library"]').boundingBox(), head = await ws.locator('.dslot[data-slot="left:0"] .dtabs').boundingBox();
+    const [x0, y0, x1, y1] = [from.x + from.width / 2, from.y + from.height / 2, head.x + head.width / 2, head.y + head.height / 2];
+    await pointer('mousePressed', x0, y0);
+    for (let step = 1; step <= 12; step++) await pointer('mouseMoved', x0 + (x1 - x0) * step / 12, y0 + (y1 - y0) * step / 12);
+    await pointer('mouseReleased', x1, y1);
+    const layoutButton = page.locator('[data-design="toolbar.layout"]');
+    await page.waitForFunction(() => document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label') === 'Layout: Build (changed)');
+    assert.notEqual(await dockTabs(), home, 'the Library moved');
+    assert.equal(await layoutButton.getAttribute('aria-pressed'), 'false');
+    await layoutButton.click();
+    await page.waitForFunction(() => document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label') === 'Layout: Build');
+    assert.equal(await layoutButton.getAttribute('aria-pressed'), 'true');
+    assert.equal(await dockTabs(), home, 'every panel is back where Build puts it');
     // Row 11: the running step shows its agent's presence chip, working.
     await page.setViewportSize({width: 1440, height: 900});
     const presence = canvas.locator('[data-design="canvas.presence"]'), follow = presence.locator('[data-design="canvas.follow"]');

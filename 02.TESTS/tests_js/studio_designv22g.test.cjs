@@ -243,7 +243,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
   await t.test('Plus opens a closed task as a preview and editing keeps it open',async()=>{
     await page.getByRole('button',{name:'Close Canvas UI first',exact:true}).click();
     await page.getByRole('tab',{name:'Canvas UI first',exact:true}).waitFor({state:'detached'});
-    await page.getByRole('button',{name:'Open tasks',exact:true}).click();
+    await page.getByRole('button',{name:'Open another task',exact:true}).click();
     await page.getByRole('menu',{name:'Open tasks',exact:true}).getByRole('button',{name:'Canvas UI first',exact:true}).click();
     const tab=page.getByRole('tab',{name:'Canvas UI first',exact:true});
     await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument()?.title==='Canvas UI first'&&!window.ArchHubAPI.getSnapshot().sessionDirty);

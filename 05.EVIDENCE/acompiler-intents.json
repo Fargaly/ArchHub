@@ -12057,6 +12057,21 @@
         "02.TESTS/tests_replica/test_privacy_and_licences_page.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CUSTOMMCP": {
+      "source": "Founder 2026-11-19 and requests R79, R74, R177: ArchHub connects with all his subscriptions through their own sign-in (status and Sign in in Settings), and he adds any custom MCP server by address, command or mcp.json in one step; its tools become Library nodes for every agent; keys stay in Windows Credential Manager.",
+      "scope": [
+        "01.APP/nodelang/custom_mcp.py",
+        "01.APP/nodelang/host_exec.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/native_host_tools.py",
+        "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests_replica/test_custom_mcp.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

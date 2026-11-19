@@ -17,30 +17,35 @@ CONTEXTS = ('node', 'wire', 'group', 'session', 'project', 'run', 'step', 'libra
 READ_TOOLS = frozenset(('read', 'task.list', 'hosts.status', 'hosts_state',
     'canvas.list_open', 'canvas.open', 'canvas.read', 'library.search', 'native.hook_stop',
     'revit_ping', 'revit_info', 'acad_ping', 'acad_info', 'max_ping', 'max_info',
-    'blender_ping', 'rhino_ping', 'office_read', 'outlook_inbox', 'notion_search', 'dropbox_list'))
+    'blender_ping', 'rhino_ping', 'office_read', 'outlook_inbox', 'notion_search', 'dropbox_list',
+    'revit_search', 'autocad_search'))
 
 
 def describe_agent_tools(tools):
     """The registered callables are bindings, not a second hand-maintained tool catalogue."""
     from .host_brokers import BROKER_ACTIONS
-    from .native_host_tools import HOST_TOOLS
+    from .native_host_tools import HOST_TOOLS, FOLDED_PROGRAMS
     specs = {row['id']: row for row in BROKER_ACTIONS}
     hosts = {row['id']: row for row in HOST_TOOLS}
+    folded_runs = {p + '_run' for p in FOLDED_PROGRAMS}
     rows = []
     for index, tool in enumerate(tools):
         spec = specs.get(tool.name, {})
-        read_only = tool.name in READ_TOOLS or spec.get('kind') == 'read'
-        context = ('node' if tool.name.startswith('canvas.') else 'library-card' if tool.name == 'library.search'
+        is_folded_run = tool.name in folded_runs
+        read_only = False if is_folded_run else (tool.name in READ_TOOLS or spec.get('kind') == 'read')
+        context = ('host' if is_folded_run
+                   else 'node' if tool.name.startswith('canvas.') else 'library-card' if tool.name == 'library.search'
                    else 'session' if tool.name.startswith('task.') else 'host' if tool.name in hosts or tool.name == 'hosts.status'
                    else 'agent' if tool.name.startswith('native.') else 'project' if tool.name.startswith('social.') else 'workshop')
-        effect = not read_only and (context == 'host' or tool.name in ('canvas.run', 'social.work_execute'))
+        effect = True if is_folded_run else (not read_only and (context == 'host' or tool.name in ('canvas.run', 'social.work_execute')))
+        approve = True if is_folded_run else effect
         operation = 'search' if tool.name in ('library.search', 'notion_search') else 'read' if read_only else 'delete' if tool.name in ('canvas.remove', 'task.archive') else 'write'
         rows.append({'id': 'agent.' + tool.name, 'label': (tool.description or tool.name).split('\n')[0],
             'group': 'host' if context == 'host' else 'ai' if context == 'agent' else 'office',
             'contexts': [context, *(['run', 'step', 'automation'] if tool.name == 'canvas.run' else [])],
             'action': {'tool': tool.name, **({'node': hosts[tool.name]['id'], 'engine': hosts[tool.name]['engine']} if tool.name in hosts else {})},
             'agent_callable': True,
-            'read_only': read_only, 'effect': effect, 'approve': effect, 'operation': operation,
+            'read_only': read_only, 'effect': effect, 'approve': approve, 'operation': operation,
             'enabled_when': {}, 'order': index})
     return rows
 
@@ -154,7 +159,7 @@ def apply_agent_registry(server, *, read_only=False):
 
 def _guard_agent_effects(server, commands):
     """Hold exact arguments in the existing Approve owner before calling the original tool."""
-    from .native_host_tools import HOST_TOOLS, _allow_effect
+    from .native_host_tools import HOST_TOOLS, _allow_effect, _valid_argument_type
     from mcp.server.fastmcp.exceptions import ToolError
     specs = {row['id']: row for row in HOST_TOOLS}
     manager = server._tool_manager
@@ -163,11 +168,23 @@ def _guard_agent_effects(server, commands):
     async def call_tool(name, arguments, context=None, convert_result=False):
         command = commands.get(name)
         spec = specs.get(name)
-        if name not in manager._tools or not command or not command['effect'] or not spec:
+        # R192: a write verb reached through <program>_run is held exactly as its own tool was.
+        folded = (specs.get(arguments.get('tool')) if name in commands and name.endswith('_run')
+                  and isinstance(arguments, dict) and isinstance(arguments.get('tool'), str) else None)
+        if folded is not None and folded.get('kind') == 'read':
+            folded = None
+        if folded is None and (name not in manager._tools or not command or not command['effect'] or not spec):
             return await original(name, arguments, context=context, convert_result=convert_result)
         try:
             tool = manager.get_tool(name)
-            params = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
+            if folded is not None:
+                given = arguments.get('arguments') or {}
+                if (not isinstance(given, dict) or set(given) - set(folded['types'])
+                        or any(not _valid_argument_type(given[k], folded['types'][k]) for k in given if k in folded['types'])):
+                    return await original(name, arguments, context=context, convert_result=convert_result)
+                name, spec, params = folded['id'], folded, {**folded['params'], **given}
+            else:
+                params = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
             host = spec.get('effect_host') or spec['engine'].split('.')[0]
             if host in ('revit', 'acad', 'max', 'rhino', 'blender'):
                 _allow_effect(host)
@@ -196,8 +213,21 @@ def _guard_agent_effects(server, commands):
 
 
 def approved_action_list():
-    return [{'name': row['action']['tool'], 'title': row['label']} for row in agent_commands()
-            if row['effect'] and 'host' in row['contexts']]
+    from .native_host_tools import FOLDED_PROGRAMS, RESTORED_BROKERS, _program
+    seen = set()
+    actions = []
+    for row in agent_commands():
+        if row['effect'] and 'host' in row['contexts']:
+            tool_name = row['action']['tool']
+            if tool_name not in seen:
+                seen.add(tool_name)
+                actions.append({'name': tool_name, 'title': row['label']})
+    for spec in RESTORED_BROKERS:
+        if _program(spec) in FOLDED_PROGRAMS and spec.get('kind') != 'read':
+            if spec['id'] not in seen:
+                seen.add(spec['id'])
+                actions.append({'name': spec['id'], 'title': spec['title']})
+    return actions
 
 
 def invoke_approved(name, arguments):
@@ -206,7 +236,20 @@ def invoke_approved(name, arguments):
     if not _RELEASING.get(False):
         raise ValueError('Approve this action first.')
     from .native_agent_mcp import build_server
+    from .native_host_tools import FOLDED_PROGRAMS, RESTORED_BROKERS, _program, _valid_argument_type
     server = build_server(_registry_catalogue=True)
+    folded = next((s for s in RESTORED_BROKERS
+                   if s['id'] == name and _program(s) in FOLDED_PROGRAMS and s.get('kind') != 'read'), None)
+    if folded is not None:
+        given = dict(arguments or {})
+        unknown = set(given) - set(folded['types'])
+        if unknown or any(not _valid_argument_type(given[k], folded['types'][k]) for k in given if k in folded['types']):
+            raise ValueError('Invalid arguments for ' + str(name))
+        params = {**folded['params'], **given}
+        run_tool = server._tool_manager.get_tool(_program(folded) + '_run')
+        if run_tool is None:
+            raise ValueError('Unknown held host command: ' + str(name))
+        return run_tool.fn(tool=name, arguments=params)
     tool = server._tool_manager.get_tool(name)
     commands = describe_agent_tools([tool]) if tool else []
     if not commands or not commands[0]['effect'] or 'host' not in commands[0]['contexts']:

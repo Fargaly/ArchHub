@@ -253,10 +253,15 @@ def test_updater_protects_journals_and_recovery_sidecars(tmp_path):
 def test_native_registered_tools_equal_origin_main():
     import asyncio
     from nodelang.native_agent_mcp import build_server
+    from nodelang.native_host_tools import FOLDED_PROGRAMS, RESTORED_BROKERS, _program
     baseline = json.loads((ROOT / '05.EVIDENCE/graphout/origin-main-tools.json').read_text())
     actual = sorted(tool.name for tool in asyncio.run(build_server().list_tools()))
-    assert actual == baseline['tools']
-    assert len(actual) == baseline['count']
+    # R192: the folded Revit/AutoCAD verbs leave the list; one search + one run per program replaces them.
+    folded = {spec['id'] for spec in RESTORED_BROKERS if _program(spec) in FOLDED_PROGRAMS}
+    added = {program + suffix for program in FOLDED_PROGRAMS for suffix in ('_search', '_run')}
+    assert folded <= set(baseline['tools'])
+    assert actual == sorted((set(baseline['tools']) - folded) | added)
+    assert len(actual) == baseline['count'] - len(folded) + len(added) < baseline['count']
 
 
 def test_graph_only_social_tools_remain_visible_open_items():

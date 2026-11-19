@@ -396,6 +396,15 @@ _PY_TYPE = {
 }
 
 
+def _valid_argument_type(val, kind: str) -> bool:
+    if kind == "integer":
+        return isinstance(val, int) and not isinstance(val, bool)
+    if kind == "number":
+        return isinstance(val, (int, float)) and not isinstance(val, bool)
+    py = _PY_TYPE.get(kind)
+    return isinstance(val, py) if py is not None else True
+
+
 def _mcp_callable(spec, read, effect):
     def run(**kwargs):
         return _dispatch_broker(spec, kwargs, read, effect)
@@ -415,10 +424,60 @@ def _mcp_callable(spec, read, effect):
     return run
 
 
+# R192 code mode: these programs show agents one search and one run tool instead of one schema per verb.
+# Every folded verb stays callable through <program>_run, under the same one decision (_dispatch_broker).
+FOLDED_PROGRAMS = ("revit", "autocad")
+
+
+def _program(spec):
+    return spec["engine"].split(".")[0]
+
+
 def _register_restored(server, read, effect):
+    folded = {}
     for spec in RESTORED_BROKERS:
+        if _program(spec) in FOLDED_PROGRAMS:
+            folded.setdefault(_program(spec), {})[spec["id"]] = spec
+            continue
         server.tool(name=spec["id"], description=spec["sub"], structured_output=False)(
             _mcp_callable(spec, read, effect))
+    for program, specs in folded.items():
+        _register_program(server, program, specs, read, effect)
 
 
-__all__ = ["HostToolRefused", "HOST_TOOLS", "RESTORED_BROKERS", "TOOL_ENGINES", "register_host_tools"]
+def _register_program(server, program, specs, read, effect):
+    def search(query: str = "") -> dict:
+        words = query.casefold().split()
+        tools = [{"tool": spec["id"], "title": spec["title"], "does": spec["sub"], "kind": spec["kind"],
+                  "arguments": {name: {"type": kind, "default": spec["params"][name]}
+                                for name, kind in spec["types"].items()}}
+                 for spec in specs.values()
+                 if all(word in " ".join((spec["id"], spec["title"], spec["sub"], spec["op"])).casefold()
+                        for word in words)]
+        return {"ok": True, "program": program, "tools": tools}
+
+    def run(tool: str, arguments: dict | None = None) -> dict:
+        spec = specs.get(tool)
+        if spec is None:
+            return {"ok": False, "error": "No %s tool named %r. Call %s_search to find it." % (program, tool, program)}
+        given = dict(arguments or {})
+        unknown = sorted(set(given) - set(spec["types"]))
+        if unknown:
+            return {"ok": False, "error": "%s takes %s; not %s." % (tool, ", ".join(spec["types"]) or "no arguments",
+                                                                  ", ".join(unknown))}
+        for name, kind in spec["types"].items():
+            if name in given and not _valid_argument_type(given[name], kind):
+                return {"ok": False, "error": "%s argument %r must be %s." % (tool, name, kind)}
+        return _dispatch_broker(spec, given, read, effect)
+
+    search.__name__, run.__name__ = program + "_search", program + "_run"
+    server.tool(name=program + "_search", structured_output=False,
+                description="Find %s tools by words (empty lists all %d). Then call %s_run with its name and arguments."
+                            % (program.capitalize(), len(specs), program))(search)
+    server.tool(name=program + "_run", structured_output=False,
+                description="Run one %s tool found by %s_search: tool = its name, arguments = its arguments."
+                            % (program.capitalize(), program))(run)
+
+
+__all__ = ["HostToolRefused", "HOST_TOOLS", "RESTORED_BROKERS", "TOOL_ENGINES", "register_host_tools",
+           "FOLDED_PROGRAMS", "_program", "_valid_argument_type"]

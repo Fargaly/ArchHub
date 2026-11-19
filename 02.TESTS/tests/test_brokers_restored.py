@@ -17,7 +17,7 @@ for _name in ("USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP"):
 
 from nodelang.library_engines import library_catalogue
 from nodelang.native_agent_mcp import build_server
-from nodelang.native_host_tools import RESTORED_BROKERS
+from nodelang.native_host_tools import FOLDED_PROGRAMS, RESTORED_BROKERS, _program
 from nodelang.node_params import TYPES
 
 _JSON_TYPE = {
@@ -89,7 +89,15 @@ def test_restored_brokers_are_catalogue_cards_and_gated_mcp_tools(monkeypatch):
 
     server = build_server()
     tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
+    # R192: Revit and AutoCAD verbs are reached through <program>_search / <program>_run, not listed one by one.
+    folded = [spec for spec in restored if _program(spec) in FOLDED_PROGRAMS]
+    assert len(folded) > 50
+    assert not [spec["id"] for spec in folded if spec["id"] in tools]
+    for program in FOLDED_PROGRAMS:
+        assert program + "_search" in tools and program + "_run" in tools
     for spec in restored:
+        if spec in folded:
+            continue
         tool = tools[spec["id"]]
         properties = (tool.parameters or {}).get("properties") or {}
         for name, kind in spec["types"].items():
@@ -114,16 +122,81 @@ def test_restored_brokers_are_catalogue_cards_and_gated_mcp_tools(monkeypatch):
         if name in PIPELINE_ENGINES:
             monkeypatch.setitem(PIPELINE_ENGINES, name, boom)
 
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    async def call(name, arguments):
+        try:
+            return _payload(await server.call_tool(name, arguments))
+        except ToolError as error:  # a host-effect permission refusal: refused before any engine
+            return {"ok": False, "refused": str(error)}
+
     async def call_all():
         answers = []
         for spec in restored:
-            answers.append((spec["id"], await server.call_tool(spec["id"], {})))
+            if spec in folded:
+                found = await call(_program(spec) + "_search", {"query": spec["id"]})
+                assert spec["id"] in [row["tool"] for row in found["tools"]], spec["id"]
+                answers.append((spec, await call(_program(spec) + "_run", {"tool": spec["id"]})))
+            else:
+                answers.append((spec, await call(spec["id"], {})))
         return answers
 
-    for tool_id, answer in asyncio.run(call_all()):
-        body = _payload(answer)
-        assert body.get("gated") is True, (tool_id, body)
-        assert body.get("verdict") == "refuse"
-        assert body.get("ok") is False
-    assert seen == [spec["id"] for spec in restored]
+    # Never ran (the engines raise if touched): a read is refused by the decision; a write is held for Approve
+    # ("Waiting for approval") or refused by the host-effect permission, both before any engine.
+    outcomes = {}
+    for spec, body in asyncio.run(call_all()):
+        if body.get("gated") is True:
+            assert body.get("verdict") == "refuse" and body.get("ok") is False, (spec["id"], body)
+            outcomes[spec["id"]] = "refused"
+        elif body.get("status") == "Waiting for approval":
+            assert spec["kind"] != "read" and body.get("approvalId"), (spec["id"], body)
+            outcomes[spec["id"]] = "held"
+        else:
+            assert spec["kind"] != "read" and "host effect permission" in body.get("refused", ""), (spec["id"], body)
+            outcomes[spec["id"]] = "refused"
+    assert sorted(outcomes) == sorted(spec["id"] for spec in restored)
+    assert all(spec["kind"] != "read" or outcomes[spec["id"]] == "refused" for spec in restored)
+    assert outcomes.get("b_set_parameter") in ("held", "refused")
+    assert set(seen) <= {spec["id"] for spec in restored}
     assert "outlook.inbox" in ops or "outlook_inbox" in tools
+
+
+def test_a_folded_write_through_revit_run_is_held_for_approve_not_run(monkeypatch):
+    """R192: with Revit effects allowed, b_set_parameter via revit_run waits for Approve; no engine runs."""
+    from nodelang import host_brokers
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    from nodelang.user_paths import state_directory
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("a broker engine ran before Approve")
+
+    for name in list(host_brokers.ENGINES):
+        monkeypatch.setitem(host_brokers.ENGINES, name, boom)
+    for name in ("revit.read", "revit.verb", "autocad.verb"):
+        if name in PIPELINE_ENGINES:
+            monkeypatch.setitem(PIPELINE_ENGINES, name, boom)
+    settings = state_directory() / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    before = settings.read_bytes() if settings.exists() else None
+    settings.write_text(json.dumps({"host_effects": {"revit": True}}), encoding="utf-8")
+    try:
+        body = _payload(asyncio.run(build_server().call_tool("revit_run", {"tool": "b_set_parameter"})))
+        assert body.get("status") == "Waiting for approval" and body.get("approvalId"), body
+        from nodelang import hook_decision
+        ran = []
+        mock_verb = lambda params, _feeds=None: (ran.append(params) or {"ok": True}, "Done")
+        monkeypatch.setitem(host_brokers.ENGINES, "revit.verb", mock_verb)
+        monkeypatch.setitem(PIPELINE_ENGINES, "revit.verb", mock_verb)
+        [card] = [c for c in hook_decision.ask_reviews() if c["id"] == body["approvalId"]]
+        approved = hook_decision.ask_apply(card["id"], card["input_digest"], "approve")
+        assert approved["status"] == "approved"
+        assert len(ran) == 1 and ran[0].get("operation") == "revit.set_parameter_by_name"
+
+        # Invalid argument type is rejected without creating an approval
+        bad = _payload(asyncio.run(build_server().call_tool("revit_run", {"tool": "b_set_parameter", "arguments": {"elements": "bad"}})))
+        assert bad.get("ok") is False and "must be list" in bad.get("error", "")
+    finally:
+        if before is None:
+            settings.unlink()
+        else:
+            settings.write_bytes(before)

@@ -11921,7 +11921,8 @@
         "01.APP/nodelang/nograph_launcher.py",
         "02.TESTS/tests_replica/test_update_real_handoff.py",
         "02.TESTS/tests_replica/test_update_release_path.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/nograph_server.py"
       ]
     },
     "MEETINGAGENT": {

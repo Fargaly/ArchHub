@@ -131,7 +131,17 @@
       if (keep) onSave(next);
     };
     const reset = () => { pending.current = null; narrowOpen.set(false); setLocal({layout: null}); onSave(null); };  // no layout of his own: the default
-    const reveal = id => { if (narrow && where(current.current, id)?.side === 'right') narrowOpen.set(true); change(show(current.current, id)); };
+    const reveal = id => {
+      if (narrow && where(current.current, id)?.side === 'right') narrowOpen.set(true);
+      const held = folded.current || [];
+      if (!held.length) { change(show(current.current, id)); return; }
+      // While the thread shows, its fold is display only: what is saved is built from his own layout (those sides as he had them);
+      // the screen keeps the thread's fold on every side but the one now opened.
+      const saved = show({...current.current, ...Object.fromEntries(held.map(side => [side, {...current.current[side], c: false}]))}, id);
+      folded.current = held.filter(side => side !== where(saved, id)?.side);
+      change({...saved, ...Object.fromEntries(folded.current.map(side => [side, {...saved[side], c: true}]))}, false);
+      if (s.dockLayout) onSave(saved);
+    };
     const fold = side => { if (side === 'right' && narrow && !current.current.right.c) narrowOpen.set(!narrowOpen.read()); else change(toggleDock(current.current, side)); };
     React.useImperativeHandle(controls, () => ({
       show: reveal,

@@ -136,8 +136,34 @@ const {chromium} = require('playwright');
     assert.deepEqual([...new Set(frames)], [his], 'every frame after the reload shows his layout, never a default one first');
     await switchTo('Sheet index check');
     await same('after a reload, on another session');
+    // The thread's Rules opens the Inspector while the thread folds the docks for display only: what is saved is his layout
+    // with the Inspector open, never the thread's fold. After closing the thread and a reload, the left dock is as he had it.
+    await page.locator('[data-design="toolbar.layout"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label') === 'Layout: Build');
+    await settle();
+    if (!await ws.locator('.dock.right').evaluate(dock => dock.classList.contains('col'))) {
+      await page.getByRole('button', {name: 'Fold the right dock to icons', exact: true}).click();
+      await settle();
+    }
+    const folds = async () => ws.evaluate(root => ['left', 'right'].map(side => root.querySelector('.dock.' + side).classList.contains('col')));
+    assert.deepEqual(await folds(), [false, true], 'his layout: the left dock open, the Inspector folded');
+    await page.getByRole('button', {name: 'Thread', exact: true}).click();
+    await page.locator('[data-design="thread.rules"]').waitFor();
+    await settle();
+    await page.locator('[data-design="thread.rules"]').click();
+    await settle();
+    assert.equal(JSON.parse(await held()).left.c, false, 'the thread fold is not saved as his layout');
+    assert.equal(JSON.parse(await held()).right.c, false, 'the Inspector he asked for is saved open');
+    await page.getByRole('button', {name: 'Close thread', exact: true}).click();
+    await settle();
+    assert.deepEqual(await folds(), [false, false], 'after the thread: the left dock as he had it, the Inspector open');
+    await page.reload();
+    await openCanvas('Sheet index check');
+    await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().dockLayout);
+    for (let tries = 0; tries < 30 && JSON.stringify(await folds()) !== '[false,false]'; tries++) await page.waitForTimeout(100);
+    assert.deepEqual(await folds(), [false, false], 'after a reload: the left dock open, the Inspector open');
     assert.deepEqual(errors, []);
-    console.log('LAYOUT=' + record);
+    console.log('LAYOUT=' + await held());  // the record the owner holds last: his layout with the Inspector the Rules opened
     console.log('PASS dock_one_layout_live: one layout across four sessions, Home and back, and a reload');
   } finally {
     await browser.close();

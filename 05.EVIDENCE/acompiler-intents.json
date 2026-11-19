@@ -11916,6 +11916,18 @@
         "02.TESTS/tests_replica/test_update_release_path.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "MEETINGAGENT": {
+      "source": "Founder request R216: a meeting agent attends in his place: Notion transcription for notes, answers from project knowledge, defers what it does not know, never commits for him; participants are told BABOOM takes notes.",
+      "scope": [
+        "01.APP/nodelang/meeting_agent.py",
+        "01.APP/nodelang/daily_work_nodes.py",
+        "01.APP/nodelang/studio/meetings.jsx",
+        "01.APP/nodelang/social_surface.py",
+        "02.TESTS/tests_replica/test_meeting_agent.py",
+        "02.TESTS/tests_replica/test_daily_work_nodes.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

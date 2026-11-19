@@ -12094,6 +12094,27 @@
         "02.TESTS/tests_replica/test_opencode_plugin_shape.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DECISIONNODES": {
+      "source": "Founder 2026-11-19 (Makkook video: can we make something like this?) and request R224: decision nodes. Decision score ranks options by weighted criteria (TOPSIS or weighted sum); Optimize and Schedule solve with the open-source HiGHS solver; all pure, re-solve on edit, time-bounded; writing results to a host stays a separate approved node.",
+      "scope": [
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/decision_engines.py",
+        "01.APP/colleague_setup.py",
+        "requirements.txt",
+        "02.TESTS/tests/test_g6_decision_score.py",
+        "02.TESTS/tests/test_g6_optimize_schedule.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "COPILOTJOINS": {
+      "source": "Founder requests R151 and R87: every agent on the machine gets his rules when it joins; GitHub Copilot CLI reads ~/.copilot/copilot-instructions.md.",
+      "scope": [
+        "01.APP/nodelang/agent_onboard.py",
+        "02.TESTS/tests_replica/test_every_agent_joins.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

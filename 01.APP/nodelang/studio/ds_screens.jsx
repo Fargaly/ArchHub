@@ -716,7 +716,9 @@
       return () => observer.disconnect();
     }, [id, handles, updateInternals]);
     const design = n.fixed ? ({'thing.session':'pin.session','thing.agent':'pin.agent','thing.you':'pin.you','thing.workshop':'pin.workshop'}[n.type]) : 'node.step';
-    return <div ref={box} data-graph-node={id} data-design={frame ? n.frameMembers ? 'frame.box' : 'group.frame' : !n.fixed&&n.children?.length ? 'group.node' : design} data-fixed={n.fixed || undefined} style={{fontSize:'calc('+(frame?13:12)+'px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{frame ? c.renderFrame(n,selected) : c.renderNode(n, selected)}</div>
+    // contain: a card lays out on its own, so resizing the canvas (a thread or dock opening) does not lay out every
+    // card again (cards sit in the engine's transformed viewport, which already contains fixed descendants).
+    return <div ref={box} data-graph-node={id} data-design={frame ? n.frameMembers ? 'frame.box' : 'group.frame' : !n.fixed&&n.children?.length ? 'group.node' : design} data-fixed={n.fixed || undefined} style={{fontSize:'calc('+(frame?13:12)+'px * var(--text-scale,1))', contain:'layout'}}><div inert={c.preview || undefined}>{frame ? c.renderFrame(n,selected) : c.renderNode(n, selected)}</div>
       {flow && [['target',RF.Position.Left,'flow:in'],['source',RF.Position.Right,'flow:out']].map(([type,position,key])=><RF.Handle key={key} type={type} position={position} id={key} isConnectable={false} className="flow-socket" data-flow-socket={key} />)}</div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
@@ -1138,20 +1140,25 @@
       });
     };
     const onNodeDragStop = (event, dragged, all) => {
-      const point = event.changedTouches?.[0] || event;
-      const hits = point && document.elementsFromPoint ? document.elementsFromPoint(point.clientX, point.clientY) : [];
-      const host = [...hits].map(el => el.closest && el.closest('[data-graph-node]')).find(el => el && el.dataset.graphNode !== dragged.id);
-      const group = host && s.graph.nodes.find(n => n.id === host.dataset.graphNode);
       const node = s.graph.nodes.find(n => n.id === dragged.id);
-      const grouped = group && group.id !== node?.id && (group.type === 'thing.workshop' || group.kind === 'Group' || group.kind === 'Workshop' || (group.children || []).length || (group.members || []).length);
-      if (node?.type === 'thing.agent' && grouped) {
-        held.current = null;
-        u.act(() => api.attachMember(group.id, node.id));
-        return;
+      // Only an agent joins what it is dropped on, so only its drop asks what lies under the pointer (a forced layout).
+      if (node?.type === 'thing.agent') {
+        const point = event.changedTouches?.[0] || event;
+        const hits = point && document.elementsFromPoint ? document.elementsFromPoint(point.clientX, point.clientY) : [];
+        const host = [...hits].map(el => el.closest && el.closest('[data-graph-node]')).find(el => el && el.dataset.graphNode !== dragged.id);
+        const group = host && s.graph.nodes.find(n => n.id === host.dataset.graphNode);
+        const grouped = group && group.id !== node.id && (group.type === 'thing.workshop' || group.kind === 'Group' || group.kind === 'Workshop' || (group.children || []).length || (group.members || []).length);
+        if (grouped) {
+          held.current = null;
+          u.act(() => api.attachMember(group.id, node.id));
+          return;
+        }
       }
       const positions = Object.fromEntries((all?.length ? all : [dragged]).map(f => [f.id, {x: f.position.x, y: f.position.y}]));
       held.current = positions;
-      Promise.resolve(u.act(() => api.moveNodes(positions))).finally(() => { if (held.current === positions) held.current = null; });
+      // The file edit is made now (a reload or close right after the drop keeps it); the engine already shows the drop
+      // (held keeps it) and the redraw of every view runs after that frame is painted, not inside the pointer event.
+      Promise.resolve(u.act(() => api.moveNodes(positions, true))).then(done => done?.shown).finally(() => { if (held.current === positions) held.current = null; });
     };
     const group = async () => {
       const g = await u.act(() => api.groupNodes(selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed)));
@@ -1642,7 +1649,9 @@
   }
   window.UI.HomeMap = HomeMap;
   window.UI.RunModeChip = RunModeChip;
-  window.UI.Canvas = Canvas;
+  // Memoized: Home's own state changes (its Inspector, rails, thread width) do not re-render the canvas; the
+  // canvas still follows the store and the app context it reads.
+  window.UI.Canvas = React.memo(Canvas);
   window.UI.ResultPreview = ResultPreview;
   window.UI.AddField = AddField;
   window.UI.NodeInspector = NodeInspector;

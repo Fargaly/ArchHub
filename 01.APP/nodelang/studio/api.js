@@ -1695,10 +1695,11 @@ function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{}, shown=shownLayout?.id===sessionDocument.id&&properties.canvasLayout!=='v48'?shownLayout.positions:null;
  // Groups, bound values and dataset columns read other nodes (and groups are completed in place below): always fresh.
- const reuse=!shown&&!sessionDocument.nodes.some(node=>node.children||node.frameMembers||node.parent||node.bind||node.type==='data.field');
+ // Members are only read by their group, so they keep their projection like any other card.
+ const readsOthers=node=>node.children||node.frameMembers||node.bind||node.type==='data.field';
  const context=JSON.stringify([properties.taskContext?.task||'',state.libraryPorts.length]), kept=new Map();
  const nodes=sessionDocument.nodes.map(node=>{
-  if(!reuse)return fileNode(shown?.[node.id]?{...node,position:shown[node.id]}:node);
+  if(shown||readsOthers(node))return fileNode(shown?.[node.id]?{...node,position:shown[node.id]}:node);
   const stamp=context+JSON.stringify(node), held=projectedNodes.get(node.id);
   const projected=held&&held.stamp===stamp&&held.ports===state.libraryPorts?held.node:fileNode(node);
   kept.set(node.id,{stamp,ports:state.libraryPorts,node:projected});return projected;
@@ -1716,7 +1717,9 @@ api.readTaskPreview=async id=>{
 };
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
-function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false){
+// A drop's redraw, waiting for the frame after the drop is painted (the edit itself is already in the document).
+let projectAfterPaint=0;
+function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false,afterPaint=false){
  if(!sessionDocument)throw Error('Open a session first.');
  // His first edit keeps what he sees: the on-screen arrangement becomes the document with it.
  if(shownLayout?.id===sessionDocument.id&&sessionDocument.properties?.canvasLayout!=='v48'){for(const n of sessionDocument.nodes)if(shownLayout.positions[n.id])n.position=shownLayout.positions[n.id];sessionDocument.properties={...sessionDocument.properties,canvasLayout:'v48'};}
@@ -1724,7 +1727,12 @@ function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve
  const before=copy(sessionDocument);
  if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
  try{edit(sessionDocument);}catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
- localDirty=true;if(!preserveSolve)runEpoch++;projectFile();queueAutosave();if(solveFor)scheduleSolve(solveFor,param);return {ok:true};
+ localDirty=true;if(!preserveSolve)runEpoch++;
+ // afterPaint: the document, undo step and autosave are set now (a reload or close right after still saves it);
+ // only the redraw of every view waits for the next painted frame.
+ let shown=null;
+ if(afterPaint){window.cancelAnimationFrame(projectAfterPaint);shown=new Promise(done=>{projectAfterPaint=window.requestAnimationFrame(()=>window.setTimeout(()=>{projectFile();done();}));});}else projectFile();
+ queueAutosave();if(solveFor)scheduleSolve(solveFor,param);return shown?{ok:true,shown}:{ok:true};
 }
 function scheduleSolve(ids,param){
  for(const id of ids)solveIds.add(id);if(param)solveParams.push(param);
@@ -1936,12 +1944,13 @@ api.addNode=async(name,position={})=>{
  fileEdit(d=>d.nodes.push(node),[node.id]);return state.graph.nodes.find(n=>n.id===node.id);
 };
 api.moveNode=(id,position)=>api.moveNodes({[id]:position});
-api.moveNodes=async positions=>fileEdit(d=>{
+// afterPaint (a canvas drop): the file edit now, the redraw after the drop's frame is painted.
+api.moveNodes=async(positions,afterPaint=false)=>fileEdit(d=>{
  const changes={...positions};
  const move=(id,dx,dy)=>{const node=d.nodes.find(n=>n.id===id);if(!node||changes[id])return;changes[id]={x:node.position.x+dx,y:node.position.y+dy};for(const child of node.children||node.frameMembers||[])move(child,dx,dy);};
  for(const [id,point] of Object.entries(positions)){const node=d.nodes.find(n=>n.id===id);if(node)for(const child of node.children||node.frameMembers||[])move(child,point.x-node.position.x,point.y-node.position.y);}
  for(const [id,point] of Object.entries(changes)){const node=d.nodes.find(n=>n.id===id);if(node)node.position={x:point.x,y:point.y};}
-});
+},null,null,true,false,afterPaint);
 api.setNodeParam=async(id,key,value)=>{
  if(!sessionDocument.nodes.some(n=>n.id===id)&&systemProjection?.nodes.some(n=>n.id===id)){try{await commands.adopt(systemProjection);const result=await nodeProperty(id,key,value);systemProjection=commands.getSnapshot().canvas;publish({systemRevision:(state.systemRevision||0)+1});return result;}finally{projectFile();}}
  const held=sessionDocument.nodes.find(n=>n.id===id);

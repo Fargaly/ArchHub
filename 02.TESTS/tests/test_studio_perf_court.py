@@ -61,6 +61,14 @@ def test_studio_perf_court(tmp_path, monkeypatch):
         print(result.stdout, result.stderr)
         assert result.returncode == 0, result.stdout + result.stderr
         metrics = json.loads(result.stdout.split('PERF ', 1)[1])
+        # A drop is in the file even when the page reloads at once, or its frames stop (minimized) before it closes.
+        saved = {n['id']: n['position'] for n in client.files('read', path=view['path'], id=view['id'])['document']['nodes']}
+        assert len(metrics['dropKept']) == 2, metrics.get('dropKept')
+        reload_drop, hidden_drop = metrics['dropKept']
+        reload_drop['file'], hidden_drop['file'] = reload_drop['saved'], saved[hidden_drop['id']]  # the file after each
+        for drop in (reload_drop, hidden_drop):
+            assert drop['x'] != drop['from']['x'], drop  # the card really moved
+            assert abs(drop['file']['x'] - drop['x']) < 1 and abs(drop['file']['y'] - drop['y']) < 1, drop
         if os.environ.get('ARCHHUB_PERF_REPORT_ONLY'):
             return
         assert metrics['homeMapBoxes'] > 0, "Home's map draws the session cards"

@@ -52,6 +52,13 @@ async function court() {
       const byId = new Map(profile.nodes.map(n => [n.id, n]));
       profile.samples.forEach((id, i) => { const f = byId.get(id).callFrame; const key = f.functionName + ' ' + f.url.split('/').pop() + ':' + (f.lineNumber + 1); self[key] = (self[key] || 0) + (gap[i] || 0) / 1000; });
       out.profile = Object.entries(self).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => k + ' ' + v.toFixed(1));
+      // Inclusive time of Studio functions (not the libraries): which of our calls the self time sits under.
+      const parent = new Map(), total = {};
+      for (const n of profile.nodes) for (const c of n.children || []) parent.set(c, n.id);
+      profile.samples.forEach((id, i) => { const seen = new Set();
+        for (let at = id; at; at = parent.get(at)) { const f = byId.get(at).callFrame, file = f.url.split('/').pop();
+          if (!/^(react|react-dom|xyflow)\.js$/.test(file) && file) { const key = f.functionName + ' ' + file + ':' + (f.lineNumber + 1); if (!seen.has(key)) { seen.add(key); total[key] = (total[key] || 0) + (gap[i] || 0) / 1000; } } } });
+      out.profileTotal = Object.entries(total).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, v]) => k + ' ' + v.toFixed(1));
       return result;
     };
     const longTasks = () => page.evaluate(() => { const list = window.__perf.long; window.__perf.long = []; return list.filter(d => d > 50); });
@@ -136,7 +143,8 @@ async function court() {
       const b = await box('n10'), x0 = b.x + b.width / 2, y0 = b.y + 14;
       await mouse('mouseMoved', x0, y0); await mouse('mousePressed', x0, y0, {button: 'left', buttons: 1, clickCount: 1});
       for (let i = 1; i <= 40; i++) await mouse('mouseMoved', x0 + i * 4, y0 + i * 2, {button: 'left', buttons: 1});
-      await mouse('mouseReleased', x0 + 160, y0 + 80, {button: 'left', buttons: 0, clickCount: 1});
+      // The drop alone can be profiled (profile 'dragEnd'): the save and redraw it starts.
+      await profiled('dragEnd', async () => { await mouse('mouseReleased', x0 + 160, y0 + 80, {button: 'left', buttons: 0, clickCount: 1}); await nextPaint(); });
     }, 'drag');
     await page.waitForTimeout(800);
 
@@ -241,6 +249,44 @@ async function court() {
     }
     out.longTasks.thread = await longTasks();
     out.longFrames = {...out.longFrames, thread: await longFrames()};
+
+    // A drop is in the file at once: reloading right after it, or a window whose frames stop (minimized) and then
+    // closes, keeps the dropped place. The Python court reads the saved file against these engine positions.
+    const placed = id => page.evaluate(nodeId => { const m = /translate\(([-\d.]+)px, ?([-\d.]+)px\)/.exec(document.querySelector('.react-flow__node[data-id="' + nodeId + '"]').style.transform); return {x: +m[1], y: +m[2]}; }, id);
+    // The first of these cards whose header is on top at its point (a dock panel can cover some after a reload).
+    // fit: double-click the empty canvas first (after a reload the restored view can put a card there instead).
+    const drop = async (ids, framesStop, fit) => { if (fit) { await fitView(); await page.waitForTimeout(600); }
+      let id, x0, y0;
+      for (const candidate of ids) {
+        const b = await box(candidate); if (!b) continue;
+        const x = b.x + b.width / 2, y = b.y + 14;
+        if (await page.evaluate(([nodeId, px, py]) => document.elementFromPoint(px, py)?.closest('.react-flow__node')?.dataset.id === nodeId, [candidate, x, y])) { id = candidate; x0 = x; y0 = y; break; }
+      }
+      if (!id) throw Error('no uncovered card to drop among ' + ids.join(','));
+      const before = await placed(id);
+      await mouse('mouseMoved', x0, y0); await mouse('mousePressed', x0, y0, {button: 'left', buttons: 1, clickCount: 1});
+      for (let i = 1; i <= 10; i++) await mouse('mouseMoved', x0 + i * 9, y0 + i * 5, {button: 'left', buttons: 1});
+      const kept = {id, ...(await placed(id)), from: before};
+      if (framesStop) await page.evaluate(() => { window.requestAnimationFrame = () => 0; });  // as a minimized window
+      await mouse('mouseReleased', x0 + 90, y0 + 50, {button: 'left', buttons: 0, clickCount: 1});
+      return kept; };
+    const cards = ['n20', 'n23', 'n17', 'n14', 'n11', 'n8', 'n5', 'n2'];
+    out.dropKept = [await drop(cards, false, true)];
+    await page.reload();
+    // A reload lands on Home again, as the first visit did: open the canvas the same way.
+    await open.waitFor({timeout: 60000});
+    await page.waitForTimeout(3000);
+    await open.click();
+    await flow.locator('.react-flow__node[data-id="n0"]').waitFor({timeout: 30000});
+    await page.waitForTimeout(1500);
+    // What the file holds after the reload (read from the file, not the view: a reopened file can be shown arranged,
+    // and the next edit then keeps that arrangement, as an open-then-edit does).
+    out.dropKept[0].saved = await page.evaluate(async nodeId => { const g = window.ArchHubAPI.getSnapshot();
+      const task = g.tasks.find(t => t.sessionPath === g.sessionFile); const file = await window.ArchHubAPI.readTaskPreview(task.id);
+      const n = file.nodes.find(r => r.id === nodeId); return {x: n.x, y: n.y}; }, out.dropKept[0].id);
+    out.dropKept.push(await drop(cards.filter(id => id !== out.dropKept[0].id), true, false));
+    await page.waitForTimeout(1000);
+    await page.close({runBeforeUnload: true});
   } catch (error) {
     out.errors.push(error.stack || String(error));
   } finally {

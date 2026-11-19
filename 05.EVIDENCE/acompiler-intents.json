@@ -11785,7 +11785,8 @@
       "scope": [
         "02.TESTS/tests_js/studio_designv22g.test.cjs",
         "05.EVIDENCE/acompiler-intents.json",
-        "01.APP/nodelang/library_engines.py"
+        "01.APP/nodelang/library_engines.py",
+        "02.TESTS/tests/test_library_skill_category.py"
       ]
     }
   }

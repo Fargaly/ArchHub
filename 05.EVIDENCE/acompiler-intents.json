@@ -12105,9 +12105,7 @@
         "requirements.txt",
         "02.TESTS/tests/test_g6_decision_score.py",
         "02.TESTS/tests/test_g6_optimize_schedule.py",
-        "05.EVIDENCE/acompiler-intents.json"
-      ],
-      "paths": [
+        "05.EVIDENCE/acompiler-intents.json",
         "docs/DECISIONS.md"
       ]
     },
@@ -12150,9 +12148,7 @@
         "01.APP/nodelang/goose_runtime.py",
         "02.TESTS/tests_replica/fixtures/goose_acp_fake.py",
         "02.TESTS/tests_replica/test_goose_auth_and_workshop.py",
-        "05.EVIDENCE/acompiler-intents.json"
-      ],
-      "paths": [
+        "05.EVIDENCE/acompiler-intents.json",
         "docs/DECISIONS.md"
       ]
     },

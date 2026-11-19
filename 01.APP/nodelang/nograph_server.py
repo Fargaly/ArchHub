@@ -1204,7 +1204,7 @@ def r_hosts(s, req):
 
 # -- Custom MCP servers: owner custom_mcp, file settings/mcp_servers.json, secrets in Credential Manager --
 _MCP_OPS = ('mcp_servers', 'add_mcp_server', 'remove_mcp_server', 'set_mcp_server_enabled',
-            'discover_mcp_tools', 'reconnect_mcp', 'import_mcp_tool', 'sign_in_mcp_server')
+            'discover_mcp_tools', 'reconnect_mcp', 'prepare_mcp_tool', 'import_mcp_tool', 'sign_in_mcp_server')
 _MCP_SEEN = {}  # id -> (status, tools) from the last Discover; a view cache, the file stays the truth
 
 
@@ -1243,8 +1243,8 @@ def _mcp_op(op, args):
             if len(args) > 1 and args[1] not in ('Tools', None, ''):
                 raise custom_mcp.McpRefused('Only tools become nodes. Resources and prompts are not imported yet.')
             _mcp_discover(str(args[0] if args else ''))
-        elif op == 'import_mcp_tool':
-            return _mcp_import(str(args[0]), str(args[1]))
+        elif op in ('prepare_mcp_tool', 'import_mcp_tool'):
+            return _mcp_import(str(args[0]), str(args[1]), prepare=op == 'prepare_mcp_tool')
         elif op == 'sign_in_mcp_server':
             server_id = str(args[0] if args else '')
             _MCP_SEEN[server_id] = ('Signing in… finish it in your browser', [])
@@ -1280,23 +1280,27 @@ def _mcp_sign_in(server_id):
             _MCP_SEEN[server_id] = ('Sign-in failed: %s' % failed, [])
 
 
-def _mcp_import(server_id, tool):
-    """Place one Connector action node already pointed at this server's tool on the open canvas."""
+def _mcp_import(server_id, tool, *, prepare=False):
+    """Build the connector node. Studio adds it through its own open document's editor."""
     from uuid import uuid4
     from . import canvas_documents, session_files
     from .custom_mcp import PREFIX
-    path = session_files.SessionFiles().current_path()
-    if not path:
-        raise Refused('Open a canvas before adding a tool.')
     item = next(row for row in session_files.catalogue() if row['id'] == 'connector_call')
     identity = str(uuid4())
 
+    node = {
+        'id': identity, 'type': item['engine'], 'item': item['id'], 'title': tool,
+        'params': {**item['params'], 'connector': PREFIX + server_id, 'action': tool},
+        'paramDefs': item.get('paramDefs', []), 'position': {'x': 80, 'y': 100},
+    }
+    if prepare:
+        return {'node': node}
+    path = session_files.SessionFiles().current_path()
+    if not path:
+        raise Refused('Open a canvas before adding a tool.')
+
     def place(document):
-        document['nodes'].append({
-            'id': identity, 'type': item['engine'], 'item': item['id'], 'title': tool,
-            'params': {**item['params'], 'connector': PREFIX + server_id, 'action': tool},
-            'paramDefs': item.get('paramDefs', []), 'position': {'x': 80, 'y': 100},
-        })
+        document['nodes'].append(node)
         return [identity]
 
     canvas_documents.edit(path, 'Studio', 'Add ' + tool, place, solve_changed=False)

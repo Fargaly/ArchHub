@@ -388,7 +388,11 @@ function watchRefresh(){stopRefresh();if(ready&&listeners.size&&!document.hidden
 document.addEventListener('visibilitychange',()=>{watchRefresh();reportedSurface=null;reportSurface();if(!document.hidden)refreshLive();});
 window.addEventListener('pagehide',stopRefresh);
 window.addEventListener('pageshow',watchRefresh);
-const canvasOperation=(op,args)=>['project_schedules','list_skills','library_ports'].includes(op)
+const canvasOperation=(op,args)=>[
+ 'project_schedules','list_skills','library_ports',
+ 'mcp_servers','add_mcp_server','remove_mcp_server','set_mcp_server_enabled',
+ 'discover_mcp_tools','reconnect_mcp','sign_in_mcp_server','prepare_mcp_tool'
+].includes(op)
  ? request('/api/universal/canvas-op',{op,args}).then(data=>data.result)
  : mutate(async()=> (await request('/api/universal/canvas-op',{op,args})).result);
 async function mutate(command,admitted=false) {
@@ -1530,7 +1534,14 @@ api.dismissSuggestion=async id=>{const result=await canvasOperation('dismiss_sug
 api.refreshMcpServers=async()=>{const result=await canvasOperation('mcp_servers',[]);publish({mcpServers:result});return result;};
 api.discoverMcpTools=async(id,kind='Tools')=>{const result=await canvasOperation('discover_mcp_tools',[id,kind]);await api.refreshMcpServers();return result;};
 api.reconnectMcp=async id=>{const result=await canvasOperation('reconnect_mcp',[id]);await api.refreshMcpServers();return result;};
-api.importMcpTool=(id,tool)=>canvasOperation('import_mcp_tool',[id,tool]);
+api.importMcpTool=async(id,tool)=>{
+ if(!sessionDocument)throw Error('Open a workflow before importing a tool.');
+ const navigation=fileNavigation,documentId=sessionDocument.id;
+ const {node}=await canvasOperation('prepare_mcp_tool',[id,tool]);
+ if(navigation!==fileNavigation||sessionDocument?.id!==documentId)return {cancelled:true};
+ fileEdit(document=>document.nodes.push(node),[node.id]);
+ return {id:node.id};
+};
 api.addMcpServer=async text=>{const result=await canvasOperation('add_mcp_server',[text]);publish({mcpServers:result.servers});return result;};
 api.removeMcpServer=async id=>{const result=await canvasOperation('remove_mcp_server',[id]);publish({mcpServers:result});return result;};
 api.signInMcpServer=async id=>{const result=await canvasOperation('sign_in_mcp_server',[id]);publish({mcpServers:result});return result;};

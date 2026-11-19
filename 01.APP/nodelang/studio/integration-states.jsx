@@ -73,8 +73,10 @@ function projectsintegrationstatesjsxReconnect2({api,id,u}, event) {
 }
 function projectsintegrationstatesjsxAsyncAwaitUActApi3({api,id,t,u}, event) {
   const handler = async () => {
+          const document = api.getSessionDocument();
+          const target = document?.properties?.taskContext?.task || api.getSessionPath();
           const result = await u.act(() => api.importMcpTool(id, t.id));
-          if (result) u.go('canvas');
+          if (result && !result.cancelled && document?.id === api.getSessionDocument()?.id) u.go('canvas', target);
         };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }

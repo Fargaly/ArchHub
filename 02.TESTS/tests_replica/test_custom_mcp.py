@@ -388,3 +388,19 @@ def test_studio_ops_list_add_switch_and_remove(state):
     assert nograph_server._mcp_op("remove_mcp_server", [row["id"]]) == []
     with pytest.raises(nograph_server.Refused, match="No such"):
         nograph_server._mcp_op("discover_mcp_tools", ["gone"])
+
+
+def test_preparing_a_tool_leaves_the_other_windows_file_untouched(state):
+    from nodelang import nograph_server, session_files
+    tmp, _store, _script = state
+    path = tmp / "other.archhub"
+    session_files.write_document(path, session_files.new_document("Other window"))
+    session_files.SessionFiles().dispatch({"action": "open", "path": str(path)})
+    original = path.read_bytes()
+
+    node = nograph_server._mcp_op("prepare_mcp_tool", ["office", "xlsx_tool"])["node"]
+    assert node["params"]["connector"] == "mcp:office" and node["params"]["action"] == "xlsx_tool"
+    assert path.read_bytes() == original
+
+    placed = nograph_server._mcp_op("import_mcp_tool", ["office", "xlsx_tool"])
+    assert [n["id"] for n in session_files.read_document(path)["nodes"]] == [placed["id"]]

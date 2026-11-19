@@ -19,6 +19,7 @@ async function mount(outcome) {
   const requests = [];
   let roots = [];
   win.fetch = async (url, options = {}) => {
+    if (url === '/api/commands') return {ok:true, status:200, json:async () => ({commands:[]})};
     if (url !== '/api/universal/workspace-roots') return new Promise(() => {});
     const body = JSON.parse(options.body);
     requests.push(body);
@@ -46,6 +47,8 @@ async function mount(outcome) {
   win.eval(transformSync(read('ds/index.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(transformSync(read('ui.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(transformSync(read('answer-widgets.jsx'), {loader:'jsx',target:'es2022'}).code);
+  // The app header counts Home's rows through their owner (ds_home2.jsx); Home itself is replaced below.
+  win.eval(transformSync(read('ds_home2.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(`
     window.UI.Btn=({children,onClick,sm,ghost,p,variant,...props})=>React.createElement('button',{...props,onClick},children);
     window.UI.Card=({children})=>React.createElement('section',null,children);

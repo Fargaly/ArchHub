@@ -62,6 +62,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   win.fetch=async(url,options={})=>{
     let data={ok:true};
+    if(url==='/api/commands')data={commands:[]};
     if(url==='/api/session-files'){
       const body=JSON.parse(options.body||'{}');
       if(body.action==='catalogue')data={ok:true,items:[{id:'value',title:'Value',engine:'param.value',pure:true,params:{type:'number',value:1},ports:{source:[],target:[]}}],recent:[],directory:'/fixture'};
@@ -103,8 +104,9 @@ async function mount(server,{holdBootDelay=false}={}) {
   win.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),undo:()=>post('/api/universal/gesture',{undo:true}),redo:()=>post('/api/universal/gesture',{redo:true})})}};
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
-  win.eval(read('01.APP/nodelang/studio/compiled/xyflow.js'));
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));
+  // The loader (studio.html) runs every vendor script the manifest lists before the compiled files.
+  for(const vendor of manifest.vendor||[])if(vendor.output.endsWith('.js'))win.eval(read('01.APP/nodelang/studio/compiled/'+vendor.output));
   for(const file of manifest.files){
     win.eval(read('01.APP/nodelang/studio/compiled/'+file.output));
     if(file.source==='api.js')await win.ArchHubAPI.ready;

@@ -25,6 +25,11 @@ function context(data={}){
  UI.bindActions=(actions,handlers)=>(id,...args)=>handlers[actions[id]](...args);
  UI.ActionStatus=()=>null;
  const c={window,React,setInterval,clearInterval,console};vm.createContext(c);
+ // Task rows read their reason (interrupted, limit reached) from its one owner, ui.jsx. ui.jsx replaces window.UI,
+ // so take its real export and put this fixture's UI back.
+ Object.assign(window,{AH:{},AH_DS:{},registerActions:()=>{}});React.createContext=()=>({});
+ vm.runInContext(Babel.transform(fs.readFileSync(path.join(root,'01.APP/nodelang/studio/ui.jsx'),'utf8'),{presets:['react']}).code,c);
+ UI.taskRowReason=window.UI.taskRowReason;window.UI=UI;
  return {UI,c,calls};
 }
 function load(ctx,name){vm.runInContext(Babel.transform(fs.readFileSync(path.join(root,'01.APP/nodelang/studio',name),'utf8'),{presets:['react']}).code,ctx.c);}
@@ -98,7 +103,11 @@ test('Native sessions button calls only discovery, without sending into a sessio
 function updateSettings(update){
  const c=context({pages:['Updates & About'],settings:[],capabilities:[],workspaces:[],update});
  c.app={act:async fn=>fn(),show:()=>{},go:()=>{}};c.UI.useApp=()=>c.app;
- load(c,'ds_settings3.jsx');return {...c,render:()=>c.UI.Settings({page:'Updates & About',full:true})};
+ Object.assign(c.c.React,{useCallback:fn=>fn,useMemo:fn=>fn()});
+ // The Updates card is its own component (UpdatesPage > UpdateCard) inside Settings: render components as React does,
+ // not just the outer element, so the real card and its actions are what the assertions read.
+ const expand=tree=>Array.isArray(tree)?tree.map(expand):!tree||typeof tree!=='object'?tree:typeof tree.type==='function'?expand(tree.type(tree.props||{})):{...tree,props:{...tree.props,children:expand(tree.props?.children)}};
+ load(c,'ds_settings3.jsx');return {...c,render:()=>expand(c.UI.Settings({page:'Updates & About',full:true}))};
 }
 
 test('Updates never claims up to date without a successful lifecycle read',()=>{

@@ -136,6 +136,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   win.fetch=async(url,options={})=>{
     let data={ok:true};
+    if(url==='/api/commands')data={commands:[]};
     if(url==='/api/universal/canvas')data={root:'graph',nodes:[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
     if(url==='/api/universal/cloud-session')data=server.cloud?await server.cloud():{ok:true,signed_in:false};
     if(url==='/api/universal/settings-action')data=server.settingsFailure?{ok:false,error:server.settingsFailure}:{ok:true,result:{}};
@@ -160,6 +161,8 @@ async function mount(server,{holdBootDelay=false}={}) {
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));
+  // The loader (studio.html) runs every vendor script the manifest lists before the compiled files.
+  for(const vendor of manifest.vendor||[])if(vendor.output.endsWith('.js'))win.eval(read('01.APP/nodelang/studio/compiled/'+vendor.output));
   for(const file of manifest.files){
     win.eval(read('01.APP/nodelang/studio/compiled/'+file.output));
     if(file.source==='api.js')await win.ArchHubAPI.ready;

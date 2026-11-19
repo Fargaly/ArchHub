@@ -11764,7 +11764,8 @@
         "02.TESTS/tests_js/dock_model.test.cjs",
         "02.TESTS/tests/test_design_canvas.py",
         "02.TESTS/tests_js/design_canvas_live.cjs",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/studio_designv22g.test.cjs"
       ]
     }
   }

@@ -11837,7 +11837,8 @@
         "02.TESTS/tests_replica/test_cloud_relay_offer.py",
         "02.TESTS/tests_replica/test_onetask.py",
         "02.TESTS/tests_replica/test_agentcanvas.py",
-        "02.TESTS/tests_js/agentcanvas.cjs"
+        "02.TESTS/tests_js/agentcanvas.cjs",
+        "01.APP/nodelang/studio/app.jsx"
       ]
     },
     "DRAFTNOASK": {

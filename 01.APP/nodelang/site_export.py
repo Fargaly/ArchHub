@@ -515,34 +515,34 @@ _DOCS_TEMPLATES = MappingProxyType({'getting-started': ('Getting started',
                 'only when its artifact and local host checks pass. Restart an already open host after setup '
                 'so it can load the connector.\n'
                 '\n'
+                '## Add a tool server\n'
+                '\n'
+                'In Settings, open Connections and find Tool servers (MCP). Enter a server address, a command or an MCP JSON snippet, then choose Add tool server.\n'
+                'Choose Check to test the connection. Switch off a server to keep its configuration and prevent its tools from running.\n'
+                '\n'
+                'In Canvas, press Ctrl K, choose MCP tools and select Discover tools. Use Import on the tool you want to add to the open canvas.\n'
+                '\n'
                 '## Operation catalogue\n'
                 '\n'
                 '{operations}\n'),
  'workshop': ('The Workshop',
-                'The command center: every agent and you in one room. ArchHub opens here.',
+                'Task conversations, subtasks and the people and agents doing the work.',
                 'Documentation for build {build}.\n'
                 '\n'
-                'ArchHub opens on the Workshop. It is the one room where you and every agent work together. Home, Canvas, Docs and Settings open from here.\n'
+                'ArchHub opens on Home. Select a task on the map to see its Properties.\n'
                 '\n'
-                '## The three columns\n'
+                '## Add a subtask\n'
                 '\n'
-                '1. Work (left). Every task, grouped as Needs attention and In progress; Show history adds Completed and archived. Click a task to open it.\n'
-                '2. The task (middle). Its conversation on top. At the bottom, the composer: type what you want, pick who it goes to in the To-list, and send.\n'
-                '3. People & agents (right). Everyone in the room, what each agent is working on, and whether it has joined. The Meeting input is here too.\n'
+                'In Properties, enter a title in New subtask and choose Add subtask. The child stays in the same project and has its own .archhub file.\n'
                 '\n'
-                '## Talking to agents\n'
+                '## Reach an agent\n'
                 '\n'
-                "A message you send to an agent lands inside that agent's running session, the same as if you typed it there. You do not need to switch windows. The agent's reply appears in the same conversation.\n"
+                'Open the Workshop dock to see the people and agents in the workspace. Use Show on a task conversation to bring it into the composer. Choose the recipient before sending.\n'
+                'Replies appear in that conversation. A direct message to an agent is delivered to its connected session.\n'
                 '\n'
-                'Agents also use this room to talk to each other, so you can read every exchange in one place.\n'
+                '## Find a command\n'
                 '\n'
-                '## Ctrl K\n'
-                '\n'
-                'Press Ctrl K anywhere to reach an agent, a workflow, a design program or a setting by typing its name.\n'
-                '\n'
-                '## When nothing is there yet\n'
-                '\n'
-                'The middle column asks "What should the agents do?". Type the job, pick who it goes to and send.\n'),
+                'Press Ctrl K to find an agent, a workflow, a program or a setting by name.\n'),
  'tasks': ('Tasks: who is doing what',
                 'One agent per task, so no work is done twice.',
                 'Documentation for build {build}.\n'

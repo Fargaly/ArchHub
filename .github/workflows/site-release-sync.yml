@@ -1,0 +1,46 @@
+name: Sync public changelog from GitHub releases
+
+# Keeps CHANGELOG.md (and therefore the baked changelog fallback) aligned with
+# every published installer. The live homepage/download card already follows
+# /download.json → releases/latest without a redeploy; this job stops the
+# repository changelog from drifting after the next release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: site-release-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Use Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Rewrite CHANGELOG.md from published releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python 03.TOOLS/packaging/website/sync_changelog.py --token "$GH_TOKEN"
+      - name: Commit when the changelog moved
+        run: |
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "CHANGELOG.md already matches published releases."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "CHANGELOG: sync public release notes from GitHub releases"
+          git push origin HEAD:${{ github.event.repository.default_branch }}

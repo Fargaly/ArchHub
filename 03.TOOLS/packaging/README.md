@@ -26,6 +26,13 @@ both asset directories and retains the coordinator's runtime static COPY.
 Public release notes omit source lines and commit identifiers; `CHANGELOG.md`
 keeps them. Exact build, installer name and SHA-256 come from the newest release's own `release.json`, which `/download.json` redirects to.
 
+The Home and Download release cards paint from same-origin `/download.json` at
+page load (GitHub's releases API is only the fallback), so the advertised build
+follows every published installer without a site redeploy. The Changelog page
+keeps a baked `CHANGELOG.md` fallback and reloads from GitHub releases when the
+API answers. After each published GitHub release, `.github/workflows/site-release-sync.yml`
+rewrites `CHANGELOG.md` via `03.TOOLS/packaging/website/sync_changelog.py`.
+
 At release time, fill the empty `Next build` section of `CHANGELOG.md` with the
 actual build id and release notes, or replace that heading with the build id.
 Keep the newest entry first. Notes describe Git changes, not unverified installed

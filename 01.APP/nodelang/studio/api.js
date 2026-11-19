@@ -1244,6 +1244,10 @@ api.setSessionListFilter=(list,value)=>settingsAction('setSessionListFilter',[li
 api.readHomeLayout=()=>settingsAction('readHomeLayout');
 api.setHomeLayout=value=>settingsAction('setHomeLayout',[value]);
 api.setDockLayout=layout=>settingsAction('setDockLayout',[layout]);  // the user's one dock layout, the same on Home and in every session
+// The Workshop settings the update policy reads (one owner: settings/settings.json); the node parameter edits the same value.
+const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel'];
+api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
+api.setApplicationSetting=async(key,value)=>{const saved=await settingsAction('setApplicationSetting',[key,value]);await refreshLiveUpdatePolicy();return saved;};
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};
@@ -1697,6 +1701,18 @@ function projectGroups(nodes,wires){
 // id -> {stamp, node}: a card whose file record, Library entry and document context did not change keeps its
 // projected object, so the canvas redraws only what changed (a drop moves one card, not all of them).
 let projectedNodes=new Map();
+// The Workshop node's update parameters are the Settings owner's live values (spec 4.3): an older workflow's
+// stored copy is shown as what the updater actually uses. Refreshed on open and after every Settings edit.
+let liveUpdatePolicy=null;
+function withLiveUpdatePolicy(node){
+ if(!liveUpdatePolicy||node.params?.tool!=='workshop')return node;
+ const live=Object.fromEntries(UPDATE_POLICY_KEYS.filter(key=>Object.hasOwn(node.params,key)&&Object.hasOwn(liveUpdatePolicy,key)).map(key=>[key,liveUpdatePolicy[key]]));
+ return Object.keys(live).length?{...node,params:{...node.params,...live}}:node;
+}
+async function refreshLiveUpdatePolicy(){
+ try{liveUpdatePolicy=await settingsAction('readUpdatePolicySettings',[]);projectFile();}
+ catch(error){console.warn('Update settings not read for the canvas:',error.message);}
+}
 function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{};
@@ -1704,7 +1720,8 @@ function projectFile(){
  // Members are only read by their group, so they keep their projection like any other card.
  const readsOthers=node=>node.children||node.frameMembers||node.bind||node.type==='data.field';
  const context=JSON.stringify([properties.taskContext?.task||'',state.libraryPorts.length]), kept=new Map();
- const nodes=sessionDocument.nodes.map(node=>{
+ const nodes=sessionDocument.nodes.map(saved=>{
+  const node=withLiveUpdatePolicy(saved);  // shown from the Settings owner; the file's copy is never written back
   if(readsOthers(node))return fileNode(node);
   const stamp=context+JSON.stringify(node), held=projectedNodes.get(node.id);
   const projected=held&&held.stamp===stamp&&held.ports===state.libraryPorts?held.node:fileNode(node);
@@ -1784,6 +1801,7 @@ const saveConflictMessage='This workflow changed elsewhere. Keep your changes in
 function rememberSaveConflict(error,path){
  if(error.response?.code!=='canvas_save_conflict'||!path||path!==sessionPath)return;
  saveConflict=path;savedConflictDraft=null;clearTimeout(autosaveTimer);
+ reportEditState();
  publish({canvasSaveConflict:saveConflictMessage,canvasSaveRecoveryError:''});
 }
 function refuseUnresolvedSave(){
@@ -1799,18 +1817,168 @@ function saveNow(){
   const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision;
   const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base}).catch(error=>{rememberSaveConflict(error,currentPath);throw error;});
   if(sessionDocument?.id===sent.id&&sessionPath===currentPath){sessionPath=saved.path;acknowledgeSave(sent,saved);}
+  saveFailed=false;reportEditState();
   return saved;
  });
  return fileWrites;
 }
+// The server holds automatic update restarts while this is true: an unsaved edit, a failed save (it stays
+// unsaved) or an unresolved Keep/Discard conflict. A restart then lost the local edit. Sent only on change.
+// One entry per open Studio page and file: another page's clean report never clears this page's draft.
+const editView=(window.crypto?.randomUUID?.()||String(Math.random()).slice(2))+'-'+Date.now();
+// A reload of this tab replaces its page: the first report retires the previous page's entries (sessionStorage is per tab).
+// Only an actual reload of this same tab retires the previous page. A tab opened from another one inherits its
+// sessionStorage (window.open): that live opener is never retired by the new tab's reports.
+let retiredEditView=null;
+try{
+ const navigation=window.performance?.getEntriesByType?.('navigation')?.[0]?.type;
+ const previous=window.sessionStorage.getItem('archhub.editView');
+ if(navigation==='reload'&&!window.opener&&previous&&previous!==editView)retiredEditView=previous;
+ window.sessionStorage.setItem('archhub.editView',editView);
+}catch(error){console.warn('Edit view not remembered for reloads:',error.message);}
+let reportedEditState=null, reportedEditFile=null, editSeq=0, saveFailed=false;
+function currentEditState(){return {unsaved:!!(localDirty||saveConflict||saveFailed),file:sessionPath||''};}
+function reportEditState(force=false){
+ if(resolvingSaveConflict)return;  // the Keep/Discard resolution reports for itself (resolveSaveConflict)
+ const {unsaved,file}=currentEditState();  // localDirty stays true until a save is acknowledged
+ if(!force&&unsaved===reportedEditState&&file===reportedEditFile)return;
+ // Opening another file first saves this one (adoptFile flushes; an unresolved conflict refuses the switch).
+ if(reportedEditFile!==null&&file!==reportedEditFile&&reportedEditState)
+  sessionRequest('edit_state',{view:editView,file:reportedEditFile,seq:++editSeq,unsaved:false}).catch(error=>console.warn('Edit report failed:',error.message));
+ reportedEditState=unsaved;reportedEditFile=file;
+ keepDraftForRecovery(unsaved,file);
+ const retire=retiredEditView;retiredEditView=null;
+ sessionRequest('edit_state',{view:editView,file,seq:++editSeq,unsaved,...(retire?{retire}:{})}).catch(error=>{reportedEditState=null;if(retire)retiredEditView=retire;console.warn('Edit report failed:',error.message);});
+}
+// A closed window's unsaved draft survives in this browser profile so a later window can keep or discard
+// exactly that draft; its server-side update hold is released only by that choice (resolves=<its view id>).
+const DRAFT_PREFIX='archhub.draft.';
+// A page's lease is a heartbeat: every live window rewrites its timestamp on each file poll and answers a ping
+// on the 'archhub-pages' channel (message events are not throttled like a hidden tab's timers). A draft is
+// offered for Keep/Discard only when its owner's heartbeat is older than LEASE_POLLS polls AND the owner does not
+// answer a ping within one poll. A closed window drops its lease at pagehide; a crashed one simply stops beating.
+// A live window is never offered, and is re-asked at click time.
+const ALIVE_PREFIX='archhub.alive.', LEASE_POLLS=2;  // short: the live ping, not the timestamp, protects a live window
+let draftRevision=0;
+const pollMs=()=>Number(state.canvasPolicy?.file_poll_ms??1000);
+function beat(){
+ try{window.localStorage.setItem(ALIVE_PREFIX+editView,String(Date.now()));}
+ catch(error){console.warn('Page lease not recorded:',error.message);}
+}
+beat();
+window.addEventListener?.('pagehide',()=>{
+ try{window.localStorage.removeItem(ALIVE_PREFIX+editView);}catch(error){console.warn('Page lease not released:',error.message);}
+});
+const pages=typeof window.BroadcastChannel==='function'?new window.BroadcastChannel('archhub-pages'):null;  // fallback channel
+const pongs=new Map();
+if(pages)pages.onmessage=event=>{
+ const message=event.data||{};
+ if(message.type==='ping'&&message.view===editView)pages.postMessage({type:'pong',view:editView});
+ if(message.type==='pong')pongs.get(message.view)?.();
+};
+function askAlive(view){
+ // True when the owning window answers within one poll; no channel means it cannot be proven gone.
+ if(!pages)return Promise.resolve(true);
+ return new Promise(resolve=>{
+  const timer=setTimeout(()=>{pongs.delete(view);resolve(false);},pollMs());
+  pongs.set(view,()=>{clearTimeout(timer);pongs.delete(view);resolve(true);});
+  pages.postMessage({type:'ping',view});
+ });
+}
+// Primary proof (where Web Locks exist): each live view holds 'archhub-view-<id>' for its whole life. The browser
+// releases it when the page dies, a renderer crash included, so a draft written under a lock whose lock is no
+// longer held belongs to a dead window. Drafts written without a lock (older pages, no Web Locks) use the
+// heartbeat + ping fallback.
+const LOCK_PREFIX='archhub-view-';
+let viewLockHeld=false;
+if(window.navigator?.locks?.request){
+ window.navigator.locks.request(LOCK_PREFIX+editView,()=>{viewLockHeld=true;return new Promise(()=>{});})
+  .catch(error=>console.warn('View lock not taken; heartbeat fallback only:',error.message));
+}
+async function ownerAlive(draft){
+ if(draft.locked&&window.navigator?.locks?.query){
+  try{
+   const held=await window.navigator.locks.query();
+   return (held.held||[]).some(lock=>lock.name===LOCK_PREFIX+draft.view);
+  }catch(error){console.warn('Locks unreadable; treated as open:',error.message);return true;}
+ }
+ return !leaseStale(draft.view)||await askAlive(draft.view);
+}
+function leaseStale(view){
+ // Missing, unreadable or older than LEASE_POLLS polls (a marker from before timestamps counts as stale too).
+ try{
+  const stamp=Number(window.localStorage.getItem(ALIVE_PREFIX+view));
+  return !Number.isFinite(stamp)||Date.now()-stamp>LEASE_POLLS*pollMs();
+ }catch(error){console.warn('Page lease unreadable; treated as open:',error.message);return false;}
+}
+function keepDraftForRecovery(unsaved,file){
+ // Written on EVERY edit (not only when the dirty flag flips), in order: the stored draft is always the latest bytes.
+ try{
+  if(unsaved&&sessionDocument)window.localStorage.setItem(DRAFT_PREFIX+editView,JSON.stringify({view:editView,file,revision:++draftRevision,locked:viewLockHeld,document:portableDocument()}));
+  else window.localStorage.removeItem(DRAFT_PREFIX+editView);
+ }catch(error){console.warn('Draft not kept for recovery:',error.message);}
+}
+function storedDrafts(){
+ const found=[];
+ try{
+  for(let index=0;index<window.localStorage.length;index++){
+   const key=window.localStorage.key(index);
+   if(!key?.startsWith(DRAFT_PREFIX)||key===DRAFT_PREFIX+editView)continue;
+   const draft=JSON.parse(window.localStorage.getItem(key)||'null');
+   if(draft?.view&&draft.document)found.push({view:draft.view,file:draft.file||'',key,locked:draft.locked===true});
+  }
+ }catch(error){console.warn('Drafts from closed windows unreadable:',error.message);}
+ return found;
+}
+let orphanCheck=null;
+function refreshOrphanDrafts(){
+ // One check at a time; only drafts whose owner is stale AND silent are offered.
+ if(orphanCheck)return orphanCheck;
+ orphanCheck=(async()=>{
+  const candidates=storedDrafts();
+  const answers=await Promise.all(candidates.map(ownerAlive));
+  publish({orphanDrafts:candidates.filter((_draft,index)=>!answers[index])});
+ })().catch(error=>console.warn('Closed-window drafts not checked:',error.message)).finally(()=>{orphanCheck=null;});
+ return orphanCheck;
+}
+function orphanDrafts(){return state.orphanDrafts||[];}
+// Another window closing (lease removed) or changing its draft changes what can be recovered here.
+window.addEventListener?.('storage',event=>{
+ if(event.key===null||event.key.startsWith(ALIVE_PREFIX)||event.key.startsWith(DRAFT_PREFIX))refreshOrphanDrafts();
+});
+api.resolveOrphanDraft=async(view,keep)=>{
+ const key=DRAFT_PREFIX+view,draft=JSON.parse(window.localStorage.getItem(key)||'null');
+ if(!draft?.document)throw Error('That draft is no longer here.');
+ if(await ownerAlive({view,locked:draft.locked===true}))throw Error('That window is still open; choose there.');
+ try{
+  if(keep)await sessionRequest('save',{document:draft.document,save_as:true,conflict_copy_of:draft.file||undefined});
+  // This page's own state for that file rides along, so the report never clears this page's own draft.
+  const mine=currentEditState();
+  await sessionRequest('edit_state',{view:editView,file:draft.file||'',seq:++editSeq,
+   unsaved:mine.unsaved&&mine.file===(draft.file||''),resolves:view,resolved:keep?'keep':'discard'});
+  window.localStorage.removeItem(key);
+  publish({orphanDrafts:orphanDrafts().filter(draft=>draft.view!==view),orphanDraftError:''});
+  return {ok:true};
+ }catch(error){publish({orphanDraftError:error.message});throw error;}
+};
+// A reloaded tab whose old page left an unsaved draft does not retire it: that draft holds until kept or discarded.
+try{if(retiredEditView&&window.localStorage.getItem(DRAFT_PREFIX+retiredEditView))retiredEditView=null;}
+catch(error){console.warn('Previous page draft unreadable:',error.message);}
+Promise.resolve().then(refreshOrphanDrafts);
+// The desktop asks the live page right before an automatic close; no answer means it does not close.
+window.__archhubEditState=()=>{reportEditState(true);return currentEditState();};
 function queueAutosave(){
+ reportEditState();  // the first edit is protected at once, not at the next file poll
+ const now=currentEditState();keepDraftForRecovery(now.unsaved,now.file);  // every edit refreshes the stored draft
  if(saveConflict)return;
  clearTimeout(autosaveTimer);autosaveTimer=setTimeout(()=>{
-  saveNow().catch(error=>{if(!saveConflict)notice('Autosave failed: '+error.message);});
+  saveNow().catch(error=>{saveFailed=true;reportEditState();if(!saveConflict)notice('Autosave failed: '+error.message);});
  },Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));
 }
 // The open file is shared with agents: pick up their edits (file revision), no background solve.
 async function pollFile(force=false){
+ reportEditState();  // on the file poll's own cadence (canvasPolicy.file_poll_ms)
+ beat();refreshOrphanDrafts();  // this window's heartbeat; a crashed window's draft becomes recoverable
  const navigation=fileNavigation;
  if(force&&localDirty)await flushAutosave();
  if(!sessionDocument||localDirty||!force&&document.hidden||navigation!==fileNavigation)return;
@@ -1836,7 +2004,9 @@ async function adoptFile(document,path='',navigation=++fileNavigation,recoveredD
   if(recoveredDraft!==JSON.stringify(sessionDocument))throw Error('Your draft changed during recovery. Choose again to keep the latest edits.');
   saveConflict=null;savedConflictDraft=null;publish({canvasSaveConflict:''});notice('');
  }
- sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();if(recoveredDraft===null)queueAutosave();return state.graph;
+ sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();if(recoveredDraft===null)queueAutosave();
+ refreshLiveUpdatePolicy();  // an older workflow shows the updater's real settings, not its stored copy
+ return state.graph;
 }
 async function flushAutosave(){
  refuseUnresolvedSave();
@@ -1855,6 +2025,11 @@ api.resolveSaveConflict=async keep=>{
    await sessionRequest('save',{document:draft,save_as:true,conflict_copy_of:path});
    savedConflictDraft=snapshot;
   }
+  // Durable, server-side and before any reload: this page's entry for the file is resolved (copy kept or
+  // changes discarded), including a failed-save state. A later genuine edit reports dirty again with a newer number.
+  saveFailed=false;
+  await sessionRequest('edit_state',{view:editView,file:path,seq:++editSeq,unsaved:false,resolved:keep?'keep':'discard'});
+  reportedEditState=false;reportedEditFile=path;
   const opened=await sessionRequest('open',{path});
   return await adoptFile(opened.document,opened.path,navigation,snapshot);
  }catch(error){
@@ -1862,6 +2037,7 @@ api.resolveSaveConflict=async keep=>{
   return {ok:false};
  }finally{
   resolvingSaveConflict=false;publish({canvasSaveResolving:false});
+  reportEditState();  // Keep or Discard releases this page's own entry only
  }
 };
 api.newSession=async title=>{
@@ -1958,6 +2134,8 @@ api.setNodeParam=async(id,key,value)=>{
  if(!sessionDocument.nodes.some(n=>n.id===id)&&systemProjection?.nodes.some(n=>n.id===id)){try{await commands.adopt(systemProjection);const result=await nodeProperty(id,key,value);systemProjection=commands.getSnapshot().canvas;publish({systemRevision:(state.systemRevision||0)+1});return result;}finally{projectFile();}}
  const held=sessionDocument.nodes.find(n=>n.id===id);
  if(held?.type==='thing.setting'&&held.params.setting&&key==='value'){await api.setSetting(held.params.setting,value);return state.graph.nodes.find(n=>n.id===id);}
+ // The Workshop node's update parameters are the Settings owner's values: an explicit edit writes that owner first.
+ if(held&&held.params?.tool==='workshop'&&UPDATE_POLICY_KEYS.includes(key))await api.setApplicationSetting(key,value);
  if(held&&(held.type==='param.value'||(held.paramDefs||[]).some(d=>d.id===key))){await paramOp('set',[id,key,value]);return state.graph.nodes.find(n=>n.id===id);}
  fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(!n||!Object.hasOwn(n.params,key))throw Error('Parameter is absent');n.params[key]=value;},[id],{node:id,key,value});return state.graph.nodes.find(n=>n.id===id);};
 async function paramOp(op,args){

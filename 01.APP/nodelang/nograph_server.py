@@ -222,6 +222,8 @@ class NoGraphServer:
             return 'An automation is running; the update waits for it to finish.'
         if self._chat_turns:
             return 'A chat answer is still arriving; the update waits for it to finish.'
+        if getattr(self, '_unsaved_views', None):
+            return 'A canvas has unsaved changes or an unresolved save conflict; save or choose Keep/Discard first.'
         return None
 
     # -- lifecycle (same surface the launcher used) ------------------------
@@ -944,13 +946,52 @@ def _action(req, default=None):
     return body.get('action', default), body
 
 
+def record_edit_state(s, body):
+    """One Studio view's report: does it hold an unsaved edit, a failed save or an unresolved Keep/Discard?
+
+    Kept per view and file, so one view's clean report never clears another view's draft. Each view numbers
+    its reports; an older number than the last one seen is refused, so a late clean report cannot undo a
+    newer dirty one. busy_reason holds every automatic update restart while any entry is dirty.
+    """
+    view, path, seq = body.get('view'), body.get('file') or '', body.get('seq')
+    if type(view) is not str or not view or type(path) is not str or type(seq) is not int or isinstance(seq, bool):
+        raise Refused('An edit report needs its view, file and sequence number.', 400)
+    lock = s.__dict__.setdefault('_edit_lock', threading.Lock())
+    with lock:
+        seen = s.__dict__.setdefault('_edit_seq', {})
+        dirty = s.__dict__.setdefault('_unsaved_views', set())
+        if seq <= seen.get(view, -1):
+            return {'ok': True, 'accepted': False, 'reason': 'stale report', 'unsaved': bool(dirty)}
+        seen[view] = seq
+        retired = body.get('retire')
+        if type(retired) is str and retired and retired != view:
+            # The same browser tab reloaded: its previous page is gone and this page now speaks for it
+            # (a recovered draft is reported dirty by this page itself). Never a silent drop of a live page.
+            for stale in [entry for entry in dirty if entry[0] == retired]:
+                dirty.discard(stale)
+            seen[retired] = float('inf')  # nothing late from the old page can re-add an entry
+        key = (view, path)
+        if body.get('unsaved') is True:
+            dirty.add(key)
+        else:
+            dirty.discard(key)
+        resolves = body.get('resolves')
+        if type(resolves) is str and resolves and resolves != view and body.get('resolved') in ('keep', 'discard'):
+            # A later view durably recovered and kept (or explicitly discarded) THAT page's exact draft. Only this
+            # releases a closed page's hold: a clean save of the same file elsewhere may carry different edits.
+            dirty.discard((resolves, path))
+        return {'ok': True, 'accepted': True, 'unsaved': bool(dirty)}
+
+
 def r_session_files(s, req):
     from .canvas_documents import CanvasSaveConflict
     from .session_files import SessionFiles
     from .enforce import guard_effect
+    action = (req.body or {}).get('action')
+    if action == 'edit_state':
+        return record_edit_state(s, req.body or {})
     if s.is_halted():
         raise Refused('Stopped by you. Press Resume to continue.', 403)
-    action = (req.body or {}).get('action')
     canvas_job = action in ('run', 'solve')
     if canvas_job:
         s._canvas_jobs = getattr(s, '_canvas_jobs', 0) + 1
@@ -1895,6 +1936,29 @@ def r_settings_action(s, req):
             if path:
                 moved = set_sessions_directory(path)
         return {'ok': True, 'result': {'sessionsFolder': str(sessions_directory()), 'moved': moved}}
+    if function == 'readUpdatePolicySettings':
+        # What the updater really uses for each update setting: the saved value, else its catalogue default.
+        from . import application_update as update_owner
+        from .pipeline_engines import UPDATE_POLICY_SETTINGS
+        from .settings_owner import _APPLICATION_SETTING_SPECS, _application_setting_default
+        saved = update_owner.saved_application_settings(s.state_dir)
+        effective = {}
+        for key in UPDATE_POLICY_SETTINGS:
+            value = saved.get(key, _application_setting_default(key))
+            effective[key] = bool(value) if _APPLICATION_SETTING_SPECS[key][0] == 'boolean' else value
+        return {'ok': True, 'result': effective}
+    if function in ('readApplicationSettings', 'setApplicationSetting'):
+        # The Workshop settings the policy reads (application_update.saved_application_settings): one owner,
+        # settings/settings.json. A value outside its Settings spec is refused, never stored.
+        from .application_update import save_application_setting, saved_application_settings
+        if function == 'setApplicationSetting':
+            if len(args) != 2:
+                raise Refused('Choose one Workshop setting and its value.')
+            try:
+                save_application_setting(args[0], args[1], s.state_dir)
+            except ValueError as refused:
+                raise Refused(str(refused)) from None
+        return {'ok': True, 'result': saved_application_settings(s.state_dir)}
     if function in ('readCanvasTabs', 'setCanvasTabs'):
         from .settings_owner import canvas_tabs
         return {'ok': True, 'result': canvas_tabs(function, args, settings)}

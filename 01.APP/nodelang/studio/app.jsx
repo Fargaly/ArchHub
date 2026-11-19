@@ -543,6 +543,16 @@
             }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && route !== 'home' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} taskId={route === 'home' ? homeThreadId : task} />
+  {!s.canvasSaveConflict && s.orphanDrafts?.length > 0 && <div role="alert" style={{position: 'fixed', top: 100, left: '50%',
+        transform: 'translateX(-50%)', maxWidth: '70vw', border: '1px solid ' + A.line, borderRadius: 10, background: '#24242b',
+        padding: '12px 18px', zIndex: 201, boxShadow: '0 8px 30px #0008', display: 'grid', gap: 8}}>
+      <span>Unsaved changes from a closed ArchHub window in {s.orphanDrafts[0].file || 'an unsaved canvas'}. Updates wait until you choose.</span>
+      {s.orphanDraftError && <span>{s.orphanDraftError}</span>}
+      <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+        <Btn sm onClick={event => executeAction('ui.select', () => api.resolveOrphanDraft(s.orphanDrafts[0].view, true), event)}>Keep those changes as a copy</Btn>
+        <Btn sm ghost onClick={event => executeAction('ui.select', () => api.resolveOrphanDraft(s.orphanDrafts[0].view, false), event)}>Discard those changes</Btn>
+      </div>
+    </div>}
   {(s.canvasSaveConflict || toast) && <div role="alert" className="flex" style={{
         position: 'fixed',
         top: 100,

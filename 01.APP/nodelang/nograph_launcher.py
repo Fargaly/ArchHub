@@ -158,7 +158,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         # Restart, Quit-install and idle/tray auto-install all ask this first; live work is never interrupted.
         server.application_update = ApplicationUpdate(Path(state_dir), app_root, request_restart=request_restart,
                                                       report=lambda line: print('  update     : ' + line, flush=True),
-                                                      restart_refusal=lambda: _update_refusal(server))
+                                                      restart_refusal=lambda: _update_refusal(server, state_dir, app_root))
     except Exception as refusal:  # noqa: BLE001 - updates say unavailable, the app still opens
         print('  update     : unavailable (%s: %s)' % (type(refusal).__name__, refusal), flush=True)
 
@@ -266,11 +266,9 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         tray = QSystemTrayIcon(icon, app)
         app.setQuitOnLastWindowClosed(False)
         def install_on_close():
-            update = server.application_update
-            if update is None:
-                return False
-            from .application_update import canvas_job_running
-            return update.install_if_safe(closing=True, canvas_running=canvas_job_running(server))
+            # Never closes here: the next update tick asks the live page for unsaved work first.
+            QTimer.singleShot(0, consider_update)
+            return False
         stay = CloseToTray(window, tray, app.quit, Path(state_dir) / 'tray-notice-shown', install_on_close)
         quit_app = stay.quit
         open_window = show_home
@@ -359,8 +357,17 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             from .application_update import canvas_job_running
             # Idle installs while the window is open. Closed to the tray installs
             # on the next tick, including a download that was not ready at the close.
-            update.install_if_safe(closing=seen_open["value"] and not window.isVisible(),
-                                   canvas_running=canvas_job_running(server))
+            # A build already refused is left alone: no close, no relaunch, until a newer one or Retry.
+            if not _auto_install_held(state_dir):
+                closing = seen_open["value"] and not window.isVisible()
+
+                def answered(live):
+                    # Reconciled with the live Studio right before an automatic close: only a page that answers
+                    # "nothing unsaved" lets it go on. No answer (a busy or broken page) holds the install.
+                    if _live_page_clean(live):
+                        update.install_if_safe(closing=closing, canvas_running=canvas_job_running(server))
+                view.page().runJavaScript(
+                    "window.__archhubEditState ? window.__archhubEditState() : null", answered)
             if QSystemTrayIcon.isSystemTrayAvailable():
                 show_restart_item()
         except Exception as error:  # noqa: BLE001 - a failed check is shown, the window stays
@@ -394,9 +401,37 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     return code
 
 
-def _update_refusal(server):
-    """Why an update must wait: only the NoGraph server's own live work (chat turns, canvas runs, automations)."""
-    return server.busy_reason()
+def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, desktop_pids=None):
+    """Why an update must not close the Studio now; None when it may.
+
+    First the NoGraph server's own live work (chat turns, canvas runs, automations). Then whether the
+    install would be refused before Setup: then the Studio is never closed, and the refusal is recorded
+    so automatic installs leave this build alone until a newer one or the user's own Retry.
+    """
+    busy = server.busy_reason()
+    if busy or state_dir is None:
+        return busy
+    from .quiet_update import hold_auto_install, preflight_refusal
+    if desktop_pids is None:
+        import psutil
+        me = psutil.Process()
+        desktop_pids = {me.pid, *(p.pid for p in me.parents()), *(p.pid for p in me.children(recursive=True))}
+    refusal = (preflight or preflight_refusal)(Path(app_root), desktop_pids=desktop_pids)
+    if refusal:
+        hold_auto_install(Path(state_dir), refusal)
+        return "The update would be refused (%s); ArchHub stays open." % refusal
+    return None
+
+
+def _live_page_clean(live):
+    """The live Studio's own answer: True only for an explicit 'nothing unsaved'."""
+    return isinstance(live, dict) and live.get('unsaved') is False
+
+
+def _auto_install_held(state_dir):
+    """A refused build is not tried again automatically (the minute-by-minute close/reopen loop)."""
+    from .quiet_update import auto_install_held
+    return auto_install_held(Path(state_dir))
 
 
 def _apply_staged_after_quit(app_root, *, relaunch=False, tray=False):
@@ -419,7 +454,7 @@ def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch, 
     if update is None:
         return
     try:
-        if relaunch or update.apply_on_quit():
+        if relaunch or (not _auto_install_held(state_dir) and update.apply_on_quit()):
             # Canvas files and settings are not installer payloads; the updater
             # verifies the installer under its existing exclusive lock.
             if instance_lock is not None:

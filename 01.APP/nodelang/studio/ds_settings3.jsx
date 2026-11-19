@@ -37,6 +37,8 @@
   "settings.ds_settings3.SettingsAction12": "SettingsAction12",
   "settings.ds_settings3.SettingsAction13": "SettingsAction13",
   "settings.ds_settings3.SettingsAction14": "SettingsAction14",
+  "settings.ds_settings3.UpdatesAutoInstall": "UpdatesAutoInstall",
+  "settings.ds_settings3.UpdatesSettingRetry": "UpdatesSettingRetry",
   "settings.ds_settings3.SettingsAction15": "SettingsAction15",
   "settings.ds_settings3.SettingsAction16": "SettingsAction16",
   "settings.ds_settings3.SettingsAction17": "SettingsAction17",
@@ -257,12 +259,13 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
     }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<window.UI.Soon label="Cloud backup — coming"><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></window.UI.Soon></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
   // The one update card: current build, update state and Check for updates (api.checkForUpdates).
-  function UpdateCard({runAction}) {
+  function UpdateCard({runAction, autoInstall}) {
     const s = useData();
     return <Card style={{
             padding: 16
           }}><div className="spread"><div><h2>ArchHub</h2><p className="muted">{s.update.installed || 'Installed build unavailable'}</p></div>{s.update.available ? <Btn p onClick={event => runAction('settings.ds_settings3.SettingsAction8', event)}>Update</Btn> : <Chip c={s.update.state === 'idle' ? A.ok : A.warn}>{s.update.state === 'idle' ? s.update.detail : s.update.detail || 'Update status unavailable'}</Chip>}</div>
           {s.update.restartRefusal && <p role="alert">{s.update.restartRefusal}</p>}
+          {autoInstall !== undefined && <label className="spread" data-setting="Updates.Install automatically" style={{marginTop: 12}}><span>Install updates automatically when I am away or ArchHub is in the tray</span><input type="checkbox" aria-label="Install updates automatically" disabled={autoInstall === null} checked={!!autoInstall} onChange={event => runAction('settings.ds_settings3.UpdatesAutoInstall', event.target.checked, event)} /></label>}
           {s.update.updatedTo && <div role="status" className="spread"><span>Updated {s.update.updatedFrom || 'ArchHub'} → {s.update.updatedTo}</span><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction9', event)}>Dismiss update confirmation</Btn></div>}
           <div className="flex" style={{
               marginTop: 12,
@@ -272,7 +275,28 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
   // Settings → System → Updates: the update card with its own action owner, so its failure shows here.
   function UpdatesPage() {
     const u = useApp();
+    // The same stored value the Workshop node's update_auto_apply_on_quit parameter edits; the update policy reads it.
+    const [autoInstall, setAutoInstall] = React.useState(null);
+    const [load, setLoad] = React.useState('waiting');
+    const readSaved = React.useCallback(() => {
+      setLoad('waiting');
+      return api.getApplicationSettings().then(saved => {
+        setAutoInstall(saved.update_auto_apply_on_quit !== false);
+        setLoad(Object.keys(saved).length ? 'loaded' : 'empty');
+      }, error => {
+        setAutoInstall(null);
+        setLoad('error');
+        throw error;
+      });
+    }, []);
+    React.useEffect(() => { readSaved().catch(error => console.warn('Update setting unreadable:', error.message)); }, [readSaved]);
     const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {
+      UpdatesSettingRetry: () => u.act(readSaved),
+      UpdatesAutoInstall: next => u.act(async () => {
+        const saved = await api.setApplicationSetting('update_auto_apply_on_quit', next);
+        setAutoInstall(saved.update_auto_apply_on_quit !== false);
+        return saved;
+      }),
       SettingsAction8: () => u.show('Update'),
       SettingsAction9: () => u.act(api.acknowledgeUpdate),
       SettingsAction10: () => u.act(api.checkForUpdates),
@@ -281,7 +305,12 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       SettingsAction13: () => u.go('docs'),
       SettingsAction14: () => u.go('feedback')
     });
-    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><UpdateCard runAction={runAction} /></>;
+    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} />
+      {load === 'waiting' && <p className="muted">Reading your update setting…</p>}
+      {load === 'error' && <p role="alert">Your update setting could not be read. <Btn sm onClick={event => runAction('settings.ds_settings3.UpdatesSettingRetry', event)}>Retry</Btn></p>}
+      {load === 'empty' && <p className="muted">Automatic updates use the default (on) until you change them below.</p>}
+      {load === 'loaded' && <p className="muted">Automatic updates are {autoInstall ? 'on' : 'off'}.</p>}
+      <UpdateCard runAction={runAction} autoInstall={load === 'loaded' || load === 'empty' ? autoInstall : undefined} /></>;
   }
   function AdvancedSettings({
     page = 'Account',

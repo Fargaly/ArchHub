@@ -15,9 +15,58 @@ _NOT_NEWER = "The offered build is not newer than the installed build; no update
 SEEN_BUILD = "last-seen-build"
 
 
-def default_update_policy():
+APPLICATION_SETTINGS = "applicationSettings"  # settings/settings.json: the Workshop settings the user saved
+
+
+def saved_application_settings(state_dir=None) -> dict:
+    """The user's saved Workshop settings (settings/settings.json), each checked against its Settings spec.
+
+    A value outside its spec, or an unreadable file, falls back to the catalogue default for that key.
+    """
+    import json
+    from .settings_owner import _APPLICATION_SETTING_SPECS
+    from .user_paths import state_directory
+    try:
+        root = Path(state_dir) if state_dir is not None else state_directory()
+        saved = json.loads((root / "settings" / "settings.json").read_text(encoding="utf-8")).get(APPLICATION_SETTINGS)
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if not isinstance(saved, dict):
+        return {}
+    kept = {}
+    for key, value in saved.items():
+        editor, bounds = _APPLICATION_SETTING_SPECS.get(key, (None, None))
+        if editor == "boolean" and type(value) is bool:
+            kept[key] = value
+        elif editor == "number" and type(value) is int and bounds["min"] <= value <= bounds["max"]:
+            kept[key] = value
+    return kept
+
+
+def save_application_setting(key, value, state_dir=None) -> dict:
+    """Store one Workshop setting in its one owner file; the Settings row and the node parameter both call this.
+
+    Refuses a key without a Settings spec or a value outside it (nothing is stored). Returns all saved values.
+    """
+    from .nograph_server import JsonFile
+    from .settings_owner import _APPLICATION_SETTING_SPECS
+    from .user_paths import state_directory
+    editor, bounds = _APPLICATION_SETTING_SPECS.get(key, (None, None))
+    if not ((editor == "boolean" and type(value) is bool)
+            or (editor == "number" and type(value) is int and bounds["min"] <= value <= bounds["max"])):
+        raise ValueError("%s must be %s within its Settings bounds." % (key, editor or "a known Workshop setting"))
+    root = Path(state_dir) if state_dir is not None else state_directory()
+    owner = JsonFile(root / "settings" / "settings.json", {"settingsScope": "User"})
+    current = owner.read()
+    saved = current.get(APPLICATION_SETTINGS) if isinstance(current.get(APPLICATION_SETTINGS), dict) else {}
+    owner.write({**current, APPLICATION_SETTINGS: {**saved, key: value}})
+    return saved_application_settings(root)
+
+
+def default_update_policy(state_dir=None):
+    """The update policy: the user's saved Settings value for each key, else the catalogue default."""
     from .library_engines import LIBRARY_ITEM_ENGINES
-    params = LIBRARY_ITEM_ENGINES["tool_workshop"]["params"]
+    params = {**LIBRARY_ITEM_ENGINES["tool_workshop"]["params"], **saved_application_settings(state_dir)}
     return {"check_interval_minutes": int(params["update_check_interval_minutes"]),
             "idle_minutes": int(params["update_idle_minutes"]),
             "auto_apply_on_quit": bool(params["update_auto_apply_on_quit"]),
@@ -28,7 +77,7 @@ def canvas_job_running(owner) -> bool:
     """True while a canvas run or a Workshop job still holds the desktop."""
     if owner is None:
         return False
-    if restart_block_reason(owner):
+    if restart_block_reason(owner) or getattr(owner, "_unsaved_views", None):
         return True
     if getattr(owner, "_canvas_jobs", 0):
         return True
@@ -188,7 +237,7 @@ class ApplicationUpdate:
             initial_stage = _remembered_stage(self.state_dir)
         initial_stage = _current_stage(initial_stage, self.app_dir, installed)
         self._request_restart = request_restart
-        self._policy = policy or default_update_policy
+        self._policy = policy or (lambda: default_update_policy(self.state_dir))
         self._restart_refusal = restart_refusal
         self._next_check = 0.0
         self.confirmed_build = None

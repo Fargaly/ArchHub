@@ -69,6 +69,10 @@ def _local_input_path(path: str, *, label: str) -> str:
     return text
 
 
+UPDATE_POLICY_SETTINGS = ("update_check_interval_minutes", "update_idle_minutes", "update_auto_apply_on_quit",
+                          "update_preview_channel")  # read by application_update.default_update_policy
+
+
 def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
     """A tool node is its settings surface as graph parameters."""
     tool = str(params.get("tool") or "").strip()
@@ -113,10 +117,15 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'update_auto_apply_on_quit': params.get('update_auto_apply_on_quit'),
             'update_preview_channel': params.get('update_preview_channel'),
         }
+        from .application_update import saved_application_settings
+        saved = saved_application_settings()
         for key, supplied in values.items():
             value = feeds[key] if key in feeds else supplied
-            if value is None:
-                value = _application_setting_default(key)
+            if value is None or key in UPDATE_POLICY_SETTINGS:
+                # The update settings are one value in one owner file (spec 4.3): the node shows the live
+                # Settings owner, never a copy saved in an older workflow. An explicit edit of the parameter
+                # writes the owner (api.setNodeParam -> setApplicationSetting); running the node never does.
+                value = saved.get(key, _application_setting_default(key))
             editor, bounds = _APPLICATION_SETTING_SPECS[key]
             if editor == 'boolean':
                 if type(value) not in (bool, int) or value not in (0, 1):

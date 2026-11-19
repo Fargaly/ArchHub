@@ -735,6 +735,23 @@ def _failure(exc, **extra):
     return {"staged": False, "build_id": "", "status": "unavailable", "reason": str(exc), **extra}
 
 
+def auto_install_held(state_dir: Path) -> str:
+    """Why the staged build may not be installed automatically again; "" when it may.
+
+    Set when an apply was refused before Setup. Without it the desktop saw the same
+    staged build as ready again, closed, was refused, reopened, and repeated every minute.
+    Metadata only: the installer is not hashed here, so the desktop may ask on every tick.
+    """
+    try:
+        data = _read_stage_marker(Path(state_dir) / "updates")
+    except FileNotFoundError:
+        return ""
+    except (OSError, ValueError) as exc:
+        return "update marker unreadable (%s)" % type(exc).__name__
+    held = data.get("auto_held")
+    return held if data.get("phase", "staged") == "staged" and isinstance(held, str) and held else ""
+
+
 def staged_update(state_dir: Path, app_dir: Path) -> dict:
     """Verify candidates; confirmed current builds use metadata only, never apply."""
     try:
@@ -851,6 +868,61 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
 _LAUNCHER_HOLDS_INSTALL = "An in-folder launcher must release the install before Setup"
 
 
+def _install_processes(root, process_iter=None):
+    """(process, pid, executable) for each process the install-folder stop would consider."""
+    import psutil
+    for process in (process_iter or psutil.process_iter)(["pid", "exe"]):
+        try:
+            pid = process.info.get("pid")
+            exe = process.info.get("exe")
+            executable = Path(exe).resolve() if exe else None
+        except (psutil.Error, OSError, ValueError):
+            continue
+        if executable and executable.is_relative_to(root):
+            yield process, pid, executable
+
+
+def _can_terminate(pid) -> bool:
+    """Ask Windows for the right to end the process without ending it (OpenProcess, PROCESS_TERMINATE)."""
+    if os.name != "nt":
+        return True
+    import ctypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel.OpenProcess(0x0001, False, int(pid))
+    if not handle:
+        return False
+    kernel.CloseHandle(ctypes.c_void_p(handle))
+    return True
+
+
+def preflight_refusal(app_dir: Path, *, desktop_pids, process_iter=None, can_terminate=None) -> str:
+    """Why an install started now would be refused before Setup; "" when nothing is known to refuse it.
+
+    Asked by the desktop before it closes for an automatic install, so a refusal keeps the Studio open.
+    The desktop's own processes are left out: they end when it closes. Nothing is stopped or signalled.
+    """
+    can_terminate = can_terminate or _can_terminate
+    for _process, pid, _executable in _install_processes(Path(app_dir).resolve(), process_iter):
+        if pid not in desktop_pids and not can_terminate(pid):
+            return "runtime process %d refused termination" % pid
+    return ""
+
+
+def hold_auto_install(state_dir: Path, reason: str) -> bool:
+    """Record that the staged build is not installed automatically again. True when recorded."""
+    try:
+        with _locked(state_dir) as updates:
+            data = _read_stage_marker(updates)
+            if data.get("phase", "staged") != "staged":
+                return False
+            _marker(updates, {**data, "auto_held": str(reason)[:512]})
+            return True
+    except (OSError, ValueError) as exc:
+        append_update_log(state_dir, "update: error hold not recorded (%s)" % exc)
+        return False
+
+
 def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: float = 5.0) -> list:
     """Stop every other process started from the install folder before the installer copies.
 
@@ -865,14 +937,8 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
     updater = psutil.Process()
     ancestors = [ancestor.pid for ancestor in updater.parents()]
     candidates = []
-    for process in (process_iter or psutil.process_iter)(["pid", "exe"]):
-        try:
-            pid = process.info.get("pid")
-            exe = process.info.get("exe")
-            executable = Path(exe).resolve() if exe else None
-        except (psutil.Error, OSError, ValueError):
-            continue
-        if pid == updater.pid or not executable or not executable.is_relative_to(root):
+    for process, pid, executable in _install_processes(root, process_iter):
+        if pid == updater.pid:
             continue
         if pid in ancestors:
             if (os.name == "nt" and pid == ancestors[0] and executable.parent == root / ".venv" / "Scripts"
@@ -939,7 +1005,12 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                 try:
                     stop_runtime(Path(app_dir))
                 except (OSError, ValueError) as exc:
+                    if str(exc) != _LAUNCHER_HOLDS_INSTALL:  # that one clears by itself within seconds
+                        # Refused before Setup: this candidate is not installed automatically again.
+                        # A new build or the user's own Retry re-arms it (hold_auto_install).
+                        _marker(updates, {**data, "phase": "staged", "auto_held": str(exc)[:512]})
                     return {**data, "applied": False, "status": "failed", "reason": str(exc)}
+            data.pop("auto_held", None)
             _discard_rollback_copy(updates)
             _marker(updates, {**data, "phase": "applying"})
             attempted_build = data["build_id"]

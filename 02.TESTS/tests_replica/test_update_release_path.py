@@ -95,7 +95,8 @@ def test_update_checks_windows_venv_redirector_before_setup(tmp_path, safe):
         assert evidence.read_text(encoding="utf-8") == "Setup reached once"
     else:
         assert not evidence.exists()
-    assert qu.staged_update(state, app)["status"] == "staged"
+    # A Setup that ran and failed is recorded (never rerun at every start); a refusal before Setup stays staged.
+    assert qu.staged_update(state, app)["status"] == ("rolled_back" if safe else "staged")
 
 
 @pytest.mark.parametrize("denied", [True, False])
@@ -900,3 +901,351 @@ def test_a_tray_start_never_shows_the_window(arguments, tray_available, shown):
     window = SimpleNamespace(show=lambda: calls.append("show"))
     assert _show_unless_tray(window, arguments, tray_available) is (not shown)
     assert calls == (["show"] if shown else [])
+
+
+def _held_fixture(tmp_path):
+    release = _build_output(tmp_path / "release", "20261120-0100-aaaaaaa", "2026-11-19T21:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20261119-0904-665c785", "2026-11-19T05:04:00Z")
+    state = tmp_path / "state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"] is True
+    return app, state
+
+
+def _ticking_desktop(state, app, preflight, restarts):
+    """The desktop's update pulse, as nograph_launcher.consider_update runs it once a minute."""
+    import threading
+    from nodelang.application_update import ApplicationUpdate
+    from nodelang.nograph_launcher import _auto_install_held, _update_refusal
+
+    server = SimpleNamespace(busy_reason=lambda: None)
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update.state_dir, update.app_dir = state, app
+    update._closed, update._state, update._worker, update._lock = False, "ready", None, threading.RLock()
+    update._prerelease, update._available, update._restart_reason = False, "20261120-0100-aaaaaaa", ""
+    update._policy = lambda: {"auto_apply_on_quit": True, "idle_minutes": 15}
+    update._request_restart = lambda: restarts.append("closed the Studio")
+    update._restart_refusal = lambda: _update_refusal(server, state, app, preflight=preflight, desktop_pids=set())
+
+    def tick():
+        if not _auto_install_held(state):
+            update.install_if_safe(closing=True, canvas_running=False)
+    return tick
+
+
+def test_the_minute_by_minute_close_reopen_loop_cannot_happen(tmp_path):
+    """Field defect (installed 0904, launcher.log 19:57-20:11): the install was refused before Setup, the
+    marker stayed "staged", the Studio read "ready" again and closed itself every minute.
+    Now the refusal is seen before the close and recorded: zero closes over ten ticks."""
+    app, state = _held_fixture(tmp_path)
+    restarts, scans = [], []
+
+    def refusing_preflight(_app, *, desktop_pids):
+        scans.append(1)
+        return "runtime process 420 refused termination"
+
+    tick = _ticking_desktop(state, app, refusing_preflight, restarts)
+    for _minute in range(10):
+        tick()
+    assert restarts == []                               # the Studio was never closed
+    assert len(scans) == 1                              # refused once, then left alone without rescanning
+    assert qu.auto_install_held(state) == "runtime process 420 refused termination"
+    assert qu.staged_update(state, app)["status"] == "staged"   # the verified package is kept for Retry
+
+
+def test_a_refusal_inside_the_installer_step_also_holds_the_build(tmp_path):
+    app, state = _held_fixture(tmp_path)
+
+    def refused(_directory):
+        raise OSError("runtime process 420 refused termination")
+
+    result = qu.apply_staged(state, app, runner=lambda *a, **k: pytest.fail("Setup ran"), stop_runtime=refused)
+    assert result["applied"] is False and qu.auto_install_held(state) == "runtime process 420 refused termination"
+    # The in-folder launcher that is still exiting clears by itself: never a hold.
+    app2, state2 = _held_fixture(tmp_path / "second")
+
+    def still_exiting(_directory):
+        raise ValueError(qu._LAUNCHER_HOLDS_INSTALL)
+
+    qu.apply_staged(state2, app2, runner=lambda *a, **k: pytest.fail("Setup ran"), stop_runtime=still_exiting)
+    assert qu.auto_install_held(state2) == ""
+
+
+def test_only_a_newer_build_or_the_users_retry_re_arms_a_held_build(tmp_path):
+    app, state = _held_fixture(tmp_path)
+    assert qu.hold_auto_install(state, "runtime process 420 refused termination") is True
+    # Retry (the user's own Update / Restart to update) is not blocked by the hold and clears it once it gets past.
+    calls = []
+    retried = qu.apply_staged(state, app, runner=lambda argv, **k: calls.append(argv) or SimpleNamespace(returncode=1),
+                              stop_runtime=lambda _d: None)
+    assert calls and "auto_held" not in json.loads((state / "updates" / "staged.json").read_text(encoding="utf-8"))
+    assert retried["applied"] is False  # this fixture's Setup fails: recorded as failed, still not auto-retried
+    # A newer build replaces the held one and is offered normally.
+    app3, state3 = _held_fixture(tmp_path / "third")
+    qu.hold_auto_install(state3, "deferred")
+    newer = _build_output(tmp_path / "third" / "release2", "20261121-0100-bbbbbbb", "2026-11-20T21:00:00Z")
+    assert qu.stage_if_newer(state3, app3, opener=_local_github(newer))["staged"] is True
+    assert qu.auto_install_held(state3) == ""
+
+
+def test_preflight_predicts_the_pid_420_refusal_without_touching_any_process(tmp_path, monkeypatch):
+    app = (tmp_path / "ArchHub").resolve()
+    app.mkdir()
+    monkeypatch.chdir(app)  # ArchHub.vbs sets this; the current selector resolves bare names here
+    processes = [SimpleNamespace(info={"pid": 420, "exe": "Registry"}),
+                 SimpleNamespace(info={"pid": 9001, "exe": str(app / ".venv" / "Scripts" / "pythonw.exe")})]
+    asked = []
+
+    def can_terminate(pid):
+        asked.append(pid)
+        return pid != 420
+
+    assert qu.preflight_refusal(app, desktop_pids={9001}, process_iter=lambda _a: processes,
+                                can_terminate=can_terminate) == "runtime process 420 refused termination"
+    assert asked == [420]  # the desktop's own process is never asked about
+    assert qu.preflight_refusal(app, desktop_pids={9001}, process_iter=lambda _a: processes[1:],
+                                can_terminate=lambda _pid: pytest.fail("asked")) == ""
+
+
+def test_an_unresolved_save_conflict_holds_the_automatic_restart_until_keep_or_discard(tmp_path):
+    """Codex fixture, installed 0904: two edits on one socket, the remote one saved, the local wire held
+    behind Keep/Discard; canvas_job_running read False and the idle restart dropped the local wire."""
+    import threading
+    from nodelang.application_update import ApplicationUpdate, UpdateRestartRefused, canvas_job_running
+    from nodelang.nograph_launcher import _update_refusal
+    from nodelang.nograph_server import NoGraphServer, r_session_files
+
+    app, state = _held_fixture(tmp_path)
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    server.busy_reason = lambda: NoGraphServer.busy_reason(server)
+    restarts = []
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update.state_dir, update.app_dir = state, app
+    update._closed, update._state, update._worker, update._lock = False, "ready", None, threading.RLock()
+    update._prerelease, update._available, update._restart_reason = False, "20261120-0100-aaaaaaa", ""
+    update._updated, update._detail, update.confirmed_build = None, "", None
+    update._policy = lambda: {"auto_apply_on_quit": True, "idle_minutes": 15}
+    update._request_restart = lambda: restarts.append("closed the Studio")
+    update._restart_refusal = lambda: _update_refusal(server, state, app, preflight=lambda _a, desktop_pids: "",
+                                                      desktop_pids=set())
+
+    def report(view, seq, unsaved, path="C:/work/flow.archhub"):
+        return r_session_files(server, SimpleNamespace(body={"action": "edit_state", "view": view, "file": path,
+                                                              "seq": seq, "unsaved": unsaved}))
+
+    report("view-1", 1, True)                # local wire unsaved, Keep/Discard alert open
+    assert canvas_job_running(server) is True
+    assert update.install_if_safe(closing=False, canvas_running=canvas_job_running(server), user_idle=True) is False
+    assert update.install_if_safe(closing=True, canvas_running=False, user_idle=True) is False  # refusal also holds it
+    assert restarts == []
+    with pytest.raises(UpdateRestartRefused, match="unsaved changes"):
+        update.reload()                      # a manual Restart says why instead of dropping the edit
+    # Codex v2 (a): a second, clean view must not clear the first view's draft.
+    report("view-2", 1, False)
+    assert canvas_job_running(server) is True and restarts == []
+    # A late, older report from the first view cannot undo its newer dirty one.
+    assert report("view-1", 1, False)["accepted"] is False
+    assert canvas_job_running(server) is True
+    report("view-1", 2, False)               # Keep (copy saved) or Discard chosen in view 1 releases view 1 only
+    assert canvas_job_running(server) is False
+    assert update.install_if_safe(closing=False, canvas_running=False, user_idle=True) is True
+    assert restarts == ["closed the Studio"]
+
+
+def test_keep_or_discard_in_one_view_releases_only_its_own_draft():
+    from nodelang.nograph_server import NoGraphServer, record_edit_state
+
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    record_edit_state(server, {"view": "a", "file": "x.archhub", "seq": 1, "unsaved": True})
+    record_edit_state(server, {"view": "b", "file": "y.archhub", "seq": 1, "unsaved": True})
+    record_edit_state(server, {"view": "a", "file": "x.archhub", "seq": 2, "unsaved": False})  # Keep in view a
+    assert "unsaved changes" in NoGraphServer.busy_reason(server)                          # view b still dirty
+    record_edit_state(server, {"view": "b", "file": "y.archhub", "seq": 2, "unsaved": False})
+    assert NoGraphServer.busy_reason(server) is None
+    for bad in ({"view": "", "file": "", "seq": 1}, {"view": "a", "file": "x", "seq": "1"},
+                {"view": "a", "file": "x", "seq": True}):
+        with pytest.raises(Exception, match="view, file and sequence"):
+            record_edit_state(server, bad)
+
+
+def test_keep_my_changes_as_a_copy_then_a_reload_lets_the_update_go_on(tmp_path):
+    """Codex compiled-browser case: Keep as a copy, view reload, both files intact, yet the old page's
+    seq-3 dirty entry for private.archhub held the update forever."""
+    from nodelang.nograph_server import NoGraphServer, record_edit_state
+
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    busy = lambda: NoGraphServer.busy_reason(server)
+    report = lambda body: record_edit_state(server, body)
+    for seq in (1, 2, 3):  # the old page: edit, failed save, unresolved Keep/Discard
+        report({"view": "old-page", "file": "private.archhub", "seq": seq, "unsaved": True})
+    assert "unsaved changes" in busy()
+    # Keep my changes as a copy: the resolution clears this page's own entry, server-side, before any reload.
+    assert report({"view": "old-page", "file": "private.archhub", "seq": 4, "unsaved": False, "resolved": "keep"})["accepted"]
+    assert busy() is None
+    # The reload: the same tab's new page retires the old one; a late old-page report cannot re-add it.
+    report({"view": "new-page", "file": "private.archhub", "seq": 1, "unsaved": False, "retire": "old-page"})
+    assert report({"view": "old-page", "file": "private.archhub", "seq": 5, "unsaved": True})["accepted"] is False
+    assert busy() is None
+    # Genuine unresolved edits still hold: a fresh edit on the new page holds again.
+    report({"view": "new-page", "file": "private.archhub", "seq": 2, "unsaved": True})
+    assert "unsaved changes" in busy()
+
+
+def test_a_reload_before_the_resolution_arrived_also_releases_the_old_page_but_other_tabs_never(tmp_path):
+    from nodelang.nograph_server import NoGraphServer, record_edit_state
+
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    record_edit_state(server, {"view": "tab-a", "file": "x.archhub", "seq": 3, "unsaved": True})
+    record_edit_state(server, {"view": "tab-b", "file": "y.archhub", "seq": 1, "unsaved": True})
+    # Tab A reloads (its draft was saved or recovered by the new page, which reports for itself).
+    record_edit_state(server, {"view": "tab-a2", "file": "x.archhub", "seq": 1, "unsaved": False, "retire": "tab-a"})
+    # Tab B is another tab: a clean report elsewhere never clears it, and a closed tab B keeps holding.
+    record_edit_state(server, {"view": "tab-c", "file": "y.archhub", "seq": 1, "unsaved": False})
+    assert server._unsaved_views == {("tab-b", "y.archhub")}
+    assert "unsaved changes" in NoGraphServer.busy_reason(server)
+
+
+@pytest.mark.parametrize("release", ["keep", "discard"])
+def test_a_closed_tabs_draft_holds_until_that_exact_draft_is_kept_or_discarded(release):
+    """Decision (builder lead + Codex): a clean save or reopen of the same file in another view never settles
+    a closed tab's draft (those can be different wires). Only recovering that exact draft and keeping it,
+    or explicitly discarding it, releases the hold."""
+    from nodelang.nograph_server import NoGraphServer, record_edit_state
+
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    busy = lambda: NoGraphServer.busy_reason(server)
+    record_edit_state(server, {"view": "closed-tab", "file": "private.archhub", "seq": 3, "unsaved": True})
+    # The tab closes. Another view opens the same file clean, edits and saves it cleanly: still held.
+    record_edit_state(server, {"view": "other", "file": "private.archhub", "seq": 1, "unsaved": False, "opened": True})
+    record_edit_state(server, {"view": "other", "file": "private.archhub", "seq": 2, "unsaved": True})
+    record_edit_state(server, {"view": "other", "file": "private.archhub", "seq": 3, "unsaved": False})
+    assert "unsaved changes" in busy()
+    # A resolution that names another page's draft, or a plain clean report, does not release it either.
+    record_edit_state(server, {"view": "other", "file": "private.archhub", "seq": 4, "unsaved": False,
+                               "resolves": "some-other-page", "resolved": release})
+    record_edit_state(server, {"view": "other", "file": "private.archhub", "seq": 5, "unsaved": False,
+                               "resolves": "closed-tab"})                       # no keep/discard: not a resolution
+    assert "unsaved changes" in busy()
+    # Recovering that exact draft and keeping it as a copy (or discarding it) releases it.
+    record_edit_state(server, {"view": "other", "file": "private.archhub", "seq": 6, "unsaved": False,
+                               "resolves": "closed-tab", "resolved": release})
+    assert busy() is None
+
+
+def test_closed_tab_then_recover_then_keep_releases_the_hold_through_the_real_route(tmp_path):
+    """Studio gap closed: the recovery banner's Keep sends exactly this body (api.resolveOrphanDraft) through
+    the real session-files route, naming the closed window's view; a desktop restart is no longer needed."""
+    from nodelang.nograph_server import NoGraphServer, r_session_files
+
+    server = SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=set()), _chat_turns=set())
+    route = lambda body: r_session_files(server, SimpleNamespace(body={"action": "edit_state", **body}))
+    route({"view": "closed-window", "file": "C:/work/private.archhub", "seq": 3, "unsaved": True})
+    # The window closes; a new window opens with its own clean canvas and shows the recovery banner.
+    route({"view": "new-window", "file": "C:/work/other.archhub", "seq": 1, "unsaved": False, "opened": True})
+    assert "unsaved changes" in NoGraphServer.busy_reason(server)
+    # Keep those changes as a copy (the copy is saved first, then this report).
+    route({"view": "new-window", "file": "C:/work/private.archhub", "seq": 2, "unsaved": False,
+           "resolves": "closed-window", "resolved": "keep"})
+    assert NoGraphServer.busy_reason(server) is None
+    # The new window's own later edit of that file still holds as usual.
+    route({"view": "new-window", "file": "C:/work/private.archhub", "seq": 3, "unsaved": True})
+    assert "unsaved changes" in NoGraphServer.busy_reason(server)
+
+
+@pytest.mark.parametrize("live, proceeds", [
+    ({"unsaved": False, "file": "x"}, True),   # the live page answered: nothing unsaved
+    ({"unsaved": True, "file": "x"}, False),   # it has a draft the reports have not shown yet (first edit)
+    (None, False),                              # no answer, an old page or a broken one: never closes
+    ({}, False), ("clean", False),
+])
+def test_the_desktop_closes_only_after_the_live_page_answers_clean(live, proceeds):
+    from nodelang.nograph_launcher import _live_page_clean
+
+    assert _live_page_clean(live) is proceeds
+
+
+def _settings_server(state):
+    from nodelang.nograph_server import JsonFile
+    return SimpleNamespace(state_dir=state, files={
+        "settings": JsonFile(state / "settings" / "settings.json", {"settingsScope": "User"}),
+        "companion": JsonFile(state / "settings" / "companion.json", {})})
+
+
+def _edit_setting(server, key, value):
+    """What the Settings row and an explicit Workshop-node parameter edit both send (api.setApplicationSetting)."""
+    from nodelang.nograph_server import r_settings_action
+    return r_settings_action(server, SimpleNamespace(body={"function": "setApplicationSetting", "args": [key, value]}))
+
+
+def test_turning_auto_update_off_and_on_reaches_the_node_the_row_and_the_policy(monkeypatch, tmp_path):
+    """One value in one owner file: an explicit edit writes it; the node, the row and the policy all read it."""
+    import threading
+    from nodelang.application_update import ApplicationUpdate, default_update_policy, saved_application_settings
+    from nodelang.pipeline_engines import tool_settings
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    server = _settings_server(state)
+    assert default_update_policy()["auto_apply_on_quit"] is True
+    _edit_setting(server, "update_auto_apply_on_quit", False)                          # OFF
+    assert saved_application_settings() == {"update_auto_apply_on_quit": False}
+    assert default_update_policy()["auto_apply_on_quit"] is False
+    assert tool_settings({"tool": "workshop"}, {})[0]["out"]["update_auto_apply_on_quit"] is False
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update.state_dir, update._state, update._prerelease, update._lock = state, "ready", False, threading.RLock()
+    update._policy, update._restart_refusal = (lambda: default_update_policy(state)), None
+    update._request_restart = lambda: pytest.fail("restarted with auto-update off")
+    assert update.install_if_safe(closing=True, canvas_running=False, user_idle=True) is False
+    assert update.apply_on_quit() is False
+    _edit_setting(server, "update_auto_apply_on_quit", True)                           # ON again
+    assert default_update_policy()["auto_apply_on_quit"] is True and update.apply_on_quit() is True
+    assert tool_settings({"tool": "workshop"}, {})[0]["out"]["update_auto_apply_on_quit"] is True
+    with pytest.raises(Exception, match="within its Settings bounds"):
+        _edit_setting(server, "update_idle_minutes", 0)                                # refused: nothing stored
+    assert "update_idle_minutes" not in saved_application_settings()
+
+
+def test_the_canvas_reads_the_effective_update_settings_it_displays(monkeypatch, tmp_path):
+    """The Workshop card/Properties render from this (api.refreshLiveUpdatePolicy), never the file's stored copy."""
+    from nodelang.nograph_server import r_settings_action
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    server = _settings_server(state)
+    read = lambda: r_settings_action(server, SimpleNamespace(body={"function": "readUpdatePolicySettings"}))["result"]
+    assert read()["update_auto_apply_on_quit"] is True and read()["update_idle_minutes"] == 15   # defaults
+    _edit_setting(server, "update_auto_apply_on_quit", False)
+    assert read()["update_auto_apply_on_quit"] is False                                      # what the card shows
+
+
+def test_an_older_saved_workflow_reopened_and_run_emits_the_live_setting(monkeypatch, tmp_path):
+    """Codex: a workflow saved while the default was On, Settings then set Off, reopen + Run emitted On."""
+    from nodelang.application_update import default_update_policy, saved_application_settings
+    from nodelang.pipeline_engines import tool_settings
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    saved_in_file = {"tool": "workshop", "update_auto_apply_on_quit": True, "update_idle_minutes": 15}
+    _edit_setting(_settings_server(state), "update_auto_apply_on_quit", False)
+    out = tool_settings(saved_in_file, {})[0]["out"]                                     # Run on the reopened file
+    assert out["update_auto_apply_on_quit"] is False                                   # the node emits Off
+    assert saved_application_settings() == {"update_auto_apply_on_quit": False}        # running never wrote On
+    assert default_update_policy()["auto_apply_on_quit"] is False
+
+
+def test_the_update_policy_reads_the_saved_settings_value(tmp_path):
+    from nodelang.application_update import default_update_policy
+    from nodelang.nograph_server import JsonFile, r_settings_action
+
+    state = tmp_path / "state"
+    assert default_update_policy(state)["auto_apply_on_quit"] is True     # nothing saved: catalogue default
+    server = SimpleNamespace(state_dir=state, files={
+        "settings": JsonFile(state / "settings" / "settings.json", {"settingsScope": "User"}),
+        "companion": JsonFile(state / "settings" / "companion.json", {})})
+    saved = r_settings_action(server, SimpleNamespace(body={"function": "setApplicationSetting",
+                                                             "args": ["update_auto_apply_on_quit", False]}))
+    assert saved["result"]["update_auto_apply_on_quit"] is False
+    assert default_update_policy(state)["auto_apply_on_quit"] is False
+    with pytest.raises(Exception, match="within its Settings bounds"):
+        r_settings_action(server, SimpleNamespace(body={"function": "setApplicationSetting",
+                                                         "args": ["update_idle_minutes", 99999]}))
+    assert default_update_policy(state)["idle_minutes"] == 15                 # the refused value was never stored

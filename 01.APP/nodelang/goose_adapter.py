@@ -41,13 +41,20 @@ def safe_workshop_call(identity, arguments):
 WORKSHOP_TOOLS = "declare,send,read,canvas.,library.search"
 
 
-def workshop_mcp_server():
+def workshop_mcp_server(session_id):
     from .client_mcp_installation import LOADER
-    return {"name":"archhub-agent", "command":sys.executable,
-        "args":["-c", LOADER, str(Path(__file__).resolve().parents[1])],
-        "env":[{"name":"PYTHONUTF8", "value":"1"},
-               {"name":"ARCHHUB_CONNECTOR_TOOLS", "value":WORKSHOP_TOOLS},
-               {"name":"GOOSE_SESSION_ID", "value":"connector-"+uuid4().hex}]}
+    setup_env = (f"import os;os.environ['PYTHONUTF8']='1';"
+                 f"os.environ['ARCHHUB_CONNECTOR_TOOLS']='{WORKSHOP_TOOLS}';"
+                 f"os.environ['GOOSE_SESSION_ID']='{session_id}';")
+    return {
+        "type": "mcp",
+        "server": {
+            "type": "stdio",
+            "name": "archhub-agent",
+            "command": sys.executable,
+            "args": ["-c", setup_env + LOADER, str(Path(__file__).resolve().parents[1])]
+        },
+    }
 
 
 def free_route(route: str) -> tuple[str, str]:
@@ -110,12 +117,14 @@ class GooseAdapter:
                       "instructions": _SYSTEM + '\n' + persona_instructions(), "settings": settings}
             encoded = base64.urlsafe_b64encode(json.dumps(recipe).encode()).decode().rstrip("=")
             # Goose owns this MCP client; messages go to the existing Workshop.
+            session_id_str = "connector-" + uuid4().hex
             session = transport.request("session/new", {
-                "cwd": str(self.runtime.work_dir), "mcpServers": [workshop_mcp_server()],
+                "cwd": str(self.runtime.work_dir), "mcpServers": [],
                 "_meta": {"recipeDeeplink": encoded, "enabledExtensions": [{
                     "type": "mcp", "server": self.runtime.host_extension,
+                    "envKeys": ["ARCHHUB_HOSTS_TOKEN"],
                     "available_tools": ["hosts_state"],
-                }]},
+                }, workshop_mcp_server(session_id_str)]},
             }, deadline=deadline, stopped=stopped, permission=goose_permission)
             session_id = session.get("sessionId")
             if not isinstance(session_id, str) or not session_id:

@@ -12,7 +12,11 @@ def send(value):
 def post(server, method, params, request_id=1):
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                "MCP-Protocol-Version": "2025-03-26"}
-    headers.update({row["name"]: row["value"] for row in server["headers"]})
+    import os
+    if "headers" in server:
+        for row in server["headers"]:
+            val = row["value"].replace("${ARCHHUB_HOSTS_TOKEN}", os.environ.get("ARCHHUB_HOSTS_TOKEN", ""))
+            headers[row["name"]] = val
     request = urllib.request.Request(server["url"], data=json.dumps({"jsonrpc": "2.0", "id": request_id,
         "method": method, "params": params}).encode(), headers=headers)
     with urllib.request.urlopen(request, timeout=5) as response:
@@ -59,13 +63,19 @@ for line in sys.stdin.buffer:
         assert "extensions" not in recipe
         assert recipe["settings"]["goose_provider"] in {"openrouter", "ollama"}
         assert recipe["settings"]["goose_provider"] == "ollama" or recipe["settings"]["goose_model"] == "openrouter/free" or recipe["settings"]["goose_model"].endswith(":free")
-        servers = params["mcpServers"]
-        assert len(servers) == 1 and servers[0]["name"] == "archhub-agent"
-        assert servers[0]["command"] == sys.executable
-        assert "nodelang.native_agent_mcp" in servers[0]["args"][1]
-        assert any(row["name"] == "GOOSE_SESSION_ID" for row in servers[0]["env"])
-        assert len(meta["enabledExtensions"]) == 1
-        extension = meta["enabledExtensions"][0]
+
+        servers = params.get("mcpServers", [])
+        assert len(servers) == 0
+        extensions = meta["enabledExtensions"]
+        assert len(extensions) == 2
+        
+        workshop = next(ext for ext in extensions if ext.get("server", {}).get("name") == "archhub-agent")
+        assert workshop["server"]["command"] == sys.executable
+        assert "nodelang.native_agent_mcp" in workshop["server"]["args"][1]
+        assert "GOOSE_SESSION_ID" in workshop["server"]["args"][1]
+        
+        extension = next(ext for ext in extensions if ext.get("server", {}).get("name", "") == "archhub-hosts" or ext.get("name") == "archhub-hosts")
+
         assert extension["type"] == "mcp" and extension["available_tools"] == ["hosts_state"]
         assert extension["server"]["name"] == "archhub-hosts"
         send({"id": message["id"], "result": {"sessionId": "fake-session"}})

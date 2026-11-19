@@ -14,6 +14,38 @@ import time
 from .acp_client import AcpTransport
 from .goose_adapter import GooseAdapter, GooseRefused
 
+def _scrub_goose_sessions(work_dir):
+    import sqlite3
+    import json
+    db_path = Path(work_dir) / "sessions.sqlite3"
+    if not db_path.exists():
+        return 0
+    scrubbed = 0
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, extension_data FROM sessions")
+            for row in cursor.fetchall():
+                try:
+                    data = json.loads(row[1])
+                except (ValueError, TypeError):
+                    continue
+                changed = False
+                extensions = data.get("enabled_extensions.v0", {}).get("extensions", [])
+                for ext in extensions:
+                    if ext.get("type") == "streamable_http" and isinstance(ext.get("headers"), dict):
+                        keys_to_remove = [k for k, v in ext["headers"].items() if k.lower() == "authorization" and not str(v).strip().endswith("${ARCHHUB_HOSTS_TOKEN}")]
+                        for k in keys_to_remove:
+                            del ext["headers"][k]
+                            changed = True
+                if changed:
+                    cursor.execute("UPDATE sessions SET extension_data = ? WHERE id = ?", (json.dumps(data), row[0]))
+                    scrubbed += 1
+            conn.commit()
+    except sqlite3.Error as e:
+        raise GooseRefused("Failed to scrub Goose sessions: " + str(e))
+    return scrubbed
+
 # The private host-read extension node: how long a live server may take to report started.
 HOST_EXTENSION_NODE = {'id': 'baboom.goose.host_read', 'params': {'start_seconds': 30}}
 
@@ -47,6 +79,7 @@ class GooseRuntime:
         except (OSError, ValueError, KeyError, TypeError):
             raise GooseRefused("The packaged Goose brain is missing or has a different digest. Repair the ArchHub package.") from None
         self.work_dir.mkdir(parents=True, exist_ok=True)
+        _scrub_goose_sessions(self.work_dir)
         config = self.work_dir / "config"
         config.mkdir(exist_ok=True)
         (config / "config.yaml").write_text(json.dumps({
@@ -64,6 +97,7 @@ class GooseRuntime:
             env.update({"GOOSE_PATH_ROOT": str(self.work_dir), "GOOSE_PROVIDER": "openrouter",
                         "GOOSE_MODEL": "openrouter/free", "GOOSE_MODE": "approve",
                         "GOOSE_TELEMETRY_ENABLED": "false", "OLLAMA_HOST": "http://127.0.0.1:11434"})
+            env["ARCHHUB_HOSTS_TOKEN"] = self._host_token
             from .model_router import discover_key, ModelRouteRefused
             try:
                 key, _ = discover_key("openrouter")
@@ -93,6 +127,7 @@ class GooseRuntime:
         from .native_host_tools import register_host_tools
         import uvicorn
         token = secrets.token_urlsafe(32)
+        self._host_token = token
         mcp = FastMCP("archhub-hosts", json_response=True, stateless_http=True)
         register_host_tools(mcp, self.control, read_only=True)
         app = mcp.streamable_http_app()
@@ -103,7 +138,8 @@ class GooseRuntime:
             async def __call__(self, scope, receive, send):
                 if scope["type"] == "http":
                     headers = dict(scope["headers"])
-                    if not secrets.compare_digest(headers.get(b"authorization", b""), ("Bearer " + token).encode()):
+                    auth = headers.get(b"authorization") or headers.get(b"archhub_hosts_token") or headers.get(b"archhub-hosts-token")
+                    if not auth or not secrets.compare_digest(auth, ("Bearer " + token).encode()):
                         await send({"type": "http.response.start", "status": 401, "headers": []})
                         await send({"type": "http.response.body", "body": b"Unauthorized"})
                         return
@@ -125,7 +161,7 @@ class GooseRuntime:
                 raise GooseRefused("The private ArchHub host read extension did not start.")
             time.sleep(0.01)
         self.host_extension = {"type": "http", "name": "archhub-hosts",
-            "url": f"http://127.0.0.1:{port}/mcp", "headers": [{"name": "Authorization", "value": "Bearer " + token}]}
+            "url": f"http://127.0.0.1:{port}/mcp", "headers": [{"name": "Authorization", "value": "Bearer ${ARCHHUB_HOSTS_TOKEN}"}]}
 
     def close(self):
         try:

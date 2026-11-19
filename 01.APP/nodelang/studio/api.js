@@ -802,7 +802,7 @@ function rememberTask(result, select=true){
  publish(select?{focusedTask:result.taskId,tasks}:{tasks});
  return session;
 }
-api.createTask=async(title,agent='',workspace=state.activeWorkspace||'')=>{const result=await workshop('createTask',[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
+api.createTask=async(title,agent='',workspace=state.activeWorkspace||'',parent='')=>{const result=await workshop('createTask',parent?[title,agent,workspace,parent]:[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
 api.renameTask=async(id,title)=>{const result=await taskFileAction('renameTask',id,title);await refreshTasks(false);return result;};
 async function taskFileAction(method,id,...args){
  const navigation=fileNavigation;

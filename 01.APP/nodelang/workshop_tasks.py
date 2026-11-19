@@ -22,7 +22,7 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
           "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
-          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT) STRICT")
+          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT, parent_id TEXT) STRICT")
 TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
@@ -111,6 +111,8 @@ def _ensure(history):
         _add_column(history, "capacity TEXT")
     if "members" not in names:
         _add_column(history, "members TEXT")
+    if "parent_id" not in names:  # Projects > tasks > subtasks: a subtask names its parent task; old rows stay top level
+        _add_column(history, "parent_id TEXT")
     history._db.execute("CREATE INDEX IF NOT EXISTS workshop_tasks_open_work "
                         "ON workshop_tasks(project, status, archived, updated_at)")
 
@@ -262,17 +264,30 @@ def rename(history, task, title, revision=None):
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 
-def create(history, title, creator, *, agent='', workspace='', zoom=1):
+def create(history, title, creator, *, agent='', workspace='', zoom=1, parent=''):
     task = uuid4().hex
     title = _text(title, "title", 2000)
+    above = None
+    if parent:
+        above = get(history, _text(parent, "parent", 64))
+        if above is None:
+            raise TaskNotFound(parent)
+    from .workspace_roots_catalogue import read_registered_roots
+    if above and not workspace:
+        # A subtask works in its parent's workspace: the parent's session file names it, else its project label does.
+        workspace = _session_context(above.get('session_path')).get('workspace') or ''
+        if not workspace and above.get('project'):
+            roots, _ = read_registered_roots()
+            workspace = next((key for key, value in roots.items() if value.get('label') == above['project']), '')
     path = _start_session(task, title, zoom, agent=agent, workspace=workspace)
     project = ''
     if workspace:
-        from .workspace_roots_catalogue import read_registered_roots
         roots, _ = read_registered_roots()
         project = (roots.get(workspace) or {}).get('label') or workspace
-    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,project) "
-           "VALUES(?,?,'open',?,?,?,?,?)", (task, title, creator, _now(), _now(), path, project or None))
+    # A subtask sits in its parent's project unless its own workspace names one.
+    project = project or (above or {}).get('project') or ''
+    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,project,parent_id) "
+           "VALUES(?,?,'open',?,?,?,?,?,?)", (task, title, creator, _now(), _now(), path, project or None, above and above['id']))
     return get(history, task)
 
 
@@ -924,7 +939,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'owner': owner, 'revision': row.get('revision') or 0,
              'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
              'capacity': row.get('capacity') or '',
-             'stale': shown == "stale", 'result': result, 'project': row.get('project') or '',
+             'stale': shown == "stale", 'result': result, 'project': row.get('project') or '', 'parent': row.get('parent_id') or '',
              'summary': _summary(row['title'], shown, result),
              'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
              'declarations': [declaration] if declaration else [],
@@ -1007,7 +1022,7 @@ def set_status(history, task, status, revision=None):
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
            "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
-           "revision", "outcome", "write_open", "capacity", "members")
+           "revision", "outcome", "write_open", "capacity", "members", "parent_id")
 
 
 def rows(history, task=None, *, include_archived=True, settle=True):
@@ -1268,8 +1283,8 @@ def pin_message(history, task, message, pinned):
     return _show(task, path, read_document(path), select=False)
 
 
-def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace=''):
-    """A new task and the .archhub file that holds its session."""
+def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace='', parent=''):
+    """A new task and the .archhub file that holds its session; parent makes it a subtask of that task."""
     if type(agent) is not str or len(agent) > 80 or '\0' in agent:
         raise ValueError('Choose a task agent.')
     if type(workspace) is not str or len(workspace) > 128:
@@ -1277,7 +1292,7 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
     if workspace:
         from .settings_owner import SettingsOwner
         SettingsOwner(None)._workspace(workspace)
-    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom)
+    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom, parent=parent)
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 

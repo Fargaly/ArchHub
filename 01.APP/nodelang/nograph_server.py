@@ -1257,14 +1257,14 @@ def _rename_task(task, title):
         return {'ok': False, 'error': str(refused)}
 
 
-def _create_task(s, title, agent='', workspace=''):
+def _create_task(s, title, agent='', workspace='', parent=''):
     """The studio's new task: one Workshop row and the .archhub file that is its session."""
     from .workshop_mailbox import application_history
     from .workshop_tasks import create_session
     try:
         with application_history() as history:
             zoom = s.files['settings'].read().get('appearanceDefaultZoom', 100)
-            return create_session(history, title, zoom=zoom / 100, agent=agent, workspace=workspace)
+            return create_session(history, title, zoom=zoom / 100, agent=agent, workspace=workspace, parent=parent)
     except ValueError as refused:
         return {'ok': False, 'error': str(refused)}
 

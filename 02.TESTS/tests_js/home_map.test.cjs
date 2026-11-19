@@ -137,3 +137,21 @@ test('nothing given up from the list: the All / Agent sessions / Workflows filte
   assert.equal(older(open).collapsed, false);
   assert.ok(cards(open).length > cards(folded).length, 'unfolded, its sessions are cards');
 });
+
+test('projects > tasks > subtasks: a subtask sits in its parent task group, one column right, wired from it; folding the parent hides every level under it', () => {
+  const tree = {groups: [{project: {id: 'Tower', label: 'Tower'}, sessions: [session('drawings', 'Drawings', 'Tower'), session('plan', 'Ground floor plan', 'Tower'),
+    session('tags', 'Door tags', 'Other')]}]};
+  const tasks = [task('drawings'), task('plan', {parent: 't-drawings'}), task('tags', {parent: 't-plan'})];
+  const view = (params = {}) => plain(homeMap({listed: tree, rows: homeRows({...state, tasks, approvals: []}, {hidden: [], order: []}), params: {...DEFAULT, ...params}, titleOf: row => row.id}));
+  const chart = view();
+  assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['Tower 3'], 'a subtask is drawn in its top task\'s project');
+  assert.deepEqual(chart.wires.map(wire => [wire.from, wire.to, wire.label].join(' > ')).sort(), ['drawings > plan > Subtask', 'plan > tags > Subtask']);
+  assert.ok(at(chart, 'drawings').x < at(chart, 'plan').x && at(chart, 'plan').x < at(chart, 'tags').x, 'each level one column to the right');
+  assert.deepEqual([at(chart, 'drawings').subtasks, at(chart, 'plan').subtasks, at(chart, 'tags').subtasks], [1, 1, 0]);
+  assert.deepEqual(['drawings', 'plan', 'tags'].map(id => at(chart, id).task), ['t-drawings', 't-plan', 't-tags'], 'every level opens its own session');
+  const folded = view({collapsed: ['task:t-drawings']});
+  assert.deepEqual(cards(folded).map(card => card.id), ['drawings']);
+  assert.equal(at(folded, 'drawings').subtasksFolded, true);
+  const middle = view({collapsed: ['task:t-plan']});
+  assert.deepEqual(cards(middle).map(card => card.id).sort(), ['drawings', 'plan']);
+});

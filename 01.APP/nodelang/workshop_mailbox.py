@@ -1751,7 +1751,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
     optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind"}, "pending":set(), "seen":set(),
-                "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
+                "task_create": {"parent"}, "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
                 "task_complete": {"result"},
                 "task_set_session": {"scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},
                 "task_open": set(), "task_archive": set()}
@@ -1876,7 +1876,7 @@ def _task(history, method, body, identity):
     from . import workshop_tasks
     me, label = identity["sender_key"], identity["sender_label"]
     if method == "task_create":
-        view = workshop_tasks.create_session(history, body["title"], label, select=False)
+        view = workshop_tasks.create_session(history, body["title"], label, select=False, parent=body.get("parent") or "")
         return {"task": workshop_tasks.get(history, view["taskId"]), "session": view}
     if method == "task_list":
         return {"tasks": workshop_tasks.rows(history, include_archived=False)}

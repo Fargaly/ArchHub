@@ -198,7 +198,7 @@
       && rows.sessionRows.find(item => item.id === session.task)?.status !== 'ARCHIVED';
     const files = (listed?.groups || []).flatMap(group => group.sessions).filter(work).map(session => {
       const row = rows.sessionRows.find(item => item.id === session.task), fact = facts(row, session.context?.plan);
-      return {id: session.id, path: session.path, task: session.task || '', title: session.title, project: session.project?.label || 'No project',
+      return {id: session.id, path: session.path, task: session.task || '', parent: row?.parent || '', title: session.title, project: session.project?.label || 'No project',
         kind: row?.kind || session.kind || 'agent-session', older: !!row && rows.sectionOf(row) === 'Older / archived',
         agent: humanLabel((session.members || [])[0]?.name || row?.owner || ''), pinned: !!session.pinned, ...fact,
         finished: fact.finished || session.state === 'done' || row?.status === 'DONE', armed: (session.automation || []).filter(trigger => trigger.armed).length, links: session.inputLinks || []};
@@ -207,16 +207,24 @@
     // An archived row (a refused start the owner archived, an old run) is not work on the map.
     // A live agent with no session is present in the Workshop dock, not a card.
     const loose = rows.sessionRows.filter(row => row.status !== 'ARCHIVED' && !row.runtimeAgent && !filed.has(row.id) && !filed.has(row.sessionPath || row.path || '')).map(row => ({id: row.approval ? row.id : 'row:' + row.id, path: row.sessionPath || '',
-      task: row.runtimeAgent ? row.runtimeAgent.task || '' : row.fileOnly || row.approval ? '' : row.id, title: row.approval ? row.title : titleOf(row),
+      task: row.runtimeAgent ? row.runtimeAgent.task || '' : row.fileOnly || row.approval ? '' : row.id, parent: row.parent || '', title: row.approval ? row.title : titleOf(row),
       project: row.runtimeAgent ? String(row.runtimeAgent.name || '').split(' / ')[1] || 'No project' : row.workspace || row.project || 'No project',
       agent: humanLabel(row.runtimeAgent?.name || (row.members || [])[0]?.name || row.owner || row.who || ''), pinned: !!row.homePinned, ...facts(row, null), armed: 0, links: [],
       kind: row.kind || 'agent-session', older: !row.approval && rows.sectionOf(row) === 'Older / archived',
       ...(row.approval ? {need: {text: row.title + ' needs your approval', approval: row.approval}} : {}), ...(row.status === 'DONE' ? {finished: true} : {})}));
     const every = [...files, ...loose];
+    // Projects > tasks > subtasks (one task owner, parent_id): a subtask sits in its top task's group, wired from its parent,
+    // one column to the right; a parent folded with 'task:<id>' hides every subtask under it.
+    const byTask = new Map(every.filter(card => card.task).map(card => [card.task, card]));
+    const above = card => card.parent && card.parent !== card.task ? byTask.get(card.parent) || null : null;
+    const chainUp = card => { const chain = []; for (let up = above(card); up && !chain.includes(up) && chain.length < 32; up = above(up)) chain.push(up); return chain; };
+    const rootOf = card => chainUp(card).at(-1) || card;
+    for (const card of every) { card.subtasks = every.filter(other => above(other) === card).length; card.subtasksFolded = card.subtasks > 0 && p.collapsed.includes('task:' + card.task); }
     const cards = every.filter(card => (p.done === 'Show' || !card.finished || card.pinned) && (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you'))
-      && (kind === 'all' || card.kind === kind));
+      && (kind === 'all' || card.kind === kind) && !chainUp(card).some(up => up.subtasksFolded));
     // Old runs keep their own section, folded until he opens it (the list's Older / archived), whatever the grouping.
-    const keyOf = card => card.older ? 'Older / archived' : p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state : card.project;
+    const ownKey = card => card.older ? 'Older / archived' : p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state : card.project;
+    const keyOf = card => ownKey(rootOf(card));
     const rank = card => { const at = order.indexOf(card.task || card.id); return at < 0 ? order.length : at; };  // his drag order, then the rest
     cards.sort((a, b) => (p.order === 'Name' ? 0 : MAP_STATES.indexOf(a.state) - MAP_STATES.indexOf(b.state)) || (p.order === 'Name' ? 0 : rank(a) - rank(b)) || a.title.localeCompare(b.title));
     const keys = [...new Set(cards.map(keyOf))].sort((a, b) => Number(a === 'Older / archived') - Number(b === 'Older / archived') || (p.group === 'State' ? MAP_STATES.indexOf(a) - MAP_STATES.indexOf(b) : a.localeCompare(b)));
@@ -224,7 +232,9 @@
     // An input link is one wire, card edge to card edge: this session feeds that one. The session model holds no socket type
     // for a link, so the wire shows the design's default (files, a list); its hover says what the link really carries.
     const links = cards.flatMap(card => card.links.map((link, index) => ({id: card.id + ':' + index, from: link.source.id, to: card.id, fromPort: 'out', toPort: 'in',
-      type: 'file', list: true, label: link.output + ' → ' + link.input}))).filter(wire => cards.some(card => card.id === wire.from));
+      type: 'file', list: true, label: link.output + ' → ' + link.input})))
+      .concat(cards.filter(above).map(card => ({id: 'subtask:' + card.id, from: above(card).id, to: card.id, fromPort: 'out', toPort: 'in', type: 'text', list: false, label: 'Subtask'})))
+      .filter(wire => cards.some(card => card.id === wire.from));
     const wide = 300, plain = p.card === 'State only', gapX = p.density === 'Compact' ? 36 : 56, gapY = p.density === 'Compact' ? 14 : 24;
     const nodes = [], groups = [], inside = new Map();
     let x = 0, y = 0, band = 0;
@@ -236,7 +246,7 @@
       const cells = [...linked.map(card => { const column = depth(card.id); used[column] = (used[column] || 0) + 1; return {card, column, row: used[column] - 1}; }),
         // A narrow room puts the unlinked sessions under the chain, not beside it.
         ...rest.map((card, index) => ({card, column: (narrow ? 0 : chain) + index % Math.max(1, side), row: (narrow ? Math.max(0, ...Object.values(used)) : 0) + Math.floor(index / Math.max(1, side))}))];
-      const tall = 58 + (plain ? 0 : 46) + (members.some(card => card.need) ? 40 : 0), columns = narrow ? Math.max(chain, side) : chain + side, lines = Math.max(1, ...cells.map(cell => cell.row + 1));
+      const tall = 58 + (plain ? 0 : 46) + (members.some(card => card.need) ? 40 : 0) + (members.some(card => card.subtasks) ? 28 : 0), columns = narrow ? Math.max(chain, side) : chain + side, lines = Math.max(1, ...cells.map(cell => cell.row + 1));
       return {key, members, cells, tall, collapsed: folded(key), w: folded(key) ? wide : 48 + columns * wide + (columns - 1) * gapX, h: folded(key) ? 64 : 58 + lines * (tall + gapY)};
     });
     const limit = Math.max(room ? wide + 48 : 1200, Math.sqrt(laid.reduce((sum, group) => sum + group.w * group.h, 0) * (room || 1.6)) * 1.05);
@@ -254,7 +264,7 @@
     const wires = links.map(wire => ({...wire, from: inside.get(wire.from), to: inside.get(wire.to)})).filter(wire => wire.from !== wire.to);
     const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
     return {params: p, nodes, wires, groups, total: every.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
-      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.now, node.steps, node.need]), wires, p.card])};
+      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
   function Home({fileWorkspace = false} = {}) {
     const s = useData(), u = useApp();
@@ -708,7 +718,11 @@
           {pickedTask && <div className="dx-preview-actions">
             <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
-          </div>}</div>
+          </div>}
+          {/* A subtask is a task of its own (its own session file) whose row names this task as its parent. */}
+          {pickedTask && <form className="dx-preview-actions" data-home-subtask-form="" onSubmit={event => { event.preventDefault(); const form = event.currentTarget, title = String(new FormData(form).get('subtask') || '').trim();
+            return title && executeAction('ui.select', () => u.act(async () => { const made = await api.createTask(title, '', '', task.id); form.reset(); u.setToast('Subtask added under ' + (task.sessionTitle || task.title) + '.'); return made; }), event); }}>
+            <input name="subtask" aria-label="New subtask" placeholder="New subtask" maxLength={2000} /><button type="submit" className="dx-quiet">Add subtask</button></form>}</div>
       </> : <>
         <header className="shared-properties-head"><span className="properties-eyebrow">HOME</span><h2>Map of the work</h2><p className="muted">Every value here is a parameter of Home. Change one and the map re-arranges. Select a session for its own properties.</p></header>
         <div className="shared-properties-task">

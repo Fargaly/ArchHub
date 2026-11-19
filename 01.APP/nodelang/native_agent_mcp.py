@@ -346,9 +346,10 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
 
     # Workshop tasks: one table in the Workshop store; a claim is one conditional UPDATE (ok false = another agent holds it).
     @server.tool(name="task.create")
-    def task_create(title: str, ctx: Context) -> dict[str, object]:
-        """Add an open task and the .archhub file that holds its session. Does not switch the open canvas."""
-        return call("task_create", {"title": title}, _caller_context(ctx))
+    def task_create(title: str, ctx: Context, parent: str = "") -> dict[str, object]:
+        """Add an open task and the .archhub file that holds its session. Does not switch the open canvas.
+        parent: an existing task id makes this a subtask of it, in the same project."""
+        return call("task_create", {"title": title, **({"parent": parent} if parent else {})}, _caller_context(ctx))
 
     @server.tool(name="task.list", annotations=ToolAnnotations(destructiveHint=False))
     def task_list(ctx: Context) -> dict[str, object]:

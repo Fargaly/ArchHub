@@ -1363,13 +1363,7 @@ def create_baboom_native_companion_window(
             if sprite is None:
                 with_app = self._beside is not None and self._beside[0] is not None
                 width, height = _STANDING_SIZE if with_app else (56, 56)
-                spot = self._free_spot()
-                if spot is None:
-                    margin = ALIVE_NODE["params"]["perch_margin"]
-                    x = screen.right - margin - width
-                    y = screen.bottom - margin - height
-                else:
-                    x, y = spot
+                x, y = self._free_spot() or (screen.right - width, screen.bottom - height)
                 x = min(max(x, screen.x), screen.right - width)
                 y = min(max(y, screen.y), screen.bottom - height)
                 sprite = Rect(x, y, width, height)
@@ -1469,6 +1463,8 @@ def create_baboom_native_companion_window(
             had, saw = self._beside, (self._needs, self._listening)
             self._beside = (app, composer, tuple(busy), tuple(screens))
             self._needs, self._listening = (max(0, int(needs)), bool(listening)) if app is not None else (0, False)
+            if had is not None and had[0] is None and app is not None and self._pinned:
+                self._pin_here(False)
             if had is None or (had[0] is None) != (app is None):
                 # Beside ArchHub he keeps its place among the windows and is never over another program.
                 # With ArchHub away he is the desktop companion he was: on top, owned by no window.
@@ -1486,19 +1482,13 @@ def create_baboom_native_companion_window(
                 self.move(self.x() + now.x - before.x, self.y() + now.y - before.y)
 
         def _free_spot(self) -> tuple[int, int] | None:
-            """The spot he dragged BABOOM to. Persists across state changes and stays on screen."""
+            """The spot he dragged BABOOM to. With ArchHub it holds only while pinned and on a screen."""
             placed = controller._user_origin
-            if placed is None:
-                return None
             if self._beside is None:
                 return placed
-            from PyQt6.QtGui import QGuiApplication
-            prim = QGuiApplication.primaryScreen()
-            if prim is not None and prim.virtualGeometry().contains(placed[0], placed[1]):
+            if self._pinned and placed is not None and screen_at(self._beside[3], *placed) is not None:
                 return placed
-            if screen_at(self._beside[3], *placed) is not None:
-                return placed
-            return placed
+            return None
 
         def _home(self) -> Rect | None:
             """Where BABOOM stands in ArchHub; None with no ArchHub window on screen or on a spot of his own."""
@@ -1539,6 +1529,8 @@ def create_baboom_native_companion_window(
             Never steals focus, never injects input, pauses on drag/hover/bubble/DND.
             """
             if self._dragged or self._dismissed or self._stopped or self._stay_put:
+                return
+            if self._beside is not None and not self._pinned:
                 return
             if self._hover_since is not None or self._details_open:
                 return
@@ -2271,17 +2263,30 @@ def create_baboom_native_companion_window(
                 if self._dragged:
                     origin = self.pos() + self._sprite_rect.topLeft()
                     self._dragged = False
-                    from PyQt6.QtGui import QGuiApplication
-                    prim = QGuiApplication.primaryScreen()
-                    vgeom = prim.virtualGeometry() if prim is not None else None
-                    if vgeom is not None:
+                    if self._beside is None or self._pinned:
+                        # With ArchHub a drag holds only after he un-pinned BABOOM from it; else he springs home.
                         margin = ALIVE_NODE["params"]["drag_margin"]
-                        bounded_x = min(max(origin.x(), vgeom.x() + margin), vgeom.right() - self._sprite_rect.width() - margin)
-                        bounded_y = min(max(origin.y(), vgeom.y() + margin), vgeom.bottom() - self._sprite_rect.height() - margin)
-                        origin = QPoint(bounded_x, bounded_y)
-                    controller.pin_sprite_origin(origin.x(), origin.y())
-                    self._save_position(origin.x(), origin.y())
-                    self._pin_here(True)
+                        if self._beside is not None:
+                            target_screen = screen_at(self._beside[3], origin.x(), origin.y())
+                            if target_screen is not None:
+                                bounded_x = min(max(origin.x(), target_screen.x + margin),
+                                                target_screen.right - self._sprite_rect.width() - margin)
+                                bounded_y = min(max(origin.y(), target_screen.y + margin),
+                                                target_screen.bottom - self._sprite_rect.height() - margin)
+                                origin = QPoint(bounded_x, bounded_y)
+                        else:
+                            from PyQt6.QtGui import QGuiApplication
+                            prim = QGuiApplication.primaryScreen()
+                            vgeom = prim.virtualGeometry() if prim is not None else None
+                            if vgeom is not None:
+                                bounded_x = min(max(origin.x(), vgeom.x() + margin),
+                                                vgeom.right() - self._sprite_rect.width() - margin)
+                                bounded_y = min(max(origin.y(), vgeom.y() + margin),
+                                                vgeom.bottom() - self._sprite_rect.height() - margin)
+                                origin = QPoint(bounded_x, bounded_y)
+                        controller.pin_sprite_origin(origin.x(), origin.y())
+                        self._save_position(origin.x(), origin.y())
+                        self._pin_here(True)
                     self.refresh()
                 elif self._transient_report is not None:
                     self._quiet_click.stop()

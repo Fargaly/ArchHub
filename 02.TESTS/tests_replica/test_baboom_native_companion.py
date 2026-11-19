@@ -381,12 +381,13 @@ def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
     assert narrow is not None
     assert narrow.layout.sprite.contained_by(Rect(0, 0, 1280, 720))
 
-    # PRESENCE1: a drag re-docks to the nearest edge.
+    # BABOOMALIVE (founder 2026-11-19): freely draggable anywhere on screen without snapping
+    # to a perimeter edge or corner (supersedes PRESENCE1 forced edge-docking to y=0).
     controller.pin_sprite_origin(410, 260)
     window.refresh()
-    assert (window.x(), window.y()) == (410, 0)
+    assert (window.x(), window.y()) == (410, 260)
     window.refresh()
-    assert window.x() == 410
+    assert (window.x(), window.y()) == (410, 260)
     window.stop_projection()
     window.close()
 
@@ -403,7 +404,7 @@ def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
         window._screen_rect = lambda: screen
         window.refresh()
         assert window.x() == 410
-        assert window.y() == 0
+        assert window.y() == 260
     finally:
         window.close()
         window.deleteLater()

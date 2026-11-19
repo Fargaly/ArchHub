@@ -222,8 +222,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.waitForFunction(async id=>(await window.ArchHubAPI.readCanvasTabs()).canvasTabs.tabs[0].id===id,second);
     await page.goto('about:blank');server=await restart();
     await page.goto(server.url+'/studio?bootstrap='+server.bootstrap);await page.locator('[data-home-page]').waitFor({state:'attached'});
-    await page.getByRole('button',{name:/^Canvas UI second/}).click();
-    await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
+    // Home is the map of the work (HOMELOOK): a double-click on the session's card opens its Canvas.
+    await page.locator('[data-design="home.card"]').filter({hasText:'Canvas UI second'}).dblclick();
     await opened('Canvas UI second');
     await page.locator('.v22g-strip').waitFor();
     assert.equal(await page.locator('.v22g-tab').count(),2);

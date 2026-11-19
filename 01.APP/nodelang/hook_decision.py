@@ -42,6 +42,7 @@ from datetime import datetime
 import fnmatch
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -208,33 +209,81 @@ _DEST_KEYS = ("page_id", "page_url", "url", "parent", "parent_id", "database_id"
 _EMAIL_ADDR = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 
 
-def _destination_blob(data) -> str:
+def _call_parts(data) -> list:
+    """The call data and the action arguments it carries: "arguments" (agent tools) and "args" (the connector.call
+    node, a mapping or its JSON text). Every send/public check reads all of them."""
     if not isinstance(data, dict):
-        return ""
-    parts = []
-    for key in _DEST_KEYS:
+        return []
+    parts = [data]
+    for key in ("arguments", "args"):
         held = data.get(key)
         if isinstance(held, str):
+            try:
+                held = json.loads(held)
+            except ValueError:
+                held = None
+        if isinstance(held, dict):
             parts.append(held)
-    nested = data.get("arguments")
-    if isinstance(nested, dict):
-        parts.append(_destination_blob(nested))
+    return parts
+
+
+def _destination_blob(data) -> str:
+    parts = []
+    for held in _call_parts(data):
+        for key in _DEST_KEYS:
+            if isinstance(held.get(key), str):
+                parts.append(held[key])
     return "\n".join(parts)
 
 
 def _public_target(data) -> bool:
     """A published page or an explicit public share. His notion.so page is still his."""
-    if isinstance(data, dict):
-        if data.get("public") is True:
+    for part in _call_parts(data):
+        if part.get("public") is True:
             return True
         for key in ("visibility", "permission", "permissions", "access", "share"):
-            held = data.get(key)
+            held = part.get(key)
             if isinstance(held, str) and re.search(r"\b(public|anyone)\b", held, re.I):
                 return True
     blob = _destination_blob(data)
     if re.search(r"notion\.site\b", blob, re.I):
         return True
     return bool(re.search(r"https?://(?!(?:www\.)?notion\.so(?:/|$))", blob, re.I))
+
+
+# A draft name that also sends, publishes, shares or destroys is not draft-only (publish_draft, send_draft, delete_draft).
+_NOT_DRAFT = re.compile(r"send|submit|publish|post|share|upload|deploy|tweet|delete|remove|discard|trash|approve|release")
+
+
+def draft_only(name) -> bool:
+    """A call that only makes a draft in his own mailbox (reply, forward or new draft) and sends nothing.
+    Founder: a draft never asks. Sending, publishing or deleting a draft still does."""
+    text = str(name or "").casefold()
+    return "draft" in text and not _NOT_DRAFT.search(text)
+
+
+def _sends_anyway(data) -> bool:
+    """A public target, or a send/submit/publish switch, in the call or its connector arguments."""
+    if _public_target(data):
+        return True
+    for held in _call_parts(data):
+        if any(held.get(flag) not in (None, False, "", 0, "false", "no")
+                                       for flag in ("send", "submit", "publish")):
+            return True
+    return False
+
+
+def _draft_action(tool: str, data) -> str:
+    """The action a call runs: the tool itself, or connector.call's data["action"] (the only engine that dispatches it;
+    host.exec runs its code whatever an action field says)."""
+    if tool.casefold() == "connector.call" and isinstance(data, dict):
+        return str(data.get("action") or "")
+    return tool
+
+
+def _draft_call(tool: str, data) -> bool:
+    """A draft-only action that sends nothing and targets nothing public."""
+    return draft_only(_draft_action(tool, data)) and not _sends_anyway(data if isinstance(data, dict) else {})
 
 
 def _outside_recipient(value) -> bool:
@@ -262,7 +311,7 @@ def _own_workspace(tool: str, data) -> bool:
     if (leaf == "send" and isinstance(data, dict) and "to" in data and isinstance(body, str)
             and not _outside_recipient(data.get("to"))):
         return True
-    if "draft" in name and not re.search(r"send[-_]?draft|submit", name):
+    if _draft_call(tool, data):
         return True
     if re.search(r"google[-_]?drive|gdrive", name) or re.search(r"(?:^|[._])drive(?:[._]|$)", name):
         if re.search(r"share|permission|publish", name) or _public_target(data):
@@ -1173,8 +1222,10 @@ def own_folder(event: dict, environment) -> bool:
 def mode_verdict(event: dict, action: str, permissions: dict, environment):
     """(verdict, rule) from the Settings parameters, or None when they change nothing."""
     tool = event["tool"].lower()
+    action_name = _draft_action(event["tool"], event["input"]).lower()  # connector.call is judged by its action too
+    names = {tool, action_name, tool.split("__")[-1], action_name.split("__")[-1]}  # mcp__<server>__<tool>: also its leaf
     for pattern, mode in permissions["tools"].items():
-        if fnmatch.fnmatchcase(tool, pattern.lower()):
+        if any(fnmatch.fnmatchcase(name, pattern.lower()) for name in names):
             return None if mode == "Allowed" else ("refuse", "tool-off") if mode == "Off" else ("ask", "tool-ask")
     run = permissions["runMode"]
     if action == "read":
@@ -1182,6 +1233,8 @@ def mode_verdict(event: dict, action: str, permissions: dict, environment):
     if run == "Plan only":
         return "refuse", "plan-only"
     data = event["input"]
+    if _draft_call(event["tool"], data):
+        return None  # a draft in his own mailbox never asks (it sends nothing)
     if tool == "host.exec" or (tool == "write" and isinstance(data, dict) and "host" in data and "code" in data):
         return "ask", "host-effect-approval"
     if run == "Accept edits":
@@ -1336,6 +1389,7 @@ def trace_rules(event, action, facts, environment):
 def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
     """A tool call (pre-tool payload + vendor) or an Approve/Deny ({"approval": kind, ...})."""
     environment = os.environ if environment is None else environment
+    _release_draft_cards(environment)
     if "approval" in payload:
         return _decide_approval(payload, environment)
     vendor = _ALIAS.get(vendor, vendor)
@@ -1724,6 +1778,34 @@ def expire_approval(environment, hold_id, who="clock"):
 def withdraw_approval(environment, hold_id, who):
     """The asker takes the approval back. Nothing runs."""
     return _close_approval(environment, hold_id, "withdrawn", who)
+
+
+def _release_draft_cards(environment):
+    """Ask cards made before drafts stopped asking: a pending card whose held call only makes a draft is released
+    as allowed (it makes the draft, it sends nothing). Runs on the next decision; a no-op once none are left."""
+    path = _ask_path(environment)
+    if not path.is_file():
+        return
+    permissions = read_permissions(environment)
+    if permissions["runMode"] == "Plan only":
+        return
+    try:
+        rows = list(_read_holds(path)["holds"].values())
+    except OSError:
+        return
+    for row in rows:
+        replay = row.get("replay") or {}
+        names = {str(replay.get("action") or "").lower(), str(replay.get("connector") or "").lower()}
+        names |= {name.split("__")[-1] for name in names}
+        held_by_setting = any(mode != "Allowed" and any(fnmatch.fnmatchcase(name, pattern.lower()) for name in names)
+                              for pattern, mode in permissions["tools"].items())
+        if (row.get("status") != "pending" or replay.get("kind") != "connector" or held_by_setting
+                or not _draft_call(str(replay.get("action") or ""), {"arguments": replay.get("arguments")})):
+            continue
+        try:
+            ask_apply(row["id"], row.get("input_digest") or "", "approve", environment, decided_by="drafts never ask")
+        except ValueError as refused:
+            logging.getLogger(__name__).warning("Draft card %s was not released: %s", row["id"], refused)
 
 
 def settle_approvals(environment, now=None):

@@ -849,6 +849,204 @@ def test_connector_call_lists_registered_outlook_and_gates_categorize():
         _mode(None)
 
 
+def test_a_draft_never_asks_and_a_send_still_does():
+    """Founder: a draft never asks. A reply, forward or new draft in his mailbox runs under Ask first; sending waits."""
+    from nodelang import hook_decision
+    _mode("Ask first")
+    try:
+        for tool in ("outlook_reply_draft", "outlook_forward_draft", "draft_email"):
+            decision = hook_decision.decide({"tool_name": tool, "tool_input": {
+                "text": "Dear Ahmed", "connector": "archhub.commands",
+                "arguments": {"to": "client@example.com", "cc": "", "body": "Dear Ahmed"}}})
+            assert decision["verdict"] in ("allow", "organize") and "hold" not in decision, (tool, decision)
+        inner = hook_decision.decide({"tool_name": "connector.call", "tool_input": {
+            "connector": "outlook", "action": "outlook_reply_draft", "text": "Dear Ahmed"}})
+        assert inner["verdict"] in ("allow", "organize") and "hold" not in inner, inner
+        for tool in ("outlook_send_draft", "send_email", "submit_reply"):
+            decision = hook_decision.decide({"tool_name": tool, "tool_input": {
+                "text": "Dear Ahmed", "connector": "archhub.commands", "arguments": {"body": "Dear Ahmed"}}})
+            assert decision["verdict"] == "ask" and decision.get("hold"), (tool, decision)
+    finally:
+        _mode(None)
+
+
+def test_a_draft_card_from_before_is_released_as_allowed_on_the_next_decision(monkeypatch):
+    """A pending draft-only card made before the fix makes its draft at the next decision; a send card stays."""
+    from nodelang import hook_decision
+    made = []
+    monkeypatch.setitem(host_exec.INVOKERS, "archhub.commands", lambda action, arguments: made.append((action, arguments)) or {"ok": True})
+    cards = {}
+    for tool in ("outlook_reply_draft", "outlook_send_draft"):
+        event = {"tool": tool, "input": {"connector": "archhub.commands", "arguments": {"to": "a@example.com", "body": tool}},
+                 "vendor": "archhub", "session": "commands"}
+        digest = hook_decision._call_digest(event, "write", "command")
+        cards[tool] = hook_decision._remember(event, "write", "command", digest, "Run " + tool, os.environ)
+    _mode(None)
+    hook_decision.decide({"tool_name": "read", "tool_input": {"path": "notes.txt"}})
+    rows = json.loads(hook_decision._ask_path(os.environ).read_text(encoding="utf-8"))["holds"]
+    assert rows[cards["outlook_reply_draft"]]["status"] == "approved"
+    assert rows[cards["outlook_send_draft"]]["status"] == "pending"
+    assert made == [("outlook_reply_draft", {"to": "a@example.com", "body": "outlook_reply_draft"})]
+
+
+def _permissions(run_mode, tools):
+    folder = host_exec.hook_decision._settings_dir(os.environ)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "permissions.json").write_text(json.dumps({"runMode": run_mode, "tools": tools}), encoding="utf-8")
+
+
+def test_a_draft_still_honours_plan_only_and_every_per_tool_setting():
+    """Review repros: Plan only refuses a draft; Off on the action refuses it, also through connector.call; Ask holds it."""
+    from nodelang import hook_decision
+    call = {"tool_name": "outlook_reply_draft", "tool_input": {"connector": "archhub.commands", "arguments": {"body": "Dear Ahmed"}}}
+    inner = {"tool_name": "connector.call", "tool_input": {"connector": "outlook", "action": "outlook_reply_draft", "text": "Dear Ahmed"}}
+    try:
+        _permissions("Plan only", {})
+        assert hook_decision.decide(call)["verdict"] == "refuse"
+        _permissions("Ask first", {"outlook_reply_draft": "Off"})
+        assert hook_decision.decide(call)["verdict"] == "refuse"
+        assert hook_decision.decide(inner)["verdict"] == "refuse", "Off on the action reaches connector.call too"
+        _permissions("Ask first", {"outlook_*": "Ask"})
+        held = hook_decision.decide(inner)
+        assert held["verdict"] == "ask" and held["rules"] == ["tool-ask"], held
+    finally:
+        _mode(None)
+
+
+def test_host_code_and_drafts_that_send_or_publish_are_never_draft_only():
+    """Review repros: host.exec with action "draft" runs code (asks); publish/send/delete drafts, a public target or a
+    send switch in the arguments are not draft-only."""
+    from nodelang import hook_decision
+    _permissions("Ask first", {})
+    try:
+        code = hook_decision.decide({"tool_name": "host.exec", "tool_input": {"host": "revit", "action": "draft", "code": "return 1;"}})
+        assert code["verdict"] == "ask", code
+        for tool, arguments in (("publish_draft", {"body": "x"}), ("delete_draft", {"id": "1"}), ("share_draft", {"id": "1"}),
+                                ("outlook_reply_draft", {"body": "x", "send": True}),
+                                ("outlook_reply_draft", {"body": "x", "url": "https://example.com/page", "public": True})):
+            decision = hook_decision.decide({"tool_name": tool, "tool_input": {"connector": "archhub.commands", "arguments": arguments}})
+            assert decision["verdict"] == "ask", (tool, arguments, decision)
+        assert not hook_decision.draft_only("approve_draft") and not hook_decision.draft_only("release_draft")
+        assert hook_decision.draft_only("outlook_forward_draft") and hook_decision.draft_only("draft_email")
+    finally:
+        _mode(None)
+
+
+def test_old_draft_cards_are_not_released_in_plan_only_or_under_a_tool_setting(monkeypatch):
+    """Review repro: releasing old draft cards honours Plan only and per-tool Off/Ask."""
+    from nodelang import hook_decision
+    made = []
+    monkeypatch.setitem(host_exec.INVOKERS, "archhub.commands", lambda action, arguments: made.append(action) or {"ok": True})
+    event = {"tool": "outlook_reply_draft", "input": {"connector": "archhub.commands", "arguments": {"body": "kept"}},
+             "vendor": "archhub", "session": "commands"}
+    digest = hook_decision._call_digest(event, "write", "command")
+    card = hook_decision._remember(event, "write", "command", digest, "Run outlook_reply_draft", os.environ)
+    rows = lambda: json.loads(hook_decision._ask_path(os.environ).read_text(encoding="utf-8"))["holds"]
+    try:
+        _permissions("Plan only", {})
+        hook_decision.decide({"tool_name": "read", "tool_input": {"path": "notes.txt"}})
+        assert rows()[card]["status"] == "pending" and made == []
+        _permissions("Accept edits", {"outlook_reply_draft": "Ask"})
+        hook_decision.decide({"tool_name": "read", "tool_input": {"path": "notes.txt"}})
+        assert rows()[card]["status"] == "pending" and made == []
+        _permissions("Accept edits", {})
+        hook_decision.decide({"tool_name": "read", "tool_input": {"path": "notes.txt"}})
+        assert rows()[card]["status"] == "approved" and made == ["outlook_reply_draft"]
+    finally:
+        _mode(None)
+
+
+def test_an_agent_draft_tool_runs_without_a_card_and_still_honours_off(monkeypatch):
+    """command_registry's guard: the Outlook reply-draft host tool runs at once; Off refuses it; Plan only refuses it."""
+    import asyncio
+    from nodelang import native_host_tools
+    from nodelang.hook_decision import ask_reviews
+    from nodelang.native_agent_mcp import build_server
+    calls = []
+    monkeypatch.setattr(native_host_tools, "_allow_effect", lambda host: None)
+    monkeypatch.setattr(native_host_tools, "_run_engine", lambda engine, params: calls.append((engine, params)) or {"ok": True})
+    server = build_server(mailbox_call=lambda *args, **kwargs: {})
+    arguments = {"to": "", "cc": "", "subject": "Re: sheets", "body": "Dear Ahmed", "reply_to": "msg-1"}
+    try:
+        _permissions("Ask first", {})
+        before = len(ask_reviews())
+        asyncio.run(server.call_tool("outlook_reply_draft", arguments))
+        assert len(ask_reviews()) == before and len(calls) == 1, (calls, ask_reviews())
+        for run_mode, tools in (("Ask first", {"outlook_reply_draft": "Off"}), ("Plan only", {})):
+            _permissions(run_mode, tools)
+            with pytest.raises(Exception, match="Refused"):
+                asyncio.run(server.call_tool("outlook_reply_draft", arguments))
+        assert len(calls) == 1
+    finally:
+        _mode(None)
+
+
+def test_connector_call_args_are_read_for_sends_and_public_targets():
+    """Re-review repro 1: connector.call keeps the action's values in data["args"] (a mapping or its JSON text). A send
+    switch, a public flag or URL there is not a draft, and a client path in it going public is refused."""
+    from nodelang import hook_decision
+    client = r"C:\\tmp\\20.CLIENTS\\demo\\brief.pdf"
+    _permissions("Ask first", {})
+    try:
+        for args in ({"send": True, "body": "x"}, {"public": True, "body": "x"}, {"url": "https://example.com/p", "body": "x"},
+                     json.dumps({"send": True, "body": "x"})):
+            decision = hook_decision.decide({"tool_name": "connector.call", "tool_input": {
+                "connector": "outlook", "action": "outlook_reply_draft", "args": args}})
+            assert decision["verdict"] == "ask", (args, decision)
+        leaking = hook_decision.decide({"tool_name": "connector.call", "tool_input": {
+            "connector": "outlook", "action": "outlook_reply_draft",
+            "args": {"send": True, "public": True, "url": "https://example.com/p", "body": "See " + client}}})
+        assert leaking["verdict"] == "refuse" and leaking["rules"], leaking
+        plain = hook_decision.decide({"tool_name": "connector.call", "tool_input": {
+            "connector": "outlook", "action": "outlook_reply_draft", "args": {"body": "Dear Ahmed"}}})
+        assert plain["verdict"] in ("allow", "organize") and "hold" not in plain, plain
+    finally:
+        _mode(None)
+
+
+def test_a_per_tool_setting_matches_an_mcp_prefixed_draft_tool_by_its_leaf(monkeypatch):
+    """Re-review repro 2: Off/Ask on outlook_reply_draft also holds mcp__<server>__outlook_reply_draft, and its old card."""
+    from nodelang import hook_decision
+    name = "mcp__archhub_agent_coordination__outlook_reply_draft"
+    try:
+        _permissions("Accept edits", {"outlook_reply_draft": "Off"})
+        assert hook_decision.decide({"tool_name": name, "tool_input": {"body": "x"}})["verdict"] == "refuse"
+        _permissions("Accept edits", {"outlook_reply_draft": "Ask"})
+        assert hook_decision.decide({"tool_name": name, "tool_input": {"body": "x"}})["verdict"] == "ask"
+        made = []
+        monkeypatch.setitem(host_exec.INVOKERS, "archhub.commands", lambda action, arguments: made.append(action) or {"ok": True})
+        event = {"tool": name, "input": {"connector": "archhub.commands", "arguments": {"body": "kept"}},
+                 "vendor": "archhub", "session": "commands"}
+        card = hook_decision._remember(event, "write", "command", hook_decision._call_digest(event, "write", "command"),
+                                       "Run " + name, os.environ)
+        hook_decision.decide({"tool_name": "read", "tool_input": {"path": "notes.txt"}})
+        rows = json.loads(hook_decision._ask_path(os.environ).read_text(encoding="utf-8"))["holds"]
+        assert rows[card]["status"] == "pending" and made == []
+    finally:
+        _mode(None)
+
+
+def test_an_agent_draft_tool_that_asks_without_a_card_is_refused_not_held(monkeypatch):
+    """Re-review repro 3: in a chat-owned agent (no card is made), a draft tool that asks is refused; no card is written."""
+    import asyncio
+    from nodelang import native_host_tools
+    from nodelang.hook_decision import ask_reviews
+    from nodelang.native_agent_mcp import build_server
+    calls = []
+    monkeypatch.setattr(native_host_tools, "_allow_effect", lambda host: None)
+    monkeypatch.setattr(native_host_tools, "_run_engine", lambda engine, params: calls.append(engine) or {"ok": True})
+    monkeypatch.setenv("ARCHHUB_CHAT_OWNED", "1")
+    server = build_server(mailbox_call=lambda *args, **kwargs: {})
+    try:
+        _permissions("Ask first", {"outlook_reply_draft": "Ask"})
+        before = len(ask_reviews())
+        with pytest.raises(Exception, match="Refused"):
+            asyncio.run(server.call_tool("outlook_reply_draft", {"subject": "Re: sheets", "body": "Dear Ahmed", "reply_to": "msg-1"}))
+        assert len(ask_reviews()) == before and calls == []
+    finally:
+        _mode(None)
+
+
 def _bound_literal(code, name):
     match = re.search(r'var %s = ("(?:\\.|[^"\\])*");' % name, code)
     assert match, code

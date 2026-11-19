@@ -185,6 +185,20 @@ def _guard_agent_effects(server, commands):
                 name, spec, params = folded['id'], folded, {**folded['params'], **given}
             else:
                 params = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
+            from .hook_decision import decide, draft_only
+            if draft_only(name):
+                # A draft in his own mailbox never asks (founder); the one decision still applies Plan only and any
+                # per-tool Off/Ask he set, and a draft that sends or targets anything public still waits.
+                verdict = decide({'tool_name': name, 'tool_input': {'connector': 'archhub.commands', 'arguments': params}})
+                if verdict['verdict'] in ('allow', 'organize'):
+                    return await original(name, arguments, context=context, convert_result=convert_result)
+                if verdict['verdict'] == 'refuse':
+                    raise ToolError('Refused: ' + '; '.join(verdict['notes'] or verdict['rules']))
+                if verdict.get('hold'):  # the decision already holds it on one Approve card: no second card
+                    answer = {'ok': True, 'status': 'Waiting for approval', 'approvalId': verdict['hold']}
+                    return tool.fn_metadata.convert_result(answer) if convert_result else answer
+                if verdict['verdict'] == 'ask':  # it asks but made no card (an agent ArchHub started for chat): not run
+                    raise ToolError('Refused: ' + '; '.join(verdict['notes'] or verdict['rules']))
             host = spec.get('effect_host') or spec['engine'].split('.')[0]
             if host in ('revit', 'acad', 'max', 'rhino', 'blender'):
                 _allow_effect(host)

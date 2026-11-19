@@ -11907,7 +11907,11 @@
         ".github/workflows/release.yml",
         "03.TOOLS/installer/build_release.ps1",
         "02.TESTS/tests_replica/test_goose_source.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "03.TOOLS/packaging/windows/goose/patches/0001-telemetry-off-by-default.patch",
+        "03.TOOLS/packaging/windows/goose/patches/0002-archhub-config-path.patch",
+        "03.TOOLS/packaging/windows/goose/patches/0003-baboom-identity.patch",
+        "03.TOOLS/packaging/windows/goose/patches/0004-archhub-default-extension.patch"
       ]
     },
     "UPDATERWORKS": {

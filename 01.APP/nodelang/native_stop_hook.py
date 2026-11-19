@@ -212,6 +212,11 @@ _LOCAL_IDLE_STOP = re.compile(r'(?<![A-Za-z])(STOP|PAUSE|HOLD)(?![A-Za-z])', re.
 _LOCAL_QUEUE = re.compile(r'(?im)^\s*(sent-but-unanswered|adopted-not-installed)\s*:\s*(.+?)\s*$')
 _LOCAL_IDLE_REASON = ('Continue the work instead of ending on a question or offer. '
                       'If blocked, state the exact deferred need as "deferred: needs <thing>".')
+_ARABIC_LETTER = re.compile(r'[؀-ۿ]')
+_LATIN_LETTER = re.compile(r'[A-Za-z]')
+# R164 "why are you speaking Arabic?": same rule text the Workshop injects (workshop_mailbox._ENGLISH_RULE).
+_LOCAL_ENGLISH_REASON = ('Founder rule: reply in English (Arabic only for exact names, with an English gloss). '
+                         'Rewrite your last reply in English.')
 _LOCAL_QUEUE_REASON = ('Resolve the local follow-up queue before ending: %s. '
                        'Follow it up or write "deferred: needs <thing>".')
 
@@ -289,7 +294,9 @@ def local_idle_stop_decision(payload, vendor):
     stripped = text.strip()
     if not stripped:
         return None
-    queued = [(str(index + 1), ': '.join(match))
+    if len(_ARABIC_LETTER.findall(stripped)) > len(_LATIN_LETTER.findall(stripped)):
+        return {'decision': 'block', 'reason': _LOCAL_ENGLISH_REASON}
+    queued =[(str(index + 1), ': '.join(match))
               for index, match in enumerate(_LOCAL_QUEUE.findall(stripped))]
     if queued:
         followed = {match.group(1) for match in _LOCAL_IDLE_FOLLOWED.finditer(stripped)}

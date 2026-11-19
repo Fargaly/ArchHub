@@ -155,3 +155,25 @@ def test_local_queue_blocks_until_each_item_id_is_followed_up(tmp_path, monkeypa
         passed = _main(tmp_path, monkeypatch, {
             'session_id': SESSION, 'transcript_path': str(transcript), 'stop_hook_active': False})
         assert passed.get('decision') != 'block'
+
+
+def test_arabic_reply_blocks_once_for_english(tmp_path, monkeypatch):
+    # R164: any agent's final reply in Arabic goes back to be rewritten in English, once.
+    transcript = _write(tmp_path, [
+        {'type': 'assistant', 'timestamp': _at(0), 'message': {'content': 'خلصت التعديل والتيستات عدت كلها.'}}
+    ])
+    payload = {'session_id': SESSION, 'transcript_path': str(transcript), 'stop_hook_active': False}
+    blocked = _main(tmp_path, monkeypatch, dict(payload))
+    assert blocked['decision'] == 'block'
+    assert 'reply in English' in blocked['reason']
+    assert _main(tmp_path, monkeypatch, {**payload, 'stop_hook_active': True}).get('decision') != 'block'
+
+
+def test_english_reply_quoting_an_arabic_name_passes(tmp_path, monkeypatch):
+    transcript = _write(tmp_path, [
+        {'type': 'assistant', 'timestamp': _at(0), 'message': {
+            'content': 'PASS. Filed under the "عقد" (contract) folder. Tests: 3 passed.'}}
+    ])
+    result = _main(tmp_path, monkeypatch, {
+        'session_id': SESSION, 'transcript_path': str(transcript), 'stop_hook_active': False})
+    assert result.get('decision') != 'block'

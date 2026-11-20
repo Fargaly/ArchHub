@@ -435,6 +435,7 @@ jobs:
             release-output/release.json
             release-output/release-notes.md
             release-output/source-manifest.tsv
+            release-output/installed-source-manifest.tsv
             release-output/studio-build.json
             release-output/BUILD_METADATA.json
           if-no-files-found: error

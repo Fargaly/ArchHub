@@ -18,6 +18,31 @@ _STOP = set('the a an of to and or in on for is are be how what which do does i 
 _GROUND_STOP = set('where go should must put keep standard std'.split())
 _ARABIC = re.compile(r'[\u0621-\u064a]')
 _ARABIC_IDENTITY = 'أنا بابوم، مساعد ذكاء اصطناعي.'
+_MACHINE_NODE_CATEGORIES = {'skill', 'workspaces', 'models', 'agents'}
+_NODE_FIELD_QUESTIONS = {
+    'inputs': (r'\binputs?\b|مدخل|يدخل', 'Inputs', 'المدخلات'),
+    'outputs': (r'\boutputs?\b|\breturns?\b|مخرج|ناتج|يطلع|بتطلع|تُخرج|تخرج', 'Outputs', 'المخرجات'),
+    'params': (r'\bparameters?\b|معامل|إعداد', 'Parameters', 'المعاملات'),
+}
+
+
+def public_node_chunks(catalogue):
+    """Project the same public records and routes rendered by the website exporter."""
+    for node in catalogue['nodes']:
+        if node['cat'] in _MACHINE_NODE_CATEGORIES:
+            continue
+        uid = node['id']
+        title = node['title']
+        slug = re.sub(r'[^a-z0-9]+', '-', uid.lower()).strip('-')
+        fields = {kind: [f"{field['name']} ({field['type'] or 'Any'})" for field in node[kind]]
+                  for kind in _NODE_FIELD_QUESTIONS}
+        paragraphs = [f"{title}: {node['sub'].rstrip('.')}."]
+        for kind, (_, label, _) in _NODE_FIELD_QUESTIONS.items():
+            if fields[kind]:
+                paragraphs.append(f"{label}: {', '.join(fields[kind])}.")
+        yield {'id': uid, 'title': title, 'head': 'Node reference',
+               'href': f'https://archhub.io/docs/nodes/{slug}/',
+               'text': ' '.join(paragraphs), 'node_fields': fields}
 
 
 def public_doc_chunks(site_export):
@@ -139,6 +164,30 @@ class Index:
         return result
 
 
+def _public_node(index, question, arabic):
+    kinds = [kind for kind, (pattern, _, _) in _NODE_FIELD_QUESTIONS.items() if re.search(pattern, question, re.I)]
+    if not kinds or not re.search(r'\bnodes?\b|عقدة|العقده|نود|\b[a-z]+\.[a-z]+\b', question, re.I):
+        return None
+    rows = [row for row in index.public_docs if 'node_fields' in row]
+    if not rows:
+        return None
+    ranked = []
+    for row in rows:
+        for name in (row['id'], row['title']):
+            if re.search(r'(?<![\w.])' + re.escape(name) + r'(?!\w|\.\w)', question, re.I):
+                ranked.append((len(name), row))
+                break
+    ranked.sort(key=lambda match: match[0], reverse=True)
+    if not ranked or (len(ranked) > 1 and ranked[0][0] == ranked[1][0]):
+        return {'answer': ('لم أجد عقدة مطابقة في دليل العقد العام.' if arabic else
+                           'I could not find a matching node in the public node reference.'), 'links': []}
+    row = ranked[0][1]
+    labels = [f"{_NODE_FIELD_QUESTIONS[kind][2 if arabic else 1]}: " +
+              (', '.join(row['node_fields'][kind]) or ('لا توجد' if arabic else 'none')) for kind in kinds]
+    return {'answer': f"{row['title']} — {'. '.join(labels)}. [{row['id']}]",
+            'links': [{'title': row['title'], 'href': row['href'], 'sub': row['head']}]}
+
+
 def _public_overview(index, question, arabic):
     if not re.search(r'\b(archhub|canvas)\b|[اأآ]ر[كک] ?ه[اآ]?ب|كان[فڤ]ا?س|لوحة العمل', question, re.I):
         return None
@@ -203,6 +252,9 @@ def answer(index, question, token='', page='/', *, complete=None):
     if token and identity:
         return {'answer': _ARABIC_IDENTITY if arabic and index.public_docs else identity, 'links': []}
     if index.public_docs:
+        node = _public_node(index, question, arabic)
+        if node:
+            return node
         if token:
             return _site_answer(index, question, token, complete, arabic)
         overview = _public_overview(index, question, arabic)

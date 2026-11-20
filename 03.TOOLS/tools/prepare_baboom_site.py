@@ -11,7 +11,7 @@ import shutil
 import sys
 
 
-def prepare(server, out):
+def prepare(server, out, *, catalogue=None):
     source = server.read_text(encoding='utf-8')
     lines = source.splitlines(keepends=True)
     removed = []
@@ -26,8 +26,10 @@ def prepare(server, out):
     app = Path(__file__).resolve().parents[2] / '01.APP' / 'nodelang'
     sys.path.insert(0, str(app.parent))
     try:
-        from nodelang.baboom_standard import public_doc_chunks
+        from nodelang.baboom_standard import public_doc_chunks, public_node_chunks
         product_docs = list(public_doc_chunks(app / 'site_export.py'))
+        if catalogue is not None:
+            product_docs.extend(public_node_chunks(json.loads(catalogue.read_text(encoding='utf-8'))))
     finally:
         sys.path.pop(0)
     package = out / 'nodelang'
@@ -51,8 +53,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('server', type=Path)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--catalogue', type=Path, help='the existing public website catalogue export')
     args = parser.parse_args()
-    prepare(args.server, args.out)
+    prepare(args.server, args.out, catalogue=args.catalogue)
 
 
 if __name__ == '__main__':

@@ -34,9 +34,16 @@ def load(name, path):
 
 @pytest.fixture
 def sites(tmp_path, monkeypatch):
+    return prepare_sites(tmp_path, monkeypatch)
+
+
+def prepare_sites(tmp_path, monkeypatch, catalogue=None):
     prepared = tmp_path / 'prepared'
-    subprocess.run([sys.executable, '-B', str(ROOT / '03.TOOLS/tools/prepare_baboom_site.py'),
-                    str(SERVER), '--out', str(prepared)], check=True, capture_output=True, timeout=30)
+    command = [sys.executable, '-B', str(ROOT / '03.TOOLS/tools/prepare_baboom_site.py'),
+               str(SERVER), '--out', str(prepared)]
+    if catalogue is not None:
+        command += ['--catalogue', str(catalogue)]
+    subprocess.run(command, check=True, capture_output=True, timeout=30)
     # Load the copied product bytes, rather than a cached source-checkout module.
     for name in ('baboom_persona', 'baboom_standard'):
         qualified = 'nodelang.' + name
@@ -93,6 +100,54 @@ def post(port, question, page, signed_in=False):
         return json.loads(response.read())
     finally:
         connection.close()
+
+
+def test_public_catalogue_drives_node_answers_and_excludes_local_capabilities(tmp_path, monkeypatch):
+    export = ROOT / '03.TOOLS/packaging/website/export_catalogue.py'
+    subprocess.run([sys.executable, '-B', str(export)], check=True, capture_output=True, timeout=60)
+    data = json.loads((ROOT / '.cache/site/catalogue.json').read_text(encoding='utf-8'))
+    public_count = len(data['nodes'])
+    field = next(node for node in data['nodes'] if node['id'] == 'data.field')
+    assert field['outputs'] == [{'name': 'values', 'type': 'list'}]
+    for category in ('skill', 'workspaces', 'models', 'agents'):
+        data['nodes'].append({**field, 'id': f'local.{category}', 'cat': category,
+                              'title': f'Hidden {category}', 'sub': 'MACHINE_ONLY_CATALOGUE_FIXTURE'})
+    catalogue = tmp_path / 'catalogue.json'
+    catalogue.write_text(json.dumps(data), encoding='utf-8')
+    _, candidate = prepare_sites(tmp_path, monkeypatch, catalogue)
+    chunks = json.loads((tmp_path / 'prepared/product-docs.json').read_text(encoding='utf-8'))['chunks']
+    assert len([chunk for chunk in chunks if 'node_fields' in chunk]) == public_count
+    assert 'MACHINE_ONLY_CATALOGUE_FIXTURE' not in json.dumps(chunks)
+    with running(candidate) as port:
+        questions = [
+            ('What does the Field node output?', 'Outputs: values (list)'),
+            ('ما مخرجات عقدة Field؟', 'المخرجات: values (list)'),
+            ('What parameters does the Field node have?', 'Parameters: type (text)'),
+            ('ما مدخلات عقدة Field؟', 'المدخلات: column (list), type (string)'),
+        ]
+        for question, expected in questions:
+            reply = post(port, question, '/')
+            assert expected in reply['answer']
+            assert reply['links'] == [{'title': 'Field', 'href': 'https://archhub.io/docs/nodes/data-field/',
+                                       'sub': 'Node reference'}]
+    with running(candidate) as port:
+        for category in ('skill', 'workspaces', 'models', 'agents'):
+            reply = post(port, f'What does the Hidden {category} node output?', '/', signed_in=True)
+            assert reply['links'] == []
+            assert 'Hidden' not in reply['answer'] and 'MACHINE_ONLY' not in reply['answer']
+        reply = post(port, 'ما مخرجات عقدة Hidden skill؟', '/')
+        assert reply == {'answer': 'لم أجد عقدة مطابقة في دليل العقد العام.', 'links': []}
+    candidate.complete.assert_not_called()
+    candidate.cloud.assert_not_called()
+
+    field['outputs'][0]['type'] = 'table'
+    catalogue.write_text(json.dumps(data), encoding='utf-8')
+    _, refreshed = prepare_sites(tmp_path / 'refreshed', monkeypatch, catalogue)
+    with running(refreshed) as port:
+        reply = post(port, 'What does the Field node output?', '/')
+    assert 'values (table)' in reply['answer'] and 'values (list)' not in reply['answer']
+    assert reply['links'][0]['href'] == 'https://archhub.io/docs/nodes/data-field/'
+    refreshed.complete.assert_not_called()
 
 
 @pytest.mark.parametrize('question,page', [

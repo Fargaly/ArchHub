@@ -119,4 +119,8 @@ test('Look uses the five design families and passes the actual workflow to the e
  assert.equal(calls.length,1);assert.equal(calls[0].preview,graph);assert.equal(calls[0].embedded,true);assert.equal(calls[0].externalInspector,true);
  assert.ok(html.includes('inert=""'),'the live preview cannot edit or run the workflow');
  assert.ok(html.includes('Custom keyboard shortcuts'),'unimplemented keyboard settings are visible');
+ data.graph={workspaceIds:[]};
+ const empty=renderToStaticMarkup(React.createElement(window.UI.Settings,{page:'Appearance'}));
+ assert.ok(empty.includes('Open a workflow to preview its real nodes here.'));
+ assert.equal(calls.length,1,'an unloaded workflow does not mount a Canvas');
 });

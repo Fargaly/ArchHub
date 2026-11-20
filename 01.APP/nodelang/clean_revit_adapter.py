@@ -1559,10 +1559,16 @@ _BUILD_WALLS = """
 var data = %s;
 var levelName = %s;
 double heightMm = %s;
+var levelNames = new List<string>();
 Level level = null;
-foreach (Level lv in new FilteredElementCollector(Doc).OfClass(typeof(Level)))
-    if (level == null || lv.Name == levelName) { if (lv.Name == levelName || level == null) level = lv; }
-if (level == null) throw new Exception("no level in the model");
+foreach (Level lv in new FilteredElementCollector(Doc).OfClass(typeof(Level))) {
+    levelNames.Add(lv.Name);
+    if (lv.Name == levelName) level = lv;
+}
+if (string.IsNullOrWhiteSpace(levelName))
+    throw new Exception("level is required; levels in the model: " + string.Join(", ", levelNames));
+if (level == null)
+    throw new Exception("unknown level '" + levelName + "'; levels in the model: " + string.Join(", ", levelNames));
 var built = new List<int>();
 // The broker (RevitMCPCore.ExecAsync) runs this inside the transaction named
 // by transaction_name and commits it; a second Transaction.Start here throws.
@@ -1594,10 +1600,12 @@ def build_walls(params: Mapping[str, object], lines: list):
             "set the session parameter to the Revit port to build into"
             " -- live: %s" % listed)
     session = _session_for(wanted, sessions)
+    segments = ["new double[] {%s}" % ", ".join(json.dumps(float(v), allow_nan=False) for v in line[:4])
+                for line in lines]
     script = _BUILD_WALLS % (
-        json.dumps([[float(v) for v in line[:4]] for line in lines]),
+        "new double[][] {%s}" % ", ".join(segments),
         json.dumps(str(params.get("level") or "")),
-        json.dumps(float(params.get("height_mm") or 3000.0)),
+        json.dumps(float(params.get("height_mm") or 3000.0), allow_nan=False),
     )
     answer = _execute(session, script, "ArchHub build walls")
     if answer.get("status") != "ok":

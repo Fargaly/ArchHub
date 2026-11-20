@@ -1429,3 +1429,56 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .v48-thread-approval>span{font:600 11px var(--type-family-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--color-warn)}.v48-thread-approval p{margin:0;font-size:12.5px;color:var(--color-ink-soft)}
 .dockws .wst{display:flex;align-items:center;gap:6px}.dockws .wst .wsl{flex:1;min-width:0}.dockws .wsraw{flex:none;font-size:11px}
 .v48-archive-ask{position:absolute;right:8px;top:8px;z-index:21;display:grid;gap:8px;max-width:320px;padding:10px;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg-panel);box-shadow:var(--e1)}.v48-archive-ask p{margin:0;font-size:12.5px;color:var(--color-ink-soft)}
+
+/* Approved directions v26 Settings: existing owners in area cards, one outline. */
+.settings-reference [hidden]{display:none!important}
+.settings-reference .settings-sheet>header{height:auto;min-height:72px;padding:18px 28px 14px;flex-wrap:wrap}
+.settings-reference .settings-sheet h1{font-size:calc(22px * var(--text-scale,1))}
+.settings-reference .sheet-view-filter{display:flex;gap:2px}
+.settings-reference .settings-sheet .sheet-view-filter .sheet-action{width:auto}
+.settings-reference .sheet-view-filter [aria-pressed=true]{box-shadow:inset 0 -2px var(--color-accent)}
+.settings-reference .sheet-settings-scope{display:flex;align-items:center;gap:8px;color:var(--color-ink-soft)}
+.settings-reference .sheet-settings-scope select{max-width:160px}
+.settings-reference .sheet-layout{grid-template-columns:260px minmax(0,1fr)}
+.settings-reference .sheet-tabs{display:grid;align-content:start;gap:4px;padding:16px 12px;border-right:1px solid var(--color-line-soft)}
+.settings-reference .sheet-tabs>.settings-section{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:10px;height:auto;min-height:54px;padding:10px 12px;border:0;border-radius:8px;text-align:left;white-space:normal}
+.settings-reference .settings-section>span{display:grid;gap:2px;min-width:0}
+.settings-reference .settings-section small{font-size:calc(12px * var(--text-scale,1));font-weight:400;line-height:1.35;color:var(--color-ink-soft)}
+.settings-reference .settings-section>svg{margin-top:2px;color:var(--color-ink-soft)}
+.settings-reference .sheet-tabs>.settings-section[aria-current=page]{background:var(--color-bg-raised);box-shadow:inset 2px 0 0 var(--color-accent);color:var(--color-ink)}
+.settings-reference .settings-section .sheet-change-count{display:block;border-radius:4px;padding:0 5px;background:var(--color-bg-hover);font-size:11px}
+.settings-reference .sheet-content{padding:22px 28px 48px;min-width:0}
+.settings-reference .sheet-page-heading{border:0;min-height:0;padding:0;margin-bottom:18px}
+.settings-reference .sheet-subpages{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.settings-reference .sheet-subpages [aria-current=page]{box-shadow:inset 0 -2px var(--color-accent)}
+.settings-reference .sheet-design-body{display:grid;grid-template-columns:minmax(0,720px) 220px;gap:28px;align-items:start}
+.settings-reference .sheet-design-cards{min-width:0}
+.settings-reference .sheet-columns,.settings-reference .sheet-owner-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-width:0}
+.settings-reference .sheet-owner-cards{margin-top:14px}
+.settings-reference .sheet-columns>section,.settings-reference .sheet-owner-card{min-width:0;background:var(--color-bg-panel);border:1px solid var(--color-line);border-radius:var(--node-radius,6px);padding:12px;scroll-margin-top:16px}
+.settings-reference .sheet-columns>section>h2,.settings-reference .sheet-owner-card>h3{font-size:calc(13px * var(--text-scale,1));line-height:20px;padding:0 0 9px;margin:0 0 4px;border-bottom:1px solid var(--color-line-soft)}
+.settings-reference .sheet-field{min-height:48px;grid-template-columns:minmax(0,1fr) minmax(0,220px);gap:12px;padding:7px 0}
+.settings-reference .sheet-field>span{font-size:calc(13px * var(--text-scale,1))}
+.settings-reference .sheet-owner-card>.setting-row{grid-template-columns:minmax(0,1fr) minmax(0,280px);gap:12px;min-height:42px}
+.settings-reference .setting-row input,.settings-reference .setting-row select{max-width:100%;min-width:0}
+.settings-reference .sheet-field .setting-row .reset{position:static;flex:0 0 auto;width:auto}
+.settings-reference .sheet-field>div{width:100%;min-width:0}
+.settings-reference .sheet-outline{display:grid;gap:2px;position:sticky;top:0;padding:12px;border:1px solid var(--color-line-soft);border-radius:10px}
+.settings-reference .sheet-outline>b{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-ink-soft);margin-bottom:4px}
+.settings-reference .sheet-outline>button{text-align:left;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--color-ink-soft);font:inherit}
+.settings-reference .sheet-outline>button:hover{background:var(--color-bg-hover);color:var(--color-ink)}
+.settings-reference .sheet-page-heading>.flex{flex-wrap:wrap}
+@media(max-width:1200px){.settings-reference .sheet-design-body{grid-template-columns:minmax(0,1fr)}.settings-reference .sheet-outline{grid-row:1;position:static;display:flex;flex-wrap:wrap;align-items:center;gap:4px}.settings-reference .sheet-outline>b{margin:0 8px 0 0}}
+@media(max-width:740px){.settings-reference .sheet-layout{grid-template-columns:160px minmax(0,1fr)}.settings-reference .sheet-tabs{padding:12px 6px}.settings-reference .sheet-tabs>.settings-section{grid-template-columns:16px minmax(0,1fr);padding:8px;gap:6px}.settings-reference .settings-section small{display:none}.settings-reference .sheet-content{padding:16px}.settings-reference .sheet-field,.settings-reference .sheet-owner-card>.setting-row{grid-template-columns:minmax(0,1fr)}.settings-reference .settings-sheet>header{padding:16px}.settings-reference .settings-sheet>header .sheet-search{min-width:140px}}
+
+.settings-reference .sheet-design-side{position:sticky;top:0;display:grid;gap:14px;min-width:0}
+.settings-reference .sheet-design-side .sheet-outline{position:static}
+.settings-reference .sheet-live-preview{border:1px solid var(--color-line);border-radius:var(--node-radius,6px);background:var(--color-bg-panel);overflow:hidden;min-width:0}
+.settings-reference .sheet-live-preview>h3{font-size:12px;padding:10px 12px;border-bottom:1px solid var(--color-line-soft);margin:0}
+.settings-reference .sheet-live-preview>p{font-size:12px;color:var(--color-ink-soft);padding:10px 12px;margin:0}
+.settings-reference .sheet-preview-stage{height:240px;position:relative;overflow:hidden}
+.settings-reference .sheet-preview-stage>[data-screen=canvas]{height:100%}
+@media(max-width:1200px){.settings-reference .sheet-design-side{position:static;grid-row:1;grid-template-columns:minmax(0,1fr)}.settings-reference .sheet-preview-stage{height:220px}}
+
+.settings-reference .sheet-design-body{grid-template-columns:minmax(0,720px) 260px}
+@media(max-width:1200px){.settings-reference .sheet-design-body{grid-template-columns:minmax(0,1fr)}}

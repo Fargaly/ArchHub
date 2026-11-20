@@ -43,7 +43,10 @@
     const workflows = [...(s.templates || []).filter(t => !t.path).map(t => ({
       label: t.title,
       commandId: 'palette.template',
-      action: () => u.show('Skill', {id: t.id})
+      action: async () => {
+        const opened = await u.act(() => api.openTemplateGraph(t.id));
+        if (opened && !opened.cancelled) await u.go('canvas');
+      }
     })), ...(s.graphs || []).map(g => ({
       label: g.name || g.title || g.id,
       commandId: 'palette.graph',

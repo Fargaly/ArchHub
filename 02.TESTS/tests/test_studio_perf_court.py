@@ -34,7 +34,7 @@ def test_studio_perf_court(tmp_path, monkeypatch):
         tasks = [client.workshop('createTask', 'Perf session %02d' % i)['taskId'] for i in range(20)]
         items = {row['id']: row for row in catalogue()}
         nodes, wires = [], []
-        for i in range(29):
+        for i in range(int(os.environ.get('ARCHHUB_PERF_NODES', '29'))):
             item = ('n_list', 's_slice', 's_count')[i % 3]
             node = {'id': 'n%d' % i, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                     'params': copy.deepcopy(items[item]['params']), 'position': {'x': 800 + (i % 3) * 340, 'y': (i // 3) * 220}}

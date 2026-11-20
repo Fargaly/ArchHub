@@ -257,12 +257,13 @@ async function court() {
     // fit: double-click the empty canvas first (after a reload the restored view can put a card there instead).
     const drop = async (ids, framesStop, fit) => { if (fit) { await fitView(); await page.waitForTimeout(600); }
       let id, x0, y0;
-      for (const candidate of ids) {
+      // A big file fits at the minimum zoom with these cards outside the pane: then drag any card on screen, as a user would.
+      for (const candidate of [...ids, ...await page.evaluate(() => [...document.querySelectorAll('[aria-label="Workflow canvas"] .react-flow__node')].map(e => e.dataset.id))]) {
         const b = await box(candidate); if (!b) continue;
-        const x = b.x + b.width / 2, y = b.y + 14;
+        const x = b.x + b.width / 2, y = b.y + Math.min(14, b.height * .08);
         if (await page.evaluate(([nodeId, px, py]) => document.elementFromPoint(px, py)?.closest('.react-flow__node')?.dataset.id === nodeId, [candidate, x, y])) { id = candidate; x0 = x; y0 = y; break; }
       }
-      if (!id) throw Error('no uncovered card to drop among ' + ids.join(','));
+      if (!id) throw Error('no uncovered card to drop among ' + ids.join(',') + ' or any card on screen');
       const before = await placed(id);
       await mouse('mouseMoved', x0, y0); await mouse('mousePressed', x0, y0, {button: 'left', buttons: 1, clickCount: 1});
       for (let i = 1; i <= 10; i++) await mouse('mouseMoved', x0 + i * 9, y0 + i * 5, {button: 'left', buttons: 1});

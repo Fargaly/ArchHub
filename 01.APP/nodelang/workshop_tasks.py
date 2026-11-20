@@ -137,7 +137,7 @@ def _member_list(text, owner=None, label=None, lease=None):
     """Every agent that joined the session, in join order. A row from before members holds its one owner."""
     try:
         held = json.loads(text) if text else []
-    except ValueError:
+    except (TypeError, ValueError, RecursionError):
         held = []
     held = [m for m in held if isinstance(m, dict) and isinstance(m.get("owner"), str)] if isinstance(held, list) else []
     if not held and owner:
@@ -145,9 +145,19 @@ def _member_list(text, owner=None, label=None, lease=None):
     return held
 
 
+def _lease_active(until, now):
+    return type(until) in (int, float) and now <= until < float('inf')
+
+
+def member_presence(members):
+    now = time.time()
+    return [{'name': m['label'] if isinstance(m.get('label'), str) and m['label'] else m['owner'],
+             'live': _lease_active(m.get('lease_until'), now)} for m in members]
+
+
 def _live(members, now=None):
     now = time.time() if now is None else now
-    return [m for m in members if (m.get("lease_until") or 0) >= now]
+    return [m for m in members if _lease_active(m.get("lease_until"), now)]
 
 
 def _holds(row, owner):
@@ -1048,8 +1058,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
              # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
-             'members': [{'name': m.get('label') or m['owner'], 'live': (m.get('lease_until') or 0) >= time.time()}
-                         for m in row.get('members') or []],
+             'members': member_presence(row.get('members') or []),
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
              'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
@@ -1138,7 +1147,7 @@ def rows(history, task=None, *, include_archived=True, settle=True):
         "SELECT " + ",".join(COLUMNS) + " FROM workshop_tasks WHERE (? IS NULL OR id=?) "
         "AND (? OR IFNULL(archived,0)=0) ORDER BY created_at DESC LIMIT 500", (task, task, show))]
     for row in found:
-        row["lease_expired"] = row["status"] == "claimed" and row["lease_until"] < now
+        row["lease_expired"] = row["status"] == "claimed" and not _lease_active(row["lease_until"], now)
         row["members"] = _member_list(row["members"], row["owner"], row["owner_label"], row["lease_until"])
     return found
 

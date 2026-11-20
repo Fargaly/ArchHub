@@ -89,6 +89,60 @@ def tasks():
     return workshop_tasks, application_history
 
 
+def test_home_keeps_project_and_members_after_an_archived_null_lease(profile):
+    from nodelang.session_files import list_sessions, read_document, write_document
+    workshop, history_store = tasks()
+    with history_store() as history:
+        tower = workshop.create_session(history, 'Tower work', select=False, workspace='tower')
+        east = workshop.create_session(history, 'East work', select=False)
+        west = workshop.create_session(history, 'West work', select=False)
+        workshop.claim(history, tower['taskId'], 'architect', 'Architect')
+        workshop.archive(history, west['taskId'])
+        history._db.executemany('UPDATE workshop_tasks SET project=? WHERE id=?',
+                                [('East wing', east['taskId']), ('West wing', west['taskId'])])
+        history._db.execute("UPDATE workshop_tasks SET status='claimed', lease_until=NULL, members=? WHERE id=?",
+                            (json.dumps([{'owner': 'former', 'lease_until': 'invalid'}]), west['taskId']))
+        row = workshop.rows(history, west['taskId'], settle=False)[0]
+        assert row['lease_expired'] and not workshop._holds(row, 'former')
+    document = read_document(east['path'])
+    document['properties']['taskContext'].update(task={}, project=['malformed'])
+    write_document(east['path'], document)
+    originals = {Path(v['path']): Path(v['path']).read_bytes() for v in (tower, east, west)}
+    groups = {g['project']['label']: g for g in list_sessions()['groups']}
+    assert set(groups) == {'Tower', 'East wing', 'West wing'}
+    assert groups['Tower']['project']['id'] == 'tower'
+    assert groups['East wing']['project']['id'] == groups['West wing']['project']['id'] == ''
+    assert groups['East wing']['sessions'][0]['task'] == east['taskId']
+    assert groups['Tower']['sessions'][0]['members'] == [{'name': 'Architect', 'live': True}]
+    assert groups['West wing']['sessions'][0]['members'] == [{'name': 'former', 'live': False}]
+    assert all(path.read_bytes() == contents for path, contents in originals.items())
+
+
+def test_home_resumes_only_a_recent_listed_nonarchived_task(profile):
+    from nodelang.session_files import SessionFiles, list_sessions
+    workshop, history_store = tasks()
+    with history_store() as history:
+        first = workshop.create_session(history, 'Current task', select=False)
+        second = workshop.create_session(history, 'Earlier task', select=False)
+        archived = workshop.create_session(history, 'Archived task', select=False)
+        workshop.archive(history, archived['taskId'])
+    loose, _ = session('Canvas only')
+    files = SessionFiles()
+    metadata = files.metadata / 'recent.json'
+    metadata.unlink(missing_ok=True)
+    assert list_sessions()['recentTask'] is None
+    records = [None, {'path': []}, {'path': str(profile / 'absent.archhub')},
+               {'path': archived['path']}, {'path': loose}, {'path': Path(first['path']).as_posix()},
+               {'path': second['path']}]
+    metadata.write_text(json.dumps(records), encoding='utf-8')
+    assert list_sessions()['recentTask'] == first['taskId']
+    for contents in (json.dumps(records[:5]), 'invalid json'):
+        metadata.write_text(contents, encoding='utf-8')
+        result = list_sessions()
+        assert result['recentTask'] is None and result['count'] == 4
+        assert metadata.read_text(encoding='utf-8') == contents
+
+
 def test_task_archive_and_pin_land_in_the_one_file_field(profile):
     workshop_tasks, application_history = tasks()
     with application_history() as history:

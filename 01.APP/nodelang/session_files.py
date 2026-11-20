@@ -2218,11 +2218,18 @@ def _registered_roots():
 def _project_of(props, roots, task_row=None):
     held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
     identity = props.get('project') or held.get('workspace') or ''
+    identity = identity if isinstance(identity, str) else ''
+    label = held.get('project')
+    if not isinstance(label, str) or not label.strip():
+        label = (task_row or {}).get('project')
+    label = label.strip() if isinstance(label, str) else ''
     if not identity:  # files from before projects: the task's project label, mapped to its registered root
-        label = held.get('project') or (task_row or {}).get('project') or ''
         identity = next((key for key, row in roots.items() if label and row.get('label') == label), '')
     row = roots.get(identity)
-    return {'id': identity, 'label': (row.get('label') or identity) if row else ''}
+    if row:
+        return {'id': identity, 'label': row.get('label') or identity}
+    # An old project name can group files, but cannot grant access to a workspace.
+    return {'id': '' if label else identity, 'label': label}
 
 
 def _state_of(props, task_row=None):
@@ -2413,32 +2420,48 @@ def list_sessions(directory=None):
 
     One directory scan, one workspace read and one task-table read; no polling (the caller refreshes on
     a save or a file change)."""
+    from .workshop_tasks import member_presence, rows
     roots = _registered_roots()
     tasks = {}
     try:
         from .workshop_mailbox import application_history
-        from .workshop_tasks import rows
         with application_history(read_only=True) as history:
-            tasks = {row['session_path']: row for row in rows(history, settle=False) if row.get('session_path')}
+            for row in rows(history, settle=False):
+                path = row.get('session_path')
+                if isinstance(path, str) and path:
+                    tasks[Path(path)] = row
     except Exception as error:  # noqa: BLE001 - no Workshop database yet: files still list, without members
         logging.getLogger(__name__).debug('Session list without task rows: %s', error)
     groups = {}
+    resumable = {}
     for path in sorted((Path(directory) if directory else sessions_directory()).glob('*.archhub')):
         try:
             document = read_document(path)
         except (OSError, ValueError):
             continue
-        row = tasks.get(str(path))
+        row = tasks.get(path)
         fields = session_fields(document, path, roots=roots, task_row=row)
-        fields['members'] = [{'name': m.get('label') or m['owner'], 'live': (m.get('lease_until') or 0) >= time.time()}
-                             for m in (row or {}).get('members') or []]
-        fields['task'] = fields['task'] or (row or {}).get('id', '')
+        fields['members'] = member_presence((row or {}).get('members') or [])
+        if not isinstance(fields['task'], str) or not fields['task'].strip():
+            fields['task'] = (row or {}).get('id', '')
+        if fields['task'] and fields['state'] != 'archived' and not (row or {}).get('archived'):
+            resumable[path] = fields['task']
         fields['updated'] = (document.get('properties', {}).get('history') or [{}])[-1].get('at', '')
-        group = groups.setdefault(fields['project']['id'] if fields['project']['label'] else '',
-                                  {'project': fields['project'] if fields['project']['label'] else {'id': '', 'label': ''}, 'sessions': []})
+        project = fields['project'] if fields['project']['label'] else {'id': '', 'label': ''}
+        group = groups.setdefault((project['id'], project['label']), {'project': project, 'sessions': []})
         group['sessions'].append(fields)
     ordered = sorted(groups.values(), key=lambda g: (not g['project']['label'], g['project']['label'].casefold()))
-    return {'ok': True, 'groups': ordered, 'count': sum(len(g['sessions']) for g in ordered)}
+    recent_task = None
+    if resumable:
+        try:
+            for entry in SessionFiles(directory).recent():
+                if isinstance(entry, dict) and isinstance(entry.get('path'), str):
+                    recent_task = resumable.get(Path(entry['path']))
+                    if recent_task:
+                        break
+        except (OSError, ValueError, RecursionError) as error:
+            logging.getLogger(__name__).debug('Recent session history unavailable: %s', error)
+    return {'ok': True, 'groups': ordered, 'count': sum(len(g['sessions']) for g in ordered), 'recentTask': recent_task}
 
 
 def runs_path(path, identity=None):

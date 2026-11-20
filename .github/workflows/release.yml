@@ -582,10 +582,11 @@ jobs:
           $source = Get-Content -Raw selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
           $block = [regex]::Match($source, '(?s)export const steps=\[(.*?)\];').Groups[1].Value
           $names = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-          if ($names.Count -ne 8) { throw 'Declare six Settings cases, one startup witness and one Projects case.' }
+          if ($names.Count -ne 9) { throw 'Declare six Settings cases, startup, Projects and scope recovery.' }
           $names[0..5] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
           $names[6] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-startup.json') -Encoding utf8
           $names[7] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-projects.json') -Encoding utf8
+          $names[8] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-scope.json') -Encoding utf8
           @{repository=$env:PUBLISHED_REPOSITORY;build=$env:PUBLISHED_BUILD;workflow_source=$env:GITHUB_SHA;setup_verified=$false;setup_sha256=$null;setup_bytes=$null;install_exit=$null;installed_root=$null;installed_build=$null;first_run_python=$null;first_run_python_version=$null;first_run_exit=$null;ui_exit=$null} |
             ConvertTo-Json | Set-Content (Join-Path $evidence 'install.json') -Encoding utf8
           if (-not [string]::IsNullOrWhiteSpace($env:PUBLISHED_CANDIDATE)) {
@@ -697,6 +698,10 @@ jobs:
           $found = @($actual | Where-Object { $_.asked -ceq $projects })
           $projectsResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$projects;result='NOT EXERCISED';did='The actual-window check did not reach the Projects case; no pass claimed.'} }
           $projectsResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'projects-result.json') -Encoding utf8
+          $scope = Get-Content -Raw (Join-Path $evidence 'declared-scope.json') | ConvertFrom-Json
+          $found = @($actual | Where-Object { $_.asked -ceq $scope })
+          $scopeResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$scope;result='NOT EXERCISED';did='The actual-window check did not reach scope recovery; no pass claimed.'} }
+          $scopeResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'scope-result.json') -Encoding utf8
       - name: Retain install identity, actual window and all six outcomes
         if: always()
         uses: actions/upload-artifact@v7
@@ -710,6 +715,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/settings-results.json
             ${{ runner.temp }}/archhub-verify-published/startup-result.json
             ${{ runner.temp }}/archhub-verify-published/projects-result.json
+            ${{ runner.temp }}/archhub-verify-published/scope-result.json
             ${{ runner.temp }}/archhub-verify-published/settings/report.json
             ${{ runner.temp }}/archhub-verify-published/settings/steps.json
             ${{ runner.temp }}/archhub-verify-published/settings/*.png

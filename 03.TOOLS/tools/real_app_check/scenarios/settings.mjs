@@ -10,6 +10,7 @@ export const steps=[
  'Reset inherits and reopening retains workspace preferences',
  'Late startup preserves the newer saved workflow',
  'Installed Projects preserves workspace selection, files and registrations',
+ 'Installed Settings recovers a stale scope without replaying a write',
 ];
 export default async function({step,js,until,clickText,cdp,out}){
  const runs=fs.readdirSync(out,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&entry.name.startsWith('run-'));assert.equal(runs.length,1);
@@ -191,6 +192,42 @@ export default async function({step,js,until,clickText,cdp,out}){
    for(const row of rows().filter(row=>!initialIds.has(row.root_id)))await call('removeWorkspace',[row.root_id]);
    await call('openSession',[before.path]);if(before.workspace)await call('selectWorkspace',[before.workspace]);
    assert.deepEqual(new Set(rows().map(row=>row.root_id)),initialIds);assert.equal(await js('window.ArchHubAPI.getSessionDocument().id'),before.id);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
+  }
+ });
+ await step(steps[8],async()=>{
+  const before=await js('(()=>{const a=window.ArchHubAPI,s=a.getSnapshot();return {path:a.getSessionPath(),id:a.getSessionDocument().id,scope:s.settingsScope,workspace:s.activeWorkspace};})()');
+  const beforeBytes=fs.readFileSync(before.path),scopeFile=path.join(folder,'scope-recovery.archhub');
+  const buffers=()=>[globalFile,workspaceFile,scopeFile].map(file=>fs.readFileSync(file));
+  const call=(method,args)=>js('(async()=>window.ArchHubAPI['+JSON.stringify(method)+'](...'+JSON.stringify(args)+'))()');
+  try{
+   await call('newSession',['Scope recovery acceptance']);await call('saveSession',[scopeFile]);await call('setSessionModel',[scopeFile,{project:workspaceId}]);await call('getSettings',[]);await call('refreshPreferences',[]);
+   assert.equal(await js("(()=>{const e=[...document.querySelectorAll('nav button')].find(e=>e.getAttribute('aria-label')==='Settings'||e.textContent.trim()==='Settings');if(!e)throw Error('Settings rail unavailable');e.click();return true;})()"),true);
+   assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);assert.equal(await clickText('Look'),true);await scope('User');
+   const stale=(await snapshot()).destination;
+   function holdScopeResponse(){
+    const browser=globalThis,original=browser.fetch;let release;
+    const probe=browser.__archhubScopeWitness={held:false,restore(){browser.fetch=original;release?.();}};
+    browser.fetch=function(...args){const pending=Reflect.apply(original,this,args);let body;try{body=JSON.parse(args[1]?.body||'{}');}catch{return pending;}
+     const url=new browser.URL(typeof args[0]==='string'?args[0]:args[0].url,browser.location.href);
+     if(url.pathname!=='/api/universal/settings-action'||body.function!=='setSettingsScope'||body.args?.[0]!=='Workspace')return pending;
+     return pending.then(response=>new Promise(resolve=>{release=()=>resolve(response);probe.held=true;}));
+    };
+   }
+   await js('('+holdScopeResponse.toString()+')()');await select('Settings scope','Workspace');
+   assert.equal(await until(()=>js('Boolean(globalThis.__archhubScopeWitness?.held)'),Boolean),true);
+   const pending=await js("(()=>{const s=window.ArchHubAPI.getSnapshot();return {busy:s.settingsScopePending===true,scopeDisabled:document.querySelector('select[aria-label=\"Settings scope\"]')?.disabled,themeDisabled:document.querySelector('select[aria-label=\"Theme\"]')?.disabled,notice:[...document.querySelectorAll('[role=status]')].some(e=>e.textContent.includes('Changing settings scope'))};})()");
+   assert.deepEqual(pending,{busy:true,scopeDisabled:true,themeDisabled:true,notice:true});
+   await js('globalThis.__archhubScopeWitness.restore();true');assert.equal((await until(snapshot,s=>s.scope==='Workspace'&&s.destination?.scope==='Workspace')).scope,'Workspace');
+   const untouched=buffers();
+   const refusal=await js('(async()=>{try{await window.ArchHubAPI.setSetting("Appearance.Theme","System",'+JSON.stringify(stale)+');return {refused:false};}catch(error){return {refused:true,code:error.response?.code,message:error.message};}})()');
+   assert.equal(refusal.refused,true);assert.equal(refusal.code,'settings_destination_changed');assert.deepEqual(buffers(),untouched);
+   assert.equal(await until(()=>js('Boolean([...document.querySelectorAll("button")].find(e=>e.textContent.trim()==="Refresh settings scope"))'),Boolean),true);assert.equal(await clickText('Refresh settings scope'),true);
+   assert.equal((await until(snapshot,s=>s.destination?.scope==='Workspace')).destination.scope,'Workspace');assert.deepEqual(buffers(),untouched);
+   await scope('Session');const otherOwners=buffers().slice(0,2);await theme('Light');
+   assert.equal(json(scopeFile).properties.settings['Appearance.Theme'],'Light');assert.deepEqual(buffers().slice(0,2),otherOwners);assert.equal(await js('Boolean(window.ArchHubAPI.getSnapshot().settingsScopePending)'),false);
+   return {pass:true,got:{pending,actualStaleDestinationRefused:true,refusalCode:refusal.code,refusedWriteChangedNoOwner:true,readOnlyRefreshReplayedNoWrite:true,explicitSessionLight:true,globalAndWorkspaceUnchanged:true},expected_http:['409 /api/universal/settings-action']};
+  }finally{
+   await js('globalThis.__archhubScopeWitness?.restore();true').catch(()=>{});await call('openSession',[before.path]);await call('refreshPreferences',[]);await call('setSettingsScope',[before.scope]);if(before.workspace)await call('selectWorkspace',[before.workspace]);assert.equal(await js('window.ArchHubAPI.getSessionDocument().id'),before.id);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
   }
  });
 }

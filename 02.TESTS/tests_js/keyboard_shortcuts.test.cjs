@@ -51,6 +51,7 @@ test('pending keyboard read does not delay first-file startup and resolves overr
     if(url==='/api/commands')return response({commands:[{id:'menu.copy',shortcut:'Ctrl C',action:{}}]});
     if(body?.function==='readKeybindings')return new Promise(resolve=>{releaseKeys=()=>resolve(response({ok:true,result:{keybindings:{'menu.copy':'Ctrl Shift C'},keyboardCommands:[],keyboardError:''}}));});
     if(body?.function==='setKeybinding')return response({ok:true,result:{keybindings:{'menu.copy':'Ctrl Alt C'},keyboardCommands:[],keyboardError:''}});
+    if(body?.function==='exportPreferences')return response({ok:true,result:{settingsExport:{format:'archhub.settings',version:1,scopes:{Workspace:{'Appearance.Theme':'Light'}}}}});
     if(body?.function==='readLibraryCollapsed')return response({ok:true,result:{libraryCollapsed:[]}});
     if(url==='/api/universal/studio-surface')return response({ok:true});
     return new Promise(()=>{});
@@ -70,6 +71,10 @@ test('pending keyboard read does not delay first-file startup and resolves overr
   assert.equal(window.ArchHubAPI.getSnapshot().keybindings['menu.copy'],newer?'Ctrl Alt C':'Ctrl Shift C','older boot reads preserve newer accepted edits');
   assert.equal(requests.some(row=>row.body?.function==='readControls'),false,'Settings has not been visited');
   assert.equal(window.ArchHubCommandRegistry.commands[0].id,'menu.copy');
+  const exported=await window.ArchHubAPI.exportData('Settings','Workspace');
+  assert.equal(exported.name,'ArchHub settings.json');
+  assert.equal(JSON.parse(exported.content).scopes.Workspace['Appearance.Theme'],'Light');
+  assert.equal(requests.find(row=>row.body?.function==='exportPreferences').body.args[0],'Workspace','final export owner dispatches the selected scope');
   assert.deepEqual(warnings,[]);
  }
 });
@@ -90,4 +95,98 @@ test('remapped save preserves typing and the primary-modifier save inside text f
  binding='Ctrl S';
  listener(event(true,true));
  assert.equal(saved,2,'primary-modifier save retains its existing text-field behavior');
+});
+
+test('session switching rejects stale preference reads and flushes edits before a session setting write',async()=>{
+ const requests=[],pending=new Map(),warnings=[];
+ const storage=()=>{const values=new Map();return {getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,String(value)),removeItem:key=>values.delete(key),key:index=>[...values.keys()][index]??null,get length(){return values.size;}};};
+ const doc=id=>({format:'archhub',version:1,id,title:id,nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:0,project:'tower'}});
+ let held=doc('first');
+ const response=data=>({ok:true,status:200,headers:{get:()=>null},json:async()=>data});
+ const preferences=(id,scope='User')=>({appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:id==='first'?'Light':'Dark',default:'Dark'}],keybindings:{'menu.copy':id==='first'?'Ctrl Shift C':'Ctrl Alt C'},keyboardCommands:[],keyboardError:'',settingsScope:scope,settingsScopes:{Workspace:true,Session:true},settingsDestination:{scope,workspace:'tower',session:id,workspaceIdentity:'fixture-root'}});
+ const window={ARCHHUB_BOOT:{token:'test',csrf:'test',nograph:true},crypto:require('node:crypto').webcrypto,structuredClone,
+  localStorage:storage(),sessionStorage:storage(),addEventListener(){},dispatchEvent(){},ArchHubStudioAuthority:{create:()=>({getSnapshot:()=>({canvas:null})})}};
+ const context={window,document:{hidden:false,addEventListener(){}},localStorage:window.localStorage,sessionStorage:window.sessionStorage,setTimeout,clearTimeout,URLSearchParams,TextEncoder,AbortSignal,AbortController,Uint8Array,CustomEvent:class {},console:{...console,warn:(...args)=>warnings.push(args.join(' '))},
+  fetch:async(url,options)=>{
+   const body=options?.body?JSON.parse(options.body):null;requests.push({url,body});
+   if(url==='/api/commands')return response({commands:[]});
+   if(body?.function==='readKeybindings')return response({ok:true,result:{keybindings:{},keyboardCommands:[],keyboardError:''}});
+   if(body?.function==='readLibraryCollapsed')return response({ok:true,result:{libraryCollapsed:[]}});
+   if(body?.function==='readEffectivePreferences')return new Promise(resolve=>pending.set(body.context.session,()=>resolve(response({ok:true,result:preferences(body.context.session)}))));
+   if(body?.function==='setSettingsScope')return response({ok:true,result:preferences('second',body.args[0])});
+   if(body?.function==='setAppearance'){
+    held={...held,properties:{...held.properties,revision:held.properties.revision+1,settings:{[body.args[0]]:body.args[1]}}};
+    const result={...preferences('second','Session'),appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:body.args[1],default:'Dark'}]};
+    if(window.deferAppearance)return new Promise(resolve=>{window.releaseAppearance=()=>resolve(response({ok:true,result:{appearanceSettings:result.appearanceSettings}}));});
+    return response({ok:true,result});
+   }
+   if(url==='/api/session-model'&&body.action==='set'){
+    if(body.path!=='C:/probe/second.archhub')return response({ok:true,session:{id:'separate'}});
+    held={...held,properties:{...held.properties,...body.values,revision:held.properties.revision+1}};
+    return response({ok:true,session:{id:held.id,project:{id:held.properties.project}}});
+   }
+   if(url==='/api/session-files'){
+    if(body.action==='initial')return response({ok:true,document:held,path:'C:/probe/first.archhub'});
+    if(body.action==='open'){held=doc('second');return response({ok:true,document:held,path:'C:/probe/second.archhub'});}
+    if(body.action==='validate')return response({ok:true,document:body.document});
+    if(body.action==='autosave'){held={...body.document,properties:{...body.document.properties,revision:body.base_revision+1}};return response({ok:true,document:held,path:body.path,revision:held.properties.revision});}
+    if(body.action==='head')return response({ok:true,revision:held.properties.revision});
+    if(body.action==='read')return response({ok:true,document:held,revision:held.properties.revision});
+   }
+   if(url==='/api/universal/studio-surface')return response({ok:true});
+   return new Promise(()=>{});
+  }};
+ vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),context);
+ window.ArchHubAPI.setActiveSurface('canvas');
+ const turn=()=>new Promise(resolve=>setImmediate(resolve));
+ for(let i=0;i<50&&!pending.has('first');i++)await turn();
+ assert.equal(pending.has('first'),true);
+ await window.ArchHubAPI.openSession('C:/probe/second.archhub');
+ for(let i=0;i<50&&!pending.has('second');i++)await turn();
+ pending.get('first')();await turn();
+ assert.equal(window.ArchHubAPI.getSnapshot().graph.id,'second');
+ assert.equal(window.ArchHubAPI.getSnapshot().keyboardPending,true,'old completion cannot release the new session shortcut guard');
+ assert.notEqual(window.ArchHubAPI.getSnapshot().keybindings['menu.copy'],'Ctrl Shift C');
+ pending.get('second')();await turn();
+ assert.equal(window.ArchHubAPI.getSnapshot().keybindings['menu.copy'],'Ctrl Alt C');
+ assert.equal(window.ArchHubAPI.getSnapshot().keyboardPending,false);
+ window.ArchHubAPI.setActiveSurface('settings/Appearance');
+ await window.ArchHubAPI.setSettingsScope('Session');
+ window.ArchHubAPI.setSessionViewport({x:10,y:20,zoom:1});
+ const begin=requests.length;
+ await window.ArchHubAPI.setSetting('Appearance.Theme','Light');
+ const saved=requests.slice(begin),write=saved.findIndex(row=>row.body?.function==='setAppearance');
+ assert.equal(write>=0,true);
+ assert.equal(saved.slice(0,write).some(row=>row.body?.action==='autosave'),true,'pending viewport edit reaches its file owner first');
+ assert.equal(saved[write].body.context.session,'second');
+ assert.equal(window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Theme').value,'Light');
+ window.ArchHubAPI.setSessionViewport({x:33,y:44,zoom:1});
+ const modelBegin=requests.length;
+ await window.ArchHubAPI.setSessionModel('C:/probe/second.archhub',{project:'tower2'});
+ const modelRequests=requests.slice(modelBegin),modelWrite=modelRequests.findIndex(row=>row.url==='/api/session-model');
+ assert.equal(modelRequests.slice(0,modelWrite).some(row=>row.body?.action==='autosave'),true);
+ assert.equal(held.viewport.x,33,'unsaved viewport survives the session model write');
+ assert.equal(window.ArchHubAPI.getSnapshot().graph.project,'tower2','Canvas adopts the owner model change');
+ const revision=held.properties.revision;
+ window.ArchHubAPI.setSessionViewport({x:55,y:66,zoom:1});
+ const nextBegin=requests.length;
+ await window.ArchHubAPI.setSetting('Appearance.Theme','Dark');
+ assert.equal(requests.slice(nextBegin).find(row=>row.body?.action==='autosave').body.base_revision,revision,'next write uses the current owner revision');
+ const separateBegin=requests.length;
+ await window.ArchHubAPI.setSessionModel('C:/probe/separate.archhub',{project:'tower'});
+ assert.equal(requests.slice(separateBegin).some(row=>row.body?.action==='autosave'),false,'separate-file edit does not save the current Canvas');
+ assert.equal(window.ArchHubAPI.getSnapshot().graph.project,'tower2');
+ await window.ArchHubAPI.setSettingsScope('Session');
+ window.deferAppearance=true;
+ const queueBegin=requests.length;
+ const firstWrite=window.ArchHubAPI.setSetting('Appearance.Theme','Light');
+ for(let i=0;i<50&&!window.releaseAppearance;i++)await turn();
+ assert.equal(typeof window.releaseAppearance,'function');
+ const queuedWrite=window.ArchHubAPI.setSetting('Appearance.Theme','Dark');
+ await window.ArchHubAPI.setSettingsScope('User');
+ window.deferAppearance=false;window.releaseAppearance();
+ await firstWrite;await queuedWrite;
+ const destinations=requests.slice(queueBegin).filter(row=>row.body?.function==='setAppearance').map(row=>row.body.context.settingsDestination.scope);
+ assert.deepEqual(destinations,['Session','Session'],'queued edits keep the scope shown when each edit began');
+ assert.deepEqual(warnings,[]);
 });

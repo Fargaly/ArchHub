@@ -821,7 +821,7 @@ def appearance_settings(function='readControls', args=(), settings=None):
             preferences = settings.update(patch, remove=remove)
     rows = [{'id': id, 'page': 'Appearance', 'label': label, 'default': default,
              'type': 'enum' if choices else 'boolean' if type(default) is bool else 'number' if type(default) is int else 'color',
-             'value': preferences.get(key, default), 'overridden': key in preferences,
+             'value': preferences.get(key, default), 'overridden': key in preferences, 'storageKey': key,
              **dimensions.get(key, {}),
              **({'min': 75, 'max': 150} if key == 'appearanceTextScale' else {}),
              **({'min': 10, 'max': 400} if key == 'appearanceDefaultZoom' else {}),
@@ -1001,3 +1001,266 @@ def keyboard_settings(function='readKeybindings', args=(), settings=None):
         changes = checked(changes)
         settings.update({'keybindings': changes})
         return present(changes)
+
+
+"""Draft addition to the existing Settings owner; no new persistent store."""
+class _PreferenceValues:
+    def __init__(self, values):
+        self.values = dict(values)
+        self.lock = threading.RLock()
+
+    def read(self):
+        return dict(self.values)
+
+    def update(self, changes, remove=()):
+        self.values.update(changes)
+        for key in remove:
+            self.values.pop(key, None)
+        return self.read()
+
+
+class SettingsDestinationChanged(ValueError):
+    pass
+
+
+class PreferenceScope:
+    """Scope resolution over the three existing owners: Settings, workspaces and the open file."""
+    SCOPES = ('User', 'Workspace', 'Session')
+
+    def __init__(self, settings, workspaces, path='', workspace='', document=None):
+        self.settings, self.workspaces, self.path = settings, workspaces, path
+        rows = appearance_settings(settings=settings)['appearanceSettings']
+        self.keys = {row['id']: row['storageKey'] for row in rows}
+        self.keyboard = {'Keyboard.' + row['id'] for row in keyboard_settings(settings=_PreferenceValues({}))['keyboardCommands']}
+        from .session_files import read_document
+        try:
+            self.document = document if document is not None else read_document(path) if path else None
+        except (OSError, ValueError):
+            self.document = None
+        props = (self.document or {}).get('properties') or {}
+        wanted = workspace or props.get('project') or ('' if self.document else settings.read().get('activeWorkspace', ''))
+        self.context_workspace = wanted
+        self.workspace = wanted if any(row.get('root_id', row.get('id')) == wanted for row in workspaces.read()['roots']) else ''
+        self.binding = self.destination()
+
+    def destination(self):
+        import hashlib
+        row = next((row for row in self.workspaces.read()['roots']
+                    if row.get('root_id', row.get('id')) == self.context_workspace), None)
+        identity = {key: row.get(key) for key in ('root_id', 'id', 'path', 'identity')} if row else None
+        return {'scope': self.settings.read().get('settingsScope', 'User'),
+                'workspace': self.context_workspace, 'session': (self.document or {}).get('id', ''),
+                'workspaceIdentity': hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()}
+
+    def assert_destination(self, expected=None, *, require_available=True):
+        expected = self.binding if expected is None else expected
+        try:
+            current = PreferenceScope(self.settings, self.workspaces, self.path,
+                                      document=None if self.path else self.document)
+            if type(expected) is not dict or expected != current.destination():
+                raise ValueError('The Settings destination changed. Refresh Settings and choose its scope again.')
+            if require_available:
+                current._require(expected['scope'])
+        except (OSError, ValueError) as error:
+            raise SettingsDestinationChanged(str(error)) from None
+        return expected['scope']
+
+    def _workspace_row(self):
+        rows = [row for row in self.workspaces.read()['roots']
+                if row.get('root_id', row.get('id')) == self.workspace]
+        if len(rows) != 1:
+            raise ValueError('Choose a registered workspace before editing its settings.')
+        return rows[0]
+
+    def _global_values(self):
+        held = self.settings.read()
+        keys = {id: held[key] for id, key in self.keys.items() if key in held}
+        bindings = held.get('keybindings', {})
+        if type(bindings) is dict:
+            keys.update({'Keyboard.' + id: value for id, value in bindings.items()})
+        return keys
+
+    def maps(self):
+        workspace = self._workspace_row().get('settings', {}) if self.workspace else {}
+        session = ((self.document or {}).get('properties') or {}).get('settings', {})
+        if type(workspace) is not dict or type(session) is not dict:
+            raise ValueError('Saved scope settings must be a settings map.')
+        return {'User': self._global_values(), 'Workspace': dict(workspace), 'Session': dict(session)}
+
+    def selected(self):
+        scope = self.settings.read().get('settingsScope', 'User')
+        if scope not in self.SCOPES:
+            raise ValueError('Choose Everywhere, Current workspace or Current session.')
+        if scope == 'Workspace' and not self.workspace or scope == 'Session' and not self.document:
+            return 'User'
+        return scope
+
+    def _require(self, scope):
+        if scope not in self.SCOPES:
+            raise ValueError('Choose a supported settings scope.')
+        if scope == 'Workspace':
+            row = self._workspace_row()
+            if not Path(row.get('path', '')).is_dir():
+                raise ValueError('The workspace folder is unavailable. Choose an available scope.')
+        if scope == 'Session' and not self.document:
+            raise ValueError('Open a session before editing session settings.')
+
+    def _project(self, values):
+        held = self.settings.read()
+        for id, key in self.keys.items():
+            held.pop(key, None)
+            if id in values:
+                held[key] = values[id]
+        held['keybindings'] = {id.removeprefix('Keyboard.'): value for id, value in values.items() if id in self.keyboard}
+        return _PreferenceValues(held)
+
+    def effective(self, scope=None, maps=None):
+        scope = scope or self.selected()
+        values = {}
+        maps = maps or self.maps()
+        for name in self.SCOPES[:self.SCOPES.index(scope) + 1]:
+            values.update(maps[name])
+        return values
+
+    def read(self, scope=None):
+        current = PreferenceScope(self.settings, self.workspaces, self.path,
+                                  document=None if self.path else self.document)
+        self.document, self.workspace, self.context_workspace = current.document, current.workspace, current.context_workspace
+        scope = scope or getattr(self, 'view_scope', None) or self.selected()
+        values = self._project(self.effective(scope))
+        keyboard = keyboard_settings(settings=self.settings if scope == 'User' else values)
+        self.binding = self.destination()
+        shown = self.binding['scope']
+        notice = '' if self.selected() == shown else 'This scope is unavailable. Showing Everywhere values; choose an available scope before editing.'
+        return {**appearance_settings(settings=values), **keyboard,
+                'settingsScope': shown, 'settingsDestination': dict(self.binding), 'settingsScopeNotice': notice, 'activeWorkspace': self.workspace,
+                'settingsScopes': {'Workspace': bool(self.workspace), 'Session': bool(self.document)}}
+
+    def validate(self, scope, values, maps):
+        self._require(scope)
+        if type(values) is not dict or len(values) > len(self.keys) + len(self.keyboard):
+            raise ValueError('Import a supported settings map.')
+        if any(id not in self.keys and id not in self.keyboard for id in values):
+            raise ValueError('The import contains an unknown or nonportable setting.')
+        projected = self._project(self.effective(scope, maps))
+        for id, value in values.items():
+            if id in self.keys:
+                appearance_settings('setAppearance', [id, value], projected)
+        keyboard = keyboard_settings(settings=projected)
+        if keyboard['keyboardError']:
+            raise ValueError(keyboard['keyboardError'])
+
+    def _write(self, scope, values, keyboard=True):
+        if scope == 'User':
+            patch = {self.keys[id]: value for id, value in values.items() if id in self.keys}
+            remove = [key for id, key in self.keys.items() if id not in values]
+            previous = self.settings.read()
+            width = self.keys['Appearance.Inspector width']
+            if width in patch and patch[width] != previous.get(width) and 'inner' in previous.get('homeLayout', {}):
+                layout = {key: value for key, value in previous['homeLayout'].items() if key != 'inner'}
+                if layout:
+                    patch['homeLayout'] = layout
+                else:
+                    remove.append('homeLayout')
+            if keyboard:
+                patch['keybindings'] = {id.removeprefix('Keyboard.'): value for id, value in values.items() if id in self.keyboard}
+            self.settings.update(patch, remove=remove)
+        elif scope == 'Workspace':
+            with self.workspaces.lock:
+                held = self.workspaces.read()
+                row = next(row for row in held['roots'] if row.get('root_id', row.get('id')) == self.workspace)
+                row['settings'] = {**{id: value for id, value in row.get('settings', {}).items() if id not in self.keys and id not in self.keyboard}, **values}
+                self.workspaces.write(held)
+        else:
+            from .session_files import set_session_fields
+            old = ((self.document or {}).get('properties') or {}).get('settings', {})
+            changes = {id: None for id in old if id in self.keys or id in self.keyboard}
+            changes.update(values)
+            from .canvas_documents import revision
+            set_session_fields(self.path, {'settings': changes}, expected_revision=revision(self.document))
+            from .session_files import read_document
+            self.document = read_document(self.path)
+
+    def change(self, changes, reset=False, keyboard=False):
+        with self.settings.lock:
+            scope = self.assert_destination()
+            maps = self.maps()
+            values = {} if reset else {id: value for id, value in maps[scope].items() if id in self.keys or id in self.keyboard}
+            for id, value in changes.items():
+                if value is None:
+                    values.pop(id, None)
+                else:
+                    values[id] = value
+            maps[scope] = values
+            self.validate(scope, values, maps)
+            self._write(scope, values, keyboard=keyboard or reset or any(id in self.keyboard for id in changes))
+        return self.read()
+
+    def select(self, scope, workspace='', expected=''):
+        with self.settings.lock:
+            self.assert_destination(require_available=False)
+            if workspace:
+                project = ((self.document or {}).get('properties') or {}).get('project')
+                if project and project != workspace:
+                    raise SettingsDestinationChanged('The session workspace changed. Refresh Settings and choose its scope again.')
+                self.context_workspace = self.workspace = workspace
+            self._require(scope)
+            if expected and (self.document or {}).get('id') != expected:
+                raise ValueError('The session changed. Refresh Settings and retry.')
+            self.settings.update({'settingsScope': scope, 'activeWorkspace': self.workspace})
+        return self.read()
+
+    def export(self, scope):
+        if scope != 'All':
+            self._require(scope)
+        maps = self.maps()
+        names = [name for name in self.SCOPES if name == 'User' or name == 'Workspace' and self.workspace or name == 'Session' and self.document] if scope == 'All' else [scope]
+        return {'format': 'archhub.settings', 'version': 1, 'scopes': {
+            name: {id: value for id, value in maps[name].items() if id in self.keys or id in self.keyboard} for name in names}}
+
+    def import_values(self, payload):
+        if (type(payload) is not dict or set(payload) != {'format', 'version', 'scopes'}
+                or payload['format'] != 'archhub.settings' or type(payload['version']) is not int or payload['version'] != 1
+                or type(payload['scopes']) is not dict or not payload['scopes'] or set(payload['scopes']) - set(self.SCOPES)):
+            raise ValueError('Import an ArchHub settings export, version 1.')
+        with self.settings.lock:
+            destination = self.assert_destination()
+            maps = self.maps()
+            for scope, values in payload['scopes'].items():
+                self.validate(scope, values, {**maps, scope: values})
+            scope = destination
+            if scope not in payload['scopes']:
+                raise ValueError('This export has no values for the selected scope. Choose its scope before importing.')
+            self._write(scope, payload['scopes'][scope])
+        return self.read()
+
+
+def validate_session_preferences(document, values):
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    folder = profile_directory() / 'settings'
+    context = PreferenceScope(JsonFile(folder / 'settings.json', {}),
+                              JsonFile(folder / 'workspaces.json', {'roots': []}), document=document)
+    context.validate('Session', values, {**context.maps(), 'Session': values})
+
+
+
+
+def preference_scope(document=None):
+    from .nograph_server import JsonFile
+    from .session_files import SessionFiles, profile_directory
+    folder = profile_directory() / 'settings'
+    return PreferenceScope(JsonFile(folder / 'settings.json', {}),
+                           JsonFile(folder / 'workspaces.json', {'roots': []}),
+                           path=SessionFiles().current_path() if document is None else '', document=document)
+
+
+def write_preference(document, identity, value):
+    owner = preference_scope(document)
+    if owner.assert_destination() != 'Session' or document is None:
+        return owner.change({identity: value})
+    props = document.setdefault('properties', {})
+    values = {**props.get('settings', {}), identity: value}
+    owner.validate('Session', values, {**owner.maps(), 'Session': values})
+    props['settings'] = values
+    return owner.read()

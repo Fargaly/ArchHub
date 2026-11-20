@@ -148,7 +148,7 @@ def set_value(document, node_ref, key, value):
     node = _node(document, node_ref)
     if node['type'] == 'thing.setting' and node['params'].get('setting') and key == 'value':
         from .canvas_documents import write_through
-        write_through(node, key, value)
+        write_through(node, key, value, document=document)
         return [node['id']]
     if node['type'] == PARAM_ENGINE and node.get('bind') and key == 'value':
         owner = _node(document, node['bind']['node'])

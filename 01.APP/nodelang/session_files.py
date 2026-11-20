@@ -222,7 +222,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         from .node_datasets import outputs as dataset_outputs
         return dataset_outputs(node, feeds)
     if engine in THING_ENGINES:
-        return run_thing(engine, params, feeds)
+        return run_thing(engine, params, feeds, document=document)
     if engine == 'skill':
         token = _RELEASING.set(False)
         try:
@@ -2059,7 +2059,7 @@ class SessionFiles:
             written = []
             for change in body.get('params') or []:
                 node = next((n for n in document['nodes'] if n['id'] == change.get('node')), None)
-                if node is not None and write_through(node, change.get('key'), change.get('value')):
+                if node is not None and write_through(node, change.get('key'), change.get('value'), document=document):
                     written.append(change.get('key'))
             return {**solve(document, list(body.get('changed') or []), invoke=invoke, stopped=stopped, path=body.get('path')), 'written': written}
         if action in ('head', 'read'):
@@ -2269,7 +2269,12 @@ def session_fields(document, path=None, *, roots=None, task_row=None):
 
 def _setting_value(identity, value):
     """A session override must be a value the global Settings row accepts (that row stays its owner)."""
-    from .settings_owner import appearance_setting
+    from .settings_owner import appearance_setting, keyboard_settings, _PreferenceValues
+    if identity.startswith('Keyboard.'):
+        commands = keyboard_settings(settings=_PreferenceValues({}))['keyboardCommands']
+        if identity.removeprefix('Keyboard.') not in {row['id'] for row in commands} or type(value) is not str or len(value) > 64:
+            raise ValueError('Choose a registered keyboard action and a text shortcut.')
+        return value
     row = appearance_setting(identity)
     default = row['default']
     kind = bool if type(default) is bool else int if type(default) is int else str
@@ -2281,10 +2286,20 @@ def _setting_value(identity, value):
 
 def resolve_setting(document, identity):
     """The session value when this session sets one, otherwise the global value from its owner."""
-    from .settings_owner import appearance_setting
-    held = (document.get('properties') or {}).get('settings') or {}
+    from .settings_owner import appearance_setting, keyboard_settings
+    props = document.get('properties') or {}
+    held = props.get('settings') or {}
     if identity in held:
         return {'value': held[identity], 'scope': 'session'}
+    project = _project_of(props, _registered_roots())['id']
+    workspace = _registered_roots().get(project, {}).get('settings', {})
+    if identity in workspace:
+        return {'value': workspace[identity], 'scope': 'workspace'}
+    if identity.startswith('Keyboard.'):
+        row = next((row for row in keyboard_settings()['keyboardCommands'] if 'Keyboard.' + row['id'] == identity), None)
+        if row is None:
+            raise ValueError('Choose a registered keyboard action.')
+        return {'value': row['value'], 'scope': 'global'}
     return {'value': appearance_setting(identity)['value'], 'scope': 'global'}
 
 
@@ -2342,13 +2357,15 @@ def _link_cycle(document, path, depth=0, seen=None):
             _link_cycle(source, found, depth + 1, seen + [source['id']])
 
 
-def set_session_fields(path, values, by='You'):
+def set_session_fields(path, values, by='You', *, expected_revision=None):
     """Change session-model fields through the one file edit (lock, attributed history, atomic replace)."""
     if not isinstance(values, dict) or not values or set(values) - _MODEL_KEYS:
         raise ValueError('Unsupported session fields')
     roots = _registered_roots()
 
     def change(document):
+        if expected_revision is not None and canvas_documents.revision(document) != expected_revision:
+            raise ValueError('The session changed. Refresh Settings and retry.')
         props = document.setdefault('properties', {})
         held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else None
         if 'project' in values:
@@ -2383,6 +2400,8 @@ def set_session_fields(path, values, by='You'):
                     merged.pop(identity, None)
                 else:
                     merged[identity] = _setting_value(identity, value)
+            from .settings_owner import validate_session_preferences
+            validate_session_preferences(document, merged)
             props['settings'] = merged
         if 'inputLinks' in values:
             from .stem_graph_evaluation import rule_holds

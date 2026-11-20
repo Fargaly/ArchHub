@@ -457,7 +457,7 @@
     row,
     raw = false
   }) {
-    const u = useApp();
+    const u = useApp(), destination = useData().settingsDestination;
     const changed = row.default !== undefined && JSON.stringify(row.value) !== JSON.stringify(row.default);
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',
@@ -474,11 +474,12 @@
         }, event)} onKeyDown={e => {
           if (e.key === 'Enter') u.openSystem(row.page);
         }} />}
-  {row.type === 'boolean' ? <D.Toggle variant="settings" label={row.label} checked={row.value} onCheckedChange={v => u.act(() => api.setSetting(row.id, v))} /> : row.options ? <select id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => u.act(() => api.setSetting(row.id, e.target.value))}>{row.options.map(v => <option key={v}>{v}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1))}, event)}>−</button><input id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => u.act(() => api.setSetting(row.id, Number(e.target.value)))} /><button type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1))}, event)}>+</button></span> : <input id={'setting-' + row.id} aria-label={row.label} type={row.type === 'color' ? 'color' : 'text'} value={row.value} onChange={e => u.act(() => api.setSetting(row.id, e.target.value))} />}
+  {row.type === 'boolean' ? <D.Toggle variant="settings" label={row.label} checked={row.value} onCheckedChange={v => u.act(() => api.setSetting(row.id, v, destination))} /> : row.options ? <select id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}}>{row.options.map(v => <option key={v}>{v}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1, destination))}, event)}>−</button><input id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => {const value=Number(e.target.value);return u.act(() => api.setSetting(row.id, value, destination));}} /><button type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1, destination))}, event)}>+</button></span> : <input id={'setting-' + row.id} aria-label={row.label} type={row.type === 'color' ? 'color' : 'text'} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}} />}
   {changed && <button className="reset" aria-label={'Reset ' + row.label} onClick={event => executeAction("sharedUI.Reset.21", {
           api,
           row,
-          u
+          u,
+          destination
         }, event)}>Reset</button>}
  </div></div>;
   }
@@ -846,9 +847,10 @@
   function sharedUIReset21({
     api,
     row,
-    u
+    u,
+    destination
   }, event) {
-    const handler = () => u.act(() => api.resetSetting(row.id));
+    const handler = () => u.act(() => api.resetSetting(row.id, destination));
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function sharedUIRetry22({

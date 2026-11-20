@@ -1929,7 +1929,58 @@ def r_settings_action(s, req):
     from .access_owner import FUNCTIONS as ACCESS_FUNCTIONS, access_action
     if function in ACCESS_FUNCTIONS:
         return {'ok': True, 'result': access_action(settings, function, list(args))}
-    if function in ('readKeybindings', 'setKeybinding', 'resetKeybindings'):
+    scoped_functions = ('readPreferences', 'readEffectivePreferences', 'setAppearance', 'resetAppearance', 'setSettingsScope',
+                        'exportPreferences', 'importPreferences', 'resetPreferences',
+                        'setKeybinding', 'resetKeybindings')
+    if function in scoped_functions or function == 'readControls':
+        allowed_args = {'readPreferences': (0,), 'readEffectivePreferences': (0,), 'setAppearance': (2,),
+                        'resetAppearance': (1,), 'setSettingsScope': (1, 2, 3), 'exportPreferences': (0, 1),
+                        'importPreferences': (1,), 'resetPreferences': (0,), 'setKeybinding': (2,),
+                        'resetKeybindings': (0,), 'readControls': (0, 1)}
+        if type(args) is not list or len(args) not in allowed_args[function]:
+            raise Refused('Use the declared arguments for this Settings action.')
+        if function == 'setAppearance' and args[1] is None:
+            raise Refused('Choose a setting value, or use Reset to inherit it.')
+        from .settings_owner import PreferenceScope, SettingsDestinationChanged
+        from .session_files import SessionFiles
+        scope_owner = PreferenceScope(settings, s.files.get('workspaces') or
+            JsonFile(settings.path.with_name('workspaces.json'), {'roots': []}), SessionFiles().current_path())
+        surface = (body.get('context') or {}).get('surface', 'settings')
+        scope_owner.view_scope = None if surface.startswith('settings') else 'Session'
+        try:
+            if function not in ('readPreferences', 'readEffectivePreferences', 'exportPreferences', 'readControls'):
+                expected = (body.get('context') or {}).get('settingsDestination')
+                if expected is None:
+                    raise SettingsDestinationChanged('Read Settings and choose its scope before editing.')
+                scope_owner.assert_destination(expected, require_available=function != 'setSettingsScope')
+            if function == 'setSettingsScope':
+                return {'ok': True, 'result': scope_owner.select(*args)}
+            if function in ('setAppearance', 'resetAppearance'):
+                if len(args) != (2 if function == 'setAppearance' else 1) or args[0] not in scope_owner.keys:
+                    raise ValueError('Choose a supported Appearance setting.')
+                return {'ok': True, 'result': scope_owner.change({args[0]: args[1] if function == 'setAppearance' else None})}
+            if function == 'setKeybinding':
+                if len(args) != 2 or 'Keyboard.' + str(args[0]) not in scope_owner.keyboard:
+                    raise ValueError('Choose a registered keyboard action and its shortcut.')
+                return {'ok': True, 'result': scope_owner.change({'Keyboard.' + args[0]: args[1]})}
+            if function == 'resetKeybindings':
+                held = scope_owner.maps()[scope_owner.selected()]
+                return {'ok': True, 'result': scope_owner.change({id: None for id in held if id in scope_owner.keyboard}, keyboard=True)}
+            if function == 'exportPreferences':
+                return {'ok': True, 'result': {'settingsExport': scope_owner.export(args[0] if args else scope_owner.selected())}}
+            if function == 'importPreferences':
+                return {'ok': True, 'result': scope_owner.import_values(args[0] if len(args) == 1 else None)}
+            if function == 'resetPreferences':
+                return {'ok': True, 'result': scope_owner.change({}, reset=True)}
+            if function == 'readEffectivePreferences':
+                return {'ok': True, 'result': scope_owner.read('Session')}
+            if function == 'readPreferences':
+                return {'ok': True, 'result': scope_owner.read()}
+        except SettingsDestinationChanged as refused:
+            raise Refused(str(refused), 409, code='settings_destination_changed') from None
+        except ValueError as refused:
+            raise Refused(str(refused)) from None
+    if function == 'readKeybindings':
         try:
             return {'ok': True, 'result': keyboard_settings(function, args, settings)}
         except ValueError as refused:
@@ -2002,17 +2053,13 @@ def r_settings_action(s, req):
             filters = {**filters, args[0]: args[1]}
             settings.update({'sessionListFilters': filters})
         return {'ok': True, 'result': {'sessionListFilters': filters}}
-    if function in ('readControls', 'setAppearance'):
-        from .settings_owner import appearance_settings
-        appearance = appearance_settings(function, args, settings)
-        rows = appearance['appearanceSettings']
-        if function == 'setAppearance':
-            return {'ok': True, 'result': appearance}
     if function == 'readControls':
+        appearance = scope_owner.read()
+        rows = appearance['appearanceSettings']
         from .settings_owner import dock_layout as one_dock_layout
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {},
-                  **keyboard_settings(settings=settings),
+                  **appearance,
                   'appearanceSettings': rows, 'homeLayout': settings.read().get('homeLayout', {}),
                   'dockLayout': one_dock_layout(settings=settings)['dockLayout']}
         try:
@@ -2083,8 +2130,6 @@ def r_settings_action(s, req):
             raise Refused('Revit is not installed on this PC.')
         os.startfile(str(found))  # noqa: S606 - the founder pressed Open; the installed program starts
         return {'ok': True, 'result': {'opened': str(found)}}
-    if function == 'setSettingsScope':
-        return {'ok': True, 'result': settings.update({'settingsScope': args[0] if args else 'User'})}
     local = {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'), 'workspacePolicies': {}}
     if function == 'readOperations':
         return {'ok': True, 'result': {**local, 'dependencies': []}}

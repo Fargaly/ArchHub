@@ -276,10 +276,14 @@ def _run_you(params, feeds):
     return {'profile': {'owner': 'account', 'scope': 'current'}}, 'Current profile in Settings'
 
 
-def _run_setting(params, feeds):
+def _run_setting(params, feeds, document=None):
     if params.get('setting'):
         from .settings_owner import appearance_setting
-        value = appearance_setting(params['setting'])['value']
+        if document is not None:
+            from .session_files import resolve_setting
+            value = resolve_setting(document, params['setting'])['value']
+        else:
+            value = appearance_setting(params['setting'])['value']
     else:
         value = feeds.get('value', params.get('value'))
     return {'value': value}, str(value)
@@ -393,18 +397,20 @@ def thing_items():
     return items
 
 
-def run_thing(engine, params, feeds):
+def run_thing(engine, params, feeds, document=None):
+    if engine == 'thing.setting':
+        return _run_setting(params, feeds, document)
     return THING_ENGINES[engine]['run'](params, feeds)
 
 
-def write_through(node, key, value):
+def write_through(node, key, value, document=None):
     """A parameter of an app-thing node is the owner's setting; write it there."""
     if node.get('type') == 'thing.setting' and node.get('params', {}).get('setting') and key == 'value':
-        from .settings_owner import appearance_setting, appearance_settings
+        from .settings_owner import appearance_setting, write_preference
         from .node_params import coerce
         row = appearance_setting(node['params']['setting'])
         kind = 'bool' if type(row['default']) is bool else 'integer' if type(row['default']) is int else row['type']
-        appearance_settings('setAppearance', [row['id'], coerce(kind, value, row)])
+        write_preference(document, row['id'], coerce(kind, value, row))
         return True
     writer = WRITE_THROUGH.get((node.get('type'), key))
     if writer is not None:

@@ -447,7 +447,7 @@ const api={};
 // The desktop companion steps aside while Settings is the open, visible screen.
 let reportedSurface='';
 function reportSurface(){const surface=document.hidden?'':activeSurface;if(surface===reportedSurface)return;reportedSurface=surface;request('/api/universal/studio-surface',{surface}).catch(()=>{reportedSurface=null;});}
-api.setActiveSurface=surface=>{activeSurface=surface;reportSurface();};
+api.setActiveSurface=surface=>{const previous=activeSurface;activeSurface=surface;reportSurface();if(previous.startsWith('settings')&&!surface.startsWith('settings'))syncPreferenceContext(true);};
 for(const name of exportedNames)api[name]=()=>unavailable(name);
 const unfinishedActions={...api};
 api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];
@@ -532,8 +532,8 @@ Object.assign(api,{
  contextLabel:id=>state.files.find(x=>x.id===id)?.name||state.graph.nodes.find(x=>x.id===id)?.title||id,
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId,false);},
- async setSetting(id,value){
-  if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return setAppearance(id,value);
+ async setSetting(id,value,destination=state.settingsDestination){
+  if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -541,7 +541,7 @@ Object.assign(api,{
   }
   return nodeProperty(row.owner,row.key,value);
  },
- async resetSetting(id){const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default):unavailable('resetSetting','Backend default unavailable');},
+ async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.'))return settingsAction('resetAppearance',[id],destination);const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
  async resetPage(page){for(const row of state.settings.filter(r=>r.page===page&&(r.id!=='Appearance.Zoom percentage'||r.default!==undefined))) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
  setNodeParam:nodeProperty,
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
@@ -1080,8 +1080,8 @@ api.readNotification=async id=>{
  return result;
 };
 api.refreshSettingsControls=refreshSettingsControls;
-api.setKeybinding=(id,chord)=>settingsAction('setKeybinding',[id,chord]);
-api.resetKeybindings=()=>settingsAction('resetKeybindings',[]);
+api.setKeybinding=(id,chord,destination=state.settingsDestination)=>settingsAction('setKeybinding',[id,chord],destination);
+api.resetKeybindings=(destination=state.settingsDestination)=>settingsAction('resetKeybindings',[],destination);
 api.exposeSettingsPage=async page=>{
  const epoch=scopeEpoch;
  const result=await settingsAction('exposeSettingsPage',[page]);
@@ -1176,12 +1176,14 @@ const refreshBeforeSocialConnections=api.refreshSocialState;
 api.refreshSocialState=async()=>{const result=await refreshBeforeSocialConnections();await refreshSocialConnections();return result;};
 // WIRE-social end
 // WIRE-settings
-const CONTROL_KEYS=['keybindings','keyboardCommands','keyboardError','firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','libraryTree','sessionListFilters','homeLayout','dockLayout'];
-async function settingsAction(functionName, args=[]) {
+const CONTROL_KEYS=['keybindings','keyboardCommands','keyboardError','firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','settingsScopes','settingsDestination','settingsScopeNotice','activeWorkspace','devices','activeDevice','deviceNotice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','libraryTree','sessionListFilters','homeLayout','dockLayout'];
+async function settingsAction(functionName, args=[], destination=state.settingsDestination) {
  const identity=state.profile.id;
  const graph=state.graph.id;
+ const sessionWrite=state.settingsScope==='Session'&&['setAppearance','resetAppearance','setKeybinding','resetKeybindings','importPreferences','resetPreferences'].includes(functionName);
+ if(sessionWrite){await flushAutosave();if(graph!==state.graph.id)throw Error('The session changed. Retry this settings edit.');}
  const generation=functionName==='readControls'?controlsGeneration:++controlsGeneration;
- const response=await request('/api/universal/settings-action',{function:functionName,args});
+ const response=await request('/api/universal/settings-action',{function:functionName,args,context:{session:state.graph.id,surface:activeSurface,settingsDestination:destination}}).catch(error=>{if(error.response?.code==='settings_destination_changed')publish({settingsScopeNotice:error.message});throw error;});
  const result=response.result;
  if(identity!==state.profile.id)throw Error('Your account changed while this action ran. Refresh the page before retrying.');
  if(!result||typeof result!=='object'||Array.isArray(result)||result.ok===false)throw Error(result?.error||result?.message||'Settings owner did not confirm the action. Refresh and retry.');
@@ -1194,7 +1196,7 @@ async function settingsAction(functionName, args=[]) {
   if(Object.keys(missing).length)publish(missing);
   return result;
  }
- if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
+ if(['readOperations','setGraphWorkspaces','readPreferences','readEffectivePreferences','setAppearance','resetAppearance','setKeybinding','resetKeybindings','setSettingsScope','importPreferences','resetPreferences'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
  if(Array.isArray(result.appearanceSettings)){
   const ids=new Set(result.appearanceSettings.map(row=>row.id));
@@ -1214,6 +1216,7 @@ async function settingsAction(functionName, args=[]) {
  if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...(values.profile||state.profile),...settingsProfile};}
  const shownSettings=state.settings;
  publish(values);
+ if(sessionWrite)await pollFile();
  // The canvas re-projects only when an appearance value really changed, not on every Settings read.
  if(result.appearanceSettings&&sessionDocument&&state.settings!==shownSettings)projectFile();
  if(result.controlErrors&&Object.keys(result.controlErrors).length)notice(Object.values(result.controlErrors).join(' '));
@@ -1232,9 +1235,9 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
 api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
-function setAppearance(id,value){
+function setAppearance(id,value,destination=state.settingsDestination){
  const identity=state.profile.id;
- const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this appearance edit.');return settingsAction('setAppearance',[id,value]);});
+ const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this appearance edit.');return settingsAction('setAppearance',[id,value],destination);});
  appearanceWrites=write.catch(()=>{});
  return write.then(result=>{
   const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id).map(n=>n.id);
@@ -1254,7 +1257,10 @@ api.setDockLayout=layout=>settingsAction('setDockLayout',[layout]);  // the user
 const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel'];
 api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
 api.setApplicationSetting=async(key,value)=>{const saved=await settingsAction('setApplicationSetting',[key,value]);await refreshLiveUpdatePolicy();return saved;};
-api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
+api.setSettingsScope=scope=>settingsAction('setSettingsScope',[scope,sessionDocument?.properties?.project||state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.settingsDestination?.session??state.graph.id]);
+api.refreshPreferences=()=>settingsAction('readPreferences');
+api.importPreferences=(payload,destination=state.settingsDestination)=>settingsAction('importPreferences',[payload],destination);
+api.resetPreferences=(destination=state.settingsDestination)=>settingsAction('resetPreferences',[],destination);
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};
 
@@ -1436,6 +1442,7 @@ Object.assign(api,{
  async startTemplate(id){const parent=state.graph.id;const opened=await api.openTemplateGraph(id);if(opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(opened.root),true);}const runEpoch=scopeEpoch;const raw=await mutate(()=>request('/api/universal/run-graph',{roots:opened.nodes}));const result=scopeEpoch===runEpoch?projectRunResult(raw):raw;if(opened.root&&scopeEpoch===runEpoch&&state.graph.id===opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(parent),true);}await refreshProjectData();return result;},
  
  async exportData(name,id){
+  if(name==='Settings'){const result=await settingsAction('exportPreferences',[id||state.settingsScope||'User']);return {name:'ArchHub settings.json',type:'application/json',content:JSON.stringify(result.settingsExport,null,2)};}
   if(name==='Recipe'||name==='Graph'){const doc=await api.exportRecipe();return {name:(doc.title||'Untitled').replace(/[<>:"/\\|?*\u0000-\u001f]/g,'-')+'.archhub',type:'application/json',content:JSON.stringify(doc,null,2)};}
   if(name.startsWith('Run ')){const run=state.runs.find(r=>'Run '+r.id===name);if(!run)throw Error('Open a current run before exporting.');return {name:'Run.json',type:'application/json',content:JSON.stringify(run.rows,null,2)};}
   if(name==='Receipts'||name==='Issues')return {name:name+'.json',type:'application/json',content:JSON.stringify(name==='Receipts'?state.receipts:state.modelReview.issues,null,2)};
@@ -1594,6 +1601,7 @@ api.saveResearchDecision=async values=>{
 
 // Canvas state is the portable file document; gestures never round-trip a graph.
 let systemProjection=null;
+let preferenceContext='',preferenceRequest=0;
 let sessionDocument=null, sessionPath='', fileDirectory='', fileHistory=[], fileFuture=[], autosaveTimer=null, fileWrites=Promise.resolve(), runEpoch=0, fileNavigation=0;
 let sessionBreadcrumbs=[];
 api.enterSession=async id=>{
@@ -1731,6 +1739,16 @@ async function refreshLiveUpdatePolicy(){
  try{liveUpdatePolicy=await settingsAction('readUpdatePolicySettings',[]);projectFile();}
  catch(error){console.warn('Update settings not read for the canvas:',error.message);}
 }
+function syncPreferenceContext(force=false){
+ if(!sessionDocument)return;
+ const context=JSON.stringify([sessionDocument.id,sessionPath,sessionDocument.properties?.project,sessionDocument.properties?.settings]);
+ if(!force&&context===preferenceContext)return;
+ preferenceContext=context;
+ const generation=++preferenceRequest;
+ publish({keyboardPending:true});
+ if(!sessionPath)return;
+ void settingsAction(activeSurface.startsWith('settings')?'readPreferences':'readEffectivePreferences').catch(error=>{if(generation===preferenceRequest)publish({keyboardError:error.message||String(error)});}).finally(()=>{if(generation===preferenceRequest)publish({keyboardPending:false});});
+}
 function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{};
@@ -1749,6 +1767,7 @@ function projectFile(){
  const graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   ...projectGroups(nodes,sessionDocument.wires.map(w=>projectSessionWire(w,nodes))),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
+ syncPreferenceContext();
 }
 api.readTaskPreview=async id=>{
  const task=state.tasks.find(row=>row.id===id);
@@ -1799,7 +1818,7 @@ function acknowledgeSave(sent,saved){
   const unchanged=same(shown(saved.document),shown(sent));
   sessionDocument=copy(saved.document);sessionRevision=saved.revision??saved.document.properties?.revision??0;
   localDirty=false;
-  if(unchanged)publish({sessionFile:sessionPath,sessionDirty:!sessionPath});else projectFile();
+  if(unchanged){publish({sessionFile:sessionPath,sessionDirty:!sessionPath});syncPreferenceContext();}else projectFile();
   return;
  }
  for(const key of new Set([...Object.keys(sent),...Object.keys(saved.document)])){
@@ -2421,7 +2440,7 @@ api.ready=(async()=>{
  Object.assign(NAVIGATION_ROUTES,Object.fromEntries(window.ArchHubCommandRegistry.commands.filter(c=>c.action.route).map(c=>[c.action.route,c.label])));
  Object.freeze(NAVIGATION_ROUTES);
  // First-file startup stays independent; editable shortcuts wait for the local override read.
- void settingsAction('readKeybindings').catch(error=>publish({...(state.keybindings===undefined?{keybindings:{},keyboardCommands:[]}:{}),keyboardError:error.message||'Keyboard shortcuts could not be read. Defaults are active.'})).finally(()=>publish({keyboardPending:false}));
+ void settingsAction('readKeybindings').catch(error=>publish({...(state.keybindings===undefined?{keybindings:{},keyboardCommands:[]}:{}),keyboardError:error.message||'Keyboard shortcuts could not be read. Defaults are active.'})).finally(()=>{if(preferenceRequest===0)publish({keyboardPending:false});});
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
  // The refusal still belongs on the status footer; a later update read must not erase it.
@@ -2472,7 +2491,13 @@ api.ready.then(()=>{
 const sessionModel=(action,extra={})=>request('/api/session-model',{action,...extra});
 api.listSessionModel=()=>sessionModel('list');
 api.readSessionModel=path=>sessionModel('get',{path}).then(data=>data.session);
-api.setSessionModel=(path,values)=>sessionModel('set',{path,values}).then(data=>data.session);
+api.setSessionModel=async(path,values)=>{
+ const current=path===sessionPath,navigation=fileNavigation;
+ if(current){await flushAutosave();if(navigation!==fileNavigation)throw Error('The session changed. Retry the session edit.');}
+ const result=await sessionModel('set',{path,values});
+ if(current&&navigation===fileNavigation)await pollFile();
+ return result.session;
+};
 api.sessionInputLinks=path=>sessionModel('links',{path}).then(data=>data.links);
 api.sessionRuns=(path,limit=200)=>sessionModel('runs',{path,limit}).then(data=>data.runs);
 api.sessionSetting=(path,id)=>sessionModel('setting',{path,id});

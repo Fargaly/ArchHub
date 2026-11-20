@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261120-171340-44781111196-1-c954dfb249b68d68a2326c0ee8e0f8770eeee23f
+
+- Published build 20261120-171340-44781111196-1-c954dfb249b68d68a2326c0ee8e0f8770eeee23f (source c954dfb).
+- Installer SHA-256: `1aea32482b2f1366e9c80b77d37a0509eaf08d0db9b97a7ce31ab2e3bff7695a`.
+- Built at 2026-11-20T17:53:37Z.
+
+Source: c954dfb2.
+
 ## 20261119-1847-9d8e490
 
 - Published build 20261119-1847-9d8e490 (source 9d8e490).

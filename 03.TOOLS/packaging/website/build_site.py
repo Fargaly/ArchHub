@@ -286,6 +286,8 @@ def doc_article(template, index, build_id):
         parts = text.replace("{build}", build_id).split("\n## ")
         body = markdown("\n## ".join(part for offset, part in enumerate(parts)
                                       if not offset or "\n" in part.strip()))
+        if row[0] == "getting-started":
+            body += '<p><a href="/download/">Download ArchHub</a> · <a href="/account/">Your account</a></p>'
     else:
         _, title, group, lede, paragraphs, where = row
         body = "<h2>How it works</h2>" + "".join(f"<p>{esc(t)}</p>" for t in paragraphs)

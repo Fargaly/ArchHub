@@ -165,6 +165,18 @@ def test_desktop_rejects_prepared_signin_prose_even_with_a_citation(sites, monke
      'connectors', 'https://archhub.io/docs/connectors/',
      'Enter a server address, a command or an MCP JSON snippet, then choose Add tool server.',
      'أدخل عنوان الخادم أو أمرًا أو مقطع MCP JSON، ثم اختر إضافة خادم أدوات.'),
+    ('Does setup open a window on first run?', 'هل تظهر نافذة عند الإعداد لأول مرة؟',
+     'first open setup background window', 'getting-started', 'https://archhub.io/docs/getting-started/',
+     'ArchHub runs setup in the background on first open.',
+     'عند فتح آرك هب لأول مرة، يجري الإعداد في الخلفية.'),
+    ('Where is my launcher log?', 'أين سجل تشغيل التطبيق؟',
+     'startup logs launcher log', 'getting-started', 'https://archhub.io/docs/getting-started/',
+     r'On a standard installation, the launcher log is %LOCALAPPDATA%\ArchHub\logs\launcher.log.',
+     r'في التثبيت العادي، تجد سجل تشغيل التطبيق في %LOCALAPPDATA%\ArchHub\logs\launcher.log.'),
+    ('Does closing the window quit ArchHub?', 'هل إغلاق النافذة ينهي تشغيل آرك هب؟',
+     'close quit window tray', 'getting-started', 'https://archhub.io/docs/getting-started/',
+     'When the tray is available, closing the window with X sends ArchHub to the tray.',
+     'عندما تكون منطقة الإعلام متاحة، يؤدي إغلاق النافذة بزر X إلى نقل آرك هب إليها.'),
     ('Where do project folders go?', 'أين توضع مجلدات المشروع؟', 'project folders',
      'STD-21', '/folders%20with%20spaces.html',
      'Project folders belong in the standard CDE container.', None),
@@ -262,6 +274,11 @@ def test_chat_guide_passages_are_present_at_the_built_public_citation_urls(tmp_p
     monkeypatch.setattr(website, 'catalogue', lambda: {'categories': [], 'nodes': [], 'starters': []})
     output = tmp_path / 'website'
     website.build_site(output, 'citation-test', 'https://example.test/citation-test/setup.exe', '0' * 64)
+    overview = (output / 'docs/getting-started/index.html').read_text(encoding='utf-8')
+    article = overview.split('<main ', 1)[1].split('</main>', 1)[0]
+    assert '<a href="/download/">Download ArchHub</a>' in article
+    assert '<a href="/account/">Your account</a>' in article
+    assert (output / 'account/index.html').is_file()
     pages = {}
     chunks = list(baboom_standard.public_doc_chunks(ROOT / '01.APP/nodelang/site_export.py'))
     assert len({chunk['id'] for chunk in chunks}) == 9

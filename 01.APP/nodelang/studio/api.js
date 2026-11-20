@@ -2425,6 +2425,7 @@ window.addEventListener('pagehide',()=>{if(sessionDocument&&localDirty&&!saveCon
 
 const initialState=copy(state);
 api.ready=(async()=>{
+ const initialNavigation=fileNavigation;
  // The native Qt owner supplies one reviewed payload and the existing bound decision bridge.
  if(window.ARCHHUB_NATIVE_APPROVAL){
   const supplied=window.ARCHHUB_NATIVE_APPROVAL;
@@ -2460,13 +2461,18 @@ api.ready=(async()=>{
  publish({libraryStatus:'waiting',libraryError:''});
  try{
   const initialFile=await sessionRequest('initial');
-  if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;if(initialFile.migrationDocument)fileHistory.push(copy(initialFile.migrationDocument));projectFile();}
-  else await api.newSession();
+  // A late startup response must not replace the workflow the user has already chosen.
+  if(initialNavigation===fileNavigation){
+   if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;if(initialFile.migrationDocument)fileHistory.push(copy(initialFile.migrationDocument));projectFile();}
+   else await api.newSession();
+  }
  }catch(error){
-  notice(error.message||String(error));
-  // A file that failed to open is not the open file: the new session must not save over it or project it again.
-  sessionDocument=null;sessionPath='';sessionRevision=0;
-  try{await api.newSession();}catch(inner){notice(inner.message||String(inner));}
+  if(initialNavigation===fileNavigation){
+   notice(error.message||String(error));
+   // A file that failed to open is not the open file: the new session must not save over it or project it again.
+   sessionDocument=null;sessionPath='';sessionRevision=0;
+   try{await api.newSession();}catch(inner){notice(inner.message||String(inner));}
+  }
  }
  publish({learning:{...state.learning,layer:'Host'},connectionNotice:state.connectionNotice||''});
  ready=true;watchRefresh();

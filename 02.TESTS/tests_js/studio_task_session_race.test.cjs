@@ -37,7 +37,7 @@ test('a canvas edit during an in-flight task save keeps the edited nodes and vie
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push({url, body});
-      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: []};
+      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: []};
       if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
       else if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: structuredClone(file), path: 'C:/isolated/alpha.archhub'};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: (body.document.properties?.revision || 0) + 1, document: body.document};
@@ -103,7 +103,7 @@ test('a refused or slow library-collapse read still opens the initial session ex
         await settingsGate;
         return {ok: true, status: 200, json: async () => ({ok: true, result: []})};
       }
-      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: []};
+      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: []};
       if (url === '/api/session-files' && body?.action === 'initial') {
         initialSeen = true;
         data = {ok: true, document: structuredClone(file), path: 'C:/isolated/alpha.archhub'};
@@ -158,7 +158,7 @@ test('a task refresh replaces recorded context and keeps file state only when th
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push(body && body.function);
-      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], document: structuredClone(blank), path: 'C:/isolated/boot.archhub', revision: 1};
+      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: [], document: structuredClone(blank), path: 'C:/isolated/boot.archhub', revision: 1};
       if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: structuredClone(blank), path: 'C:/isolated/boot.archhub'};
       else if (url === '/api/session-files' && body?.action === 'validate') data = {ok: true, document: body.document};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: 2, document: body.document};
@@ -217,4 +217,48 @@ test('a task refresh replaces recorded context and keeps file state only when th
   await late;
   assert.equal(context.ArchHubAPI.getSnapshot().tasks.some(row => row.scope === 'STALE'), false, 'a response from an older graph does not replace the tasks');
   assert.equal(task('a').scope, 'Bath');
+});
+
+test('late first-file startup preserves a newer created, opened or saved workflow', async () => {
+ const {setImmediate}=require('node:timers');
+ for(const choice of ['ordinary','empty','new','saved','opened','stale-error','ordinary-error']){
+  const document=(id,title)=>({format:'archhub',version:1,id,title,nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}});
+  const initial=document('initial','Initial'),chosen=document('chosen','Chosen');let release,initialStarted=false;
+  const gate=new Promise(resolve=>release=resolve),notices=[];let sequence=0;
+  const response=data=>({ok:true,status:200,headers:{get:()=>null},json:async()=>data});
+  const context={console,structuredClone,URLSearchParams,AbortSignal,setTimeout,clearTimeout,setInterval:()=>0,clearInterval(){},
+   CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail;}},document:{hidden:true,addEventListener(){}},
+   crypto:{randomUUID:()=>`new-${++sequence}`},sessionStorage:{getItem:()=>null,setItem(){},removeItem(){}},localStorage:{getItem:()=>null,setItem(){},removeItem(){}},
+   ARCHHUB_BOOT:{token:'fixture',csrf:'fixture',nograph:true},addEventListener(){},dispatchEvent(e){notices.push(e.detail?.message);},
+   fetch:async(url,options={})=>{
+    const body=options.body?JSON.parse(options.body):null;
+    if(url==='/api/commands')return response({commands:[]});
+    if(url==='/api/session-files'&&body?.action==='initial'){
+     initialStarted=true;await gate;
+     if(choice.endsWith('error'))return {ok:false,status:409,headers:{get:()=>null},json:async()=>({ok:false,error:'Initial file refused'})};
+     return response({ok:true,document:choice==='empty'||choice==='new'?null:structuredClone(initial),path:'C:/fixture/initial.archhub'});
+    }
+    if(url==='/api/session-files'&&body?.action==='open')return response({ok:true,document:structuredClone(chosen),path:'C:/fixture/chosen.archhub'});
+    if(url==='/api/session-files'&&body?.action==='save')return response({ok:true,document:body.document,path:body.path,revision:1});
+    if(url==='/api/session-files'&&body?.action==='validate')return response({ok:true,document:body.document});
+    if(url==='/api/session-files'&&body?.action==='autosave')return response({ok:true,document:body.document,path:body.path,revision:(body.document.properties?.revision||0)+1});
+    if(url==='/api/universal/settings-action')return response({ok:true,result:{keybindings:{},keyboardCommands:[],appearanceSettings:[],libraryCollapsed:[]}});
+    return response({ok:true,result:[],items:[],recent:[],directory:'mem',sessions:[],messages:[],agents:[],providers:[],roots:[]});
+   }};
+  context.window=context;vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(studio,'studio-authority.js'),'utf8'),context);
+  vm.runInContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),context);
+  const api=context.ArchHubAPI;
+  for(let i=0;i<100&&!initialStarted;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(initialStarted,true,choice);
+  if(choice==='new'||choice==='saved')await api.newSession('User work');
+  if(choice==='saved')await api.saveSession('C:/fixture/user.archhub');
+  if(choice==='opened'||choice==='stale-error')await api.openSession('C:/fixture/chosen.archhub');
+  const selected=['new','saved','opened','stale-error'].includes(choice)?api.getSessionDocument():null,selectedPath=api.getSessionPath();release();await api.ready;
+  const held=api.getSessionDocument();
+  if(['new','saved','opened','stale-error'].includes(choice)){
+   assert.equal(held.id,selected.id,choice+' kept selected document');assert.equal(held.title,selected.title);assert.equal(api.getSessionPath(),selectedPath,choice+' kept selected path');assert.equal(notices.includes('Initial file refused'),false,'superseded startup refusal stays superseded');
+  }else if(choice==='ordinary'){assert.equal(held.id,'initial');assert.equal(api.getSessionPath(),'C:/fixture/initial.archhub');}
+  else {assert.equal(held.title,'Untitled');if(choice==='ordinary-error')assert.equal(notices.includes('Initial file refused'),true,'active startup refusal remains visible');}
+ }
 });

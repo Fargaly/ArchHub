@@ -3104,8 +3104,10 @@
         "tests_replica/test_conduct.py",
         "tools/archhub-compiler/rules.json",
         "tools/archhub-compiler/src/intent.rs",
+        "03.TOOLS/tools/archhub-compiler/src/intent.rs",
         "tools/archhub-compiler/src/main.rs",
         "tools/archhub-compiler/tests/conduct.rs",
+        "03.TOOLS/tools/archhub-compiler/tests/conduct.rs",
         "tools/archhub-compiler/tests/fixtures/conduct.json",
         "tools/pipeline/pre_commit.py",
         "tools/pipeline/strict_check.py"

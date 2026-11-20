@@ -10,10 +10,10 @@ on:
         required: true
         type: string
       mode:
-        description: 'release (build, then publish) or check (goose-cli cargo check only: no installer, upload or publish)'
+        description: 'release (build and publish), build (installer and Goose artifacts), or check (Goose cargo check only)'
         required: false
         type: choice
-        options: [release, check]
+        options: [release, check, build]
         default: release
 
 permissions:
@@ -84,8 +84,10 @@ jobs:
           }
 
   build:
-    if: ${{ inputs.mode != 'check' }}
+    if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'release' || inputs.mode == 'build')) }}
     runs-on: windows-2025
+    permissions:
+      contents: read
     outputs:
       build_id: ${{ steps.identity.outputs.build_id }}
       source_revision: ${{ steps.source.outputs.revision }}
@@ -377,7 +379,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Goose did not build from its pinned source.' }
           "GOOSE_BUILD_PATH=$build" >> $env:GITHUB_ENV
       - name: Compile Studio and installer from verified source snapshots
-        if: ${{ inputs.mode != 'check' }}
         shell: pwsh
         env:
           BUILD_ID: ${{ steps.identity.outputs.build_id }}
@@ -387,7 +388,7 @@ jobs:
             -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
       - name: Prove installed users' updater accepts this build (dry run)
-        if: ${{ inputs.mode != 'check' }}
+        if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
         shell: pwsh
         run: |
           ./selected/03.TOOLS/packaging/windows/publish_release.ps1 `
@@ -395,7 +396,7 @@ jobs:
             -ExpectedSourceRevision '${{ steps.source.outputs.revision }}' -DryRun
       - name: Retain exact installer and metadata for review
         id: upload
-        if: ${{ inputs.mode != 'check' }}
+        if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
         uses: actions/upload-artifact@v7
         with:
           name: archhub-installer-${{ steps.identity.outputs.build_id }}
@@ -408,8 +409,35 @@ jobs:
             release-output/BUILD_METADATA.json
           if-no-files-found: error
           compression-level: 0
+      - name: Prepare build-only artifact checksums
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'build' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item -LiteralPath (Join-Path $env:GOOSE_BUILD_PATH 'goose.exe'), (Join-Path $env:GOOSE_BUILD_PATH 'receipt.json') -Destination release-output
+          Copy-Item -LiteralPath (Join-Path $env:GOOSE_BUILD_PATH 'LICENSE') -Destination release-output/goose-LICENSE.txt
+          foreach ($name in @('ArchHub-Setup-0.exe', 'goose.exe', 'receipt.json')) {
+            $path = Join-Path release-output $name
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name" | Set-Content -LiteralPath "$path.sha256" -Encoding ascii
+          }
+      - name: Retain build-only installer, Goose and receipt
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'build' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: archhub-build-${{ steps.identity.outputs.build_id }}
+          path: |
+            release-output/ArchHub-Setup-0.exe
+            release-output/ArchHub-Setup-0.exe.sha256
+            release-output/goose.exe
+            release-output/goose.exe.sha256
+            release-output/receipt.json
+            release-output/receipt.json.sha256
+            release-output/goose-LICENSE.txt
+          if-no-files-found: error
+          compression-level: 0
       - name: Retain failed snapshot and partial build for inspection
-        if: ${{ failure() && inputs.mode != 'check' }}
+        if: ${{ failure() && (github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release')) }}
         uses: actions/upload-artifact@v7
         with:
           name: archhub-failed-build-${{ github.run_id }}-${{ github.run_attempt }}
@@ -419,7 +447,7 @@ jobs:
 
   publish:
     needs: build
-    if: ${{ inputs.mode != 'check' }}
+    if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
     runs-on: windows-2025
     timeout-minutes: 10
     permissions:
@@ -438,13 +466,13 @@ jobs:
         shell: pwsh
         run: python -m pip install --disable-pip-version-check -r selected/requirements.txt
       - name: Download this run's exact build artifact
-        if: ${{ inputs.mode != 'check' }}
+        if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
         uses: actions/download-artifact@v8
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release-output
       - name: Verify and publish complete updater release
-        if: ${{ inputs.mode != 'check' }}
+        if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

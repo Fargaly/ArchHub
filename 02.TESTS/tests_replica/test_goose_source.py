@@ -354,7 +354,7 @@ def test_check_dispatch_reaches_no_write_permission_upload_or_publish_step():
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     triggers = workflow.get("on", workflow.get(True))
-    assert triggers["workflow_dispatch"]["inputs"]["mode"]["options"] == ["release", "check"]
+    assert triggers["workflow_dispatch"]["inputs"]["mode"]["options"] == ["release", "check", "build"]
     assert triggers["workflow_dispatch"]["inputs"]["mode"]["default"] == "release"
     assert workflow["permissions"] == {"contents": "read"}
     check = _ran(workflow, "workflow_dispatch", "check")
@@ -368,21 +368,36 @@ def test_check_dispatch_reaches_no_write_permission_upload_or_publish_step():
             assert forbidden not in text, (name, forbidden)
     runs = "\n".join(step.get("run", "") for step in workflow["jobs"]["goose-check"]["steps"])
     assert "build_goose.py --check" in runs and "--output" not in runs
-    # every job or step that can write is guarded off in check mode on its own line too
-    for name, other in workflow["jobs"].items():
-        if (other.get("permissions") or {}).get("contents") == "write":
-            assert "inputs.mode != 'check'" in other.get("if", ""), name
-        for step in other["steps"]:
-            body = yaml.safe_dump(step)
-            if any(word in body for word in ("upload-artifact", "download-artifact", "publish_release", "build_release")):
-                assert "inputs.mode != 'check'" in step.get("if", ""), (name, step.get("name"))
+def test_build_dispatch_reuses_packaging_with_read_only_permissions_and_no_publish():
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    ran = _ran(workflow, "workflow_dispatch", "build")
+    assert set(ran) == {"build"}
+    assert workflow["permissions"] == {"contents": "read"}
+    job = workflow["jobs"]["build"]
+    assert job["permissions"] == {"contents": "read"}
+    steps = [step for step in job["steps"] if step.get("name") in ran["build"]]
+    body = yaml.safe_dump(steps)
+    assert "build_goose.py --source" in body and "build_release.ps1" in body
+    for forbidden in ("publish_release", "gh release", "GH_TOKEN", "github.token", "persist-credentials: true"):
+        assert forbidden not in body
+    uploads = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert len(uploads) == 1
+    paths = set(uploads[0]["with"]["path"].splitlines())
+    for name in ("ArchHub-Setup-0.exe", "goose.exe", "receipt.json"):
+        assert {f"release-output/{name}", f"release-output/{name}.sha256"} <= paths
+    publish = workflow["jobs"]["publish"]
+    publish_step = next(step for step in publish["steps"] if "publish_release.ps1" in step.get("run", ""))
+    release_only = "${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}"
+    assert publish["if"] == publish_step["if"] == release_only
+    assert "publish" not in _ran(workflow, "workflow_dispatch", "unexpected")
 
 
 def test_release_dispatches_keep_the_existing_build_and_publish_path():
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     every = {name: [step.get("name", step.get("uses", "")) for step in job["steps"]
-                    if "failure()" not in str(step.get("if", ""))]
+                    if "failure()" not in step.get("if", "") and "inputs.mode == 'build'" not in step.get("if", "")]
              for name, job in workflow["jobs"].items() if not name.startswith("goose-check")}
     for event, mode in (("workflow_dispatch", "release"), ("repository_dispatch", None)):
         ran = _ran(workflow, event, mode)

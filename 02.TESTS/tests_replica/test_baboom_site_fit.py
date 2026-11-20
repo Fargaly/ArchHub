@@ -278,7 +278,10 @@ def test_chat_guide_passages_are_present_at_the_built_public_citation_urls(tmp_p
     article = overview.split('<main ', 1)[1].split('</main>', 1)[0]
     assert '<a href="/download/">Download ArchHub</a>' in article
     assert '<a href="/account/">Your account</a>' in article
+    assert '<a href="/security/">Account privacy</a>' in article
+    assert '<a href="https://github.com/Fargaly/ArchHub/issues">Report a problem</a>' in article
     assert (output / 'account/index.html').is_file()
+    assert (output / 'security/index.html').is_file()
     pages = {}
     chunks = list(baboom_standard.public_doc_chunks(ROOT / '01.APP/nodelang/site_export.py'))
     assert len({chunk['id'] for chunk in chunks}) == 9

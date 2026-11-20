@@ -205,6 +205,7 @@ class NoGraphServer:
         _SERVER = self
         self.thread = None
         self.cloud_relay = None
+        self.workshop_injection = None
         self._relay_lock = threading.Lock()
         # Who holds the relay and the trigger service: taken briefly by close() and by the warm-up when it hands over
         # what it made, never while a relay is being started (close() must not wait for a slow start).
@@ -255,10 +256,26 @@ class NoGraphServer:
         self._hosts.get()
         self._local.get()
         # F38 / SLOWHOME: cloud relay and TriggerService must not hold "server up" for tens of seconds.
+        self._start_workshop_injection()
         threading.Thread(target=self._warm_after_listen, name='archhub-nograph-warm', daemon=True).start()
         threading.Thread(target=_refresh_opencode_plugin, args=(self.state_dir,), name='archhub-opencode-plugin',
                          daemon=True).start()
         return self
+
+    def _start_workshop_injection(self):
+        if os.environ.get('ARCHHUB_DISABLE_WORKSHOP_WATCH', '').strip().lower() in ('1', 'true', 'yes'):
+            return
+        try:
+            from .workshop_mailbox import WorkshopInjection, _local_transport
+            try:
+                transport = _local_transport()
+            except Exception:  # noqa: BLE001 - Workshop runtime absent: watcher still runs without push
+                transport = None
+            worker = WorkshopInjection(self, transport)
+            if self._own('workshop_injection', worker):
+                worker.start()
+        except Exception as refused:  # noqa: BLE001 - boot must not wait on watcher failure
+            print('  workshop   : injection skipped -- %s' % refused, flush=True)
 
     def _warm_after_listen(self):
         """Finish non-admission work after HTTP is already answering Home."""
@@ -352,6 +369,12 @@ class NoGraphServer:
         with self._owned_lock:  # after this, the warm-up attaches nothing (_own closes what it makes)
             triggers, self.triggers = getattr(self, 'triggers', None), None
             relay, self.cloud_relay = self.cloud_relay, None
+            injection, self.workshop_injection = self.workshop_injection, None
+        if injection is not None:
+            try:
+                injection.close()
+            except Exception as stuck:  # noqa: BLE001 - closing the app goes on
+                print('  workshop   : injection did not stop -- %s' % stuck, flush=True)
         if triggers is not None:
             triggers.close()
         if relay is not None:

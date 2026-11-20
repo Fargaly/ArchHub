@@ -1224,7 +1224,7 @@ class WorkshopInjection:
                 {"session":row["session"], "native_session_id":row["native_session_id"]})}, "escalation", "watch",
                 now=now)[0]:
             return False   # another watcher, whatever seat it saw, holds this note's dispatch
-        outcome = self.transport.inject({"app":"claude", "id":row["native_session_id"]},
+        outcome = self.transport.inject({"app":row.get("runtime") or "claude", "id":row["native_session_id"]},
             "Workshop escalation " + note["id"] + "\n" + note["content"].partition("\n")[2] + "\nNo reply needed.",
             message_id=note["id"] + ":escalation", timeout_seconds=self.injection_timeout_seconds,
             cancel_event=self._stop)

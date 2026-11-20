@@ -88,7 +88,13 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    await page.getByLabel('Node radius',{exact:true}).waitFor();
    await page.getByRole('button',{name:'Put on Canvas',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{page:'Appearance'});
-   assert.equal(await page.getByLabel('Settings scope',{exact:true}).locator('option[value=Workspace]').isDisabled(),true);
+   const scope=page.getByLabel('Settings scope',{exact:true});
+   const workspace=scope.locator('option[value=Workspace]');
+   assert.equal(await workspace.evaluate(option=>option.matches(':disabled')),true,await workspace.evaluate(option=>option.outerHTML));
+   await scope.focus();
+   await scope.press('End');
+   assert.equal(await scope.inputValue(),'User','keyboard selection must skip the unavailable workspace scope');
+   assert.equal(await page.evaluate(()=>window.writes.some(row=>'scope' in row)),false);
    await nav.getByRole('button',{name:'Projects',exact:true}).click();
    await page.getByRole('heading',{name:'Project folders',exact:true}).waitFor();
    await page.getByRole('heading',{name:'Example workspace',exact:true}).waitFor();

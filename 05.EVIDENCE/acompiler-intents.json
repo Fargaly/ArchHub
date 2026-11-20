@@ -12296,6 +12296,15 @@
         "03.TOOLS/packaging/website/export_design.py",
         "03.TOOLS/packaging/website/data/design.json"
       ]
+    },
+    "COLDSTARTERS": {
+      "source": "Build 19 Studio repair. On cold Home, the built-in starters must appear from the existing starter owner without scanning the saved .archhub files twice, opening host programs, or holding up the usable canvas. Existing saved-file search and the combined template listing stay available. Coordinator Workshop assignment df111e649ca149258c401dd7a8bd4844.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/nograph_server.py",
+        "02.TESTS/tests_js/studio_designmatch.test.cjs",
+        "02.TESTS/tests_replica/test_one_library_catalogue.py"
+      ]
     }
   },
   "DRAFTNOASK": {

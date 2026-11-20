@@ -97,6 +97,11 @@ def test_the_pin_names_source_and_its_lock_not_a_release_archive():
     assert "url" not in pin and "sha256" not in pin
 
 
+def test_goose_pin_uses_the_dynamic_crt():
+    pin = build_goose.load_pin(WINDOWS / "goose-pin.json")
+    assert "crt-static" not in pin["rustflags"]
+
+
 def test_stock_goose_never_builds_or_stages(tmp_path, ours, pin, fake_tools):
     _declare(pin, [])
     with pytest.raises(ValueError, match="F5"):
@@ -158,7 +163,7 @@ def test_build_fetches_the_pinned_commit_and_builds_locked_with_a_receipt(tmp_pa
     cargo, env = next((c, e) for c, e in fake_tools if c[0] == "cargo")
     assert cargo == ["cargo", "build", "--release", "--locked", "--target", "x86_64-pc-windows-msvc",
                      "-p", "goose-cli", "--bin", "goose"]
-    assert env["RUSTFLAGS"] == "-C target-feature=+crt-static"
+    assert env["RUSTFLAGS"] == ""
     assert receipt["upstream_commit"] == COMMIT and receipt["archhub_rev"] == "abc123"
     assert receipt["patches"] == [["0001-archhub.patch", build_goose.sha(ours / "patches" / "0001-archhub.patch")]]
     assert receipt["cargo_lock_sha256"] == hashlib.sha256(UPSTREAM_LOCK).hexdigest()
@@ -218,7 +223,9 @@ def test_stage_refuses_a_reversed_series_another_revision_or_other_engine_inputs
     _declare(pin, ["01-a.patch", "02-b.patch"])
     with pytest.raises(ValueError, match="another ArchHub revision"):
         _stage(tmp_path, ours, pin, "p2", rev="def456")
-    pin.write_text(pin.read_text(encoding="utf-8").replace("crt-static", "crt-static "), encoding="utf-8")
+    value = json.loads(pin.read_text(encoding="utf-8"))
+    value["params"]["rustflags"] = "-C target-feature=+crt-static"
+    pin.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match="other engine inputs"):
         _stage(tmp_path, ours, pin, "p3")
 
@@ -445,8 +452,10 @@ def test_the_command_line_exits_with_cargos_own_code(monkeypatch, capfd):
     assert "cargo check exited with code 101" in capfd.readouterr().err
 
 
-def test_llama_cpp_uses_the_same_static_c_runtime_as_rust(tmp_path, ours, pin, fake_tools):
+def test_llama_cpp_uses_the_default_dynamic_crt(tmp_path, ours, pin, fake_tools, monkeypatch):
+    monkeypatch.delenv("LLAMA_STATIC_CRT", raising=False)
     (ours / "Cargo.lock").write_bytes(UPSTREAM_LOCK)
     build_goose.check(tmp_path / "src", archhub_rev="abc123", ours=ours, pin_path=pin)
     env = next(e for c, e in fake_tools if c[0] == "cargo")
-    assert "crt-static" in env["RUSTFLAGS"] and env["LLAMA_STATIC_CRT"] == "1"
+    assert env["RUSTFLAGS"] == ""
+    assert "LLAMA_STATIC_CRT" not in env

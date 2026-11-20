@@ -7,7 +7,7 @@
     "target": "x86_64-pc-windows-msvc",
     "package": "goose-cli",
     "binary": "goose",
-    "rustflags": "-C target-feature=+crt-static",
+    "rustflags": "",
     "check_timeout_minutes": 120,
     "cargo_lock_sha256": "0fd5e83cea2f0c77607d8b8e4e06633c4d4e70745860db975dd7431bbc4ef41f",
     "cargo_lock_git_blob": "e0d3f1e3024e796720728bd76f016cfed75fa346",

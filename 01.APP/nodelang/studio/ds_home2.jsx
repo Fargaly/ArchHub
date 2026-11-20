@@ -143,7 +143,7 @@
     // One row per piece of work: a further live agent on it is an avatar on that row, never a second row.
     for(const agent of (s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working')){
       const row=sessionRows.find(row=>row.id===agent.task);
-      if(row){row.workingNow=true;if(agent.name&&!(row.members||[]).some(member=>member.name===agent.name))row.members=[...(row.members||[]),{name:agent.name,live:true}];}
+      if(row){row.workingNow=true;if(agent.name&&!(row.members||[]).some(member=>member.id===agent.id||(member.roots||[]).includes(agent.id)||!member.id&&member.name===agent.name))row.members=[...(row.members||[]),{id:agent.id,roots:[agent.id],name:agent.name,live:true}];}
       else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
     }
     // A held run that belongs to no listed session is a row too: it needs him, so it is shown and counted.
@@ -182,7 +182,7 @@
   const homeMap = ({listed, rows, params, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = []}) => {
     const p = {...params, collapsed: params.collapsed || []};
     // What a card says comes from the session's own row: its steps and their states, its held run or its failed step.
-    const facts = (row, filePlan) => {
+    const facts = (row, filePlan, members = row?.members || []) => {
       const work = (row?.workflow || []).filter(node => node.type !== 'thing.session' && !['fixed-agent', 'fixed-you', 'fixed-workshop', 'start'].includes(node.id));
       const plan = row && Array.isArray(row.plan) && !row.planInferred ? row.plan : filePlan || [];
       const ran = id => String((row?.activity || []).find(item => item.id === id)?.status || '');
@@ -197,7 +197,8 @@
         need: held ? {text: (held.title || 'A run') + ' needs your approval', approval: held.id} : failed ? {text: failed.title + ' failed', failed: true}
           : row && rows.interruptedWork(row) && !row.stale ? {text: 'Interrupted · waiting for an agent', resume: true} : null,
         // The lead is the card's agent; everyone else on this piece of work is a small avatar on the same card, never a second card.
-        members: [...new Set((row?.members || []).map(member => member.name).filter(Boolean))].slice(1),
+        agent: humanLabel(members[0]?.name || ''),
+        members: members.slice(1).map(member => member.name).filter(Boolean),
         state: row && rows.needs(row) ? 'Needs you' : failed ? 'Failed' : row && rows.working(row) ? 'Working' : 'Idle'};
     };
     // A card is a piece of work (founder 2026-11-19): agents are members of it, never cards. A session whose task row is
@@ -205,10 +206,10 @@
     const work = session => session.state !== 'archived' && !hidden.includes(session.task)
       && rows.sessionRows.find(item => item.id === session.task)?.status !== 'ARCHIVED';
     const files = (listed?.groups || []).flatMap(group => group.sessions).filter(work).map(session => {
-      const row = rows.sessionRows.find(item => item.id === session.task), fact = facts(row, session.context?.plan);
+      const row = rows.sessionRows.find(item => item.id === session.task), fact = facts(row, session.context?.plan, Array.isArray(row?.members) ? row.members : session.members || []);
       return {id: session.id, path: session.path, task: session.task || '', parent: row?.parent || '', title: session.title, project: session.project?.label || 'No project',
         kind: row?.kind || session.kind || 'agent-session', older: !!row && rows.sectionOf(row) === 'Older / archived',
-        agent: humanLabel((session.members || [])[0]?.name || row?.owner || ''), pinned: !!session.pinned, ...fact,
+        pinned: !!session.pinned, ...fact,
         finished: fact.finished || session.state === 'done' || row?.status === 'DONE', armed: (session.automation || []).filter(trigger => trigger.armed).length, links: session.inputLinks || []};
     });
     const filed = new Set(files.flatMap(card => [card.task, card.path]).filter(Boolean));
@@ -217,7 +218,7 @@
     const loose = rows.sessionRows.filter(row => row.status !== 'ARCHIVED' && !row.runtimeAgent && !filed.has(row.id) && !filed.has(row.sessionPath || row.path || '')).map(row => ({id: row.approval ? row.id : 'row:' + row.id, path: row.sessionPath || '',
       task: row.runtimeAgent ? row.runtimeAgent.task || '' : row.fileOnly || row.approval ? '' : row.id, parent: row.parent || '', title: row.approval ? row.title : titleOf(row),
       project: row.runtimeAgent ? String(row.runtimeAgent.name || '').split(' / ')[1] || 'No project' : row.workspace || row.project || 'No project',
-      agent: humanLabel(row.runtimeAgent?.name || (row.members || [])[0]?.name || row.owner || row.who || ''), pinned: !!row.homePinned, ...facts(row, null), armed: 0, links: [],
+      pinned: !!row.homePinned, ...facts(row, null, row.approval && row.who ? [{name: row.who}] : row.members || []), armed: 0, links: [],
       kind: row.kind || 'agent-session', older: !row.approval && rows.sectionOf(row) === 'Older / archived',
       ...(row.approval ? {need: {text: row.title + ' needs your approval', approval: row.approval}} : {}), ...(row.status === 'DONE' ? {finished: true} : {})}));
     const every = [...files, ...loose];
@@ -276,7 +277,7 @@
     const wires = links.map(wire => ({...wire, from: inside.get(wire.from), to: inside.get(wire.to)})).filter(wire => wire.from !== wire.to);
     const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
     return {params: p, nodes, wires, groups, total: every.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
-      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
+      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
   // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
   // sessions, run budget. Done when and input links are the session model's (POST /api/session-model); read-only agents and
@@ -460,13 +461,14 @@
       return title!==humanLabel(name)?title:[name.split(' / ')[0],name.split(' / ')[2]?.replace(/^session-/,'').slice(0,6)].filter(Boolean).join(' · ');};
     const focus = u.task || homeLayout.resume || s.focusedTask;  // the session he came up from (its card is selected) before Home's saved selection
     const task = fileWorkspace ? tasks.find(t => t.id === u.task) : resumed(focus);
+    const taskMembers = rows.sessionRows.find(row => row.id === task?.id)?.members || task?.members || [];
     React.useEffect(()=>{
       if(!fileWorkspace&&request!=='waiting'&&request!=='error')setRequest(tasks.length?'loaded':'empty');
     },[fileWorkspace,tasks.length,request]);
     const people = window.UI.workshopPeople ? window.UI.workshopPeople(s) : {people: [], choices: [], whoIs: label => ({name: label || 'Agent'})};
     const ownerOf = t => {
       if (!t) return '';
-      const live = (s.liveAgents || []).find(a => a.agent === t.owner || (t.declarations || []).some(d => d.agent === a.agent));
+      const live = (s.liveAgents || []).find(a => a.agent === t.owner || a.name === t.owner || (t.declarations || []).some(d => d.agent === a.agent));
       if (live) return live.name && live.name !== live.agent ? live.name : (live.name || '');
       return (s.providers || []).find(p => p.id === t.owner)?.name || t.owner || (t.agents || []).map(describe).filter(Boolean).join(' · ');
     };
@@ -556,6 +558,7 @@
         return {ok: false, error: error instanceof Error ? error.message : String(error)};
       });
     };
+    const projectChoices = (s.workspaces || []).map(w => ({key: w.id, value: w.id, name: w.name || w.id})).filter(c => c.value);
     const agentChoices = (s.liveAgents || []).map(agent => ({key: agent.handle || agent.agent, handle: agent.handle ? agent.agent : undefined, name: agent.name && agent.name !== agent.agent ? agent.name : agent.agent, gate: agent.gate, breaches: agent.breaches}));
     const openTask = t => u.openTaskFile(t.id);
     const send = async () => {
@@ -776,6 +779,7 @@
             <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
           </div>}
+          {pickedTask && <><details className="dx-fact dx-edit-field"><summary><span>Project</span><span className="dx-edit-label">Edit</span><b>{task?.project || ''}</b></summary><select aria-label="Project" key={(task?.id || '') + ':project:' + (task?.workspace || '')} defaultValue={task?.workspace || ''} onChange={e => { if (e.target.value === task?.workspace) return false; return saveSession({project: e.target.value}); }}><option value="">No project</option>{projectChoices.map(c => <option key={c.key} value={c.value}>{c.name}</option>)}</select></details><div className="dx-fact" aria-label="Task participants"><span>Participants</span><b>{taskMembers.length ? taskMembers.map(member => humanLabel(member.name)).join(' · ') : 'No agent yet'}</b></div></>}
           {/* A subtask is a task of its own (its own session file) whose row names this task as its parent. */}
           {pickedTask && <form className="dx-preview-actions" data-home-subtask-form="" onSubmit={event => { event.preventDefault(); const form = event.currentTarget, title = String(new FormData(form).get('subtask') || '').trim();
             return title && executeAction('ui.select', () => u.act(async () => { const made = await api.createTask(title, '', '', task.id); form.reset(); u.setToast('Subtask added under ' + (task.sessionTitle || task.title) + '.'); return made; }), event); }}>

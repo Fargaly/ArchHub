@@ -146,3 +146,120 @@ def test_the_session_card_and_inspector_rendered_with_real_edits_that_act(tmp_pa
     finally:
         client.close()
         server.close()
+
+
+def test_project_clear_survives_file_and_task_database_reopen(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path / 'desk')
+    import pytest
+    from nodelang import session_files as files, workshop_tasks as tasks
+    from nodelang.nograph_server import JsonFile
+    from nodelang.user_paths import state_directory
+    from nodelang.workshop_mailbox import application_history
+    work = tmp_path / 'project'
+    work.mkdir()
+    owner = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    owner.write({'roots': [{'root_id': 'root-a', 'label': 'Shared studio', 'path': str(work), 'settings': {}}]})
+    with application_history() as history:
+        task = tasks.create(history, 'Project assignment', 'founder')['id']
+        path = tasks.open_session(history, task)['path']
+        document = files.read_document(path)
+        document['properties']['taskContext'].update(project='Shared studio', workspace='root-a')
+        files.write_document(path, document)
+        with history._transaction(write=True):
+            history._db.execute('UPDATE workshop_tasks SET project=? WHERE id=?', ('Shared studio', task))
+        tasks.update_session(history, task, {'project': 'root-a'})
+        assert files.session_fields(files.read_document(path), path)['project']['id'] == 'root-a'
+        assert any(row['id'] == task for row in tasks.column(history, project='root-a'))
+        assert any(row['id'] == task for row in tasks.column(history, project='Shared studio'))
+        tasks.update_session(history, task, {'project': ''})
+    with application_history() as reopened:
+        row = tasks.get(reopened, task)
+        document = files.read_document(path)
+        assert files.session_fields(document, path, task_row=row)['project'] == {'id': '', 'label': ''}
+        assert files.resolve_project_folder(document) == ''
+        shown = next(row for row in tasks.column(reopened) if row['id'] == task)
+        assert shown['project'] == '' and shown['workspace'] == ''
+        assert not any(row['id'] == task for row in tasks.column(reopened, project='Shared studio'))
+        before = Path(path).read_bytes()
+        for bad in ('missing-root', None, [], 7):
+            with pytest.raises(ValueError):
+                tasks.update_session(reopened, task, {'project': bad})
+            assert Path(path).read_bytes() == before
+        assert tasks.get(reopened, task)['title'] == 'Project assignment'
+    files.set_session_fields(path, {'project': 'root-a'})
+    assert files.session_fields(files.read_document(path), path)['project']['id'] == 'root-a'
+    files.set_session_fields(path, {'project': ''})
+    assert files.session_fields(files.read_document(path), path)['project'] == {'id': '', 'label': ''}
+
+
+def test_member_presence_counts_native_sessions_not_provider_aliases():
+    import time
+    from nodelang.workshop_tasks import member_presence
+    live = time.time() + 120
+    assert member_presence([]) == []
+    assert member_presence([{'owner': 'archived', 'label': 'Codex', 'lease_until': None}]) == [{'name': 'Codex', 'live': False}]
+    members = [{'owner': 'first', 'label': 'Codex', 'lease_until': live},
+               {'owner': 'alias', 'label': 'Other label', 'lease_until': None},
+               {'owner': 'second', 'label': 'Codex', 'lease_until': None}]
+    declarations = [dict(session=owner, root=root, runtime='codex', native_session_id=native, display_name='Codex')
+                    for owner, root, native in [('first', 'r1', 'native-one'), ('alias', 'r2', 'native-one'), ('second', 'r3', 'native-two')]]
+    one = member_presence(members[:1], declarations)
+    assert len(one) == 1 and one[0]['live'] and one[0]['roots'] == ['r1']
+    two = member_presence(members, declarations)
+    assert len(two) == 2 and two[0]['roots'] == ['r1', 'r2'] and two[0]['live'] and not two[1]['live']
+    assert two[0]['id'] != two[1]['id']
+
+
+def test_disk_project_clear_and_cached_db_only_legacy_grouping(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path / 'desk')
+    import time
+    from nodelang import session_files as files, workshop_tasks as tasks
+    from nodelang.nograph_server import JsonFile
+    from nodelang.user_paths import state_directory
+    from nodelang.workshop_mailbox import application_history
+    owner = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    for count in (1, 2):
+        roots = [{'root_id': 'studio-' + str(i), 'label': 'Fixture studio', 'path': str(tmp_path / ('studio-' + str(i))), 'settings': {}} for i in range(count)]
+        owner.write({'roots': roots})
+        with application_history() as history:
+            task = tasks.create(history, 'Legacy ' + str(count), 'founder')['id']
+            path = tasks.open_session(history, task)['path']
+            document = files.read_document(path)
+            document['properties'].pop('project', None)
+            held = document['properties']['taskContext']
+            held.pop('project', None)
+            held.pop('workspace', None)
+            files.write_document(path, document)
+            with history._transaction(write=True):
+                history._db.execute('UPDATE workshop_tasks SET project=? WHERE id=?', ('Fixture studio', task))
+        os.utime(path, (time.time() - 10, time.time() - 10))
+        with application_history() as history:
+            row = tasks.get(history, task)
+            expected = {'id': 'studio-0' if count == 1 else '', 'label': 'Fixture studio'}
+            assert files.session_fields(files.read_document(path), path, task_row=row)['project'] == expected
+            for _ in range(2):
+                shown = next(item for item in tasks.column(history) if item['id'] == task)
+                assert shown['project'] == expected['label'] and shown['workspace'] == expected['id']
+                assert any(item['id'] == task for item in tasks.column(history, project='Fixture studio'))
+                if count == 1:
+                    assert any(item['id'] == task for item in tasks.column(history, project='studio-0'))
+            files.set_session_fields(path, {'project': 'studio-0'})
+            os.utime(path, (time.time() - 30, time.time() - 30))
+            assert next(item for item in tasks.column(history) if item['id'] == task)['project'] == 'Fixture studio'
+            roots[0]['label'] = 'Renamed fixture'
+            owner.write({'roots': roots})
+            shown = next(item for item in tasks.column(history) if item['id'] == task)
+            assert shown['project'] == 'Renamed fixture' and shown['workspace'] == 'studio-0'
+            assert any(item['id'] == task for item in tasks.column(history, project='Renamed fixture'))
+            assert any(item['id'] == task for item in tasks.column(history, project='studio-0'))
+            roots[0]['label'] = 'Fixture studio'
+            owner.write({'roots': roots})
+            files.set_session_fields(path, {'project': ''})
+        saved = json.loads(Path(path).read_bytes())
+        assert saved['properties']['project'] == '', 'an explicit clear must remain in the actual JSON file'
+        with application_history() as history:
+            row = tasks.get(history, task)
+            assert files.session_fields(files.read_document(path), path, task_row=row)['project'] == {'id': '', 'label': ''}
+            shown = next(item for item in tasks.column(history) if item['id'] == task)
+            assert shown['project'] == '' and shown['workspace'] == ''
+            assert not any(item['id'] == task for item in tasks.column(history, project='Fixture studio'))

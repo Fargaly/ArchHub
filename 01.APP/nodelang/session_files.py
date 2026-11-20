@@ -2217,14 +2217,26 @@ def _registered_roots():
 
 def _project_of(props, roots, task_row=None):
     held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
-    identity = props.get('project') or held.get('workspace') or ''
-    identity = identity if isinstance(identity, str) else ''
+    # Explicitly set project wins (even empty = cleared). Otherwise fall back
+    # to held workspace and the unambiguous legacy-label mapping.
+    if 'project' in props:
+        identity = props.get('project')
+        identity = identity if isinstance(identity, str) else ''
+        if not identity:
+            return {'id': '', 'label': ''}
+    else:
+        identity = held.get('workspace') or ''
+        identity = identity if isinstance(identity, str) else ''
     label = held.get('project')
     if not isinstance(label, str) or not label.strip():
         label = (task_row or {}).get('project')
     label = label.strip() if isinstance(label, str) else ''
-    if not identity:  # files from before projects: the task's project label, mapped to its registered root
-        identity = next((key for key, row in roots.items() if label and row.get('label') == label), '')
+    # Only auto-resolve a legacy label when exactly one registered root matches.
+    # Ambiguous labels stay visible without granting workspace access.
+    if not identity and label:
+        matches = [key for key, row in roots.items() if row.get('label') == label]
+        if len(matches) == 1:
+            identity = matches[0]
     row = roots.get(identity)
     if row:
         return {'id': identity, 'label': row.get('label') or identity}
@@ -2376,6 +2388,17 @@ def _link_cycle(document, path, depth=0, seen=None):
             _link_cycle(source, found, depth + 1, seen + [source['id']])
 
 
+def _set_project(props, identity, roots):
+    """The project writer shared by Session-model and Workshop edits."""
+    if type(identity) is not str or (identity and identity not in roots):
+        raise ValueError('Choose a registered workspace for the project.')
+    props['project'] = identity
+    held = props.get('taskContext')
+    if isinstance(held, dict):
+        held.pop('workspace', None)
+        held.pop('project', None)
+
+
 def set_session_fields(path, values, by='You', *, expected_revision=None):
     """Change session-model fields through the one file edit (lock, attributed history, atomic replace)."""
     if not isinstance(values, dict) or not values or set(values) - _MODEL_KEYS:
@@ -2388,12 +2411,7 @@ def set_session_fields(path, values, by='You', *, expected_revision=None):
         props = document.setdefault('properties', {})
         held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else None
         if 'project' in values:
-            if values['project'] and values['project'] not in roots:
-                raise ValueError('Choose a registered workspace for the project.')
-            props['project'] = values['project']
-            if held is not None:  # the file's one project value from now on
-                held.pop('workspace', None)
-                held.pop('project', None)
+            _set_project(props, values['project'], roots)
         if 'state' in values:
             props['state'] = values['state']
         if 'pinned' in values:
@@ -2445,7 +2463,7 @@ def set_session_fields(path, values, by='You', *, expected_revision=None):
                     node['params']['armed'] = row['armed']
                 if 'askBeforeRunning' in row:
                     node['params']['ask_before_running'] = row['askBeforeRunning']
-        for key in ('settings', 'inputLinks', 'project'):
+        for key in ('settings', 'inputLinks'):
             if key in props and not props[key]:
                 props.pop(key)
         return []

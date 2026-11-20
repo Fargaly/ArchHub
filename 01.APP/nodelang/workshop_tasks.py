@@ -149,10 +149,23 @@ def _lease_active(until, now):
     return type(until) in (int, float) and now <= until < float('inf')
 
 
-def member_presence(members):
+def member_presence(members, declarations=()):
     now = time.time()
-    return [{'name': m['label'] if isinstance(m.get('label'), str) and m['label'] else m['owner'],
-             'live': _lease_active(m.get('lease_until'), now)} for m in members]
+    by_owner = {}
+    for row in declarations:
+        by_owner.setdefault(row.get('session'), []).append(row)
+    shown = {}
+    for member in members:
+        rows = by_owner.get(member['owner'], [])
+        native = next((row for row in rows if row.get('native_session_id') and (row.get('runtime') or row.get('app'))), {})
+        identity = (native.get('runtime') or native.get('app'), native.get('native_session_id')) if native else member['owner']
+        key = ':'.join(identity) if isinstance(identity, tuple) else identity
+        row = shown.setdefault(key, {'id': key, 'roots': [],
+            'name': native.get('display_name') or member.get('label') or member['owner'], 'live': False})
+        row['live'] = row['live'] or _lease_active(member.get('lease_until'), now)
+        row['roots'].extend(item['root'] for item in rows if item.get('root') and item['root'] not in row['roots'])
+    return list(shown.values()) if declarations else [
+        {'name': row['name'], 'live': row['live']} for row in shown.values()]
 
 
 def _live(members, now=None):
@@ -857,27 +870,39 @@ def _root_task_id(root, request_id):
 _SESSION_CONTEXTS = {}
 
 
-def _session_context(path):
-    """Task-session fields already stored in the task file. A missing file leaves them empty."""
+def _session_context(path, *, roots=None, task_row=None):
+    """Cache file-owned context; project names always come from the current roots."""
     if not isinstance(path, str) or not path:
         return {}
     try:
+        from .session_files import read_document, _project_of, _registered_roots
+        roots = _registered_roots() if roots is None else roots
         stat = os.stat(path)
         stamp = (stat.st_mtime_ns, stat.st_size)
         held = _SESSION_CONTEXTS.get(path)
-        # A file written in the last 2 s may change again within one coarse (FAT/SMB) timestamp tick: read it fresh.
+        # A recently written file may change again within one coarse FAT/SMB timestamp tick.
         if held and held[0] == stamp and time.time() - stat.st_mtime >= 2:
-            return copy.deepcopy(held[1])
-        from .session_files import read_document
-        document = read_document(path)
-        context = _held_context(document)
+            context, choice = copy.deepcopy(held[1:])
+        else:
+            document = read_document(path)
+            context = _held_context(document, roots=roots, task_row=task_row)
+            props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
+            saved = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
+            choice = {'taskContext': {key: saved.get(key) for key in ('project', 'workspace')}}
+            if 'project' in props:
+                choice['project'] = props['project']
+            context.pop('project', None)
+            context.pop('workspace', None)
+            context['sessionTitle'] = document['title']
+            context['fileMessages'] = _file_messages(document)
+            _SESSION_CONTEXTS[path] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
+        project = _project_of(choice, roots, task_row)
+        context.update(project=project['label'], workspace=project['id'])
+        return context
     except (OSError, ValueError, KeyError, TypeError):
         _SESSION_CONTEXTS.pop(path, None)
         return {}
-    context["sessionTitle"] = document["title"]
-    context["fileMessages"] = _file_messages(document)
-    _SESSION_CONTEXTS[path] = (stamp, copy.deepcopy(context))
-    return context
+
 
 
 def _without_header(text):
@@ -1026,13 +1051,15 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
     index = _declaration_index(declarations)
     working = {m["owner"] for row in listed if not row["id"].startswith("declared-") and row["status"] != "done"
                and not row.get("archived") for m in _live(row.get("members") or [])}
+    from .session_files import _registered_roots
+    roots = _registered_roots()
     for row in listed:
-        if project and row.get("project") != project:
-            continue
         if row["id"].startswith("declared-") and row.get("owner") in working:
             continue
         declaration = _declaration_for(row, declarations, index)
-        session = _session_context(row.get("session_path"))
+        session = _session_context(row.get("session_path"), roots=roots, task_row=row)
+        if project and project not in (session.get("workspace"), session.get("project", row.get("project"))):
+            continue
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
         shown = "ARCHIVED" if row.get("archived") else state(row)
         result = recorded_result(row, last)
@@ -1054,7 +1081,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'owner': owner, 'revision': row.get('revision') or 0,
              'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
              'capacity': row.get('capacity') or '',
-             'stale': shown == "stale", 'result': result, 'project': row.get('project') or '', 'parent': row.get('parent_id') or '',
+             'stale': shown == "stale", 'result': result, 'project': session.get('project', row.get('project') or ''), 'parent': row.get('parent_id') or '',
              'summary': _summary(row['title'], shown, result),
              'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
              'declarations': [declaration] if declaration else [],
@@ -1064,7 +1091,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
              # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
-             'members': member_presence(row.get('members') or []),
+             'members': member_presence(row.get('members') or [], declarations),
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
              'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
@@ -1171,9 +1198,11 @@ def _current_session():
         return ""
 
 
-def _held_context(document):
+def _held_context(document, *, roots=None, task_row=None):
     props = document.get("properties") if isinstance(document.get("properties"), dict) else {}
     held = props.get("taskContext") if isinstance(props.get("taskContext"), dict) else {}
+    from .session_files import _project_of, _registered_roots
+    project = _project_of(props, _registered_roots() if roots is None else roots, task_row)
     nodes = document.get("nodes") or []
     agents = list(held["agents"]) if isinstance(held.get("agents"), list) else []
     for node in nodes:
@@ -1185,7 +1214,8 @@ def _held_context(document):
         "scope": "" if held.get("scope") == document["id"] else (held.get("scope") or ""),
         "rules": held["rules"] if isinstance(held.get("rules"), list) else [],
         "pinnedMessages": list(held.get('pinnedMessages') or []),
-        "workspace": props.get('project') or held.get('workspace') or '',
+        "workspace": project['id'],
+        **({"project": project['label']} if 'project' in props or held.get('project') or held.get('workspace') else {}),
         "homePinned": props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True,
         "agents": agents,
         "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
@@ -1417,7 +1447,7 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 
-_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
+_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned", "project"}
 _HANDOVER = ("done", "next", "results", "summary", "next_step", "files_touched", "blocker", "resume_prompt", "updated_at")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
 _ABSOLUTE = re.compile(
@@ -1582,6 +1612,7 @@ def update_session(history, task, values):
         row = get(history, task)
     path = row["session_path"]
     from . import canvas_documents
+    from .session_files import _registered_roots, _set_project
     def change(document):
         props = dict(document.get("properties") or {})
         held = dict(props.get("taskContext") or {})
@@ -1631,6 +1662,8 @@ def update_session(history, task, values):
             held["progress"] = _plain(progress)
         held["task"] = task
         props["taskContext"] = held
+        if "project" in values:
+            _set_project(props, values["project"], _registered_roots())
         document["properties"] = props
         if "nodes" in values:
             _apply_nodes(document, values["nodes"])

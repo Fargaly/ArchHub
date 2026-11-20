@@ -12355,6 +12355,23 @@
         "02.TESTS/tests_js/settings_design_areas.test.cjs"
       ]
     },
+    "SETTINGSKEYS": {
+      "source": "Build 19 Settings design, Keyboard group. Edit and reset shortcuts through the existing settings owner and command registry. Apply the same binding to menus and real Home and Canvas key events. Preserve first-file startup, text entry and reserved controls. Existing coordinator assignment to the Settings builder.",
+      "scope": [
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_js/keyboard_shortcuts.test.cjs",
+        "02.TESTS/tests_js/settings_design_areas.test.cjs",
+        "02.TESTS/tests_replica/test_keyboard_settings.py"
+      ]
+    },
     "QUOTACONTINUITY": {
       "source": "Founder 2026-11-20 09:26: work must never stop when any agent/model hits quota; auto-release stalled/quota-hit tasks with handover across all tasks, seat-coordinator lease failover, and mixed fallback_models with Retry-After cooldown.",
       "scope": [

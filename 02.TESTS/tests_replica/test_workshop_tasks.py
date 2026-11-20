@@ -5,8 +5,19 @@ Then release, complete, lease expiry, and the Work column the Studio reads.
 """
 import threading
 
+import pytest
+
 from nodelang import workshop_tasks
 from nodelang.workshop_mailbox import application_history
+
+
+@pytest.fixture(autouse=True)
+def work_column_lifetime(monkeypatch):
+    from nodelang import nograph_server
+    # Direct column tests need the same worker-thread cleanup as closing a Studio server.
+    monkeypatch.setattr(nograph_server, "_STORE_VERSION_CLOSED", [False])
+    yield
+    nograph_server._close_store_version()
 
 
 def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
@@ -58,31 +69,43 @@ def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     assert nograph_server._set_task_status(ids[2], "PLANNED")["status"] == "PLANNED"
     assert nograph_server._set_task_status(ids[2], "WIP")["ok"] is False
 
-    # An agent's declare() joins its session: working claims it, a new request moves it to that request's session, done completes it.
+    # Declarations join work the user created. Moving or reporting status must never create another card.
     from nodelang.workshop_mailbox import call
+    with application_history() as history:
+        first_id = workshop_tasks.create_session(history, "First repair", select=False)["taskId"]
+        second_id = workshop_tasks.create_session(history, "Second repair", select=False)["taskId"]
+    expected = set(ids) | {first_id, second_id}
     me = {"claude/sessionID": "wstask-declare"}
-    declare = lambda request, status: call("declare", {"task": "Fix " + request, "paths": [str(tmp_path)],
-                                                       "status": status, "request_id": request}, me)
-    def declared_rows():
-        return [row for row in nograph_server._list_tasks() if row["id"].startswith("session-")]
-    declare("REQ-1", "working")
-    first = declared_rows()
-    assert len(first) == 1 and first[0]["description"] == "Fix REQ-1" and first[0]["title"] == "Fix" and first[0]["status"] == "WIP" and first[0]["owner"]
-    declare("REQ-1", "working")                                              # re-declaring renews, no new row
-    declare("REQ-2", "working")                                              # different work: its own row; REQ-1 stays, not closed
-    states = {row["description"]: row["status"] for row in declared_rows()}
-    assert states == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "WIP"}, states
-    bound = next(row for row in declared_rows() if row["description"] == "Fix REQ-2")
+    def declare(request, status):
+        call("declare", {"task": "Review drawings", "paths": [str(tmp_path)],
+                         "status": status, "request_id": request}, me)
+
+    def work_rows():
+        rows = {row["id"]: row for row in nograph_server._list_tasks()}
+        assert set(rows) == expected
+        return rows
+
+    declare("unknown-request", "working")
+    assert work_rows()[first_id]["status"] == "PLANNED"
+    declare(first_id, "working")
+    first = work_rows()[first_id]
+    assert first["description"] == "First repair" and first["status"] == "WIP" and first["owner"]
+    declare(first_id, "working")
+    declare(second_id, "working")
+    rows = work_rows()
+    assert rows[first_id]["status"] == "PLANNED"
+    bound = rows[second_id]
+    assert bound["status"] == "WIP"
     assert bound["owner"]
     assert bound["agents"] == [bound["owner"]]
     assert bound["folders"] and bound["scope"] == bound["folders"][0]
     assert bound["plan"][0]["status"] == "working"
     assert bound["activity"][0]["status"] == "WIP"
     assert bound["session"]
-    declare("REQ-2", "done")
-    assert {row["description"]: row["status"] for row in declared_rows()} == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "DONE"}
-    call("declare", {"task": "Starting", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned"}, me)
-    assert len(declared_rows()) == 2                                         # no fake rows for unassigned work
+    declare(second_id, "done")
+    declare("unassigned", "working")
+    rows = work_rows()
+    assert rows[first_id]["status"] == "PLANNED" and rows[second_id]["status"] == "DONE"
 
 
 def test_rename_records_the_title_the_founder_typed(tmp_path, monkeypatch):

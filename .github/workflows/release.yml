@@ -15,6 +15,10 @@ on:
         type: choice
         options: [release, check, build, goose, verify-published]
         default: release
+      published_candidate:
+        description: 'Optional exact installer JSON: build_id, bytes (integer), sha256; empty uses the pinned release'
+        required: false
+        type: string
       verify_minutes:
         description: 'Maximum minutes for the clean published-installer check'
         required: false
@@ -560,6 +564,7 @@ jobs:
       PUBLISHED_SHA256: 62772163849761374db264a247e21bf3a50b7b170986f224cfff5f0f421bfeb6
       PUBLISHED_BYTES: '416586952'
       VERIFY_MINUTES: ${{ inputs.verify_minutes }}
+      PUBLISHED_CANDIDATE: ${{ inputs.published_candidate }}
     steps:
       - name: Check out the verification tools only
         uses: actions/checkout@v7
@@ -581,6 +586,31 @@ jobs:
           $names | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
           @{repository=$env:PUBLISHED_REPOSITORY;build=$env:PUBLISHED_BUILD;workflow_source=$env:GITHUB_SHA;setup_verified=$false;setup_sha256=$null;setup_bytes=$null;install_exit=$null;installed_root=$null;installed_build=$null;first_run_python=$null;first_run_python_version=$null;first_run_exit=$null;ui_exit=$null} |
             ConvertTo-Json | Set-Content (Join-Path $evidence 'install.json') -Encoding utf8
+          if (-not [string]::IsNullOrWhiteSpace($env:PUBLISHED_CANDIDATE)) {
+            $candidate = [System.Text.Json.JsonDocument]::Parse($env:PUBLISHED_CANDIDATE)
+            try {
+              $value = $candidate.RootElement
+              if ($value.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { throw 'Supply one exact installer identity object.' }
+              $properties = @($value.EnumerateObject())
+              if ($properties.Count -ne 3 -or (($properties.Name | Sort-Object) -join ',') -cne 'build_id,bytes,sha256') { throw 'Supply exactly build_id, bytes and sha256 together.' }
+              $build = $value.GetProperty('build_id')
+              $bytes = $value.GetProperty('bytes')
+              $sha = $value.GetProperty('sha256')
+              if ($build.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $build.GetString() -cnotmatch '\A[A-Za-z0-9._-]{1,128}\z') { throw 'Build ID must match the existing release-offer identity contract.' }
+              if ($sha.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $sha.GetString() -cnotmatch '\A[0-9a-f]{64}\z') { throw 'Supply the exact lowercase installer SHA-256.' }
+              if ($bytes.ValueKind -ne [System.Text.Json.JsonValueKind]::Number) { throw 'Installer bytes must be a positive integer.' }
+              $length = $bytes.GetInt64()
+              if ($length -le 0) { throw 'Installer bytes must be a positive integer.' }
+              $env:PUBLISHED_BUILD = $build.GetString()
+              $env:PUBLISHED_SHA256 = $sha.GetString()
+              $env:PUBLISHED_BYTES = [string]$length
+            } finally { $candidate.Dispose() }
+            foreach ($key in @('PUBLISHED_BUILD', 'PUBLISHED_SHA256', 'PUBLISHED_BYTES')) { "$key=$([Environment]::GetEnvironmentVariable($key))" >> $env:GITHUB_ENV }
+            $receipt = Join-Path $evidence 'install.json'
+            $state = Get-Content -Raw $receipt | ConvertFrom-Json
+            $state.build = $env:PUBLISHED_BUILD
+            $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          }
           if (@('15', '20', '25', '30') -cnotcontains $env:VERIFY_MINUTES) { throw 'Choose a supported verification budget.' }
       - name: Verify and install the exact published Setup for this clean user
         shell: pwsh
@@ -661,7 +691,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: archhub-verify-published-7c-${{ github.run_id }}
+          name: archhub-verify-published-${{ env.PUBLISHED_BUILD }}-${{ github.run_id }}
           if-no-files-found: error
           path: |
             ${{ runner.temp }}/archhub-verify-published/install.json

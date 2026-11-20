@@ -429,6 +429,19 @@ def test_installer_dispatch_installs_locked_studio_dependencies_and_gates_releas
         assert "build" in workflow["jobs"]["publish"]["needs"]
 
 
+@pytest.mark.parametrize("mode", ["build", "release"])
+def test_packaging_step_supplies_the_existing_x64_environment_loader(mode):
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    step = next(step for step in workflow["jobs"]["build"]["steps"] if "build_release.ps1" in step.get("run", ""))
+    assert step["name"] in _ran(workflow, "workflow_dispatch", mode)["build"]
+    run = step["run"]
+    assert "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" in run
+    assert "VC/Auxiliary/Build/vcvars64.bat" in run
+    assert "selected/03.TOOLS/tools/archhub-compiler/target/msvc" in run
+    assert run.index("Set-Content -LiteralPath (Join-Path $msvc 'setup_x64.bat')") < run.index("build_release.ps1")
+
+
 def test_release_goose_office_round_trips(tmp_path, monkeypatch):
     """Run the existing Office round-trip on the release job's exact Goose artifact."""
     artifact = os.environ.get("ARCHHUB_RELEASE_GOOSE_EXE")

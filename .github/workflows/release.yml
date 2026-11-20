@@ -387,6 +387,17 @@ jobs:
         env:
           BUILD_ID: ${{ steps.identity.outputs.build_id }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw 'Visual Studio discovery is missing.' }
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'The runner Visual Studio x64 toolchain was not found.' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) { throw 'The selected Visual Studio x64 setup is missing.' }
+          # The compiler packager imports this checkout's x64 setup for both Cargo and dumpbin.
+          $msvc = Join-Path $env:GITHUB_WORKSPACE 'selected/03.TOOLS/tools/archhub-compiler/target/msvc'
+          New-Item -ItemType Directory -Force -Path $msvc | Out-Null
+          Set-Content -LiteralPath (Join-Path $msvc 'setup_x64.bat') -Encoding ascii -Value @('@echo off', ('call "{0}"' -f $vcvars))
           ./selected/03.TOOLS/installer/build_release.ps1 `
             -BuildId $env:BUILD_ID `
             -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `

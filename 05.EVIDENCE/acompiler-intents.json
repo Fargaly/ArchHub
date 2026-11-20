@@ -12334,9 +12334,10 @@
       ]
     },
     "COMPOSERONESEND": {
-      "source": "Build 19 Studio composer: dispatch a submitted draft once and restore a refused draft only if the user has not edited or sent another draft. Keep independent messages and all composer entry points working. Workshop 9ad8d55c54da4e8caccf5a83beae05ab and 26722f1e6942489ca8afa7e8b350bbfd.",
+      "source": "Build 19 Studio composer: dispatch a submitted draft once and restore a refused draft only if the user has not edited or sent another draft. Keep independent messages and all composer entry points working. Workshop 9ad8d55c54da4e8caccf5a83beae05ab and 26722f1e6942489ca8afa7e8b350bbfd. Workshop c06f631b41bf4ea78b8e4c48097d1534 assigns the rendered check for independent Home session drafts and recipient-correct sends.",
       "scope": [
-        "01.APP/nodelang/studio/ui.jsx"
+        "01.APP/nodelang/studio/ui.jsx",
+        "03.TOOLS/tools/real_app_check/scenarios/home_drafts.mjs"
       ]
     }
   },

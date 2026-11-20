@@ -866,21 +866,50 @@ async def community_leave(req: Request, authorization: str | None = Header(None)
 @app.post("/v1/community/join")
 async def community_join(req: Request,
                          authorization: str | None = Header(None)) -> dict:
-    """Present a community join-code; the cloud verifies it against the owner
-    key inside it and records the membership that gates the shared replica."""
+    """Present a community join-code; the cloud verifies it against the owner key
+    ENROLLED for that community (never the key the code carries) and only then
+    records the membership that gates the shared replica."""
     user = _require_user(authorization)
     body = await req.json() if await _has_body(req) else {}
-    from community_join import verify_join_code
-    payload, reason = verify_join_code(str((body or {}).get("envelope") or ""))
-    if payload is None:
+    from community_join import read_join_code, verify_join_code
+    claimed, _sig, reason = read_join_code(str((body or {}).get("envelope") or ""))
+    if claimed is None:
         raise HTTPException(status_code=400, detail={"error": reason})
+    owner = db.community_owner(str(claimed["community_id"]))
+    payload, reason = verify_join_code(str((body or {}).get("envelope") or ""),
+                                       owner_pub=owner["owner_pub"] if owner else None)
+    if payload is None:
+        raise HTTPException(status_code=403, detail={"error": reason})
     db.add_community_member(str(payload["community_id"]), user["id"],
                             role=str(payload.get("role") or "member"),
-                            owner_pub=str(payload["owner_pub"]))
+                            owner_pub=owner["owner_pub"])
     # A verified join-code is the member's own act: it lifts an earlier opt-out.
     db.clear_community_optout(str(payload["community_id"]), user["id"])
     return {"joined": True, "community_id": str(payload["community_id"]),
             "community_keys": _community_keys_for_user(user)}
+
+
+def _owner_key_proof(body: dict, statement: bytes) -> str:
+    """The owner's Ed25519 key, after its signature over ``statement`` proved the caller holds it (possession only)."""
+    from community_join import ed25519_key, verify_signature
+    owner_pub = str((body or {}).get("owner_pub") or "")
+    if ed25519_key(owner_pub) is None:
+        raise HTTPException(status_code=400, detail={"error": "owner_pub must be an Ed25519 public key"})
+    if not verify_signature(owner_pub, statement, str((body or {}).get("signature") or "")):
+        raise HTTPException(status_code=403, detail={"error": "signature does not prove possession of owner_pub"})
+    return owner_pub
+
+
+@app.post("/v1/community/create")
+async def community_create(req: Request,
+                           authorization: str | None = Header(None)) -> dict:
+    """A new community: the cloud allocates its id and binds it to the signed-in creator and their key at once."""
+    user = _require_user(authorization)
+    body = await req.json() if await _has_body(req) else {}
+    from community_join import enrol_statement
+    owner_pub = _owner_key_proof(body, enrol_statement("new", user["id"]))
+    community_id = db.create_community(user["id"], owner_pub)
+    return {"created": True, "community_id": community_id, "community_keys": _community_keys_for_user(user)}
 
 
 @app.post("/v1/brain/sync")

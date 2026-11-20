@@ -55,7 +55,7 @@ def test_members_are_listed_and_who_left_is_counted(client):
     stay, _ = _member("comm-stay@studio.test")
     leave, _ = _member("comm-leave@studio.test")
     for user in (stay, leave):
-        db.add_community_member(CID, user["id"], role="member", owner_pub="court-key")
+        db.add_community_member(CID, user["id"], role="member", owner_pub=db.PLATFORM_COMMUNITY_OWNER)
     db.remove_community_member(CID, leave["id"])
     db.record_community_optout(CID, leave["id"])
     answer = client.get("/founder/api/community/members", headers=_founder())

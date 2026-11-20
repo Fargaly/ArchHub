@@ -315,10 +315,26 @@ CREATE TABLE IF NOT EXISTS community_members (
     role            TEXT NOT NULL DEFAULT 'member',
     owner_pub       TEXT NOT NULL,
     joined_at       INTEGER NOT NULL,
+    -- How this membership was established: 'join' (a join-code verified against the enrolled owner),
+    -- 'create' (the cloud allocated the community to this creator) or 'platform' (the default community
+    -- at sign-in). NULL = a row recorded before owners were enrolled; it is kept but grants nothing.
+    verified_by     TEXT,
     PRIMARY KEY (community_id, user_id),
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members(user_id);
+-- The community's owner, enrolled on the cloud independently of any join-code:
+-- a join-code is checked against THIS key, never against the key it carries.
+-- Rows come only from an authoritative record: a community the cloud allocated to
+-- its signed-in creator, a founder recovery bound to a real account, or the
+-- platform's own default community (owner_user_id NULL). Old membership rows are
+-- never a source: they only repeat what self-asserted join-codes claimed.
+CREATE TABLE IF NOT EXISTS community_owners (
+    community_id    TEXT PRIMARY KEY,
+    owner_user_id   TEXT,
+    owner_pub       TEXT NOT NULL,
+    enrolled_at     INTEGER NOT NULL
+);
 -- The founder review of the Community Brain (ADGR-0004): one row per version
 -- (hlc) of a community fragment a member contributed. Other members pull a
 -- version only once it is admitted; the contributor always sees their own.
@@ -810,6 +826,9 @@ def init_schema() -> None:
             # (Fresh DBs already have it from SCHEMA above — the
             # try/except makes the duplicate add a no-op.)
             "ALTER TABLE tokens ADD COLUMN expires_at INTEGER",
+            # COMMUNITYJOINTRUST: membership provenance. Existing rows stay NULL (unverified, no grant)
+            # until a validated rejoin, an owner create or the default sign-in upgrades them.
+            "ALTER TABLE community_members ADD COLUMN verified_by TEXT",
             # Model C (founder 2026-05-31): AI mode + hosted credit
             # balance per workspace. `ai_mode` is 'byo_key' (default,
             # launch-cheap — user's own key, no hosted limit) or
@@ -2705,14 +2724,73 @@ def list_companies_for_user(user_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+# The platform owns its default community; only the server's own sign-in path records members under it.
+PLATFORM_COMMUNITY_OWNER = "archhub-platform"
+
+
+def community_owner(community_id: str) -> Optional[dict]:
+    """The owner enrolled for this community on the cloud, or None (unenrolled: its join-codes are refused)."""
+    with connect() as con:
+        row = con.execute("SELECT community_id, owner_user_id, owner_pub, enrolled_at FROM community_owners"
+                          " WHERE community_id = ?", (community_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_community(owner_user_id: str, owner_pub: str) -> str:
+    """A new community: the cloud allocates its id and binds it to the signed-in creator and key in one transaction;
+    the creator is its first member."""
+    community_id = "c-" + uuid.uuid4().hex
+    now = int(time.time())
+    with connect() as con:
+        con.execute("INSERT INTO community_owners (community_id, owner_user_id, owner_pub, enrolled_at) VALUES (?, ?, ?, ?)",
+                    (community_id, owner_user_id, owner_pub, now))
+        con.execute("INSERT INTO community_members (community_id, user_id, role, owner_pub, joined_at, verified_by)"
+                    " VALUES (?, ?, 'owner', ?, ?, 'create')", (community_id, owner_user_id, owner_pub, now))
+    return community_id
+
+
+def recover_community_owner(community_id: str, *, owner_user_id: str, owner_pub: str, signature: str) -> bool:
+    """The explicit recovery for an existing community with no trusted owner (an operator action on the founder's
+    decision): bind it to a registered account whose Ed25519 key signed this exact community and account. Possession
+    of the key is required, not proof of ownership; the founder's decision is. Never replaces an enrolled owner: a
+    competing enrolment returns False and changes nothing."""
+    from community_join import enrol_statement, verify_signature
+    if get_user(owner_user_id) is None:
+        raise ValueError("recovery refused: the owner must be a registered account")
+    if not verify_signature(owner_pub, enrol_statement(community_id, owner_user_id), signature):
+        raise ValueError("recovery refused: the signature does not prove possession of owner_pub for this community")
+    with connect() as con:
+        try:
+            con.execute("INSERT INTO community_owners (community_id, owner_user_id, owner_pub, enrolled_at) VALUES (?, ?, ?, ?)",
+                        (community_id, owner_user_id, owner_pub, int(time.time())))
+        except sqlite3.IntegrityError:
+            return False
+    return True
+
+
 def add_community_member(community_id: str, user_id: str, *, role: str, owner_pub: str) -> None:
-    """Record a membership proven by a verified join-code (idempotent)."""
+    """Record a membership proven against the community's ENROLLED owner; anything else writes nothing.
+    The row is marked with how it was proven ('platform' for the default sign-in, else 'join'). A held row from
+    before enrolment (verified_by NULL) is upgraded in place by this proof; its first joined_at is kept.
+    The platform marker enrols the platform as owner of a still-unowned id: only the server's sign-in path passes it,
+    and no join-code can be verified against it (it is not an Ed25519 key)."""
+    owner = community_owner(community_id)
+    if owner is None and owner_pub == PLATFORM_COMMUNITY_OWNER:
+        with connect() as con:
+            con.execute("INSERT OR IGNORE INTO community_owners (community_id, owner_user_id, owner_pub, enrolled_at)"
+                        " VALUES (?, NULL, ?, ?)", (community_id, owner_pub, int(time.time())))
+        owner = community_owner(community_id)
+    if owner is None or owner["owner_pub"] != owner_pub:
+        raise ValueError("membership refused: the community has no enrolled owner with this key")
+    proven = "platform" if owner_pub == PLATFORM_COMMUNITY_OWNER else "join"
     with connect() as con:
         con.execute(
-            "INSERT OR IGNORE INTO community_members"
-            " (community_id, user_id, role, owner_pub, joined_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (community_id, user_id, role or "member", owner_pub, int(time.time())),
+            "INSERT INTO community_members"
+            " (community_id, user_id, role, owner_pub, joined_at, verified_by)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (community_id, user_id) DO UPDATE SET"
+            " role = excluded.role, owner_pub = excluded.owner_pub, verified_by = excluded.verified_by",
+            (community_id, user_id, role or "member", owner_pub, int(time.time()), proven),
         )
 
 
@@ -2827,11 +2905,15 @@ def judge_community_version(community_id: str, fragment_id: str, hlc: str, *,
 
 
 def list_community_keys_for_user(user_id: str) -> list[str]:
-    """Community replica keys this user may read and write -- server-resolved."""
+    """Community replica keys this user may read and write -- server-resolved. Only a membership with recorded
+    provenance (verified join, owner create, default sign-in) whose key is still the community's enrolled owner
+    grants access; a row held from before enrolment grants nothing until a validated rejoin upgrades it."""
     with connect() as con:
         rows = con.execute(
-            "SELECT community_id FROM community_members WHERE user_id = ?"
-            " ORDER BY joined_at", (user_id,)).fetchall()
+            "SELECT m.community_id FROM community_members m JOIN community_owners o"
+            " ON o.community_id = m.community_id AND o.owner_pub = m.owner_pub"
+            " WHERE m.user_id = ? AND m.verified_by IS NOT NULL"
+            " ORDER BY m.joined_at", (user_id,)).fetchall()
     return [str(r[0]) for r in rows]
 
 

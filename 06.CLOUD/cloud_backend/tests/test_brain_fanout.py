@@ -61,13 +61,23 @@ def _user(suffix: str = "") -> tuple[dict, dict]:
     return u, {"Authorization": f"Bearer {token}"}
 
 
+_OWNER_KEYS: dict = {}
+
+
 def _join(client, headers, community_id):
-    """Membership is what the cloud verified from the owner's signed join-code,
-    never a key named on the wire (2026-09-04 audit finding 23)."""
+    """Membership is what the cloud verified from a join-code signed by the community's
+    ENROLLED owner, never a key named on the wire (2026-09-04 audit finding 23)."""
     import base64, time, uuid
+    import db
     from tests.join_signing import _generate_keypair, _sign
     from community_join import _payload_bytes
-    priv, pub = _generate_keypair()
+    if db.community_owner(community_id) is None:  # disposable court data: one enrolled owner per community
+        _OWNER_KEYS[community_id] = _generate_keypair()
+        owner = db.get_or_create_user(f"owner+{community_id}@example.com")
+        from community_join import enrol_statement
+        assert db.recover_community_owner(community_id, owner_user_id=owner["id"], owner_pub=_OWNER_KEYS[community_id][1],
+                                          signature=_sign(_OWNER_KEYS[community_id][0], enrol_statement(community_id, owner["id"])))
+    priv, pub = _OWNER_KEYS[community_id]
     now = time.time()
     data = {"community_id": community_id, "name": "Court", "owner_pub": pub, "role": "member",
             "transport": {}, "issued_by": "owner", "issued_at": now, "expires_at": now + 3600,

@@ -12300,7 +12300,9 @@
         "requirements-cloud.txt",
         "06.CLOUD/cloud_backend/requirements.txt",
         "04.DOCS/DECISIONS.md",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "03.TOOLS/packaging/cloud/requirements.lock",
+        "02.TESTS/tests/test_cloud_lock_drift.py"
       ]
     },
     "BUILD19GUIDE": {

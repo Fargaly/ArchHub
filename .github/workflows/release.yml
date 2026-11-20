@@ -10,10 +10,10 @@ on:
         required: false
         type: string
       mode:
-        description: 'release (build and publish), build (installer and Goose artifacts), check (Goose cargo check only), or verify-published (install the pinned public release)'
+        description: 'release (build and publish), build (installer and Goose artifacts), check (Goose cargo check only), goose (Goose runtime artifacts only), or verify-published (install the pinned public release)'
         required: false
         type: choice
-        options: [release, check, build, verify-published]
+        options: [release, check, build, goose, verify-published]
         default: release
       verify_minutes:
         description: 'Maximum minutes for the clean published-installer check'
@@ -89,7 +89,7 @@ jobs:
           }
 
   build:
-    if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'release' || inputs.mode == 'build')) }}
+    if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'release' || inputs.mode == 'build' || inputs.mode == 'goose')) }}
     runs-on: windows-2025
     permissions:
       contents: read
@@ -129,6 +129,7 @@ jobs:
           node-version: '24.13.0'
           package-manager-cache: false
       - name: Install locked Studio build dependencies
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'goose' }}
         working-directory: selected
         shell: pwsh
         run: npm ci --no-audit --no-fund
@@ -137,6 +138,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install the release court's runtime and the installer compiler
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'goose' }}
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check -r selected/requirements.txt pytest
@@ -388,7 +390,32 @@ jobs:
           python selected/03.TOOLS/packaging/windows/build_goose.py --source (Join-Path $env:RUNNER_TEMP 'goose-src') --output $build --archhub-rev $env:SOURCE_REVISION
           if ($LASTEXITCODE -ne 0) { throw 'Goose did not build from its pinned source.' }
           "GOOSE_BUILD_PATH=$build" >> $env:GITHUB_ENV
+      - name: Prepare Goose-only runtime checksums
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'goose' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('goose.exe', 'receipt.json', 'LICENSE')) {
+            $path = Join-Path $env:GOOSE_BUILD_PATH $name
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name" | Set-Content -LiteralPath "$path.sha256" -Encoding ascii
+          }
+      - name: Retain Goose-only runtime, receipt and license
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'goose' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: archhub-goose-${{ steps.identity.outputs.build_id }}
+          path: |
+            ${{ runner.temp }}/goose-build/goose.exe
+            ${{ runner.temp }}/goose-build/goose.exe.sha256
+            ${{ runner.temp }}/goose-build/receipt.json
+            ${{ runner.temp }}/goose-build/receipt.json.sha256
+            ${{ runner.temp }}/goose-build/LICENSE
+            ${{ runner.temp }}/goose-build/LICENSE.sha256
+          if-no-files-found: error
+          compression-level: 0
       - name: Compile Studio and installer from verified source snapshots
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'goose' }}
         shell: pwsh
         env:
           BUILD_ID: ${{ steps.identity.outputs.build_id }}

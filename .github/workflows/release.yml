@@ -7,14 +7,19 @@ on:
     inputs:
       broker_review:
         description: 'Independent archhub-broker-review/v1 JSON for this exact revision'
-        required: true
+        required: false
         type: string
       mode:
-        description: 'release (build and publish), build (installer and Goose artifacts), or check (Goose cargo check only)'
+        description: 'release (build and publish), build (installer and Goose artifacts), check (Goose cargo check only), or verify-published (install the pinned public release)'
         required: false
         type: choice
-        options: [release, check, build]
+        options: [release, check, build, verify-published]
         default: release
+      verify_minutes:
+        description: 'Maximum minutes for the clean published-installer check'
+        required: false
+        type: choice
+        options: ['15', '20', '25', '30']
 
 permissions:
   contents: read
@@ -113,6 +118,7 @@ jobs:
           if ($env:APPROVED_REVISION -cnotmatch '^[0-9a-f]{40}$') { throw 'An exact approved revision is required.' }
           $revision = (git -C selected rev-parse HEAD).Trim()
           if ($revision -cne $env:APPROVED_REVISION) { throw 'Checkout differs from approved source.' }
+          if ([string]::IsNullOrWhiteSpace($env:BROKER_REVIEW)) { throw 'Independent broker review is required to build or publish.' }
           $review = Join-Path $env:RUNNER_TEMP 'broker-review.json'
           [IO.File]::WriteAllText($review, $env:BROKER_REVIEW, [Text.UTF8Encoding]::new($false))
           "revision=$revision" >> $env:GITHUB_OUTPUT
@@ -512,3 +518,128 @@ jobs:
           ./selected/03.TOOLS/packaging/windows/publish_release.ps1 `
             -ReleaseDirectory release-output -ExpectedSourceRevision $env:SOURCE_REVISION `
             -Repository $env:GH_REPO
+
+
+  verify-published:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'verify-published' }}
+    runs-on: windows-2025
+    timeout-minutes: ${{ fromJSON(inputs.verify_minutes) }}
+    permissions:
+      contents: read
+    env:
+      PUBLISHED_REPOSITORY: Fargaly/ArchHub
+      PUBLISHED_BUILD: 20261120-143339-44754205914-1-7c364326cfec80539087ac8153d5616322a78955
+      PUBLISHED_SHA256: 62772163849761374db264a247e21bf3a50b7b170986f224cfff5f0f421bfeb6
+      PUBLISHED_BYTES: '416586952'
+      VERIFY_MINUTES: ${{ inputs.verify_minutes }}
+    steps:
+      - name: Check out the verification tools only
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: selected
+          persist-credentials: false
+      - name: Prepare failure evidence for all six Settings cases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP 'archhub-verify-published'
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          "VERIFY_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+          $source = Get-Content -Raw selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
+          $block = [regex]::Match($source, '(?s)export const steps=\[(.*?)\];').Groups[1].Value
+          $names = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value })
+          if ($names.Count -ne 6) { throw 'The Settings scenario must declare exactly six cases.' }
+          $names | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
+          @{repository=$env:PUBLISHED_REPOSITORY;build=$env:PUBLISHED_BUILD;workflow_source=$env:GITHUB_SHA;setup_verified=$false;setup_sha256=$null;setup_bytes=$null;install_exit=$null;installed_root=$null;installed_build=$null;first_run_python=$null;first_run_python_version=$null;first_run_exit=$null;ui_exit=$null} |
+            ConvertTo-Json | Set-Content (Join-Path $evidence 'install.json') -Encoding utf8
+          if (@('15', '20', '25', '30') -cnotcontains $env:VERIFY_MINUTES) { throw 'Choose a supported verification budget.' }
+      - name: Verify and install the exact published Setup for this clean user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Join-Path $env:VERIFY_EVIDENCE 'install.json'
+          $state = Get-Content -Raw $receipt | ConvertFrom-Json
+          $setup = Join-Path $env:RUNNER_TEMP 'ArchHub-Setup-0.exe'
+          $tag = 'build-' + $env:PUBLISHED_BUILD
+          $url = 'https://github.com/' + $env:PUBLISHED_REPOSITORY + '/releases/download/' + $tag + '/ArchHub-Setup-0.exe'
+          Invoke-WebRequest -Uri $url -OutFile $setup
+          $bytes = (Get-Item -LiteralPath $setup).Length
+          $digest = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($bytes -ne [long]$env:PUBLISHED_BYTES -or $digest -cne $env:PUBLISHED_SHA256) { throw 'Published Setup identity differs; nothing was executed.' }
+          $state.setup_verified = $true
+          $state.setup_sha256 = $digest
+          $state.setup_bytes = $bytes
+          $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          $log = Join-Path $env:VERIFY_EVIDENCE 'setup.log'
+          $process = Start-Process -FilePath $setup -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/RESTARTEXITCODE=3010', '/TASKS="desktopicon"', ('/LOG="' + $log + '"')) -WindowStyle Hidden -PassThru -Wait
+          $state.install_exit = $process.ExitCode
+          $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          if ($process.ExitCode -ne 0) { throw ('Native Setup failed or requires restart: ' + $process.ExitCode) }
+          $app = Join-Path $env:LOCALAPPDATA 'ArchHub'
+          $state.installed_root = $app
+          $state.installed_build = (Get-Content -Raw (Join-Path $app 'BUILD_ID')).Trim()
+          $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          if ($state.installed_build -cne $env:PUBLISHED_BUILD) { throw 'The default installed build differs from the pinned release.' }
+      - name: Run the installed first-run setup and six actual-window Settings cases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Join-Path $env:VERIFY_EVIDENCE 'install.json'
+          $state = Get-Content -Raw $receipt | ConvertFrom-Json
+          $app = Join-Path $env:LOCALAPPDATA 'ArchHub'
+          # Reuse the installed launcher's exact interpreter discovery without starting its updater or UI.
+          $launcher = Get-Content -Raw (Join-Path $app 'ArchHub.vbs')
+          $discovery = [regex]::Match($launcher, '(?is)Function FindPython\(kind\).*?End Function\s+Function PythonUsable\(candidate\).*?End Function').Value
+          $quoting = [regex]::Match($launcher, '(?is)Function QuoteArgument\(value\).*?End Function').Value
+          if (-not $discovery -or -not $quoting) { throw 'Installed launcher interpreter discovery or its quoting helper is unavailable.' }
+          $probe = Join-Path $env:VERIFY_EVIDENCE 'launcher-python.vbs'
+          $prefix = 'Set sh = CreateObject("WScript.Shell")' + "`r`n" + 'Set fso = CreateObject("Scripting.FileSystemObject")' + "`r`n"
+          [IO.File]::WriteAllText($probe, $prefix + $quoting + "`r`n" + $discovery + "`r`n" + 'WScript.Echo FindPython("python")', [Text.UTF8Encoding]::new($false))
+          $python = (& (Join-Path $env:WINDIR 'System32/cscript.exe') //nologo $probe | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($python) -or -not [IO.Path]::IsPathFullyQualified($python) -or -not (Test-Path -LiteralPath $python)) { throw 'Installed launcher found no usable absolute Python.' }
+          $state.first_run_python = $python
+          $state.first_run_python_version = (& $python -E -s -c 'import sys; print(sys.version); raise SystemExit(0 if sys.version_info[:2] == (3,14) else 1)' | Out-String).Trim()
+          $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Installed launcher Python does not support the bundled wheelhouse.' }
+          & $python -E -s -B (Join-Path $app 'colleague_setup.py') --launcher-setup 2>&1 | Tee-Object -FilePath (Join-Path $env:VERIFY_EVIDENCE 'first-run.log')
+          $state.first_run_exit = $LASTEXITCODE
+          $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          if ($state.first_run_exit -ne 0) { throw 'The installed first-run setup did not finish.' }
+          $env:PATH = (Join-Path $app 'runtime') + [IO.Path]::PathSeparator + $env:PATH
+          & $python -B selected/03.TOOLS/tools/real_app_check/real_app_check.py --app $app --scenario selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
+          $state.ui_exit = $LASTEXITCODE
+          $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+          if ($state.ui_exit -ne 0) { throw 'Installed Settings actual-window acceptance failed; inspect the retained report.' }
+      - name: Record each Settings outcome even when install or launch failed
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP 'archhub-verify-published'
+          $declared = Join-Path $evidence 'declared-settings.json'
+          if (-not (Test-Path -LiteralPath $declared)) { throw 'Verification initialization did not produce declared Settings evidence.' }
+          $stepsFile = Join-Path $evidence 'settings/steps.json'
+          $actual = @()
+          if (Test-Path -LiteralPath $stepsFile) { $actual = @(Get-Content -Raw $stepsFile | ConvertFrom-Json) }
+          $rows = @(Get-Content -Raw $declared | ConvertFrom-Json | ForEach-Object {
+            $asked = $_
+            $found = @($actual | Where-Object { $_.asked -ceq $asked })
+            if ($found.Count -eq 1) { $found[0] }
+            else { @{asked=$asked;result='NOT EXERCISED';did='Install or actual-window check did not reach this case; no pass claimed.'} }
+          })
+          $rows | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'settings-results.json') -Encoding utf8
+      - name: Retain install identity, actual window and all six outcomes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: archhub-verify-published-7c-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/archhub-verify-published/install.json
+            ${{ runner.temp }}/archhub-verify-published/setup.log
+            ${{ runner.temp }}/archhub-verify-published/first-run.log
+            ${{ runner.temp }}/archhub-verify-published/settings-results.json
+            ${{ runner.temp }}/archhub-verify-published/settings/report.json
+            ${{ runner.temp }}/archhub-verify-published/settings/steps.json
+            ${{ runner.temp }}/archhub-verify-published/settings/*.png

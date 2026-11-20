@@ -89,15 +89,45 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   assert.equal(await page.evaluate(()=>window.fixture.settingsScope),'Session');
   await page.evaluate(()=>{window.queueSettingAct=false;window.update({settings:[{id:'Projects.Folder',page:'Projects',group:'Project register',label:'Project folder',type:'text',value:'Example',default:''}]});});
   await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Projects',exact:true}).click();
-  for(const family of ['Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'])await page.getByRole('group',{name:family+'. Coming soon: not built yet',exact:true}).waitFor();
+  for(const family of ['Units and precision','Office standard','Templates','Location','Revit worksharing','IFC version','IFC export setup','BCF version','Print and PDF','CAD','File naming','CDE folders'])await page.getByRole('group',{name:family+'. Coming soon: not built yet',exact:true}).waitFor();
   assert.equal(await page.getByRole('group',{name:'Project register. Coming soon: not built yet',exact:true}).count(),0,'only the backed family leaves Coming soon');
   assert.equal(await page.locator('[data-setting="Projects.Folder"]').count(),1,'the backed setting keeps one editor');
-  await page.evaluate(()=>window.update({settings:['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].map((group,i)=>({id:'Projects.Test'+i,page:'Projects',group,label:'Project preference '+i,type:'text',value:'',default:''}))}));
+  await page.evaluate(()=>window.update({settings:['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].flatMap((group,i)=>group==='IFC and BCF'?['IFC version','IFC export setup','BCF version'].map((label,j)=>({id:'Projects.Test'+i+'-'+j,page:'Projects',group,label,type:'text',value:'',default:''})):[{id:'Projects.Test'+i,page:'Projects',group,label:'Project preference '+i,type:'text',value:'',default:''}])}));
   await page.locator('[data-setting="Projects.Test10"]').waitFor();
   assert.equal(await page.getByRole('heading',{name:'Project preferences',exact:true}).count(),0,'all-backed Projects has no empty placeholder section');
   assert.equal(await page.getByRole('navigation',{name:'On this page'}).getByRole('button',{name:'Project preferences',exact:true}).count(),0,'the empty placeholder has no outline target');
-  assert.equal(await page.locator('[data-setting^="Projects.Test"]').count(),11,'every backed editor remains single');
+  assert.equal(await page.locator('[data-setting^="Projects.Test"]').count(),13,'every backed editor remains single');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({result:'PASS',actual:'Settings sheet, controls and action registry',workspaceSelector:true,sessionSelector:true,exportSelectedAndAll:true,upload:'fixture JSON bytes',refusalAndRetry:true,resetDestination:'Workspace',pageErrors:errors,boundary:'fixture owner; real owner tested separately; not installed'}));
+ }finally{await browser.close();}
+});
+
+test('pending scope disables its editors and keeps one read-only recovery beside the refusal',async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}});page.setDefaultTimeout(3000);
+  await mount(page,{name:'Scope reviewer',signedIn:false,checking:false},{settingsScopes:{Workspace:true,Session:true},keyboardCommands:[],settings:[{id:'Appearance.Theme',label:'Theme',page:'Appearance',type:'enum',options:['Dark','Light','System'],default:'Dark',value:'Dark'}]});
+  await page.waitForFunction(()=>typeof window.finishInitialSettingsRead==='function');
+  await page.evaluate(()=>window.finishInitialSettingsRead());
+  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Look',exact:true}).click();
+  await page.evaluate(()=>window.update({settingsScopePending:true}));
+  await page.getByRole('status').filter({hasText:'Changing settings scope'}).waitFor();
+  assert.equal(await page.getByLabel('Settings scope',{exact:true}).isDisabled(),true);
+  assert.equal(await page.getByLabel('Theme',{exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Import into Everywhere',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Reset Everywhere',exact:true}).isDisabled(),true);
+  await page.evaluate(()=>{
+   window.ArchHubAPI.refreshPreferences=async()=>{window.refreshCalls=(window.refreshCalls||0)+1;window.update({settingsDestination:{scope:'User',workspace:'example',session:'fixture'},settingsScopeNotice:''});return {ok:true};};
+   window.update({settingsScopePending:false,settingsDestination:null,settingsScopeNotice:'The Settings destination changed. Refresh Settings and choose its scope again.'});
+  });
+  assert.equal(await page.getByRole('status').filter({hasText:'Changing settings scope'}).count(),0);
+  const recovery=page.getByRole('button',{name:'Refresh settings scope',exact:true});
+  assert.equal(await recovery.count(),1);
+  await page.getByRole('alert').filter({has:recovery}).waitFor();
+  await recovery.click();
+  assert.equal(await page.getByLabel('Settings scope',{exact:true}).isEnabled(),true);
+  assert.equal(await page.getByLabel('Theme',{exact:true}).isEnabled(),true);
+  assert.equal(await page.evaluate(()=>window.refreshCalls),1);
+  assert.deepEqual(await page.evaluate(()=>window.writes),[],'read-only recovery did not replay a preference write');
  }finally{await browser.close();}
 });

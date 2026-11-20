@@ -1267,7 +1267,12 @@ api.setDockLayout=layout=>settingsAction('setDockLayout',[layout]);  // the user
 const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel'];
 api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
 api.setApplicationSetting=async(key,value)=>{const saved=await settingsAction('setApplicationSetting',[key,value]);await refreshLiveUpdatePolicy();return saved;};
-api.setSettingsScope=(scope,destination=state.settingsDestination)=>settingsAction('setSettingsScope',[scope,destination?.workspace??sessionDocument?.properties?.project??state.activeWorkspace??'',destination?.session??state.graph.id],destination);
+let settingsScopeRequests=0;
+api.setSettingsScope=async(scope,destination=state.settingsDestination)=>{
+ settingsScopeRequests++;publish({settingsScopePending:true});
+ try{return await settingsAction('setSettingsScope',[scope,destination?.workspace??sessionDocument?.properties?.project??state.activeWorkspace??'',destination?.session??state.graph.id],destination);}
+ finally{settingsScopeRequests--;publish({settingsScopePending:settingsScopeRequests>0});}
+};
 api.refreshPreferences=()=>settingsAction('readPreferences');
 api.importPreferences=(payload,destination=state.settingsDestination)=>settingsAction('importPreferences',[payload],destination);
 api.resetPreferences=(destination=state.settingsDestination)=>settingsAction('resetPreferences',[],destination);

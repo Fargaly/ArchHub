@@ -122,11 +122,20 @@ def broker_call(service: str, route: str, body=None, *, port=None, timeout=10.0)
         wait = min(float(timeout), float(_PING_TIMEOUT), 1.5)
         try:
             answer = _call(row["port"], route, body, timeout=wait)
-        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+            if service == "revit" and isinstance(exc, (urllib.error.HTTPError, ValueError)):
+                raise
             answer = {"status": "ok", "service": row.get("service"), "pid": row.get("pid"),
                       "port": row["port"], "revit_version": row.get("revit_version"),
                       "acad_version": row.get("acad_version"), "version": row.get("service_version"),
                       "document": row.get("document") or "", "info_source": "ping-discovery"}
+            if service == "revit":
+                return {**answer, "ok": False, "status": "unavailable", "document": None}
+        if service == "revit":
+            ok = answer.get("status") == "ok"
+            document = (answer.get("document") or answer.get("document_title") or answer.get("title") or
+                        answer.get("document_name") or "") if ok else None
+            return {**answer, "ok": ok, "port": row["port"], "document": document}
         if answer.get("status") != "ok":
             answer = {"status": "ok", "service": row.get("service"), "pid": row.get("pid"),
                       "port": row["port"], "revit_version": row.get("revit_version"),

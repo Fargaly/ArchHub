@@ -4,13 +4,17 @@ Fixture brokers only; client registration remains on the shipped server.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
+from io import BytesIO
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 
 from nodelang import native_agent_mcp as native
+from nodelang.clean_revit_adapter import _call as signed_broker_call
 
 ARCHHUB_HOSTS_TOOLS = {
     "revit_open_document",
@@ -98,6 +102,86 @@ def test_reads_work_without_permission_or_graph(rig):
         tool(rig, name, {"operation": "excel.list_workbooks"} if name == "office_read" else {})
     # NOGRAPH (9afdeaa4): the server holds no Work enrolment at all; the reads above answered without one.
     assert not hasattr(rig.server, "work_control")
+
+
+@pytest.fixture
+def signed_reply(monkeypatch):
+    from nodelang import clean_revit_adapter, host_bridge_auth
+
+    calls = []
+    monkeypatch.setattr(clean_revit_adapter, "_call", signed_broker_call)
+    monkeypatch.setattr(host_bridge_auth, "ensure_secret", lambda: "isolated-fixture-secret")
+
+    def respond(status, body):
+        def open_request(request, *, timeout):
+            assert request.get_header(host_bridge_auth.SIGNATURE_HEADER.capitalize())
+            calls.append((request.selector, timeout))
+            if status is None:
+                raise TimeoutError("isolated transport timeout")
+            raw = json.dumps(body).encode("utf-8")
+            if status != 200:
+                raise HTTPError(request.full_url, status, "fixture response", None, BytesIO(raw))
+            return nullcontext(SimpleNamespace(status=status, read=lambda: raw))
+
+        monkeypatch.setattr(host_bridge_auth.urllib.request, "urlopen", open_request)
+        return calls
+
+    return respond
+
+
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_native_revit_info_preserves_http_refusal(rig, signed_reply, status):
+    calls = signed_reply(status, {"error": "fixture broker refusal", "document": "unexpected.rvt"})
+    reply = payload(tool(rig, "revit_info"))
+    assert reply == {"ok": False, "status": "error", "http_status": status, "error": "fixture broker refusal",
+                     "port": REVIT["port"], "document": None}
+    assert calls == [("/info", 1.5)]
+
+
+@pytest.mark.parametrize("document", [None, "", "Signed.rvt"])
+def test_native_revit_info_keeps_authorized_result(rig, signed_reply, document):
+    answer = {"status": "ok"}
+    if document is not None:
+        answer["document"] = document
+    signed_reply(200, answer)
+    assert payload(tool(rig, "revit_info")) == {
+        "ok": True, "status": "ok", "document": document or "", "port": REVIT["port"]}
+
+
+def test_native_revit_info_timeout_keeps_discovery_without_a_document(rig, signed_reply):
+    calls = signed_reply(None, {})
+    reply = payload(tool(rig, "revit_info"))
+    assert reply["ok"] is False and reply["status"] == "unavailable"
+    assert reply["document"] is None and reply["info_source"] == "ping-discovery"
+    assert reply["revit_version"] == REVIT["revit_version"] and reply["port"] == REVIT["port"]
+    assert calls == [("/info", 1.5)]
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_native_autocad_info_preserves_its_existing_projection(rig, signed_reply, status):
+    signed_reply(status, {"status": "ok", "document_name": "Signed.dwg"})
+    reply = payload(tool(rig, "acad_info"))
+    assert reply["ok"] is True and reply["status"] == "ok"
+    assert reply["document"] == ("Signed.dwg" if status == 200 else ACAD["document"])
+
+
+@pytest.mark.parametrize("status", [200, 403])
+def test_native_revit_phases_keeps_signed_result_or_refusal(rig, signed_reply, monkeypatch, status):
+    from nodelang import clean_revit_adapter, hook_decision
+
+    monkeypatch.setattr(clean_revit_adapter, "live_sessions", lambda: [REVIT])
+    monkeypatch.setattr(hook_decision, "decide", lambda request: {"verdict": "allow"})
+    phases = [{"name": "Existing"}, {"name": "New Construction"}]
+    calls = signed_reply(status, {"status": "ok", "result": phases} if status == 200 else
+                         {"error": "fixture phase read refused"})
+    args = {"tool": "revit_list_phases", "arguments": {}}
+    if status == 200:
+        reply = payload(tool(rig, "revit_run", args))
+        assert reply["ok"] is True and reply["out"] == phases
+    else:
+        with pytest.raises(Exception, match="Revit refused revit.list_phases: fixture phase read refused"):
+            tool(rig, "revit_run", args)
+    assert [route for route, _ in calls] == ["/exec"]
 
 
 @pytest.mark.parametrize("name,args", [("revit_execute_csharp", {"code": "result=1;"}),

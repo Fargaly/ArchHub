@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "intents": {
+    "IFCEXPORTSOURCE": {"source": "Founder whole-app completion 2026-11-20; Workshop 287045fe2af441eda6583b738cfe6423 assigns 542e existing IFC caller vertical plus narrow typed artifact compiler/rules/tests; c771 retains trusted adapter/tests. Exact source admission only, no runtime project or host effect authority.", "scope": ["03.TOOLS/tools/archhub-compiler/src/lib.rs", "03.TOOLS/tools/archhub-compiler/src/main.rs", "03.TOOLS/tools/archhub-compiler/src/intent.rs", "03.TOOLS/tools/archhub-compiler/rules.json", "03.TOOLS/tools/archhub-compiler/tests/ifc_export.rs", "01.APP/nodelang/enforce.py"]},
     "SITELINKS": {
       "source": "Founder website-and-links LIGHT lane, 2026-11-12: one public links source, Git-history changelog, stdlib static generator using v48 identity and current documentation, README repair, archived exporter instructions and one scoped test. Branch only; hooks on; Cargo allowed for the commit hook only by coordinator decision 2026-11-12; no push, deploy, publish, install or live profiles. 2026-11-17: archhub.io follows the latest release and carries the BABOOM companion from baboom.archhub.io through a Caddy proxy (founder yes, Fly v45/v46).",
       "scope": [

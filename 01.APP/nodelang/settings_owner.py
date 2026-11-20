@@ -1208,7 +1208,7 @@ class PreferenceScope:
         shown = self.binding['scope']
         notice = '' if self.selected() == shown else 'This scope is unavailable. Showing Everywhere values; choose an available scope before editing.'
         return {**preference_settings(settings=values), **keyboard,
-                'settingsScope': shown, 'settingsDestination': dict(self.binding), 'settingsScopeNotice': notice, 'activeWorkspace': self.workspace,
+                'settingsScope': shown, 'settingsDestination': dict(self.binding), 'settingsScopeNotice': notice, 'activeWorkspace': self.settings.read().get('activeWorkspace', self.workspace),
                 'settingsScopes': {'Workspace': bool(self.workspace), 'Session': bool(self.document)}}
 
     def validate(self, scope, values, maps):

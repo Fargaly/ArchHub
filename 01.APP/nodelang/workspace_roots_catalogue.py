@@ -12,6 +12,51 @@ class WorkspaceRootRefused(ValueError):
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 ROOT_PATH_PREFIX = 'workspace-roots/'
+def project_folder_layout(parent, governed_root=''):
+    base = Path(parent).resolve()
+    root = Path(governed_root).resolve() if governed_root else None
+    return 'Governed work folder' if root and (root / '00.GOVERNANCE').is_dir() and (root / '10.PRODUCT').is_dir() and base.is_relative_to(root) else 'Empty folder'
+
+
+def create_project_folder(parent, name, governed_root=''):
+    """Create one new work folder; registration stays with the workspace owner."""
+    if (type(name) is not str or not name or len(name) > 100 or name != name.strip()
+            or name.endswith('.') or name in ('.', '..')
+            or any(ord(char) < 32 or char in '<>:"/\\|?*' for char in name)
+            or name.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL',
+                *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}):
+        raise ValueError('Use one ordinary project folder name without reserved characters.')
+    base = Path(parent)
+    if not base.is_absolute() or not base.is_dir():
+        raise ValueError('Choose an available registered parent folder.')
+    if any(part.is_symlink() or part.is_junction() for part in (base, *base.parents)):
+        raise ValueError('The parent folder is redirected. Choose its real registered location.')
+    template = project_folder_layout(base, governed_root)
+    if template == 'Governed work folder' and base.resolve() == Path(governed_root).resolve():
+        raise ValueError('Choose a work parent inside a numbered workspace area.')
+    target = base / name
+    try:
+        target.mkdir()  # Never merge with, truncate or replace an existing project.
+    except FileExistsError:
+        raise ValueError('That folder already exists. Add it as a workspace instead.') from None
+    if template == 'Empty folder':
+        return target
+    try:
+        (target / '_WIP').mkdir()
+        with (target / 'README.md').open('x', encoding='utf-8', newline='\n') as stream:
+            stream.write('# ' + name + '\n\nResults belong beside this README and REGISTER.md.\n'
+                         'Keep received sources, drafts, scripts and superseded revisions in _WIP.\n')
+        rows = ['# REGISTER: ' + name, '', 'Generated from the files on disk when this project was created.', '',
+                '| File | SHA-256 |', '|---|---|']
+        for item in sorted(target.rglob('*')):
+            relative = item.relative_to(target).as_posix()
+            rows.append('| `' + relative + ('/` | |' if item.is_dir() else
+                '` | ' + hashlib.sha256(item.read_bytes()).hexdigest() + ' |'))
+        with (target / 'REGISTER.md').open('x', encoding='utf-8', newline='\n') as stream:
+            stream.write('\n'.join(rows) + '\n')
+    except OSError as error:
+        raise ValueError('Project creation was incomplete at %s. Existing files were preserved: %s' % (target, error)) from error
+    return target
 
 def built_in_path() -> str:
     """The built-in governed tree: the same folder the application resolves as

@@ -2173,45 +2173,76 @@ def r_settings_action(s, req):
 
 
 def r_workspace_roots(s, req):
+    from .workspace_roots_catalogue import create_project_folder, project_folder_layout
     action, body = _action(req, 'list')
-    store = s.files['workspaces']
-    held = store.read()
-    if not held['roots'] and not held.get('imported_legacy'):
-        # One-time carry-over of the folders registered before NOGRAPH (~/.archhub/workspace-roots.json).
-        from .workspace_roots_catalogue import default_snapshot_path
-        legacy = default_snapshot_path()
-        try:
-            old = json.loads(legacy.read_text(encoding='utf-8')).get('roots') or []
-        except (OSError, ValueError):
-            old = []
-        held['roots'] = [{'root_id': 'workspace:' + str(r.get('id') or secrets.token_hex(6)),
-                          'label': Path(str(r['path'])).name, 'path': str(r['path']),
-                          'privacy': r.get('privacy', 'private'), 'state': 'registered', 'available': True}
-                         for r in old if r.get('path')]
-        held['imported_legacy'] = True
-        store.write(held)
     if action == 'browse':
         picker = s.native_folder_picker
         return {'ok': True, 'path': str(picker('Choose a workspace folder') or '') if picker else ''}
-    if action == 'register':
-        path = Path(str(body.get('path') or ''))
-        if not path.is_absolute() or not path.is_dir():
-            raise Refused('Choose an existing local folder.')
-        row = {'root_id': 'workspace:' + secrets.token_hex(6), 'label': path.name, 'path': str(path),
-               'privacy': body.get('privacy', 'private'), 'state': 'registered', 'available': True}
-        held['roots'] = [r for r in held['roots'] if r['path'] != str(path)] + [row]
-        store.write(held)
-        return {'ok': True, 'root': row}
-    if action == 'unregister':
-        held['roots'] = [r for r in held['roots'] if r['root_id'] != body.get('id')]
-        store.write(held)
-        return {'ok': True}
-    built_in = s.workspace_built_in()
-    roots = [{**r, 'available': Path(r['path']).is_dir()} for r in held['roots']]
-    return {'ok': True, 'roots': roots, 'revision': len(roots),
-            'built_in': {'id': 'workspace:archhub', 'label': 'ArchHub', 'path': built_in, 'removable': False,
-                         'available': bool(built_in) and Path(built_in).is_dir()} if built_in else None,
-            'health': {'state': 'current', 'message': 'Workspaces are read from settings/workspaces.json.'}}
+    store = s.files['workspaces']
+    with store.lock:
+        held = store.read()
+        if not held['roots'] and not held.get('imported_legacy'):
+            # One-time carry-over of the folders registered before NOGRAPH (~/.archhub/workspace-roots.json).
+            from .workspace_roots_catalogue import default_snapshot_path
+            legacy = default_snapshot_path()
+            try:
+                old = json.loads(legacy.read_text(encoding='utf-8')).get('roots') or []
+            except (OSError, ValueError):
+                old = []
+            held['roots'] = [{'root_id': 'workspace:' + str(r.get('id') or secrets.token_hex(6)),
+                              'label': Path(str(r['path'])).name, 'path': str(r['path']),
+                              'privacy': r.get('privacy', 'private'), 'state': 'registered', 'available': True}
+                             for r in old if r.get('path')]
+            held['imported_legacy'] = True
+            store.write(held)
+        if action == 'select':
+            builtin = s.workspace_built_in()
+            selected = {'root_id': 'workspace:archhub', 'label': 'ArchHub', 'path': builtin} if body.get('id') == 'workspace:archhub' and builtin else next((row for row in held['roots'] if row['root_id'] == body.get('id')), None)
+            if selected is None or not Path(selected['path']).is_dir():
+                raise Refused('Choose an available registered workspace.')
+            s.files['settings'].update({'activeWorkspace': selected['root_id']})
+            return {'ok': True, 'root': selected}
+        if action == 'create':
+            held = store.read()
+            parents = [row for row in held['roots'] if row['root_id'] == body.get('parent')]
+            if len(parents) != 1:
+                raise Refused('Choose a registered parent folder for the new project.')
+            governed = s.workspace_built_in()
+            template = project_folder_layout(parents[0]['path'], governed)
+            try:
+                path = create_project_folder(parents[0]['path'], body.get('name'), governed)
+            except ValueError as error:
+                raise Refused(str(error)) from error
+            row = {'root_id': 'workspace:' + secrets.token_hex(6), 'label': path.name, 'path': str(path),
+                   'privacy': parents[0].get('privacy', 'private'), 'state': 'registered', 'available': True}
+            held['roots'].append(row)
+            try:
+                store.write(held)
+            except OSError as error:
+                raise Refused('Project files were created at %s, but registration failed. Add that existing folder as a workspace.' % path) from error
+            return {'ok': True, 'root': row, 'template': template}
+        if action == 'register':
+            path = Path(str(body.get('path') or ''))
+            if not path.is_absolute() or not path.is_dir():
+                raise Refused('Choose an existing local folder.')
+            existing = next((row for row in held['roots'] if Path(row['path']).resolve() == path.resolve()), None)
+            if existing is not None:
+                return {'ok': True, 'root': existing}
+            row = {'root_id': 'workspace:' + secrets.token_hex(6), 'label': path.name, 'path': str(path),
+                   'privacy': body.get('privacy', 'private'), 'state': 'registered', 'available': True}
+            held['roots'] = [r for r in held['roots'] if r['path'] != str(path)] + [row]
+            store.write(held)
+            return {'ok': True, 'root': row}
+        if action == 'unregister':
+            held['roots'] = [r for r in held['roots'] if r['root_id'] != body.get('id')]
+            store.write(held)
+            return {'ok': True}
+        built_in = s.workspace_built_in()
+        roots = [{**r, 'available': Path(r['path']).is_dir(), 'project_template': project_folder_layout(r['path'], built_in)} for r in held['roots']]
+        return {'ok': True, 'roots': roots, 'revision': len(roots),
+                'built_in': {'id': 'workspace:archhub', 'label': 'ArchHub', 'path': built_in, 'removable': False,
+                             'available': bool(built_in) and Path(built_in).is_dir()} if built_in else None,
+                'health': {'state': 'current', 'message': 'Workspaces are read from settings/workspaces.json.'}}
 
 
 def r_pick_file(s, req):

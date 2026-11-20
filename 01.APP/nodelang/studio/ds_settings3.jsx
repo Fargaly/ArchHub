@@ -16,6 +16,9 @@
   "settings.ds_settings3.WorkspaceRowsAction2": "WorkspaceRowsAction2",
   "settings.ds_settings3.WorkspaceRowsAction3": "WorkspaceRowsAction3",
   "settings.ds_settings3.WorkspaceRowsAction4": "WorkspaceRowsAction4",
+  "settings.ds_settings3.NewProject": "NewProject",
+  "settings.ds_settings3.CreateProject": "CreateProject",
+  "settings.ds_settings3.CancelProject": "CancelProject",
   "settings.ds_settings3.AccountAction0": "AccountAction0",
   "settings.ds_settings3.AccountAction1": "AccountAction1",
   "settings.ds_settings3.AccountAction2": "AccountAction2",
@@ -220,19 +223,30 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
   function WorkspaceRows() {
     const s = useData(),
       u = useApp();
+    const [newProject,setNewProject]=React.useState(false), [projectName,setProjectName]=React.useState(''),
+      [projectParent,setProjectParent]=React.useState(''), [creating,setCreating]=React.useState(false);
+    const createProject=async()=>{
+      if(creating)return;
+      setCreating(true);
+      try {
+        const result=await u.act(()=>api.addWorkspace({create:true,parent:projectParent,name:projectName}));
+        if(result?.root){setNewProject(false);setProjectName('');}
+      } finally {setCreating(false);}
+    };
     const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {WorkspaceRowsAction0: (event) => (() => u.pickWorkspace())(event),
 WorkspaceRowsAction1: (w, event) => (async () => {
-            await u.act(() => api.selectWorkspace(w.id));
-            u.go('canvas');
+            const opened=await u.act(() => api.selectWorkspace(w.id));
+            if(opened?.ok)u.go('home');
           })(event),
 WorkspaceRowsAction2: (w, event) => (() => u.show('Workspace rules', {
             id: w.id
           }))(event),
 WorkspaceRowsAction3: (w, event) => (() => u.confirm('Remove this workspace from the list?', () => api.removeWorkspace(w.id)))(event),
-WorkspaceRowsAction4: (event) => (() => u.act(api.listWorkspaces))(event)});
+WorkspaceRowsAction4: (event) => (() => u.act(api.listWorkspaces))(event),
+NewProject:()=>setNewProject(value=>!value), CreateProject:createProject, CancelProject:()=>setNewProject(false)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><Card><div className="spread" style={{
         padding: 16
-      }}><div><h2>Workspaces</h2><small className="muted">Choose the folders ArchHub and your agents work in.</small></div><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction0', event)}>Add workspace</Btn></div><div className="row muted" role={s.workspaceHealth?.state === 'error' ? 'alert' : 'status'}>{s.workspaceHealth?.message || 'Reading workspaces…'}{s.workspaceHealth?.state === 'error' && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction4', event)}>Retry</Btn>}</div>{s.workspaceHealth?.recovery && <div className="row muted">{s.workspaceHealth.recovery.message}</div>}{s.workspaces.map(w => <div key={w.id} className="spread row"><D.Toggle label={'Use ' + w.name} checked={(s.graph.workspaceIds || []).includes(w.id)} onCheckedChange={v => u.act(() => api.setGraphWorkspaces(v ? [...new Set([...(s.graph.workspaceIds || []), w.id])] : (s.graph.workspaceIds || []).filter(id => id !== w.id)))} /><div className="fill"><h3>{w.name}</h3><span className="muted" style={{
+      }}><div><h2>Workspaces</h2><small className="muted">Choose the folders ArchHub and your agents work in.</small></div><div className="flex"><Btn sm onClick={event=>runAction('settings.ds_settings3.NewProject',event)}>New project</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction0', event)}>Add workspace</Btn></div></div>{newProject&&<form className="row grid" aria-label="New project" onSubmit={event=>{event.preventDefault();runAction('settings.ds_settings3.CreateProject',event);}}><label>Project name<input aria-label="Project name" value={projectName} disabled={creating} onChange={event=>setProjectName(event.target.value)}/></label><label>Parent workspace<select aria-label="Parent workspace" value={projectParent} disabled={creating} onChange={event=>setProjectParent(event.target.value)}><option value="">Choose a registered folder</option>{s.workspaces.filter(w=>!w.builtIn&&w.available!==false).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label><p>New project folders: {s.workspaces.find(w=>w.id===projectParent)?.projectTemplate||'Choose a parent folder'}. Existing folders stay as they are.</p><div className="flex"><button type="submit" className="sheet-action" onClick={event=>{event.preventDefault();runAction('settings.ds_settings3.CreateProject',event);}} disabled={creating||!projectName.trim()||!projectParent}>{creating?'Creating…':'Create project'}</button><Btn sm ghost disabled={creating} onClick={event=>runAction('settings.ds_settings3.CancelProject',event)}>Cancel</Btn></div></form>}<div className="row muted" role={s.workspaceHealth?.state === 'error' ? 'alert' : 'status'}>{s.workspaceHealth?.message || 'Reading workspaces…'}{s.workspaceHealth?.state === 'error' && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction4', event)}>Retry</Btn>}</div>{s.workspaceHealth?.recovery && <div className="row muted">{s.workspaceHealth.recovery.message}</div>}{s.workspaces.map(w => <div key={w.id} className="spread row"><D.Toggle label={'Use ' + w.name} checked={(s.graph.workspaceIds || []).includes(w.id)} onCheckedChange={v => u.act(() => api.setGraphWorkspaces(v ? [...new Set([...(s.graph.workspaceIds || []), w.id])] : (s.graph.workspaceIds || []).filter(id => id !== w.id)))} /><div className="fill"><h3>{w.name}</h3><span className="muted" style={{
             fontSize: 'calc(12px * var(--text-scale,1))'
           }}>{w.folder} · {w.available === false ? 'Folder unavailable' : (s.workspaceHealth?.state === 'ready' || (s.workspaceHealth?.state === 'idle' && w.builtIn)) ? 'Ready' : 'Checking…'}</span></div><div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction1', w, event)}>Open</Btn><Btn sm ghost aria-label={'Privacy ' + w.name} title="Workspace privacy" onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction2', w, event)}><window.AHIcon name="shield" size={16} /></Btn>{!w.builtIn && w.removable !== false && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction3', w, event)}>Remove</Btn>}</div></div>)}{!s.workspaces.some(w => !w.builtIn) && <Empty>No other workspaces yet.</Empty>}</Card></>;
   }

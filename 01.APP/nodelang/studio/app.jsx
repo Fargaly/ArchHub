@@ -632,7 +632,7 @@
     const formAction=window.UI.useAction();
     const [text, setText] = React.useState(m.text || ''),
       [extra, setExtra] = React.useState(''),
-      [taskWorkspace, setTaskWorkspace] = React.useState(''),
+      [taskWorkspace, setTaskWorkspace] = React.useState(() => s.workspaces.some(w=>w.id===s.activeWorkspace&&!w.builtIn&&w.available!==false)?s.activeWorkspace:''),
       [query, setQuery] = React.useState(''),
       [mode, setMode] = React.useState('All'),
       [listening, setListening] = React.useState(false),

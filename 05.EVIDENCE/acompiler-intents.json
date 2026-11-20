@@ -12309,7 +12309,7 @@
       ]
     },
     "CLOUDKNOWNTEN": {
-      "source": "Build 19 integration: reconcile the ten existing cloud test failures against current supported owners and behavior, including real membership, native deploy refusal, and identity routes. Preserve live coverage and support the retirement of obsolete source-only checks with revision evidence. Seven test files only. Coordinator Workshop assignment 69e9ef0ac5c04fddaf6d40b6fb6701f0.",
+      "source": "Build 19 integration: reconcile the ten existing cloud test failures against current supported owners and behavior, including real membership, native deploy refusal, and identity routes. Preserve live coverage and support the retirement of obsolete source-only checks with revision evidence. Seven test files only. Coordinator Workshop assignment 69e9ef0ac5c04fddaf6d40b6fb6701f0. Workshop 51bcb3123fd542dd8752d6a698aca678 also assigns the three remaining cloud route-inventory tests for the pinned FastAPI version, including the retired relay assertion.",
       "scope": [
         "06.CLOUD/cloud_backend/tests/test_cockpit_agent.py",
         "06.CLOUD/cloud_backend/tests/test_company_quota.py",
@@ -12317,7 +12317,10 @@
         "06.CLOUD/cloud_backend/tests/test_google_is_the_only_sign_in.py",
         "06.CLOUD/cloud_backend/tests/test_one_signin_one_cloud_address.py",
         "06.CLOUD/cloud_backend/tests/test_the_cockpit_has_one_source.py",
-        "06.CLOUD/cloud_backend/tests/test_the_old_share_path_is_retired.py"
+        "06.CLOUD/cloud_backend/tests/test_the_old_share_path_is_retired.py",
+        "06.CLOUD/cloud_backend/tests/test_cockpit_admin_panel.py",
+        "06.CLOUD/cloud_backend/tests/test_every_founder_route_is_gated.py",
+        "06.CLOUD/cloud_backend/tests/test_baboom_relay_retirement.py"
       ]
     },
     "COMMUNITYOWNERRECOVERY": {

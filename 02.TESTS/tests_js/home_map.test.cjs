@@ -37,6 +37,30 @@ const draw = (params = {}, hidden = []) => plain(homeMap({listed, rows: homeRows
 const cards = chart => chart.nodes.filter(node => !node.group);
 const at = (chart, id) => cards(chart).find(card => card.id === id);
 
+test('Canvas resumes selected work, then the last opened task, then the most recently edited eligible file', () => {
+  const a = session('a', 'Selected', '', {updated: '2026-11-17'});
+  const b = session('b', 'Last opened', '', {updated: '2026-11-18'});
+  const c = session('c', 'Last edited', '', {updated: '2026-11-20'});
+  const archived = session('z', 'Archived', '', {state: 'archived', updated: '2026-11-21'});
+  const model = {groups: [{sessions: [archived, {...c, task: ''}, c, b, a]}], recentTask: b.task};
+  const resume = context.window.UI.homeSessionToResume;
+  assert.equal(resume(model, [a.task]).id, a.id);
+  assert.equal(resume(model, [archived.task]).id, b.id);
+  assert.equal(resume({...model, recentTask: ''}, []).id, c.id);
+  assert.equal(resume({groups: [{sessions: [archived, {...c, task: ''}]}]}, []), undefined);
+});
+
+test('quiet unassigned sessions fold together until expanded, and pinned work stays visible', () => {
+  const files = [session('a', 'First task', ''), session('b', 'Second task', '')];
+  const rows = homeRows({tasks: [], graphs: [], approvals: [], agentGraph: {sessions: []}}, {hidden: [], order: []});
+  const map = (params = {}) => homeMap({listed: {groups: [{sessions: files}]}, rows, params: {...DEFAULT, ...params}});
+  assert.equal(map().groups[0].count, 2);
+  assert.equal(cards(map()).length, 0);
+  assert.equal(cards(map({collapsed: []})).length, 2);
+  files[1] = {...files[1], pinned: true};
+  assert.equal(cards(map()).length, 2);
+});
+
 test('a card is one whole session: who works on it, its state word, where it stands and what it needs', () => {
   const chart = draw();
   assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['No project 1', 'Office 3', 'Tower 3']);

@@ -65,6 +65,14 @@
   // A Workshop card's Show asks for the cursor in that thread's composer. The ask outlives the screen's remount when the
   // thread opens, and ends on the first composer render that shows that thread (focused) or another thread (dropped).
   let focusAsk = null, homeShown = '';
+  const homeSessionToResume = (listing, selection) => {
+    const files = listing.groups.flatMap(group => group.sessions).filter(file => file.task && file.path && file.state !== 'archived');
+    for (const id of [...selection, listing.recentTask]) {
+      const file = files.find(file => file.task === id);
+      if (file) return file;
+    }
+    return files.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || ''), 'en', {numeric: true}))[0];
+  };
   const homeDestination = route => {
     if (route === 'workshop' || route === 'canvas') return {route: 'home', face: route, library: false};
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
@@ -228,6 +236,10 @@
     const rank = card => { const at = order.indexOf(card.task || card.id); return at < 0 ? order.length : at; };  // his drag order, then the rest
     cards.sort((a, b) => (p.order === 'Name' ? 0 : MAP_STATES.indexOf(a.state) - MAP_STATES.indexOf(b.state)) || (p.order === 'Name' ? 0 : rank(a) - rank(b)) || a.title.localeCompare(b.title));
     const keys = [...new Set(cards.map(keyOf))].sort((a, b) => Number(a === 'Older / archived') - Number(b === 'Older / archived') || (p.group === 'State' ? MAP_STATES.indexOf(a) - MAP_STATES.indexOf(b) : a.localeCompare(b)));
+    if (p.group === 'Project' && !params.collapsed) {
+      const unassigned = cards.filter(card => keyOf(card) === 'No project');
+      if (unassigned.length > 1 && unassigned.every(card => card.state === 'Idle' && !card.pinned)) p.collapsed = ['No project'];
+    }
     const folded = key => key === 'Older / archived' ? !olderOpen : p.collapsed.includes(key);
     // An input link is one wire, card edge to card edge: this session feeds that one. The session model holds no socket type
     // for a link, so the wire shows the design's default (files, a list); its hover says what the link really carries.
@@ -742,7 +754,13 @@
                 {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
               </section> : null;
     // No session yet: three starts for the composer.
-    const zeroState = <section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>;
+    const zeroState = homeLayout.hidden.length ? <section className="resume-zero">
+      <h1>No sessions shown on Home</h1><button type="button" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show hidden sessions</button>
+    </section> : request === 'empty' ? <section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>
+      : <section className="resume-zero"><h1>No sessions shown on Home</h1><button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
+        const opened = await api.openSession();
+        if (opened && !opened.cancelled) await u.go('canvas');
+      }), event)}>Open a canvas…</button></section>;
     // Hiding and Reset Home are one step each that Undo (the toast's button) takes back exactly.
     const undoable = (text, patch) => { const before = homeRef.current; u.setToast({text, label: 'Undo', open: () => saveHome(before)}); return saveHome(patch); };
     const hideFromHome = t => { setPicked('none'); return undoable((t.sessionTitle || t.title) + ' is hidden from Home. It is still in its file.', {hidden: [...homeLayout.hidden, t.id], resume: ''}); };
@@ -792,8 +810,13 @@
               <div className="dx-col dx-task-column home-map-stage">
                 {listing.status === 'error' ? <p role="alert">{listing.error} <button type="button" onClick={() => executeAction('ui.select', () => setAttempt(attempt + 1))}>Retry</button></p> : null}
                 {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
-                  : request === 'empty' ? <main className="resume-main">{zeroState}</main>
-                  : mapChoices && listing.status === 'loaded' ? <main className="resume-main">{chart.total ? <section className="resume-zero"><h1>No session matches</h1><button type="button" onClick={event => executeAction('ui.select', () => changeMap({filter: 'All', done: 'Show'}), event)}>Show every session</button></section> : zeroState}</main> : null}
+                  : mapChoices && listing.status === 'loaded' && (request === 'empty' || request === 'loaded') ? <main className="resume-main">{chart.total ? <section className="resume-zero">
+                    <h1>{chart.params.filter === 'Running' ? '0 running' : chart.params.filter === 'Needs you' ? '0 need you' : 'No sessions match your filters'}</h1>
+                    <button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
+                      if (sessionKind !== 'all') await api.setSessionListFilter('home', 'all');
+                      return changeMap({filter: 'All', done: 'Show'});
+                    }), event)}>Show all ({chart.total})</button>
+                  </section> : zeroState}</main> : null}
                 {/* The composer belongs to the map's own column: between the docks at every width, never over them. */}
                 {/* The picked card's session is the composer's recipient (design v61 C1-C3, the Composer's homeSession); none picked: a new session. */}
                 <div className="global-composer"><window.UI.Composer compact homeSession={cardTask(pickedCard) || undefined} key={cardTask(pickedCard)?.id || ''} /></div>
@@ -876,6 +899,7 @@
   window.UI.homeDescribe = describe;
   window.UI.homeStepOf = stepOf;
   window.UI.homeDestination = homeDestination;
+  window.UI.homeSessionToResume = homeSessionToResume;
   window.UI.homeTaskMessages = taskMessages;
   window.UI.homeMiddle = middle;
 })();

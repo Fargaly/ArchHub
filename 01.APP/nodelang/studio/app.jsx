@@ -178,7 +178,9 @@
         setRoute('canvas');
       }
     }, [s.sessionFile]);
+    const navigation = React.useRef(0);
     const go = async (r, taskId = '') => {
+      const visit = ++navigation.current;
       if (r === 'system') r = 'settings/System graph';
       if (r === 'baboom') {
         setCompanion(true);
@@ -186,8 +188,11 @@
         return;
       }
       const document = api.getSessionDocument?.();
-      const unboundCanvas = r === 'canvas' && document && !document.properties?.taskContext
-        && (!taskId || taskId === api.getSessionPath?.());
+      const currentPath = api.getSessionPath?.();
+      const currentTask = document?.properties?.taskContext?.task;
+      const unboundCanvas = r === 'canvas' && document && !currentTask
+        && (!taskId || taskId === currentPath)
+        && (currentPath || api.hasSessionEdits?.() || canvasOpened);
       const home = !unboundCanvas && window.UI.homeDestination?.(r);
       if (unboundCanvas) setTask('');
       if (home) {
@@ -195,10 +200,31 @@
         const selected = taskId ? s.tasks.find(t => t.id === taskId || t.sessionPath === taskId)
           : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask)
             || (route === 'home' && r === 'canvas' ? s.tasks.find(t => t.id === window.UI.homeShown?.()) : undefined);  // the open session wins; from Home, Canvas opens the session Home shows selected
-        if (selected) return openTaskFile(selected.id, home.face);
-        setTask('');
-        setToast('Pick a task on Home.');
-        r = 'home';
+        if (r === 'canvas' && !taskId && currentTask && (!selected || selected.id === currentTask || api.hasSessionEdits?.())) {
+          setTask(currentTask);
+          setTaskFace('canvas');
+          r = s.tasks.some(row => row.id === currentTask) ? 'task-file' : 'canvas';
+        } else if (selected) {
+          return openTaskFile(selected.id, home.face);
+        } else if (r === 'canvas' && !taskId) {
+          // Resume a saved task even before the Workshop has published its task rows.
+          const listing = await act(() => api.listSessionModel());
+          if (visit !== navigation.current) return;
+          const recent = listing && !api.hasSessionEdits?.() && window.UI.homeSessionToResume(listing, [s.homeLayout?.resume, tabsRef.current.active, s.focusedTask]);
+          if (recent) {
+            const opened = await act(() => api.openSession(recent.path));
+            if (!opened || opened.cancelled || visit !== navigation.current) return;
+            setTask(recent.task);
+            setTaskFace('canvas');
+            r = s.tasks.some(row => row.id === recent.task) ? 'task-file' : 'canvas';
+          } else {
+            setTask('');
+          }
+        } else {
+          setTask('');
+          setToast('Pick a task on Home.');
+          r = 'home';
+        }
       }
       if (r.startsWith('settings/') && !route.startsWith('settings/')) settingsOrigin.current = route;
       if(r==='canvas')setCanvasOpened(true);

@@ -70,7 +70,25 @@ const {chromium} = require('playwright');
       await settle(canvasView, 'Canvas from Home');
       assert.equal((await page.locator('.v22g-tab[data-active="true"] [role="tab"]').textContent()).trim(), 'Canvas session to reopen', 'the open session wins');
     });
-    console.log('OK both #185 routes open without the error screen');
+    await fresh('3 recover the Home filters without losing saved work', async page => {
+      assert.ok(await create(page, 'Saved task behind the running filter'));
+      await page.evaluate(async () => {
+        const api = window.ArchHubAPI;
+        const {homeLayout} = await api.readHomeLayout();
+        await api.setSessionListFilter('home', 'workflow');
+        await api.setHomeLayout({...homeLayout, map: {...homeLayout.map, filter: 'Running'}});
+      });
+      await page.getByRole('heading', {name: '0 running', exact: true}).waitFor();
+      const saved = page.waitForResponse(response => response.url().endsWith('/api/universal/settings-action')
+        && response.request().method() === 'POST' && response.request().postDataJSON()?.function === 'setHomeLayout');
+      await page.getByRole('button', {name: /^Show all \([1-9]\d*\)$/}).click();
+      assert.ok((await saved).ok(), 'the settings owner accepted the filter change');
+      await page.locator('[data-home-kind="all"][aria-pressed="true"]').waitFor();
+      const filter = await page.evaluate(async () => (await window.ArchHubAPI.readHomeLayout()).homeLayout.map.filter);
+      assert.equal(filter, 'All');
+      assert.equal(await page.getByRole('heading', {name: 'What do you need?', exact: true}).count(), 0);
+    });
+    console.log('OK both reopening routes and the Home filter recovery');
   } finally {
     await browser.close();
   }

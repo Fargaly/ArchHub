@@ -58,6 +58,7 @@ ArchHub is built with a clean separation of concerns. To run the desktop app fro
 
 - [Contribution Guidelines](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
+- [ArchHub license and commercial use](LICENSE.md)
 - [Node Catalogue Reference](04.DOCS/CATALOGUE.md)
 - [Desktop App Source Documentation](04.DOCS/README.md)
 

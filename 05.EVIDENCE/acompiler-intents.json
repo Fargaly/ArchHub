@@ -203,6 +203,17 @@
         "05.EVIDENCE/guardownscratch/"
       ]
     },
+    "BABOOMPUBLICGUIDES": {
+      "source": "2026-11-20 BABOOM standards-site assignment: extend the existing chat with Arabic and English answers grounded in the public ArchHub guides and the existing BIM standard. Cite the source, refuse unsupported questions, and review the patch before deployment.",
+      "scope": [
+        "01.APP/nodelang/baboom_standard.py",
+        "01.APP/nodelang/site_export.py",
+        "02.TESTS/tests_replica/test_baboom_site_fit.py",
+        "03.TOOLS/packaging/website/build_site.py",
+        "03.TOOLS/tools/prepare_baboom_site.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "BABOOMSITEFIT": {
       "source": "Independent release da12106 checks: e988 c1c0f04a signed-out response regression and 717 site deployment check; persona installed-manifest gap. Builder repair scope, not founder words. Preserve live signed-out response, router and truthful desktop handling; admit exact persona identity with hashes and all user-data exclusions. Commit only; no push, install, release or live-site change.",
       "scope": [

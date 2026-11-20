@@ -134,9 +134,15 @@ def _prepare(source, pin, series, ours, seed_lock):
         check_lock(source / "Cargo.lock", pin)   # seed only the pinned upstream bytes
         shutil.copyfile(source / "Cargo.lock", lock)
     shutil.copyfile(lock, source / "Cargo.lock")
-    env = {**os.environ, "RUSTFLAGS": pin["rustflags"], "CARGO_INCREMENTAL": "0"}
+    env = {**os.environ, "CARGO_INCREMENTAL": "0"}
+    rustflags = pin["rustflags"]
     env.pop("CARGO_ENCODED_RUSTFLAGS", None)
-    if "crt-static" in pin["rustflags"]:
+    if rustflags:
+        env["RUSTFLAGS"] = rustflags
+    else:
+        # Cargo uses Goose's target linker flags only when both overrides are absent.
+        env.pop("RUSTFLAGS", None)
+    if "crt-static" in rustflags:
         # llama-cpp-sys-2 builds llama.cpp with the dynamic C runtime unless told otherwise; with Rust on the static
         # one the final link fails (MSVC RuntimeLibrary mismatch). One C runtime for the whole executable.
         env["LLAMA_STATIC_CRT"] = "1"

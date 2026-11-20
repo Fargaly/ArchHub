@@ -163,7 +163,7 @@ def test_build_fetches_the_pinned_commit_and_builds_locked_with_a_receipt(tmp_pa
     cargo, env = next((c, e) for c, e in fake_tools if c[0] == "cargo")
     assert cargo == ["cargo", "build", "--release", "--locked", "--target", "x86_64-pc-windows-msvc",
                      "-p", "goose-cli", "--bin", "goose"]
-    assert env["RUSTFLAGS"] == ""
+    assert "RUSTFLAGS" not in env and "CARGO_ENCODED_RUSTFLAGS" not in env
     assert receipt["upstream_commit"] == COMMIT and receipt["archhub_rev"] == "abc123"
     assert receipt["patches"] == [["0001-archhub.patch", build_goose.sha(ours / "patches" / "0001-archhub.patch")]]
     assert receipt["cargo_lock_sha256"] == hashlib.sha256(UPSTREAM_LOCK).hexdigest()
@@ -467,10 +467,18 @@ def test_the_command_line_exits_with_cargos_own_code(monkeypatch, capfd):
     assert "cargo check exited with code 101" in capfd.readouterr().err
 
 
-def test_llama_cpp_uses_the_default_dynamic_crt(tmp_path, ours, pin, fake_tools, monkeypatch):
+@pytest.mark.parametrize("rustflags", ["", "-C debuginfo=1"])
+def test_cargo_receives_only_an_explicit_rustflags_override(tmp_path, ours, pin, fake_tools, monkeypatch, rustflags):
+    monkeypatch.setenv("RUSTFLAGS", "-C opt-level=1")
+    monkeypatch.setenv("CARGO_ENCODED_RUSTFLAGS", "-C\x1fopt-level=2")
     monkeypatch.delenv("LLAMA_STATIC_CRT", raising=False)
-    (ours / "Cargo.lock").write_bytes(UPSTREAM_LOCK)
-    build_goose.check(tmp_path / "src", archhub_rev="abc123", ours=ours, pin_path=pin)
+    value = json.loads(pin.read_text(encoding="utf-8"))
+    value["params"]["rustflags"] = rustflags
+    pin.write_text(json.dumps(value), encoding="utf-8")
+    receipt = _build(tmp_path, ours, pin, seed_lock=True)
     env = next(e for c, e in fake_tools if c[0] == "cargo")
-    assert env["RUSTFLAGS"] == ""
+    assert {key: env[key] for key in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS") if key in env} == (
+        {"RUSTFLAGS": rustflags} if rustflags else {}
+    )
     assert "LLAMA_STATIC_CRT" not in env
+    assert receipt["rustflags"] == rustflags

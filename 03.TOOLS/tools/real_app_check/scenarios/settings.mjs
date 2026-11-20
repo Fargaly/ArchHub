@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -15,12 +16,13 @@ export const steps=[
  'Installed Projects creates the selected Office folder tree through its native picker',
 ];
 const declaredSteps=steps;
-export default async function({step:recordStep,js,until,clickText,cdp,out,native}){
+export default async function({input,step:recordStep,js,until,clickText,cdp,out,native}){
  const entry=await recordStep(declaredSteps[0],async()=>{
   const access=await until(()=>js("window.ArchHubAPI?.getSnapshot()?.desktopAccess"),value=>value&&value.state!=='pending');
   assert(access&&typeof access.admitted==='boolean','The installed admission decision was not shown');
   if(access.admitted)return {not_exercised:'This profile already has a legitimate admitted account. Signed-out startup was not exercised; no signout was performed.',got:{authenticated:true}};
   assert(['signed_out','session_invalid','unavailable'].includes(access.state));
+  await until(() => js("Boolean(document.querySelector('[data-desktop-admission]'))"), Boolean);
   const hidden=await js("(()=>{const a=window.ArchHubAPI,s=a.getSnapshot();return {entry:!!document.querySelector('[data-desktop-admission]'),home:!!document.querySelector('[data-home-page]'),nodes:(s.graph?.nodes||[]).length,workspaces:(s.workspaces||[]).length,tasks:(s.tasks||[]).length,messages:(s.workshopMessages||[]).length,email:s.profile.email||'',document:a.getSessionDocument(),file:a.getSessionPath()};})()");
   assert.deepEqual(hidden,{entry:true,home:false,nodes:0,workspaces:0,tasks:0,messages:0,email:'',document:null,file:''});
   const refusal=await js("(async()=>{const held=window.__archhubSession;const response=await fetch('/api/universal/workspace-roots',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':held?.token||'','X-ArchHub-CSRF':held?.csrf||''},body:JSON.stringify({action:'list'})});const value=await response.json();return {status:response.status,code:value.code,state:value.state,hasRoots:Array.isArray(value.roots)&&value.roots.length>0};})()");
@@ -34,7 +36,14 @@ export default async function({step:recordStep,js,until,clickText,cdp,out,native
    assert.equal(await clickText('Sign in with your browser'),true);
    const signin=await until(()=>js('(()=>{const w=globalThis.__archhubAdmissionWitness;return {calls:w.signIns,status:w.status,phase:w.phase};})()'),value=>value.status!==null&&['waiting','exchanging','done','failed'].includes(value.phase));
    assert.equal(signin.calls,1);assert.equal(signin.status,200);assert(['waiting','exchanging','done'].includes(signin.phase),'The installed browser sign-in could not start');
-   const current=await until(()=>js('window.ArchHubAPI.getSnapshot().desktopAccess'),value=>value.admitted===true,20,500);
+   // Dedicated QA operators can use the full browser sign-in window.
+   const waitMs = input?.waitForSignIn === true ? 300_000 : 10_000;
+   const deadline = performance.now() + waitMs;
+   const current = await until(
+    () => js('window.ArchHubAPI.getSnapshot().desktopAccess'),
+    value => value.admitted === true || performance.now() >= deadline,
+    waitMs / 500 + 1, 500
+   );
    if(!current.admitted)assert.equal(await js("!!document.querySelector('[data-desktop-admission]')&&!document.querySelector('[data-home-page]')&&window.ArchHubAPI.getSessionDocument()===null"),true);
    return {pass:true,got:{authenticated:current.admitted===true,initialState:access.state,privateContentAbsent:true,protectedRouteRefused:refusal,newDocumentRefused:true,retryUsable:true,realSignInRequest:signin},expected_http:['401 /api/universal/workspace-roots','503 /api/universal/workspace-roots']};
   }finally{await js('globalThis.__archhubAdmissionWitness?.restore();true').catch(()=>{});}

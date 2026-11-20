@@ -23,6 +23,13 @@ Options:
   `.jsx` files, the copy's compiled Studio is rebuilt with this repository's
   `03.TOOLS/packaging/compile_studio.cjs`. Re-run without an overlay once the change is installed.
 - `--input <json>`: data handed to the scenario as `ctx.input`.
+  On a dedicated Windows QA machine, save `{"waitForSignIn":true}` in `qa-signin.json` and run this command from the repository root with a fresh evidence directory:
+
+  ```powershell
+  python -B 03.TOOLS/tools/real_app_check/real_app_check.py --scenario 03.TOOLS/tools/real_app_check/scenarios/settings.mjs --input qa-signin.json --out qa-signin-evidence
+  ```
+
+  Complete normal browser sign-in with the approved QA account within five minutes. If sign-in never finishes, the ten authenticated checks report `NOT EXERCISED` and the run is `INCOMPLETE`.
 - `--boot-seconds` and `--probe-seconds`: bounds on app start and on the whole scenario.
 
 Heavy runs go through the machine queue (`run-heavy.ps1`) like any test batch.

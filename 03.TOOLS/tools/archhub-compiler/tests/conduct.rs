@@ -121,3 +121,33 @@ fn metadata_readers_do_not_become_foreground_effects() {
     let hits=intent::check(&c,&[("tools/pipeline/strict_check.py".into(),source.into())]);
     assert!(!hits.iter().any(|d| d.message.contains("R100")), "{hits:?}");
 }
+
+#[test]
+fn inert_iife_callee_has_no_foreground_effect() {
+    assert_javascript_foreground(r#"(() => { const id = "keyboard.save"; return id; })();"#, 0);
+}
+
+#[test]
+fn literal_projection_has_no_foreground_effect() {
+    assert_javascript_foreground(r#"[{id: "Keyboard.save"}].filter(row => row.id);"#, 0);
+    assert_javascript_foreground(r#"const rows = [{id: "Keyboard.save"}]; rows.filter(row => row.id);"#, 0);
+}
+
+#[test]
+fn real_keyboard_call_still_needs_a_guard() {
+    assert_javascript_foreground(r#"keyboard.send("x");"#, 1);
+    assert_javascript_foreground(r#"(() => { keyboard.send("x"); })();"#, 1);
+}
+
+#[test]
+fn aliased_keyboard_call_still_needs_a_guard() {
+    assert_javascript_foreground(r#"const k = keyboard; k.send("x");"#, 1);
+    assert_javascript_foreground(r#"const send = (host.keyboard.send); send("x");"#, 1);
+}
+
+fn assert_javascript_foreground(source: &str, expected: usize) {
+    let file = "tools/archhub-compiler/worker.jsx";
+    let context = json!({"intent":"ACOMPILER2B","author":"court","files":[file]});
+    let diagnostics = intent::check(&context, &[(file.into(), source.into())]);
+    assert_eq!(diagnostics.iter().filter(|d| d.message.contains("R100")).count(), expected, "{source}: {diagnostics:?}");
+}

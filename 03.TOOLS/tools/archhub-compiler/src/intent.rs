@@ -328,7 +328,8 @@ pub fn check_with_authority(
         let Some(tree) = parser.parse(source, None) else {
             continue;
         };
-        let bindings = conduct_bindings(tree.root_node(), source);
+        let script = matches!(language, "javascript" | "typescript");
+        let bindings = conduct_bindings(tree.root_node(), source, script);
         let mut stack = vec![tree.root_node()];
         while let Some(node) = stack.pop() {
             if node.kind().contains("comment") {
@@ -337,7 +338,7 @@ pub fn check_with_authority(
             let content = text(node, source);
             let mut violated = None;
             let conduct = &conduct_authority["machine_rules"]["conduct"]["R100"];
-            if foreground_call(node, source, conduct, &bindings) && !away_guarded(node, source, conduct) {
+            if foreground_call(node, source, conduct, &bindings, script) && !away_guarded(node, source, conduct) {
                 diagnostics.push(error("E0102", file, node.start_position().row+1, node.start_position().column+1,
                     "R100: foreground effect has no dominating idle/away guard".into(),
                     "place the effect inside the positive founder_away() or idle_or_away() branch"));
@@ -614,7 +615,7 @@ fn away_guarded(node: tree_sitter::Node<'_>, source: &str, policy: &Value) -> bo
     }
     false
 }
-fn conduct_bindings(root: tree_sitter::Node<'_>, source: &str) -> Vec<(String, String)> {
+fn conduct_bindings(root: tree_sitter::Node<'_>, source: &str, script: bool) -> Vec<(String, String, bool)> {
     let mut bindings = vec![];
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -622,22 +623,27 @@ fn conduct_bindings(root: tree_sitter::Node<'_>, source: &str) -> Vec<(String, S
         if node.kind() == "import_statement" {
             for part in content.trim_start_matches("import ").split(',') {
                 if let Some((module, alias)) = part.trim().split_once(" as ") {
-                    bindings.push((alias.trim().into(), module.trim().into()));
+                    bindings.push((alias.trim().into(), module.trim().into(), true));
                 }
             }
         } else if node.kind() == "import_from_statement" {
             if let Some((module, names)) = content.trim_start_matches("from ").split_once(" import ") {
                 for name in names.split(',') {
                     let (name, alias) = name.trim().split_once(" as ").unwrap_or((name.trim(), name.trim()));
-                    bindings.push((alias.into(), format!("{module}.{name}")));
+                    bindings.push((alias.into(), format!("{module}.{name}"), true));
                 }
             }
         } else if matches!(node.kind(), "assignment" | "variable_declarator") {
             if let (Some(name), Some(value)) = (node.child_by_field_name("left").or_else(|| node.child_by_field_name("name")),
                 node.child_by_field_name("right").or_else(|| node.child_by_field_name("value"))) {
-                if name.kind() == "identifier" && matches!(value.kind(),
-                    "identifier" | "attribute" | "member_expression" | "string" | "string_literal" | "list" | "tuple" | "array") {
-                    bindings.push((text(name, source).into(), text(value, source).into()));
+                if name.kind() == "identifier" {
+                    let identity = if script { script_callee(value, source) } else { None };
+                    let is_identity = identity.is_some();
+                    if let Some(value) = identity.or_else(|| ((!script && value.kind() == "member_expression") || matches!(value.kind(),
+                        "identifier" | "attribute" | "string" | "string_literal" | "list" | "tuple" | "array"))
+                        .then(|| text(value, source).into())) {
+                        bindings.push((text(name, source).into(), value, is_identity));
+                    }
                 }
             }
         }
@@ -645,15 +651,15 @@ fn conduct_bindings(root: tree_sitter::Node<'_>, source: &str) -> Vec<(String, S
     }
     bindings
 }
-fn conduct_provenance(seed: &str, bindings: &[(String, String)]) -> Option<std::collections::BTreeSet<String>> {
+fn conduct_provenance(seed: &str, bindings: &[(String, String, bool)], identity_only: bool) -> Option<std::collections::BTreeSet<String>> {
     // Preserve every possible provenance; a later unrelated binding may never
     // erase an earlier risky import. This is deliberately conservative.
     let mut resolved = std::collections::BTreeSet::from([seed.to_string()]);
     let mut pending = vec![(seed.to_string(), std::collections::BTreeSet::new())];
     let mut steps = 0;
     while let Some((candidate, visited)) = pending.pop() {
-        for (index, (alias, value)) in bindings.iter().enumerate() {
-                if visited.contains(&index) { continue; }
+        for (index, (alias, value, is_identity)) in bindings.iter().enumerate() {
+                if visited.contains(&index) || (identity_only && !is_identity) { continue; }
                 let next = if candidate == *alias { Some(value.clone()) }
                 else if let Some(tail) = candidate.strip_prefix(&format!("{alias}.")) {
                     Some(format!("{value}.{tail}"))
@@ -671,22 +677,53 @@ fn conduct_provenance(seed: &str, bindings: &[(String, String)]) -> Option<std::
     }
     Some(resolved)
 }
-fn foreground_call(node: tree_sitter::Node<'_>, source: &str, policy: &Value, bindings: &[(String, String)]) -> bool {
+fn script_callee(node: tree_sitter::Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "identifier" | "this" | "super" => Some(text(node, source).into()),
+        "parenthesized_expression" | "as_expression" | "satisfies_expression" | "non_null_expression" | "type_assertion" =>
+            script_callee(children(node).into_iter().find(|part| !matches!(part.kind(), "comment" | "type_arguments"))?, source),
+        "member_expression" | "subscript_expression" => {
+            let object = script_callee(node.child_by_field_name("object")?, source);
+            let member = node.child_by_field_name("property").map(|part| text(part, source))
+                .or_else(|| {
+                    let index = node.child_by_field_name("index")?;
+                    let literal = text(index, source);
+                    (index.kind() == "string").then(|| literal.get(1..literal.len().saturating_sub(1))).flatten()
+                        .filter(|part| part.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '$')))
+                });
+            match (object, member) {
+                (Some(prefix), Some(name)) => Some(format!("{prefix}.{name}")),
+                (None, Some(name)) => Some(name.into()),
+                (prefix, None) => prefix,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn foreground_call(node: tree_sitter::Node<'_>, source: &str, policy: &Value, bindings: &[(String, String, bool)], script: bool) -> bool {
     if !matches!(node.kind(), "call" | "call_expression" | "command" | "invocation_expression") { return false; }
     let content = text(node, source);
     if node.kind() == "command" && strings(&policy["heavy_commands"]).iter().any(|command| {
         conduct_command_tokens(content).starts_with(&command.to_lowercase())
     }) { return true; }
-    let function = node.child_by_field_name("function").or_else(|| node.child_by_field_name("name"))
-        .map(|n| text(n, source)).unwrap_or(content);
-    let Some(resolved) = conduct_provenance(function, bindings) else { return true; };
+    let callee = node.child_by_field_name("function").or_else(|| node.child_by_field_name("name"));
+    let identity;
+    let function = if script {
+        identity = callee.and_then(|callee| script_callee(callee, source));
+        let Some(name) = identity.as_deref() else { return false; };
+        name
+    } else {
+        callee.map(|n| text(n, source)).unwrap_or(content)
+    };
+    let Some(resolved) = conduct_provenance(function, bindings, script) else { return true; };
     if resolved.iter().any(|value| contains_any(value, &policy["source_calls"])) { return true; }
     if !resolved.iter().any(|value| contains_any(value, &policy["launch_calls"])) { return false; }
     let mut arguments = content.to_string();
     if let Some(args) = node.child_by_field_name("arguments") {
         for arg in children(args) {
             if arg.kind() == "identifier" {
-                let Some(values) = conduct_provenance(text(arg, source), bindings) else { return true; };
+                let Some(values) = conduct_provenance(text(arg, source), bindings, false) else { return true; };
                 for value in values { arguments.push_str(&value); }
             }
         }

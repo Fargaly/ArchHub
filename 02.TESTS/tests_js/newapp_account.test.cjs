@@ -4,8 +4,15 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 
+const signedInAccount={signed_in:true,email:'court-user@example.test',user_id:'court-user'};
+function desktopAccess(account=signedInAccount){
+ return account.signed_in
+  ? {ok:true,admitted:true,state:'admitted',subject:account.user_id,email:account.email}
+  : {ok:true,admitted:false,state:'signed_out',subject:null,email:null};
+}
+
 test('CLOUD404 account and control availability survive both refresh orders and recover',async()=>{
- const account={signed_in:true,email:'court-user@example.test',user_id:'court-user'};
+ const account={...signedInAccount};
  const message='Signed in. Office invitations unavailable until the cloud service is updated.';
  let accountErrors={officeInvitations:message},controlErrors={secrets:'Connected account unavailable'};
  const {api}=await adapter(account,{'/api/universal/settings-action':body=>({ok:true,result:
@@ -25,14 +32,15 @@ test('CLOUD404 account and control availability survive both refresh orders and 
  accountErrors={};await api.refreshSettingsAccount();
  assert.equal(api.getSnapshot().controlErrors.officeInvitations,undefined);
  assert.equal(api.getSnapshot().controlErrors.providerModels,'Model catalogue unavailable');
- account.signed_in=false;account.email='';await api.syncAccount();
- assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot().controlErrors)),{});
+ account.signed_in=false;account.email='';await api.refreshDesktopAccess();
+ assert.equal(api.getSnapshot().desktopAccess.state,'signed_out');
+ assert.equal(api.getSnapshot().controlErrors,undefined);
 });
 
 async function adapter(account, responses={}){
  const requests=[],events=new Map();
  const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},
-  Uint8Array:globalThis.Uint8Array,dispatchEvent(e){events.get(e.type)?.(e);},addEventListener(name,fn){events.set(name,fn);},AH:{inkSoft:'#888'},crypto:require('node:crypto')};
+  Uint8Array:globalThis.Uint8Array,cancelAnimationFrame(){},dispatchEvent(e){events.get(e.type)?.(e);},addEventListener(name,fn){events.set(name,fn);},AH:{inkSoft:'#888'},crypto:require('node:crypto')};
  window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  const context={window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},
   CustomEvent:class {},sessionStorage:{getItem(){return null;}},URLSearchParams,TextEncoder:globalThis.TextEncoder,TextDecoder:globalThis.TextDecoder,AbortSignal:globalThis.AbortSignal,console,
@@ -42,7 +50,9 @@ async function adapter(account, responses={}){
    if(url==='/api/commands')data={commands:[]};
    if(url==='/api/universal/canvas')data={root:'canvas',nodes:[],wires:[],
     authorization:{principal:'local-process',display_name:'Local transport'}};
+   if(url==='/api/universal/desktop-access')data=desktopAccess(account);
    if(url==='/api/universal/cloud-session')data={...account};
+   if(url==='/api/universal/cloud-signin'&&!options.body)data={ok:true,phase:account.signed_in?'done':'idle'};
    if(Object.hasOwn(responses,url))data=await (typeof responses[url]==='function'?responses[url](options.body&&JSON.parse(options.body)):responses[url]);
    if(url==='/api/universal/cloud-signin'&&options.body)Object.assign(account,
     {signed_in:true,email:'user@example.test',user_id:'account-1',display_name:'Account user'});
@@ -53,12 +63,13 @@ async function adapter(account, responses={}){
    return {ok:true,status:200,json:async()=>data};
   }};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/api.js'),'utf8'),context);
- await window.ArchHubAPI.ready;
+ if(account.signed_in)await window.ArchHubAPI.ready;
+ else await window.ArchHubAPI.refreshDesktopAccess();
  return {api:window.ArchHubAPI,requests,window};
 }
 
 test('unfinished controls use actual adapter availability without invoking an action',async()=>{
- const {api,requests}=await adapter({signed_in:false});const count=requests.length;
+ const {api,requests}=await adapter({...signedInAccount});const count=requests.length;
  assert.equal(api.supportsAction('startVoiceInput'),false);
  assert.equal(api.supportsAction('changePlan'),false);
  assert.equal(api.supportsAction('reviewProofRow'),false);
@@ -75,7 +86,7 @@ test('unfinished controls use actual adapter availability without invoking an ac
 });
 
 test('unfinished controls and modal launchers are omitted from the rendered design',async()=>{
- const {api}=await adapter({signed_in:false},{'/api/universal/providers':{providers:[{id:'codex',name:'Codex',enabled:true,signedIn:true}]}});
+ const {api}=await adapter({...signedInAccount},{'/api/universal/providers':{providers:[{id:'codex',name:'Codex',enabled:true,signedIn:true}]}});
  await api.listProviders();
  const {JSDOM}=require('jsdom');
  const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
@@ -114,7 +125,7 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
 });
 
 test('Interface Studio refuses placement without a workflow and keeps the current projection',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/commands':{commands:[]}});
+ const {api,requests}=await adapter({...signedInAccount},{'/api/commands':{commands:[]}});
  const before=api.getSnapshot().graph;
  await assert.rejects(()=>api.addInterfaceElement('Button'),/Open a workflow/);
  assert.equal(requests.some(r=>r.body?.op==='add_interface_element'),false);
@@ -130,7 +141,7 @@ test('Interface Studio preserves the newer file readback when an older placement
  let revision=0,readCount=0,releaseOld,markOld;
  const oldStarted=new Promise(resolve=>{markOld=resolve;});
  const oldRead=new Promise(resolve=>{releaseOld=resolve;});
- const {api}=await adapter({signed_in:false},{
+ const {api}=await adapter({...signedInAccount},{
   '/api/commands':{commands:[]},
   '/api/session-files':async body=>{
    if(body.action==='initial')return {ok:true,document:document(0),path};
@@ -160,7 +171,7 @@ test('Interface Studio preserves the newer file readback when an older placement
 test('OPS history review community and MCP project the returned owner data',async()=>{
  const metadata={versions:[{id:'version-1'}],modelReview:{operation:'Naming Check',results:[{detail:'Actual result'}],issues:[]},dismissed:['suggestion']};
  const community={peers:[{id:'peer',subscribed:true}],patterns:[]};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas-op':body=>{
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/canvas-op':body=>{
   if(body.op==='project_state')return {ok:true,result:metadata};
   if(body.op==='mcp_servers')return {ok:true,result:[{id:'server',status:'Negotiated',tools:[]}]};
   if(['community_state','subscribe_community','review_community_pattern'].includes(body.op))return {ok:true,result:community};
@@ -181,7 +192,7 @@ test('OPS history review community and MCP project the returned owner data',asyn
 test('OPS mod actions preserve the native review digest and refresh from the package owner',async()=>{
  const calls=[];
  const mod={id:'rows',name:'Rows',nodes:[],enabled:true};
- const {api}=await adapter({signed_in:false},{'/api/universal/mods':body=>{
+ const {api}=await adapter({...signedInAccount},{'/api/universal/mods':body=>{
   calls.push(body);
   if(body.action==='browse')return {ok:true,path:'C:/FIXTURE/PACKAGE'};
   if(body.action==='review')return {ok:true,review:{...mod,digest:'actual-manifest-digest'}};
@@ -196,7 +207,7 @@ test('OPS mod actions preserve the native review digest and refresh from the pac
 
 test('OPS research reads captured content checks license and saves the actual decision',async()=>{
  let row={id:'source',title:'Source',source:'C:/FIXTURE/LICENSE.md',sha256:'digest',summary:'Actual content',transcript:['MIT License']};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/social-surface':body=>{
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/social-surface':body=>{
   if(body.op==='check_research_license')row={...row,licenseStatus:'MIT License',licenseEvidence:['MIT License']};
   if(body.op==='save_research_decision')row={...row,...body.args[1],status:'Decision recorded'};
   return {ok:true,result:row,state:{social:{research:[row]}}};
@@ -211,7 +222,7 @@ test('OPS research reads captured content checks license and saves the actual de
 test('OPS refused adoption work remains retryable and only a confirmed Work is linked',async()=>{
  let refused=true;
  let row={id:'source',source:'C:/FIXTURE/LICENSE.md',title:'LICENSE',summary:'MIT License',sha256:'source-digest',licenseEvidence:['MIT License']};
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
+ const {api}=await adapter({...signedInAccount},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
   '/api/universal/social-surface':body=>{
    if(body.op==='save_research_decision')row={...row,...body.args[1]};
    if(body.op==='bind_research_work')row={...row,work:body.args[1],status:'Application work queued; not applied'};
@@ -228,7 +239,7 @@ test('OPS refused adoption work remains retryable and only a confirmed Work is l
 });
 
 test('OPS share and memory proposals return real Workshop tasks rather than invented approvals',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
   '/api/universal/workshop':body=>({ok:true,result:body.function==='listTasks'?[]:{id:'work-1',status:'queued'}})});
  api.getSnapshot().mods.push({id:'mod-1',name:'Actual package'});
  api.getSnapshot().suggestions.push({id:'suggestion',text:'Actual suggestion'});
@@ -240,7 +251,7 @@ test('OPS share and memory proposals return real Workshop tasks rather than inve
 test('OPS file picker cancellation and refused sends retain the attachment draft',async()=>{
  let refused=true,picked='C:/FIXTURE/SOURCE.md';
  const file={id:'file-node',name:'SOURCE.md',path:picked,kind:'Project file'};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
   '/api/universal/pick-file':()=>({ok:true,path:picked}),
   '/api/universal/canvas-op':body=>({ok:true,result:body.op==='project_files'?[file]:file}),
   '/api/router/chat':()=>refused?{ok:false,error:'Choose an available agent'}:{ok:true,result:{answer:'Read'}},
@@ -256,7 +267,7 @@ test('OPS file picker cancellation and refused sends retain the attachment draft
 
 test('a local transport lease never becomes the account profile',async()=>{
  const {api}=await adapter({signed_in:false,email:''});
- await api.syncAccount();
+ await assert.rejects(()=>api.syncAccount(),/Sign in to archhub.io/);
  const profile=api.getSnapshot().profile;
  assert.equal(profile.signedIn,false);
  assert.notEqual(profile.id,'local-process');
@@ -278,7 +289,7 @@ test('one-click sign-in and sign-out project the account owner answer',async()=>
 });
 
 test('workspace picker registers the absolute native path and re-reads the catalogue',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/workspace-roots':body=>body?.action==='browse'?{ok:true,path:'C:/WORK'}:{ok:true,roots:[]}});
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/workspace-roots':body=>body?.action==='browse'?{ok:true,path:'C:/WORK'}:{ok:true,roots:[]}});
  await api.addWorkspace();
  const writes=requests.filter(r=>r.url==='/api/universal/workspace-roots').map(r=>r.body);
  const start=writes.findIndex(body=>body?.action==='browse');
@@ -288,7 +299,7 @@ test('workspace picker registers the absolute native path and re-reads the catal
 });
 
 test('cancelled native folder selection never registers a workspace',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/workspace-roots':{ok:true,path:'',roots:[]}});
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/workspace-roots':{ok:true,path:'',roots:[]}});
  const cancelled=await api.addWorkspace();
  assert.equal(cancelled.cancelled,true);
  assert.equal(cancelled.message,'No workspace was added.');
@@ -296,7 +307,7 @@ test('cancelled native folder selection never registers a workspace',async()=>{
 });
 
 test('Docs retains generated guides and the glossary from the documentation owner',async()=>{
- const {api}=await adapter({signed_in:false},{'/api/documentation':{tutorials:[{id:'account-web',title:'Account',description:'Sign in',text:'# Account\nUse browser sign-in.'}],
+ const {api}=await adapter({...signedInAccount},{'/api/documentation':{tutorials:[{id:'account-web',title:'Account',description:'Sign in',text:'# Account\nUse browser sign-in.'}],
   glossary:[{term:'Node',definition:'One block on the canvas.'}]}});
  const docs=await api.refreshDocs();
  assert.equal(docs.length,1);
@@ -307,7 +318,7 @@ test('Docs retains generated guides and the glossary from the documentation owne
 
 
 test('update status is read from the existing lifecycle and never inferred from graph configuration',async()=>{
- const {api}=await adapter({signed_in:false},{'/api/universal/application-update':{ok:true,
+ const {api}=await adapter({...signedInAccount},{'/api/universal/application-update':{ok:true,
   state:'ready',current_build:'installed',available_build:'next',restart_supported:true,detail:'Verified download'}});
  await api.refreshApplicationUpdate();
  for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
@@ -317,7 +328,7 @@ test('update status is read from the existing lifecycle and never inferred from 
 });
 
 test('check, restart and confirmation use the existing update actions',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/application-update':body=>({ok:true,
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/application-update':body=>({ok:true,
   state:body?.action==='reload'?'restarting':body?.action==='acknowledge'?'idle':'ready',current_build:'installed',available_build:body?.action==='acknowledge'?null:'next',restart_supported:true})});
  await api.checkForUpdates();await api.installUpdate();await api.acknowledgeUpdate();
  assert.deepEqual(requests.filter(r=>r.url==='/api/universal/application-update'&&r.body).map(r=>r.body),
@@ -328,7 +339,7 @@ test('check, restart and confirmation use the existing update actions',async()=>
 test('failed update checks and missing desktop lifecycle never offer restart',async()=>{
  for(const status of [{state:'failed',detail:'Feed unreachable',restart_supported:true},
   {state:'ready',available_build:'next',restart_supported:false}]){
-  const {api,requests}=await adapter({signed_in:false},{'/api/universal/application-update':{ok:true,current_build:'installed',...status}});
+  const {api,requests}=await adapter({...signedInAccount},{'/api/universal/application-update':{ok:true,current_build:'installed',...status}});
   await api.refreshApplicationUpdate();
   assert.equal(api.getSnapshot().update.available,false);
   await assert.rejects(()=>api.installUpdate());
@@ -338,7 +349,7 @@ test('failed update checks and missing desktop lifecycle never offer restart',as
 
 test('a native ready notification refreshes the approved design without the retired transport',async()=>{
  let ready=false;
- const {api,window,requests}=await adapter({signed_in:false},{'/api/universal/application-update':()=>({ok:true,
+ const {api,window,requests}=await adapter({...signedInAccount},{'/api/universal/application-update':()=>({ok:true,
   state:ready?'ready':'idle',current_build:'installed',available_build:ready?'next':null,restart_supported:true})});
  await api.refreshApplicationUpdate();const before=requests.length;ready=true;
  window.dispatchEvent({type:'archhub:update-ready'});
@@ -349,9 +360,11 @@ test('a native ready notification refreshes the approved design without the reti
 
 test('a stale status read cannot erase a newer checked release',async()=>{
  let release,hold=false;
- const {api}=await adapter({signed_in:false},{'/api/universal/application-update':body=>
+ const {api}=await adapter({...signedInAccount},{'/api/universal/application-update':body=>
   body?{ok:true,state:'ready',available_build:'next',current_build:'installed',restart_supported:true}:
   hold?new Promise(resolve=>{release=resolve;}):{ok:true,state:'idle',current_build:'installed',restart_supported:true}});
+ // Let the startup status read finish before holding the deliberate stale read.
+ await new Promise(resolve=>globalThis.setImmediate(resolve));
  await api.refreshApplicationUpdate();hold=true;
  const old=api.refreshApplicationUpdate();
  await api.checkForUpdates();
@@ -360,7 +373,7 @@ test('a stale status read cannot erase a newer checked release',async()=>{
 });
 
 test('a refused restart is not replayed and clears the stale ready offer',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/application-update':body=>body?
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/application-update':body=>body?
   {ok:false,error:'A Workshop job is running'}:{ok:true,state:'ready',available_build:'next',current_build:'installed',restart_supported:true}});
  await api.refreshApplicationUpdate();
  for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
@@ -434,7 +447,7 @@ async function screen(files,data,methods='{}'){
  return {evaluate,close:()=>command('Target.closeTarget',{targetId})};
 }
 test('OPS real browser MCP load errors retry and refused imports preserve the current screen',async()=>{
- const {api}=await adapter({signed_in:false});
+ const {api}=await adapter({...signedInAccount});
  const s=await screen(['answer-widgets.jsx','integration-states.jsx'],api.getSnapshot(),`{
   refreshMcpServers:async()=>{if(refused)throw Error('Reconnect the actual tool server');const rows=[{id:'actual-server',name:'Actual server',status:'Negotiated',tools:[{id:'actual-tool',name:'Actual tool'}]}];testData.mcpServers=rows;return rows;},
   importMcpTool:async()=>{throw Error('Open this tool in its Workshop work');},
@@ -504,6 +517,7 @@ async function adapter(canvasSource={root:'g',nodes:[],wires:[]}) {
   fetch:async(url,options)=>{
    const body=options.body&&JSON.parse(options.body);requests.push({url,body});let result={ok:true};
    if(url==='/api/commands')return {ok:true,status:200,json:async()=>({commands:[]})};
+   if(url==='/api/universal/desktop-access')result=desktopAccess();
    if(url==='/api/universal/canvas')result=canvasSource;
    if(url==='/api/universal/wire-property')canvasSource.wires.find(wire=>wire.id===body.wire).params=[{label:body.label,relation:'condition-relation',value:body.value}];
    if(url==='/api/universal/set-property')for(const wire of canvasSource.wires)for(const parameter of wire.params||[])if(parameter.relation===body.relation)parameter.value=body.value;
@@ -547,7 +561,7 @@ test('wire rule edits check the rule with the file owner and keep it on the open
 }
 // WIRE-projects end
 test('WIRE-rest absent canvas commands reject with a repair action and do not synthesize state',async()=>{
- const {api,requests}=await adapter({signed_in:false});
+ const {api,requests}=await adapter({...signedInAccount});
  await assert.rejects(()=>api.createCommunityGroup('Test group'),/System graph/);
  assert.equal(api.getSnapshot().community.groups.length,0);
  assert.equal(requests.some(r=>r.url==='/api/universal/interaction'),false);
@@ -557,7 +571,7 @@ test('WIRE-rest command uses the admitted control, current revision and typed su
  const canvas={root:'canvas',revision:'rev-7',nodes:[],wires:[],scope:{current:'scope-1'},interaction_projection:{bindings:[
   {control:'createCommunityGroup',interaction:'command-1',event:'activate',event_facts:[{source:'submitted',input:'name'}]}
  ]}};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/canvas':canvas,
   '/api/universal/interaction':{ok:true,result:{id:'group-1',name:'Test group'}}});
  const result=await api.createCommunityGroup('Test group');
  assert.equal(result.id,'group-1');
@@ -571,7 +585,7 @@ test('WIRE-rest owner refusal propagates without a write retry or fabricated gro
  const canvas={root:'canvas',revision:7,nodes:[],wires:[],interaction_projection:{bindings:[
   {control:'createCommunityGroup',interaction:'command-1',event:'activate',event_facts:[{source:'submitted',input:'name'}]}
  ]}};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/canvas':canvas,
   '/api/universal/interaction':{ok:false,error:'Membership requires owner review'}});
  await assert.rejects(()=>api.createCommunityGroup('Test group'),/Membership requires owner review/);
  assert.equal(requests.filter(r=>r.url==='/api/universal/interaction').length,1);
@@ -605,7 +619,7 @@ async function restScreen(component, api, state, props={}) {
 }
 
 test('WIRE-rest rendered Desktop shows waiting, real refusal, retry and the owner result',async()=>{
- const {api}=await adapter({signed_in:false});let calls=0,release;
+ const {api}=await adapter({...signedInAccount});let calls=0,release;
  const screen=await restScreen('DesktopScene',{...api,getDesktopCompanion:()=>{calls++;return calls===1?new Promise(resolve=>{release=resolve;}):Promise.resolve({ok:true,status:'running',message:'Native owner frame 17'});}},api.getSnapshot());
  try{
   const click=text=>{const button=[...screen.win.document.querySelectorAll('button')].find(b=>b.textContent===text);assert.ok(button,text);button.click();};
@@ -622,7 +636,7 @@ test('WIRE-rest rendered Desktop shows waiting, real refusal, retry and the owne
 });
 
 test('WIRE-rest rendered Watcher reads connector owner evidence and opens existing Connections',async()=>{
- const {api}=await adapter({signed_in:false});let calls=0;
+ const {api}=await adapter({...signedInAccount});let calls=0;
  const screen=await restScreen('Watcher',{...api,readHostAvailability:async()=>{calls++;return {ok:true,operations:[{host:'revit',operation:'read',status:'available',reason:'Broker observed'}]};}},api.getSnapshot());
  try{
   [...screen.win.document.querySelectorAll('button')].find(b=>b.textContent==='Read source').click();await screen.settle();
@@ -634,13 +648,13 @@ test('WIRE-rest rendered Watcher reads connector owner evidence and opens existi
 
 test('WIRE-rest command rejects a changed input schema before posting',async()=>{
  const canvas={root:'canvas',nodes:[],wires:[],interaction_projection:{bindings:[{control:'createCommunityGroup',interaction:'i',event:'activate',event_facts:[]}]}};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/canvas':canvas});
  await assert.rejects(()=>api.createCommunityGroup('Group'),/input schema changed/);
  assert.equal(requests.some(r=>r.url==='/api/universal/interaction'),false);
 });
 
 test('WIRE-rest rendered community preserves rejected drafts and executes its registered owner callback',async()=>{
- const {api}=await adapter({signed_in:false});let calls=0;
+ const {api}=await adapter({...signedInAccount});let calls=0;
  const screen=await restScreen('CommunityTools',{...api,createCommunityGroup:async(name)=>{calls++;assert.equal(name,'Retained group');throw Error('Choose a community owner in System graph');}},api.getSnapshot());
  try{
   const input=screen.win.document.querySelector('[aria-label="Community group name"]');
@@ -654,7 +668,7 @@ test('WIRE-rest rendered community preserves rejected drafts and executes its re
 });
 
 test('WIRE-rest rendered owned screens mount against the real empty snapshot and keep navigation usable',async()=>{
- const {api}=await adapter({signed_in:false});
+ const {api}=await adapter({...signedInAccount});
  for(const component of ['GraphProperties','RefineComparison','Routing','Xray','WatcherDimensions']){
   const screen=await restScreen(component,api,api.getSnapshot());
   try{assert.ok(screen.win.document.getElementById('root').textContent.length>0,component);}
@@ -663,7 +677,7 @@ test('WIRE-rest rendered owned screens mount against the real empty snapshot and
 });
 
 test('WIRE-rest context menu keeps a refused owner action and Retry inside the menu',async()=>{
- const {api}=await adapter({signed_in:false});let calls=0;
+ const {api}=await adapter({...signedInAccount});let calls=0;
  const state=api.getSnapshot();state.graph.nodes=[{id:'node-1',title:'Actual node',inputs:[],outputs:[]}];
  const screen=await restScreen('ContextMenu',{...api,setPortVisibility:async()=>{calls++;throw Error('Port visibility owner refused this selection');}},state,{kind:'Port menu',nodeId:'node-1',port:'out',close(){}});
  try{
@@ -701,7 +715,7 @@ async function buttonsAdapter(extra={},replies={}){
  window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
-  const data=Object.hasOwn(replies,url)?await replies[url](body):url==='/api/commands'?{commands:[]}:url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
+  const data=Object.hasOwn(replies,url)?await replies[url](body):url==='/api/universal/desktop-access'?desktopAccess():url==='/api/commands'?{commands:[]}:url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
    {ok:true,result:{dependencies:[{id:body.args[0],state:'Ready'}]}}:{ok:true,result:[]};
   return {ok:true,status:200,json:async()=>data};
  };
@@ -767,7 +781,7 @@ async function hostskillsAdapter() {
  let fail=false,owner=true,cards=[];
  const methods=[];
  const file=path=>({format:'archhub',version:1,id:'doc:'+path,title:path||'Untitled',nodes:[],wires:[],groups:[],notes:[],properties:{}});
- const rig=await adapter({signed_in:false},{
+ const rig=await adapter({...signedInAccount},{
   // The open file's owner: each path opens as its own document (D-014), so a switch is a real adoptFile.
   '/api/session-files':body=>body.action==='catalogue'?{ok:true,items:[],sessions:[],directory:'/fixture'}:
    body.action==='open'?{ok:true,document:file(body.path),path:body.path}:{ok:true,document:body.document||file(''),path:body.path||'',revision:1},
@@ -832,6 +846,8 @@ test('HOSTSKILLS unavailable owner hides all six and a local file preserves uplo
  await rig.api.inspectConnectorBundle({name:'fixture.json',arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)});
  const call=rig.methods.find(r=>r.function==='inspectConnectorBundle');
  assert.equal(Buffer.from(call.args[0].base64,'base64').toString(),bytes.toString());
+ // Finish the initial Home notifications read before counting blocked host actions.
+ await new Promise(resolve=>globalThis.setImmediate(resolve));
  rig.loseOwner();await rig.api.readHostSkills();const count=rig.methods.length;
  for(const name of ['importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill']){
   assert.equal(rig.api.supportsAction(name),false);await assert.rejects(()=>rig.api[name](),/owner unavailable/);
@@ -924,7 +940,7 @@ async function approvalAdapter() {
   title:'Reviewed request',approvalKind:'social',kind:'qc',status:'pending',rows:[{element:'post',before:'Not executed',after:'Exact request'}],rubric:{}};
  let latest=globalThis.structuredClone(card),failure=null;
  const methods=[];
- const rig=await adapter({signed_in:false},{
+ const rig=await adapter({...signedInAccount},{
   '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
   '/api/universal/workshop':body=>{
    if(body.function==='listTasks')return {result:[]};
@@ -972,7 +988,7 @@ test('APPROVALS owner refusal preserves the confirmed projection',async()=>{
  await assert.rejects(()=>api.postponeApproval("decision-1"),/exact request changed/);
  assert.deepEqual(api.getSnapshot().approvals,before);
  // A new adapter owner failure is exercised with no Workshop binding.
- const absent=await adapter({signed_in:false});
+ const absent=await adapter({...signedInAccount});
  assert.equal(absent.api.supportsAction('postponeApproval'),false);
  await assert.rejects(()=>absent.api.postponeApproval('decision-1'),/not confirmed|unavailable/);
  assert.deepEqual(api.getSnapshot().approvals,before);
@@ -1017,7 +1033,7 @@ async function watcherAdapter() {
   wallY:510,pendingY:530,marks:[],comments:[],dimensions:[],lengthMm:12900,thicknessMm:200,geometry:{outline:[],walls:[[120,510,980,510]],doors:[],tags:[]},status:'loaded'};
  let failure=null,cards=[],writes=0,readOwner=true;
  const methods=[];
- const rig=await adapter({signed_in:false},{
+ const rig=await adapter({...signedInAccount},{
   '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
   '/api/universal/workshop':body=>{
    if(body.function==='listTasks')return {result:[]};
@@ -1119,7 +1135,7 @@ async function desktopAdapter(){
  const held={owner:'desktop-owner',program:'',stage:'Watching',instance:null,offers:[],proposal:null,taskId:null,
   schedules:[{id:'schedule-1',title:'Daily',operation:'Workflow',responsibility:'',selfReview:true,owner:'account-1'}]};
  let cards=[],failure=null,owner=true,writes=0;const methods=[];
- const rig=await adapter({signed_in:false},{
+ const rig=await adapter({...signedInAccount},{
   '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
   '/api/universal/workshop':body=>{
    if(body.function==='listTasks')return {result:[]};
@@ -1189,7 +1205,7 @@ test('DESKTOP rendered existing scene exposes the three owner-bound controls and
 
 for(const name of ['setDesktopProgram','offerDesktopAction','prepareDesktopAction','setScheduleResponsibility','reviewScheduledWork'])
  test('DESKTOP '+name+' stays hidden until its owner answers',async()=>{
-  const {api,requests}=await adapter({signed_in:false});const calls=()=>requests.filter(row=>row.body?.function===name).length,count=calls();
+  const {api,requests}=await adapter({...signedInAccount});const calls=()=>requests.filter(row=>row.body?.function===name).length,count=calls();
   assert.equal(api.supportsAction(name),false);
   await assert.rejects(()=>api[name](),/unavailable/);assert.equal(calls(),count);
  });
@@ -1269,7 +1285,7 @@ test('SETTINGS slow control read cannot overwrite a confirmed companion write',a
 
 // Migrated behavior contracts from the retired StudioLM tests, against the current owner.
 test('STUDIOTESTS stop-all posts once and preserves state after refusal',async()=>{
- let refused=true;const {api,requests}=await adapter({signed_in:false},{'/stop-all':()=>refused?{ok:false,error:'Stop refused'}:{ok:true,stopped:true}});
+ let refused=true;const {api,requests}=await adapter({...signedInAccount},{'/stop-all':()=>refused?{ok:false,error:'Stop refused'}:{ok:true,stopped:true}});
  const stopped=api.getSnapshot().app.stopped;
  await assert.rejects(api.stopEverything(),/Stop refused/);
  assert.equal(api.getSnapshot().app.stopped,stopped,'refusal cannot fabricate a new stopped state');
@@ -1280,7 +1296,7 @@ test('STUDIOTESTS stop-all posts once and preserves state after refusal',async()
 
 test('STUDIOTESTS host availability returns only the server catalogue and retains empty and refused reads',async()=>{
  let response={hosts:[{id:'host-a',name:'Revit'}]};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/hosts':()=>response});
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/hosts':()=>response});
  assert.deepEqual(JSON.parse(JSON.stringify(await api.readHostAvailability())),response);
  response={hosts:[]};assert.deepEqual(JSON.parse(JSON.stringify(await api.readHostAvailability())),response);
  response={ok:false,error:'Host catalogue unavailable'};await assert.rejects(api.readHostAvailability(),/Host catalogue unavailable/);
@@ -1290,7 +1306,7 @@ test('STUDIOTESTS host availability returns only the server catalogue and retain
 // Clean ApplicationServer projects declared group ports; member ports belong to the entered scope.
 // clean_visual_projection.py::project_clean_visual_canvas, application_server.py::_clean_connect.
 test('CARDPOLISH Properties opens the existing full-value Node dialog',async()=>{
- const {api}=await adapter({signed_in:false});const state=api.getSnapshot();
+ const {api}=await adapter({...signedInAccount});const state=api.getSnapshot();
  state.graph.nodes=[{id:'node-1',title:'Actual node',inputs:[],outputs:[],params:{payload:{full:'retained structured value'}}}];
  const screen=await restScreen('ContextMenu',api,state,{kind:'Node menu',nodeId:'node-1',close(){}});
  try{
@@ -1326,7 +1342,7 @@ async function fileAdapter(open={}){
   sessionStorage:{getItem(){return null;},setItem(){}},URLSearchParams,TextEncoder:globalThis.TextEncoder,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options={})=>{
    const body=options.body?JSON.parse(options.body):{};requests.push({url,body});
-   const data=url==='/api/commands'?{commands:[]}:url==='/api/session-files'?answer(body):url==='/api/universal/canvas-op'?{ok:true,result:[]}:{ok:true,result:{}};
+   const data=url==='/api/universal/desktop-access'?desktopAccess():url==='/api/commands'?{commands:[]}:url==='/api/session-files'?answer(body):url==='/api/universal/canvas-op'?{ok:true,result:[]}:{ok:true,result:{}};
    return {ok:true,status:200,json:async()=>data};
   }};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/api.js'),'utf8'),context);

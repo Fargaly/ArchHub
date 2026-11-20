@@ -199,7 +199,20 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or engine in ('thing.file.write', 'script.python'))):
+    bcf_write = False
+    if engine == 'daily.ifc_check_bcf':
+        from .daily_work_nodes import bcf_request, BCF_VERSIONS
+        version_input = feeds.get('bcf_version', params.get('bcf_version', BCF_VERSIONS[0]))
+        params = bcf_request(params, feeds, document)
+        bcf_write = bool(params['bcf_path'])
+        if bcf_write and continuation and not _RELEASING.get(False):
+            source = params['bcf'] or params['ifc']
+            with open(source, 'rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            continuation = {**continuation, 'bcf_binding': {'node': node['id'], 'source': source,
+                            'digest': digest, 'version': params['bcf_version'], 'output': params['bcf_path'],
+                            'version_input': version_input}}
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
@@ -1389,6 +1402,17 @@ def approval_current(document, continuation, identity):
     current = document.get('properties', {}).get('canvasRun', {})
     if not current.get('id') or current['id'] != expected.get('id') or current.get('inputs', {}).get(identity) != expected.get('inputs', {}).get(identity):
         return False
+    binding = continuation.get('bcf_binding')
+    if binding:
+        from .daily_work_nodes import resolve_bcf_version
+        try:
+            if resolve_bcf_version({'bcf_version': binding['version_input']}, {}, document) != binding['version']:
+                return False
+            with open(binding['source'], 'rb') as stream:
+                if hashlib.file_digest(stream, 'sha256').hexdigest() != binding['digest']:
+                    return False
+        except (OSError, ValueError):
+            return False
     def canonical(value):
         value = copy.deepcopy(value)
         for row in value['nodes']:

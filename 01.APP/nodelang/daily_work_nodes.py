@@ -57,6 +57,7 @@ python-dateutil==2.9.0.post0 --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0
 six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
 pystache==0.6.8 --hash=sha256:7211e000974a6e06bce2d4d5cad8df03bcfffefd367209117376e4527a1c3cb8
 """
+_BCF_LOCK = ''.join(line + '\n' for line in _IFC_LOCK.splitlines() if line.startswith(('bcf-client==', 'xsdata==')))
 _OCR_LOCK = """\
 rapidocr==3.10.0 --hash=sha256:2fc34e26cd0f48514804a94f8832283039c7334076bff60768b1fed9ad068050
 onnxruntime==1.31.1 --hash=sha256:0a3998e18cb667ef54287556bd62291a788ed235723dd90c83b2294b24e71d81
@@ -76,6 +77,7 @@ urllib3==2.8.0 --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475
 charset-normalizer==3.5.2 --hash=sha256:e4e81e09c1578b8df602e3db08b0b3ea0a6947ad612f52bf8dc5ea8d47691f0c
 """
 RUNTIMES = {
+    'bcf': {'lock': _BCF_LOCK, 'files': []},
     'ifc': {'lock': _IFC_LOCK, 'files': [
         {'url': 'https://github.com/IfcOpenShell/IfcOpenShell/releases/download/ifcopenshell-python-0.9.0post1/'
                 'ifcopenshell-python-0.9.0post1-py314-win64.zip',
@@ -158,7 +160,7 @@ def ensure_runtime(name: str, *, budget_s: float = 900) -> Path:
         # pip's hash mode refuses any wheel whose SHA-256 is not the pinned one.
         done = subprocess.run([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input',
                                '--no-deps', '--require-hashes', '--only-binary=:all:', '--target', str(building / 'site'),
-                               '-r', str(lock)], capture_output=True, text=True, timeout=budget_s,
+                               '-r', str(lock)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=budget_s,
                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if done.returncode:
             shutil.rmtree(building, ignore_errors=True)
@@ -182,7 +184,7 @@ def run_worker(job: str, args: dict, *, site: Path | None, budget_s: float) -> d
         order = Path(scratch) / 'job.json'
         order.write_text(json.dumps({'job': job, 'site': str(site) if site else '', 'args': args}), encoding='utf-8')
         try:
-            done = subprocess.run([sys.executable, '-I', str(WORKER), str(order)], capture_output=True, text=True,
+            done = subprocess.run([sys.executable, '-I', str(WORKER), str(order)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                   encoding='utf-8', errors='replace', timeout=budget_s, cwd=scratch,
                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         except subprocess.TimeoutExpired:
@@ -403,25 +405,80 @@ def revision_compare(params, feeds):
     return {'pages': pages, 'overlays': files, 'summary': summary}, summary
 
 
+BCF_VERSIONS = ('2.1', '3.0')
+
+
+def _bcf_output(value, source):
+    text = str(value or '')
+    target = Path(text)
+    if not target.is_absolute() or text.startswith(('\\\\', '//')) or target.suffix.lower() not in ('.bcf', '.bcfzip'):
+        raise ValueError('Choose a local absolute .bcf or .bcfzip output file.')
+    if target.resolve() == source.resolve() or (target.exists() and os.path.samefile(target, source)):
+        raise ValueError('The BCF output must differ from the input file.')
+    if target.resolve().suffix.lower() not in ('.bcf', '.bcfzip'):
+        raise ValueError('The resolved BCF output must be a .bcf or .bcfzip file.')
+    return target.resolve()
+
+
 # ------------------------------------------- 3 clash and IDS check to BCF --
+def resolve_bcf_version(params, feeds, document=None):
+    version = feeds.get('bcf_version', params.get('bcf_version', BCF_VERSIONS[0]))
+    if version in (None, '', 'From Projects'):
+        from .session_files import resolve_setting
+        version = resolve_setting(document or {}, 'Projects.BCF version')['value']
+    if version not in BCF_VERSIONS:
+        raise ValueError('Choose BCF 2.1 or 3.0.')
+    return version
+
+
+def bcf_request(params, feeds, document=None):
+    source = feeds.get('bcf') or params.get('bcf')
+    is_archive = bool(source)
+    path = _local_file(source if is_archive else feeds.get('ifc') or params.get('ifc'), 'bcf' if is_archive else 'ifc', ('.bcf', '.bcfzip') if is_archive else ('.ifc',)).resolve()
+    target = params.get('bcf_path') or ('' if is_archive else path.with_suffix('.bcf'))
+    if target:
+        target = str(_bcf_output(target, path))
+    spec = DAILY_ENGINES['daily.ifc_check_bcf']['params']
+    for key in ('archive_bytes', 'archive_entries'):
+        if not 1 <= int(params.get(key, spec[key])) <= spec[key]:
+            raise ValueError('BCF archive budgets must remain within their declared maximum.')
+    return {**params, 'bcf_version': resolve_bcf_version(params, feeds, document),
+            'bcf': str(path) if is_archive else '', 'ifc': '' if is_archive else str(path), 'bcf_path': target}
+
+
 def ifc_check_bcf(params, feeds):
     spec = DAILY_ENGINES['daily.ifc_check_bcf']
+    params = bcf_request(params, feeds)
+    version = params['bcf_version']
+    source = params.get('bcf')
+    if params['bcf_path']:
+        from .hook_decision import _RELEASING
+        if not _RELEASING.get(False):
+            raise PermissionError('BCF writes require the existing file-write Approve card.')
+    if source:
+        source = _local_file(source, 'bcf', ('.bcf', '.bcfzip'))
+        target = str(_bcf_output(params['bcf_path'], source)) if params.get('bcf_path') else ''
+        site = ensure_runtime('bcf', budget_s=_budget(params, spec)) / 'site'
+        answer = run_worker('bcf_exchange', {'source': str(source), 'target': target, 'version': version,
+                                             'archive_bytes': int(params.get('archive_bytes', spec['params']['archive_bytes'])),
+                                             'archive_entries': int(params.get('archive_entries', spec['params']['archive_entries']))}, site=site, budget_s=_budget(params, spec))
+        return {**answer, 'clashes': [], 'ids_failures': [], 'summary': '%d BCF %s issue(s)' % (len(answer['issues']), answer['version'])}, '%d BCF issue(s)' % len(answer['issues'])
     model = _local_file(feeds.get('ifc') or params.get('ifc'), 'ifc', ('.ifc',))
     ids = feeds.get('ids') or params.get('ids')
     ids = str(_local_file(ids, 'ids', ('.ids', '.xml'))) if ids else ''
-    target = Path(str(params.get('bcf_path') or model.with_suffix('.bcf')))
+    target = _bcf_output(params.get('bcf_path') or model.with_suffix('.bcf'), model)
     if not target.is_absolute() or str(target).startswith(('\\\\', '//')):
         raise ValueError('bcf_path must be a local absolute path')
     budget = _budget(params, spec)
     site = ensure_runtime('ifc', budget_s=budget) / 'site'
-    answer = run_worker('ifc_check', {'ifc': str(model), 'ids': ids, 'bcf': str(target),
+    answer = run_worker('ifc_check', {'ifc': str(model), 'ids': ids, 'bcf': str(target), 'version': version,
                                       'a': str(params.get('clash_a') or 'IfcWall'),
                                       'b': str(params.get('clash_b') or 'IfcColumn, IfcBeam, IfcSlab, IfcDuctSegment, IfcPipeSegment'),
                                       'tolerance': float(params.get('tolerance') or 0.002)}, site=site, budget_s=budget)
     summary = '%d clash(es), %d IDS failure(s), %d BCF topic(s) -> %s' % (
         len(answer['clashes']), len(answer['ids_failures']), answer['topics'], target.name)
     return {'clashes': answer['clashes'], 'ids_failures': answer['ids_failures'], 'bcf': str(target),
-            'summary': summary}, summary
+            'issues': answer.get('issues', []), 'version': answer.get('version', version), 'summary': summary}, summary
 
 
 # ------------------------------------------------------------ 4 Arabic OCR --
@@ -542,10 +599,11 @@ DAILY_ENGINES = {
         'params': {'old': '', 'new': '', 'dpi': 100, 'threshold': 48, 'max_pages': 200, 'budget_s': 120}},
     'daily.ifc_check_bcf': {
         'engine': 'daily.ifc_check_bcf', 'pure': False, 'run': ifc_check_bcf,
-        'in': [_port('ifc', 'path'), _port('ids', 'path')],
-        'out': [_port('clashes', 'list'), _port('ids_failures', 'list'), _port('bcf', 'path'), _port('summary', 'string')],
+        'in': [_port('ifc', 'path'), _port('ids', 'path'), _port('bcf', 'path'), _port('bcf_version', 'string')],
+        'out': [_port('clashes', 'list'), _port('ids_failures', 'list'), _port('bcf', 'path'), _port('summary', 'string'), _port('issues', 'list'), _port('version', 'string')],
         'title': 'Clash + IDS check to BCF', 'sub': 'IfcOpenShell clash and ifctester IDS, issues written as BCF',
-        'params': {'ifc': '', 'ids': '', 'bcf_path': '', 'clash_a': 'IfcWall',
+        'paramDefs': [{'id': 'bcf_version', 'name': 'BCF version', 'type': 'choice', 'options': ['From Projects', *BCF_VERSIONS]}],
+        'params': {'archive_bytes': 64 * 1024 * 1024, 'archive_entries': 4096, 'ifc': '', 'ids': '', 'bcf': '', 'bcf_version': 'From Projects', 'bcf_path': '', 'clash_a': 'IfcWall',
                    'clash_b': 'IfcColumn, IfcBeam, IfcSlab, IfcDuctSegment, IfcPipeSegment', 'tolerance': 0.002,
                    'budget_s': 900}},
     'daily.arabic_ocr': {
@@ -596,5 +654,6 @@ def daily_items():
     """Library cards for the daily-work pack."""
     return [{'id': 'daily:' + engine.split('.', 1)[1], 'cat': 'daily work', 'title': spec['title'], 'sub': spec['sub'],
              'engine': engine, 'params': dict(spec['params']), 'pure': spec['pure'], 'budget': dict(spec['budget']),
+             **({'paramDefs': spec['paramDefs']} if 'paramDefs' in spec else {}),
              'ports': {'source': list(spec['out']), 'target': list(spec['in'])}}
             for engine, spec in DAILY_ENGINES.items()]

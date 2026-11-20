@@ -11,6 +11,8 @@ def profile(tmp_path, monkeypatch):
     for name in ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME'):
         monkeypatch.setenv(name, str(tmp_path / name))
         (tmp_path / name).mkdir()
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('WORKSHOP_STATE_DIR', str(tmp_path / 'transport'))
     yield tmp_path
 
 
@@ -61,7 +63,9 @@ def test_every_daily_node_carries_the_node_contract():
     for engine, spec in DAILY_ENGINES.items():
         assert THING_ENGINES[engine] is spec and is_pure(engine) is spec['pure']
         assert spec['budget']['seconds'] > 0 and all(p['type'] != 'any' for p in spec['in'] + spec['out'])
-        assert cards[engine]['ports'] == {'source': spec['out'], 'target': spec['in']}
+        assert cards[engine]['ports']['source'] == spec['out']
+        assert {row['id'] for row in cards[engine]['ports']['target']} == {row['id'] for row in spec['in']} | set(spec['params'])
+        assert all(port in cards[engine]['ports']['target'] for port in spec['in'])
     assert {e for e, s in DAILY_ENGINES.items() if s['pure']} == {'daily.titleblock_qa', 'daily.revision_compare'}
 
 
@@ -185,3 +189,237 @@ def test_side_effect_nodes_pass_the_c3_decision_before_they_act(tmp_path, monkey
     sheets = make_pdf(tmp_path / 'one.pdf', [title_block('Tower A', 'A-101', 'P01')])
     out, _shown = run_thing('daily.titleblock_qa', {'pdf': sheets, 'fields': 'Project'}, {})
     assert out['issues'] == [] and len(asked) == 1  # a pure read never asks
+
+
+@pytest.fixture
+def bcf_xml_site(monkeypatch):
+    import os
+    site = os.environ.get('ARCHHUB_BCF_TEST_SITE')
+    if site:
+        monkeypatch.syspath_prepend(site)
+    pytest.importorskip('bcf.xml_parser', reason='real pinned BCF XML runtime is required')
+    return site
+
+
+def make_bcf_archive(path, version):
+    import importlib
+    from bcf.xml_parser import XmlParserSerializer
+    from xsdata.models.datatype import XmlDateTime
+    model = importlib.import_module('bcf.v%s.model' % version[0])
+    serializer = XmlParserSerializer()
+    guid = '11111111-1111-4111-8111-111111111111'
+    view = '22222222-2222-4222-8222-222222222222'
+    date = XmlDateTime.from_string('2026-11-20T09:00:00Z')
+    comment = model.Comment(guid='33333333-3333-4333-8333-333333333333', date=date, author='Reviewer', comment='Keep this comment')
+    point = model.ViewPoint(guid=view, viewpoint='viewpoint.bcfv', snapshot='snapshot.png')
+    topic = model.Topic(guid=guid, title='Archive round trip', creation_date=date, creation_author='Architect', description='Preserve every attachment', topic_type='Issue', topic_status='Open')
+    if version == '2.1':
+        markup = model.Markup(topic=topic, comment=[comment], viewpoints=[point])
+    else:
+        topic.comments = model.TopicComments(comment=[comment])
+        topic.viewpoints = model.TopicViewpoints(view_point=[point])
+        markup = model.Markup(topic=topic)
+    camera = dict(camera_view_point=model.Point(x=0,y=0,z=5), camera_direction=model.Direction(x=0,y=0,z=-1), camera_up_vector=model.Direction(x=0,y=1,z=0),view_to_world_scale=10)
+    if version == '3.0':camera['aspect_ratio']=1
+    viewpoint = model.VisualizationInfo(guid=view, orthogonal_camera=model.OrthogonalCamera(**camera))
+    with zipfile.ZipFile(path,'w',zipfile.ZIP_DEFLATED) as archive:
+        archive.comment = b'Preserve archive metadata'
+        archive.writestr('bcf.version',serializer.serialize(model.Version(version_id=version)))
+        archive.writestr(guid+'/markup.bcf',serializer.serialize(markup))
+        archive.writestr(guid+'/viewpoint.bcfv',serializer.serialize(viewpoint))
+        archive.writestr(guid+'/snapshot.png',bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63d008a8f80f00038401f0696a165b0000000049454e44ae426082'))
+        archive.writestr('documents/source-note.txt','Original attached document')
+    return guid
+
+
+@pytest.mark.parametrize('version',['2.1','3.0'])
+def test_real_bcf_archive_reads_writes_and_preserves_all_metadata(tmp_path, bcf_xml_site, version):
+    import xml.etree.ElementTree as ET
+    from nodelang import daily_work_nodes as daily
+    source,target=tmp_path/'source.bcfzip',tmp_path/'copy.bcfzip'
+    guid=make_bcf_archive(source,version)
+    result=daily.run_worker('bcf_exchange',{'source':str(source),'target':str(target),'version':version},site=Path(bcf_xml_site) if bcf_xml_site else None,budget_s=15)
+    assert result['version']==version and result['issues'][0]['guid']==guid
+    assert target.read_bytes()==source.read_bytes()
+    # Independent reader: stdlib ZIP/XML, no production worker or BCF serializer code.
+    with zipfile.ZipFile(target) as archive:
+        assert archive.testzip() is None and archive.comment==b'Preserve archive metadata'
+        assert ET.fromstring(archive.read('bcf.version')).attrib['VersionId']==version
+        markup=ET.fromstring(archive.read(guid+'/markup.bcf'))
+        assert any(node.text=='Keep this comment' for node in markup.iter())
+        assert archive.read('documents/source-note.txt')==b'Original attached document'
+        assert archive.read(guid+'/snapshot.png').startswith(b'\x89PNG')
+    wrong=tmp_path/'wrong.bcfzip'
+    with pytest.raises(RuntimeError,match='Cross-version'):
+        daily.run_worker('bcf_exchange',{'source':str(source),'target':str(wrong),'version':'3.0' if version=='2.1' else '2.1'},site=Path(bcf_xml_site) if bcf_xml_site else None,budget_s=15)
+    assert not wrong.exists()
+
+
+def test_bcf_scoped_default_and_explicit_parameter_reach_the_existing_worker(tmp_path, monkeypatch, bcf_xml_site):
+    from nodelang import daily_work_nodes as daily, canvas_documents as canvas,session_files as files,settings_owner
+    from nodelang.nograph_server import JsonFile
+    from nodelang.user_paths import state_directory
+    root=tmp_path/'registered';root.mkdir()
+    roots=JsonFile(state_directory()/'settings/workspaces.json',{'roots':[]})
+    roots.write({'roots':[{'root_id':'probe','label':'Probe','path':str(root),'settings':{'Projects.BCF version':'3.0'}}]})
+    prefs=JsonFile(files.profile_directory()/'settings/settings.json',{})
+    settings_owner.preference_settings('setAppearance',['Projects.BCF version','2.1'],prefs)
+    document=files.new_document('BCF scope');document['properties']['project']='probe'
+    source=root/'source.bcfzip';make_bcf_archive(source,'3.0')
+    captured=[]
+    original=daily.run_worker
+    def worker(job,args,**kwargs):
+        captured.append(dict(args));return original(job,args,**kwargs)
+    monkeypatch.setattr(daily,'run_worker',worker)
+    approved=[]
+    monkeypatch.setattr(daily,'DECIDE',lambda payload,vendor:approved.append(payload['tool_input']['bcf_version']) or {'decision':'allow'})
+    params={**daily.DAILY_ENGINES['daily.ifc_check_bcf']['params'],'bcf':str(source)}
+    result=canvas.run_thing('daily.ifc_check_bcf',params,{},document)[0]
+    assert captured[-1]['version']=='3.0' and approved[-1]=='3.0' and result['version']=='3.0'
+    assert any(daily.runtimes_root().glob('bcf-*/ready.json')) and not list(daily.runtimes_root().glob('ifc-*'))
+    document['properties']['settings']={'Projects.BCF version':'2.1'}
+    canvas.run_thing('daily.ifc_check_bcf',params,{},document)
+    assert captured[-1]['version']=='2.1'
+    canvas.run_thing('daily.ifc_check_bcf',{**params,'bcf_version':'3.0'},{},document)
+    assert captured[-1]['version']=='3.0' and approved[-1]=='3.0'
+    canvas.run_thing('daily.ifc_check_bcf',params,{'bcf_version':'3.0'},document)
+    assert captured[-1]['version']=='3.0' and approved[-1]=='3.0'
+    before=prefs.path.read_bytes()
+    with pytest.raises(ValueError):settings_owner.preference_settings('setAppearance',['Projects.BCF version','9.0'],prefs)
+    assert prefs.path.read_bytes()==before
+
+
+@pytest.mark.parametrize('case',['unsafe path','duplicate path','unsupported version','expanded budget','external entity','negative budget'])
+def test_bcf_refusals_preserve_existing_output(tmp_path, bcf_xml_site, case):
+    from nodelang import daily_work_nodes as daily
+    source,target=tmp_path/'input.bcfzip',tmp_path/'held.bcfzip'
+    make_bcf_archive(source,'2.1');target.write_bytes(b'Keep the existing output')
+    with zipfile.ZipFile(source,'a',zipfile.ZIP_DEFLATED) as archive:
+        if case=='unsafe path':archive.writestr('../escape.txt','bad')
+        elif case=='duplicate path':archive.writestr('bcf.version','duplicate')
+        elif case=='unsupported version':
+            pass
+        elif case=='expanded budget':archive.writestr('large.txt','x'*100000)
+        elif case=='external entity':archive.writestr('extra.bcfv','<!DOCTYPE x [<!ENTITY y SYSTEM "file:///not-read">]><VisualizationInfo/>')
+    if case=='unsupported version':
+        with zipfile.ZipFile(source,'r') as archive:entries={name:archive.read(name) for name in archive.namelist()}
+        entries['bcf.version']=b'<Version VersionId="4.0"/>'
+        with zipfile.ZipFile(source,'w') as archive:
+            for name,data in entries.items():archive.writestr(name,data)
+    with pytest.raises(RuntimeError):
+        daily.run_worker('bcf_exchange',{'source':str(source),'target':str(target),'version':'2.1','archive_bytes':-1 if case=='negative budget' else 80000},site=Path(bcf_xml_site) if bcf_xml_site else None,budget_s=15)
+    assert target.read_bytes()==b'Keep the existing output'
+
+
+def test_new_bcf_nodes_inherit_design_default_old_files_keep_explicit_legacy_behavior(tmp_path, monkeypatch):
+    from nodelang import canvas_documents as canvas,daily_work_nodes as daily,settings_owner,session_files as files
+    assert settings_owner.preference_setting('Projects.BCF version')['value']=='3.0'
+    document=files.new_document('Portable old BCF workflow')
+    document['nodes']=[{'id':'old','type':'daily.ifc_check_bcf','params':{'ifc':'sample.ifc'},'position':{'x':0,'y':0}}]
+    path=files.document_path(files.sessions_directory(),document);files.write_document(path,document)
+    before=path.read_bytes();reopened=files.read_document(path)
+    asked=[]
+    monkeypatch.setattr(daily,'DECIDE',lambda payload,vendor:asked.append(payload['tool_input']['bcf_version']) or {'decision':'ask','reason':'Fixture approval'})
+    with pytest.raises(PermissionError):canvas.run_thing('daily.ifc_check_bcf',reopened['nodes'][0]['params'],{},reopened)
+    assert asked[-1]=='2.1' and path.read_bytes()==before and 'bcf_version' not in files.read_document(path)['nodes'][0]['params']
+    with pytest.raises(PermissionError):canvas.run_thing('daily.ifc_check_bcf',daily.DAILY_ENGINES['daily.ifc_check_bcf']['params'],{},document)
+    assert asked[-1]=='3.0'
+    with pytest.raises(PermissionError):canvas.run_thing('daily.ifc_check_bcf',reopened['nodes'][0]['params'],{'bcf_version':'3.0'},reopened)
+    assert asked[-1]=='3.0'
+
+
+def test_normal_bcf_entry_requires_file_write_approval_and_rejects_other_files(tmp_path,monkeypatch,bcf_xml_site):
+    import os
+    from nodelang import canvas_documents as canvas,daily_work_nodes as daily
+    from nodelang.hook_decision import _RELEASING
+    source=tmp_path/'input.bcfzip';make_bcf_archive(source,'3.0')
+    held=tmp_path/'keep.txt';held.write_bytes(b'Keep this file')
+    params={**daily.DAILY_ENGINES['daily.ifc_check_bcf']['params'],'bcf':str(source),'bcf_path':str(held)}
+    monkeypatch.setattr(daily,'DECIDE',lambda *args:{'decision':'allow'})
+    with pytest.raises(ValueError,match='.bcf'):canvas.run_thing('daily.ifc_check_bcf',params,{})
+    assert held.read_bytes()==b'Keep this file' and not daily.runtimes_root().exists()
+    alias=tmp_path/'alias.bcf';os.link(source,alias)
+    with pytest.raises(ValueError,match='differ'):canvas.run_thing('daily.ifc_check_bcf',{**params,'bcf_path':str(alias)},{})
+    assert alias.read_bytes()==source.read_bytes()
+    output=tmp_path/'out.bcfzip';params['bcf_path']=str(output)
+    with pytest.raises(PermissionError,match='Approve card'):canvas.run_thing('daily.ifc_check_bcf',params,{})
+    assert not output.exists() and not daily.runtimes_root().exists()
+    token=_RELEASING.set(True)
+    try:result=canvas.run_thing('daily.ifc_check_bcf',params,{})[0]
+    finally:_RELEASING.reset(token)
+    assert result['version']=='3.0' and output.read_bytes()==source.read_bytes()
+    for budget in (-1,0,64*1024*1024+1):
+        with pytest.raises(ValueError,match='budgets'):canvas.run_thing('daily.ifc_check_bcf',{**params,'bcf_path':'','archive_bytes':budget},{})
+    assert output.read_bytes()==source.read_bytes()
+
+
+@pytest.mark.parametrize('legacy',[False,True])
+def test_saved_bcf_node_run_creates_actionable_approval_and_reads_back(tmp_path,bcf_xml_site,legacy):
+    import copy
+    from nodelang import session_files as files
+    from nodelang.hook_decision import ask_apply,ask_reviews
+    version='2.1' if legacy else '3.0'
+    source,target=tmp_path/'source.bcfzip',tmp_path/'approved.bcfzip';make_bcf_archive(source,version)
+    item=next(row for row in files.catalogue() if row['id']=='daily:ifc_check_bcf')
+    node={'id':'exchange','item':item['id'],'type':item['engine'],'params':copy.deepcopy(item['params']),
+          'ports':copy.deepcopy(item['ports']),'paramDefs':copy.deepcopy(item.get('paramDefs',[])),'position':{'x':0,'y':0}}
+    node['params'].update(bcf=str(source),bcf_path=str(target))
+    if legacy:node['params'].pop('bcf_version',None);node['paramDefs']=[]
+    assert 'approvalRequired' not in node
+    document=files.new_document('BCF approval');document['nodes']=[node]
+    path=tmp_path/'approved.archhub';files.write_document(path,document)
+    owner=files.SessionFiles(tmp_path/'sessions')
+    run=owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    assert run.get('approvalId') and not target.exists()
+    card=next(card for card in ask_reviews() if card['id']==run['approvalId'])
+    decided=ask_apply(card['id'],card['input_digest'],'approve')
+    assert decided['status']=='approved',decided
+    assert target.exists(),decided
+    assert target.read_bytes()==source.read_bytes()
+    result=files.read_document(path)['nodes'][0]['result']
+    assert result['status']=='Done' and result['output']['version']==version
+    assert 'approvalRequired' not in files.read_document(path)['nodes'][0]
+
+
+@pytest.mark.parametrize('change',['setting','source'])
+def test_bcf_approval_cannot_silently_change_inputs(tmp_path,bcf_xml_site,change):
+    import copy
+    from nodelang import session_files as files,settings_owner
+    from nodelang.hook_decision import ask_apply,ask_reviews
+    source,target=tmp_path/'source.bcfzip',tmp_path/'must-not-write.bcfzip';make_bcf_archive(source,'3.0')
+    item=next(row for row in files.catalogue() if row['id']=='daily:ifc_check_bcf')
+    node={'id':'exchange','item':item['id'],'type':item['engine'],'params':{**copy.deepcopy(item['params']),'bcf':str(source),'bcf_path':str(target)},'paramDefs':copy.deepcopy(item.get('paramDefs',[])),'position':{'x':0,'y':0}}
+    document=files.new_document('BCF revalidation');document['nodes']=[node]
+    path=tmp_path/'held.archhub';files.write_document(path,document);owner=files.SessionFiles(tmp_path/'sessions')
+    waiting=owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    card=next(card for card in ask_reviews() if card['id']==waiting['approvalId'])
+    if change=='setting':settings_owner.preference_settings('setAppearance',['Projects.BCF version','2.1'])
+    else:
+        with zipfile.ZipFile(source,'a') as archive:archive.writestr('changed.txt','Input changed after the card')
+    with pytest.raises(ValueError,match='changed after'):
+        ask_apply(card['id'],card['input_digest'],'approve')
+    assert not target.exists()
+
+
+def test_saved_bcf_read_without_output_stays_usable_without_write_card(tmp_path,bcf_xml_site):
+    import copy
+    from nodelang import session_files as files
+    from nodelang.hook_decision import ask_reviews
+    source=tmp_path/'read.bcfzip';make_bcf_archive(source,'2.1')
+    item=next(row for row in files.catalogue() if row['id']=='daily:ifc_check_bcf')
+    document=files.new_document('Read BCF');document['nodes']=[{'id':'read','item':item['id'],'type':item['engine'],'params':{**copy.deepcopy(item['params']),'bcf':str(source)},'position':{'x':0,'y':0}}]
+    path=tmp_path/'read.archhub';files.write_document(path,document)
+    result=files.SessionFiles(tmp_path/'sessions').dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    assert not result.get('approvalId') and not [card for card in ask_reviews() if card['status']=='pending']
+    assert files.read_document(path)['nodes'][0]['result']['output'].get('version')=='2.1',result
+
+
+def test_ifc_report_serialization_failure_preserves_destination(tmp_path,bcf_xml_site):
+    from nodelang.daily_work_worker import save_bcf_report
+    target=tmp_path/'existing.bcfzip';make_bcf_archive(target,'3.0');before=target.read_bytes()
+    class BrokenArchive:
+        def save(self,path):
+            with zipfile.ZipFile(path,'w') as partial:partial.writestr('partial.txt','Incomplete serialization')
+            raise RuntimeError('Serialization failed')
+    with pytest.raises(RuntimeError,match='Serialization failed'):save_bcf_report(BrokenArchive(),target)
+    assert target.read_bytes()==before and not list(tmp_path.glob('.bcf-*'))

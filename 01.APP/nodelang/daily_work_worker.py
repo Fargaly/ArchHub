@@ -18,7 +18,11 @@ def ifc_check(args):
     import ifcopenshell
     from ifcopenshell import geom
     from ifcopenshell.util import placement as placements, unit as units
-    from bcf.v2.bcfxml import BcfXml
+    from importlib import import_module
+    version = args.get('version', '2.1')
+    if version not in ('2.1', '3.0'):
+        raise ValueError('Choose BCF 2.1 or 3.0.')
+    BcfXml = import_module('bcf.v%s.bcfxml' % version[0]).BcfXml
     model = ifcopenshell.open(args['ifc'])
     bcf = BcfXml.create_new('ArchHub check: ' + os.path.basename(args['ifc']))
     scale = units.calculate_unit_scale(model)
@@ -83,8 +87,87 @@ def ifc_check(args):
                                   'Hard clash, penetration %.3f m at %s' % (abs(float(clash.distance)),
                                                                            [round(v, 2) for v in point]), 'ArchHub')
             topic.add_viewpoint_from_point_and_guids(numpy.array(point) + 5.0, a.GlobalId, b.GlobalId)
-    bcf.save_project(args['bcf'])
-    return {'clashes': clashes, 'ids_failures': ids_failures, 'topics': len(clashes) + len(ids_failures)}
+    written = save_bcf_report(bcf, args['bcf'])
+    return {'clashes': clashes, 'ids_failures': ids_failures, 'topics': len(clashes) + len(ids_failures),
+            **written}
+
+
+def save_bcf_report(archive, destination):
+    from pathlib import Path
+    target = Path(destination)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, suffix='.bcfzip', prefix='.bcf-', delete=False) as stream:
+            temporary = Path(stream.name)
+        archive.save(temporary)
+        bcf_exchange({'source': str(temporary)})
+        os.replace(temporary, target)
+        return bcf_exchange({'source': str(target)})
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def bcf_exchange(args):
+    from pathlib import Path, PurePosixPath
+    from io import BytesIO
+    import importlib
+    import zipfile
+    import xml.etree.ElementTree as ET
+    from bcf.xml_parser import XmlParserSerializer
+    source, target = Path(args['source']), args.get('target')
+    limit = int(args.get('archive_bytes', 64 * 1024 * 1024))
+    if not 1 <= limit <= 64 * 1024 * 1024 or not 1 <= int(args.get('archive_entries', 4096)) <= 4096:
+        raise ValueError('BCF archive budgets must be positive and within 64 MiB / 4096 entries.')
+    with source.open('rb') as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError('BCF archive exceeds its declared byte budget.')
+    parser = XmlParserSerializer()
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        entries = archive.infolist()
+        names = [item.filename for item in entries]
+        if len(entries) > int(args.get('archive_entries', 4096)) or len(names) != len(set(names)):
+            raise ValueError('BCF archive has too many entries or duplicate paths.')
+        if sum(item.file_size for item in entries) > limit or any(PurePosixPath(name).is_absolute() or '..' in PurePosixPath(name).parts or chr(92) in name for name in names):
+            raise ValueError('BCF archive exceeds its expanded budget or contains unsafe paths.')
+        def xml(name):
+            value = archive.read(name)
+            if b'<!DOCTYPE' in value.upper() or b'<!ENTITY' in value.upper():
+                raise ValueError('BCF XML may not declare external entities or a document type.')
+            return value
+        version = ET.fromstring(xml('bcf.version')).attrib.get('VersionId')
+        if version not in ('2.1', '3.0'):
+            raise ValueError('Only BCF 2.1 and 3.0 are supported.')
+        model = importlib.import_module('bcf.v%s.model' % version[0])
+        parser.parse(xml('bcf.version'), model.Version)
+        issues = []
+        for name in names:
+            if name.endswith('/markup.bcf'):
+                markup = parser.parse(xml(name), model.Markup)
+                if markup.topic is None or not markup.topic.guid or not markup.topic.title:
+                    raise ValueError('A BCF issue needs its topic identity and title.')
+                issues.append({'guid': markup.topic.guid, 'title': markup.topic.title, 'description': markup.topic.description or ''})
+            elif name.endswith('.bcfv'):
+                parser.parse(xml(name), model.VisualizationInfo)
+    if target:
+        if args['version'] != version:
+            raise ValueError('Cross-version BCF conversion is not supported; choose the source version to preserve all issue data.')
+        target = Path(target)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.bcf-', delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+            if target.read_bytes() != data:
+                raise ValueError('BCF output readback did not preserve the source archive.')
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    return {'issues': issues, 'version': version, 'bcf': str(target or source)}
 
 
 def areas(args):
@@ -157,7 +240,7 @@ def whisper(args):
     return {'segments': segments, 'language': (held.get('result') or {}).get('language', '')}
 
 
-JOBS = {'ifc_check': ifc_check, 'areas': areas, 'ocr': ocr, 'whisper': whisper}
+JOBS = {'bcf_exchange': bcf_exchange, 'ifc_check': ifc_check, 'areas': areas, 'ocr': ocr, 'whisper': whisper}
 
 
 def main():

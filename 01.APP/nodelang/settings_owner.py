@@ -848,7 +848,16 @@ def preference_settings(function='readControls', args=(), settings=None):
     from .nograph_server import JsonFile
     from .session_files import profile_directory
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    from .daily_work_nodes import BCF_VERSIONS
     identity, key = 'Projects.Working subfolder', 'projectWorkingSubfolder'
+    if args and args[0] == 'Projects.BCF version' and function in ('setAppearance', 'resetAppearance'):
+        if function == 'setAppearance':
+            if args[1] not in BCF_VERSIONS:
+                raise ValueError('Choose BCF 2.1 or 3.0.')
+            settings.update({'bcfVersion': args[1]})
+        else:
+            settings.update({}, remove=['bcfVersion'])
+        function, args = 'readControls', ()
     if function != 'readControls' and args and args[0] == identity:
         if function == 'setAppearance':
             settings.update({key: project_subfolder(args[1])})
@@ -864,7 +873,11 @@ def preference_settings(function='readControls', args=(), settings=None):
            'label': 'Working subfolder (relative)', 'type': parameter['type'], 'default': parameter['value'],
            'value': settings.read().get(key, parameter['value']),
            'description': 'Relative to the registered project workspace folder. Empty uses its root; an explicit Session node folder wins.'}
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row]}
+    bcf = {'id': 'Projects.BCF version', 'storageKey': 'bcfVersion', 'page': 'Projects', 'group': 'IFC and BCF',
+           'label': 'BCF version', 'type': 'choice', 'options': list(BCF_VERSIONS), 'default': BCF_VERSIONS[-1],
+           'value': settings.read().get('bcfVersion', BCF_VERSIONS[-1]),
+           'description': 'Version written by issue exchange. BCF input is read in its recorded version.'}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf]}
 
 
 def preference_setting(identity):

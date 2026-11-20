@@ -1251,7 +1251,7 @@ function setAppearance(id,value,destination=state.settingsDestination){
  return write.then(result=>preferenceChanged(id,result));
 }
 function preferenceChanged(id,result){
- const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id||id==='Projects.Working subfolder'&&n.type==='thing.session'&&!n.params?.project_folder).map(n=>n.id);
+ const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id||id==='Projects.Working subfolder'&&n.type==='thing.session'&&!n.params?.project_folder||id==='Projects.BCF version'&&n.type==='daily.ifc_check_bcf'&&(n.params?.bcf_version==='From Projects'||Object.hasOwn(n.params||{},'bcf_version')&&!n.params.bcf_version)).map(n=>n.id);
  if(changed.length)scheduleSolve(changed,null);
  return result;
 }

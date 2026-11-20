@@ -109,6 +109,9 @@ def test_public_catalogue_drives_node_answers_and_excludes_local_capabilities(tm
     public_count = len(data['nodes'])
     field = next(node for node in data['nodes'] if node['id'] == 'data.field')
     assert field['outputs'] == [{'name': 'values', 'type': 'list'}]
+    manual = next(node for node in data['nodes'] if node['id'] == 'tr_manual')
+    assert manual['title'] == 'Manual run' and manual['sub'] == 'starts when you press Run'
+    assert len([node for node in data['nodes'] if node['title'].casefold() == 'merge']) > 1
     for category in ('skill', 'workspaces', 'models', 'agents'):
         data['nodes'].append({**field, 'id': f'local.{category}', 'cat': category,
                               'title': f'Hidden {category}', 'sub': 'MACHINE_ONLY_CATALOGUE_FIXTURE'})
@@ -130,21 +133,69 @@ def test_public_catalogue_drives_node_answers_and_excludes_local_capabilities(tm
             assert expected in reply['answer']
             assert reply['links'] == [{'title': 'Field', 'href': 'https://archhub.io/docs/nodes/data-field/',
                                        'sub': 'Node reference'}]
+    manual_href = 'https://archhub.io/docs/nodes/tr-manual/'
+    with running(candidate) as port:
+        for question, page in [
+            ('tr_manual', '/'),
+            ('When does the Manual run node start?', '/'),
+            ('When does Manual run start?', '/'),
+            ('\u0645\u062a\u0649 \u062a\u0628\u062f\u0623 \u0639\u0642\u062f\u0629 Manual run\u061f', '/'),
+            ('\u0646\u0648\u062f tr_manual \u0628\u062a\u0634\u062a\u063a\u0644 \u0625\u0645\u062a\u0649\u061f', '/'),
+            ('What does tr-manual do?', '/'),
+        ]:
+            reply = post(port, question, page)
+            assert 'starts when you press Run. [tr_manual]' in reply['answer']
+            assert reply['links'] == [{'title': 'Manual run', 'href': manual_href, 'sub': 'Node reference'}]
+    with running(candidate) as port:
+        for question, page in [
+            ('When does it start?', '/docs/nodes/tr-manual/?tab=reference'),
+            ('When does this node start?', manual_href),
+        ]:
+            reply = post(port, question, page)
+            assert 'starts when you press Run. [tr_manual]' in reply['answer']
+            assert reply['links'] == [{'title': 'Manual run', 'href': manual_href, 'sub': 'Node reference'}]
+        for question in ('tr_manual outputs', 'Manual run node outputs'):
+            reply = post(port, question, '/')
+            assert 'Outputs: out (trigger), fire (unknown). [tr_manual]' in reply['answer']
+            assert reply['links'][0]['href'] == manual_href
+    with running(candidate) as port:
+        reply = post(port, 'l_merge_handoff outputs', '/')
+        assert 'value (any)' in reply['answer']
+        assert reply['links'][0]['href'] == 'https://archhub.io/docs/nodes/l-merge-handoff/'
+        for question in ('What does the Merge node output?', 'tr.manual outputs', 'tr.manual',
+                         'What are the outputs of the Manual run node and the Field node?'):
+            reply = post(port, question, '/')
+            assert reply == {'answer': 'I could not find a matching node in the public node reference.', 'links': []}
+    with running(candidate) as port:
+        for question, page in [
+            ('What does this node do?', 'https://other.example/docs/nodes/tr-manual/'),
+            ('What does this node do according to STD-21?', '/docs/nodes/tr-manual/'),
+            ('Where do project folders go?', '/docs/nodes/tr-manual/'),
+        ]:
+            reply = post(port, question, page)
+            assert reply['links'][0]['href'].startswith('/api/auth/start?')
+            assert all(link['href'] != manual_href for link in reply['links'])
     with running(candidate) as port:
         for category in ('skill', 'workspaces', 'models', 'agents'):
             reply = post(port, f'What does the Hidden {category} node output?', '/', signed_in=True)
             assert reply['links'] == []
             assert 'Hidden' not in reply['answer'] and 'MACHINE_ONLY' not in reply['answer']
+        reply = post(port, 'What does the Hidden skill node do?', '/', signed_in=True)
+        assert reply['links'] == [] and 'MACHINE_ONLY' not in reply['answer']
         reply = post(port, 'ما مخرجات عقدة Hidden skill؟', '/')
         assert reply == {'answer': 'لم أجد عقدة مطابقة في دليل العقد العام.', 'links': []}
     candidate.complete.assert_not_called()
     candidate.cloud.assert_not_called()
 
     field['outputs'][0]['type'] = 'table'
+    manual['sub'] = 'Starts from the updated catalogue'
     catalogue.write_text(json.dumps(data), encoding='utf-8')
     _, refreshed = prepare_sites(tmp_path / 'refreshed', monkeypatch, catalogue)
     with running(refreshed) as port:
         reply = post(port, 'What does the Field node output?', '/')
+        manual_reply = post(port, 'tr-manual', '/')
+    assert 'Starts from the updated catalogue. [tr_manual]' in manual_reply['answer']
+    assert manual_reply['links'][0]['href'] == manual_href
     assert 'values (table)' in reply['answer'] and 'values (list)' not in reply['answer']
     assert reply['links'][0]['href'] == 'https://archhub.io/docs/nodes/data-field/'
     refreshed.complete.assert_not_called()

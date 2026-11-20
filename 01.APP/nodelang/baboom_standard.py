@@ -26,6 +26,21 @@ _NODE_FIELD_QUESTIONS = {
 }
 
 
+_NODE_NOUN = r'\bnodes?\b|(?:ال)?عقد[ةه]|(?:ال)?نود'
+_NODE_ID = r'(?<![\w.-])[a-z][a-z0-9]*(?:[._][a-z0-9]+)+(?!\w|[.-]\w)'
+_NODE_QUESTION_ENGLISH = r'(?:what (?:does|is)|when (?:does|will)|how does|describe|tell me about)'
+_NODE_BEHAVIOR = re.compile(
+    r'\b' + _NODE_QUESTION_ENGLISH + r'\b|'
+    r'متى|[اإ]مت[ىي]|[اإ]يه|ماذا|ما (?:هو|هي|وظيفة)|كيف|[اإ]زاي|اشرح')
+_THIS_NODE = re.compile(
+    r'\b(?:this node|it)\b|هذه العقدة|'
+    r'(?:العقد[ةه]|النود) دي')
+_PRIVATE_STANDARD = re.compile(
+    r'\b(?:std|standard|bbm)[\s-]*[0-9]+\b|\b(?:office|bim|private) standard\b|'
+    r'المعيار|ستاندرد')
+_NODE_REFERENCE_ROOT = 'https://archhub.io/docs/nodes/'
+
+
 def public_node_chunks(catalogue):
     """Project the same public records and routes rendered by the website exporter."""
     for node in catalogue['nodes']:
@@ -41,8 +56,8 @@ def public_node_chunks(catalogue):
             if fields[kind]:
                 paragraphs.append(f"{label}: {', '.join(fields[kind])}.")
         yield {'id': uid, 'title': title, 'head': 'Node reference',
-               'href': f'https://archhub.io/docs/nodes/{slug}/',
-               'text': ' '.join(paragraphs), 'node_fields': fields}
+               'href': f'{_NODE_REFERENCE_ROOT}{slug}/',
+               'text': ' '.join(paragraphs), 'node_fields': fields, 'node_summary': node['sub']}
 
 
 def public_doc_chunks(site_export):
@@ -123,6 +138,14 @@ class Index:
     def __init__(self, path, *, public_docs=None):
         self.chunks = json.loads(Path(path).read_text(encoding='utf-8'))['chunks']
         self.public_docs = json.loads(public_docs.read_text(encoding='utf-8'))['chunks'] if public_docs else []
+        self.node_aliases = {}
+        for row in self.public_docs:
+            if 'node_fields' in row:
+                slug = row['href'].removeprefix(_NODE_REFERENCE_ROOT).strip('/')
+                for alias in {row['id'].casefold(), ' '.join(row['title'].casefold().split()), slug}:
+                    self.node_aliases.setdefault(alias, []).append(row)
+        names = '|'.join(map(re.escape, sorted(self.node_aliases, key=len, reverse=True)))
+        self.node_names = re.compile(r'(?<![\w.-])(?:' + names + r')(?!\w|[.-]\w)') if names else None
         self.rows = self.chunks + [row for row in self.public_docs if not _ARABIC.search(row['text'])]
         self.tf = [Counter(words(c['text']) + words(f"{c['id']} {c['title']} {c['head']}") * 3) for c in self.rows]
         self.n = len(self.chunks)
@@ -164,27 +187,62 @@ class Index:
         return result
 
 
-def _public_node(index, question, arabic):
-    kinds = [kind for kind, (pattern, _, _) in _NODE_FIELD_QUESTIONS.items() if re.search(pattern, question, re.I)]
-    if not kinds or not re.search(r'\bnodes?\b|عقدة|العقده|نود|\b[a-z]+\.[a-z]+\b', question, re.I):
+def _public_node(index, question, page, arabic):
+    if not index.node_names:
         return None
-    rows = [row for row in index.public_docs if 'node_fields' in row]
-    if not rows:
+    query = ' '.join(question.casefold().split())
+    if _PRIVATE_STANDARD.search(query):
         return None
-    ranked = []
-    for row in rows:
-        for name in (row['id'], row['title']):
-            if re.search(r'(?<![\w.])' + re.escape(name) + r'(?!\w|\.\w)', question, re.I):
-                ranked.append((len(name), row))
-                break
-    ranked.sort(key=lambda match: match[0], reverse=True)
-    if not ranked or (len(ranked) > 1 and ranked[0][0] == ranked[1][0]):
+    kinds = [kind for kind, (pattern, _, _) in _NODE_FIELD_QUESTIONS.items() if re.search(pattern, query)]
+    behavior = _NODE_BEHAVIOR.search(query)
+    exact = query.rstrip(' .!?؟')
+    exact_id = re.fullmatch(_NODE_ID, exact)
+    if not (behavior or kinds or exact in index.node_aliases or exact_id):
+        return None
+    direct, named = {}, {}
+    for match in index.node_names.finditer(query):
+        alias = match.group()
+        after = query[match.end():]
+        before = query[:match.start()]
+        has_noun = (re.match(r'\s+(?:' + _NODE_NOUN + ')', after) or
+                    re.search('(?:' + _NODE_NOUN + r')\s*$', before))
+        title_question = (behavior and (
+            arabic and (not before or not after.strip(' .!?؟')) or
+            re.fullmatch(_NODE_QUESTION_ENGLISH + r'(?: the)? ', before)
+            and re.fullmatch(r'(?: (?:do|start|run|work|mean))?[ .!?]*', after)))
+        for row in index.node_aliases[alias]:
+            if title_question or kinds and not before:
+                direct[row['id']] = row
+            if has_noun or alias in (exact, row['id'].casefold(),
+                                     row['href'].removeprefix(_NODE_REFERENCE_ROOT).strip('/')):
+                named[row['id']] = row
+    this_node = _THIS_NODE.search(query)
+    if not named and this_node:
+        path = page.split('?', 1)[0].split('#', 1)[0].removeprefix('https://archhub.io').rstrip('/')
+        slug = path.removeprefix('/docs/nodes/')
+        for row in index.node_aliases.get(slug, ()):
+            if path == row['href'].removeprefix('https://archhub.io').rstrip('/'):
+                named[row['id']] = row
+    rows = named or direct
+    names_unknown_node = re.search(
+        r'\bthe (?!node\b)[^!?]+ node\b|(?:' + _NODE_NOUN + r')\s+[a-z][\w.-]*', query)
+    if not rows and not (exact_id or (kinds and re.search(_NODE_NOUN + '|' + _NODE_ID, query))
+                         or (behavior and names_unknown_node and not this_node)):
+        return None
+    if len(rows) != 1:
         return {'answer': ('لم أجد عقدة مطابقة في دليل العقد العام.' if arabic else
                            'I could not find a matching node in the public node reference.'), 'links': []}
-    row = ranked[0][1]
-    labels = [f"{_NODE_FIELD_QUESTIONS[kind][2 if arabic else 1]}: " +
-              (', '.join(row['node_fields'][kind]) or ('لا توجد' if arabic else 'none')) for kind in kinds]
-    return {'answer': f"{row['title']} — {'. '.join(labels)}. [{row['id']}]",
+    row, = rows.values()
+    if kinds:
+        labels = [f"{_NODE_FIELD_QUESTIONS[kind][2 if arabic else 1]}: " +
+                  (', '.join(row['node_fields'][kind]) or ('لا توجد' if arabic else 'none')) for kind in kinds]
+        fact = f"{row['title']} — {'. '.join(labels)}."
+    else:
+        summary = row.get('node_summary')
+        fact = f"{row['title']}: {summary.rstrip('.')}." if summary else row['text']
+        if arabic:
+            fact = 'النص الأصلي الموثق بالإنجليزية: ' + fact
+    return {'answer': f"{fact} [{row['id']}]",
             'links': [{'title': row['title'], 'href': row['href'], 'sub': row['head']}]}
 
 
@@ -252,7 +310,7 @@ def answer(index, question, token='', page='/', *, complete=None):
     if token and identity:
         return {'answer': _ARABIC_IDENTITY if arabic and index.public_docs else identity, 'links': []}
     if index.public_docs:
-        node = _public_node(index, question, arabic)
+        node = _public_node(index, question, page, arabic)
         if node:
             return node
         if token:

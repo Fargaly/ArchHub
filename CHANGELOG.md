@@ -2,6 +2,17 @@
 
 ## Next build
 
+## 20261120-143339-44754205914-1-7c364326cfec80539087ac8153d5616322a78955
+
+- Home reopens saved Canvas sessions and shows when a filter is hiding work. Home and Workshop use the same saved project and participant names.
+- Keyboard shortcuts edited in Settings now apply across the workspace. The appearance preview uses the current workflow.
+- The desktop updater defers an update while agent connectors are busy.
+- Canvas uses the reviewed BCF version for issue exchange. Approval covers the source, output and selected BCF version. A failed export preserves the previous report.
+- Before creating walls, the Revit tool checks that the selected level exists in the open model.
+- Known gaps: Verification of a clean Windows installation and the six Settings interactions on that installation is pending.
+
+Source: 7c364326.
+
 ## 20261119-1847-9d8e490
 
 - Published build 20261119-1847-9d8e490 (source 9d8e490).

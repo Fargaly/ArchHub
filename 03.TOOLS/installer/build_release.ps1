@@ -17,7 +17,9 @@ param(
     # The broker review record (archhub-broker-review/v1, nodelang/host_artifact_review.py):
     # an independent reviewer's decision on this exact bridges/ tree and revision.
     # Required for a release; a local candidate without it activates no host broker.
-    [string]$BrokerReviewPath
+    [string]$BrokerReviewPath,
+    # Retain the stable installer and release evidence for later publication.
+    [switch]$BuildOnly
 )
 
 # Build only the selected colleague installer. No installed state, builder-home
@@ -988,6 +990,8 @@ $notes = @(
 if ($env:GITHUB_ACTIONS) {
     # The workflow's contents:write job publishes this exact retained artifact.
     Write-Output "Built $assetName with BUILD_ID $BuildId; automatic workflow publication follows."
+} elseif ($BuildOnly) {
+    Write-Output "Built stable artifact $assetName with BUILD_ID $BuildId. Nothing installed or published."
 } else {
     # A reviewed local release must not end at a file the founder installs by
     # hand. Use the same reconciler/publisher as CI; candidates never enter here.

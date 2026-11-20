@@ -491,7 +491,8 @@ $LASTEXITCODE = 0
         assert "PLAN 1" not in result.stdout
 
 
-def test_build_does_not_auto_publish_after_refused_dry_run(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["build-only", "local", "local-refused"])
+def test_local_stable_build_publication_handoff(tmp_path, monkeypatch, mode):
     if not PWSH:
         pytest.skip("PowerShell required")
     monkeypatch.delenv("PSModulePath", raising=False)
@@ -499,12 +500,16 @@ def test_build_does_not_auto_publish_after_refused_dry_run(tmp_path, monkeypatch
     publisher.parent.mkdir(parents=True)
     publisher.write_text('param($ReleaseDirectory, $ExpectedSourceRevision, $PythonPath, [switch]$DryRun)\n'
                          'Add-Content -LiteralPath $env:GH_CALLS -Value "dryrun=$DryRun"\n'
-                         "if ($DryRun) { throw 'HTTP 422: refused' }\n")
+                         "if ($DryRun -and $env:REFUSE_PUBLICATION) { throw 'HTTP 422: refused' }\n")
     calls = tmp_path / "calls.txt"
     monkeypatch.setenv("GH_CALLS", str(calls))
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    if mode == "local-refused":
+        monkeypatch.setenv("REFUSE_PUBLICATION", "1")
+    else:
+        monkeypatch.delenv("REFUSE_PUBLICATION", raising=False)
     harness = tmp_path / "build-tail.ps1"
-    harness.write_text('''param($Build, $Root)
+    harness.write_text('''param($Build, $Root, [switch]$BuildOnly)
 $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Build, [ref]$tokens, [ref]$errors)
@@ -514,17 +519,32 @@ $tail = $ast.Find({ param($node)
     $node.Clauses[0].Item1.Extent.Text -eq '$env:GITHUB_ACTIONS'
 }, $true)
 if (-not $tail) { throw 'missing automatic publication branch' }
+if ($BuildOnly -and $ast.ParamBlock.Parameters.Name.VariablePath.UserPath -notcontains 'BuildOnly') {
+    throw 'build script does not expose -BuildOnly'
+}
 $selectedRoot = $Root; $output = $Root; $sourceRevision = 'fixture'; $PythonPath = 'fixture'
+$assetName = 'ArchHub-Setup-0.exe'; $BuildId = 'fixture'
 $statusName = 'status.txt'; $utf8 = [Text.UTF8Encoding]::new($false)
-& ([scriptblock]::Create($tail.ElseClause.Extent.Text.Trim().Substring(1).TrimEnd().TrimEnd('}')))
+& ([scriptblock]::Create($tail.Extent.Text))
 ''')
-    result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
-                             "-Build", str(ROOT / "03.TOOLS/installer/build_release.ps1"),
-                             "-Root", str(tmp_path)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "HTTP 422: refused" in result.stderr
-    assert calls.read_text().splitlines() == ["dryrun=True"]
-    assert not (tmp_path / "status.txt").exists()
+    command = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
+               "-Build", str(ROOT / "03.TOOLS/installer/build_release.ps1"), "-Root", str(tmp_path)]
+    if mode == "build-only":
+        command.append("-BuildOnly")
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert result.returncode == int(mode == "local-refused"), result.stdout + result.stderr
+    recorded = calls.read_text().splitlines() if calls.exists() else []
+    if mode == "build-only":
+        assert recorded == []
+        assert "Built stable artifact ArchHub-Setup-0.exe" in result.stdout
+        assert not (tmp_path / "status.txt").exists()
+    elif mode == "local":
+        assert recorded == ["dryrun=True", "dryrun=False"]
+        assert (tmp_path / "status.txt").read_text().startswith("PUBLISHED:")
+    else:
+        assert "HTTP 422: refused" in result.stderr
+        assert recorded == ["dryrun=True"]
+        assert not (tmp_path / "status.txt").exists()
 
 
 def _sha(data: bytes) -> str:

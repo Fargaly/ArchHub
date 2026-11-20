@@ -124,7 +124,7 @@ test('Look uses the five design families and passes the actual workflow to the e
  for(const row of settings)assert.equal(html.split('data-setting="'+row.id+'"').length-1,1,row.id+' has one editor');
  assert.equal(calls.length,1);assert.equal(calls[0].preview,graph);assert.equal(calls[0].embedded,true);assert.equal(calls[0].externalInspector,true);
  assert.ok(html.includes('inert=""'),'the live preview cannot edit or run the workflow');
- assert.ok(html.includes('Custom keyboard shortcuts'),'unimplemented keyboard settings are visible');
+ assert.ok(html.includes('Keyboard shortcuts apply everywhere.'),'the real keybinding editor is visible');
  data.graph={workspaceIds:[]};
  const empty=renderToStaticMarkup(React.createElement(window.UI.Settings,{page:'Appearance'}));
  assert.ok(empty.includes('Open a workflow to preview its real nodes here.'));

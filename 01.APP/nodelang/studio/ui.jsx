@@ -437,6 +437,22 @@
         }, event)}>Undo</Btn>}</div>}
  </Card>;
   }
+  function shortcutFromEvent(event) {
+    if(event.isComposing || ['Control','Shift','Alt','Meta','Dead'].includes(event.key))return '';
+    const key=event.key===' '?'Space':event.key.length===1?event.key.toUpperCase():event.key;
+    return [(event.ctrlKey||event.metaKey)&&'Ctrl',event.shiftKey&&'Shift',event.altKey&&'Alt',key].filter(Boolean).join(' ');
+  }
+  function shortcutFor(id) {
+    const commands=window.ArchHubCommandRegistry?.commands||[];
+    const row=commands.find(row=>row.id===id),identity=row?.keyFrom||id;
+    const defaults=commands.find(row=>row.id===identity)?.shortcut||'';
+    const overrides=api.getSnapshot().keybindings||{};
+    const chord=Object.hasOwn(overrides,identity)?overrides[identity]:defaults;
+    return chord.split(' ').map(part=>({Del:'Delete',Esc:'Escape'}[part]||part)).join(' ');
+  }
+  function matchesShortcut(id,event) {
+    return !api.getSnapshot().keyboardPending && !event.isComposing && !event.repeat && !!shortcutFor(id) && shortcutFor(id)===shortcutFromEvent(event);
+  }
   function SettingControl({
     row,
     raw = false
@@ -505,6 +521,7 @@
     return <Tag className="soon" data-soon="" data-block={block ? '' : undefined} role="group" aria-label={label + '. ' + SOON} aria-disabled="true" title={SOON}><Tag className="soon-part" ref={part => part?.setAttribute('inert', '')}>{children}</Tag><span className="soon-chip">Coming soon</span></Tag>;
   }
   window.UI = {
+    shortcutFor, shortcutFromEvent, matchesShortcut,
     Soon,
     useAskBaboom,
     profileInitials,

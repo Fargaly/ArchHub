@@ -390,19 +390,22 @@
     }, [toast, s.runtimeParameters?.toast_visible_ms]);
     React.useEffect(() => {
       const key = e => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        if(e.defaultPrevented||e.isComposing)return;
+        const typing=e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+        const match=id=>(!typing||e.ctrlKey||e.metaKey)&&window.UI.matchesShortcut(id,e);
+        if (match('keyboard.new_task')) {
           e.preventDefault(); show('New task'); return;
         }
-        if (route === 'task-file' && (e.ctrlKey || e.metaKey)) {
-          if (e.key === '\\') {e.preventDefault();setTaskFace(taskFace === 'split' ? 'canvas' : 'split');return;}
-          if (e.key.toLowerCase() === 'w') {e.preventDefault();act(() => closeTaskTab(task));return;}
-          if (e.key === 'PageDown' || e.key === 'PageUp') {
+        if (route === 'task-file') {
+          if (match('menu.show.the.thread')) {e.preventDefault();setTaskFace(taskFace === 'split' ? 'canvas' : 'split');return;}
+          if (match('menu.close.tab')) {e.preventDefault();act(() => closeTaskTab(task));return;}
+          if (match('keyboard.next_tab') || match('keyboard.previous_tab')) {
             e.preventDefault(); const tabs = tabsRef.current.tabs, index = tabs.findIndex(tab => tab.id === task);
-            if (tabs.length) openTaskFile(tabs[(index + (e.key === 'PageDown' ? 1 : -1) + tabs.length) % tabs.length].id);
+            if (tabs.length) openTaskFile(tabs[(index + (match('keyboard.next_tab') ? 1 : -1) + tabs.length) % tabs.length].id);
             return;
           }
         }
-        if (e.ctrlKey && e.key.toLowerCase() === 'k') {
+        if (match('keyboard.search')) {
           e.preventDefault();
           show('Search');
         }
@@ -410,7 +413,7 @@
           e.preventDefault();
           act(api.stopEverything);
         }
-        if (e.key === 'F2' && api.supportsAction('startVoiceInput')) {
+        if (match('keyboard.voice') && api.supportsAction('startVoiceInput')) {
           e.preventDefault();
           voice(text => show('Voice command', {
             text
@@ -424,6 +427,7 @@
             text
           })), duration);
         }
+        if(match('menu.settings')){e.preventDefault();go('settings/Account');return;}
         if (e.key === 'Escape') {
           if (modal) close();
           else if (companion) setCompanion(false);
@@ -433,9 +437,9 @@
           e.preventDefault();
           show('Search');
         }
-        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.target.isContentEditable && e.target.contentEditable !== 'true' && !e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) {
+        if ((match('menu.undo')||match('menu.redo')) && !e.target.isContentEditable && e.target.contentEditable !== 'true' && !e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) {
           e.preventDefault();
-          act(e.shiftKey ? api.redo : api.undo);
+          act(match('menu.redo') ? api.redo : api.undo);
         }
       };
       const up = e => {

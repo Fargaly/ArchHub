@@ -405,3 +405,29 @@ STUDIO_COMMANDS = (
     {"id": "palette.mcp_tools", "label": "MCP tools", "group": "host", "contexts": ["palette"], "action": {"client": "projects.ds_library.MCPTools.10"}, "effect": False, "approve": False, "agent_callable": False, "read_only": True, "operation": "read", "enabled_when": {}, "paletteGroup": "Hosts", "order": 114},
     {"id": "palette.share_session", "label": "Share session", "group": "output", "contexts": ["palette"], "action": {"client": "projects.ds_library.ExportRecipe.8"}, "effect": False, "approve": False, "agent_callable": False, "read_only": False, "operation": "write", "enabled_when": {}, "paletteGroup": "Workflows", "order": 115},
 )
+
+# The existing listeners and menus read these same defaults; only overrides live in Settings.
+KEYBOARD_ALIASES = {
+    'menu.delete': 'menu.delete.50', 'menu.delete.group.and.nodes': 'menu.delete.50',
+    'menu.item.59': 'menu.delete.50', 'menu.duplicate.56': 'menu.duplicate',
+    'menu.copy.57': 'menu.copy', 'menu.cut.58': 'menu.cut', 'menu.item.51': 'menu.rerun',
+}
+_KEYBOARD_GLOBAL = (
+    ('keyboard.new_task', 'New task', 'Ctrl N', 'navigation'),
+    ('keyboard.search', 'Search and do', 'Ctrl K', 'navigation'),
+    ('keyboard.voice', 'Voice command', 'F2', 'navigation'),
+    ('keyboard.next_tab', 'Next tab', 'Ctrl PageDown', 'session'),
+    ('keyboard.previous_tab', 'Previous tab', 'Ctrl PageUp', 'session'),
+    ('keyboard.save', 'Save workflow', 'Ctrl S', 'canvas'),
+    ('keyboard.save_as', 'Save workflow as', 'Ctrl Shift S', 'canvas'),
+    ('keyboard.ungroup', 'Ungroup', 'Ctrl Shift G', 'canvas'),
+)
+_KEYBOARD_WRITES = frozenset(('keyboard.save', 'keyboard.save_as', 'keyboard.ungroup'))
+STUDIO_COMMANDS = tuple({**row, **({'keyFrom': KEYBOARD_ALIASES[row['id']]} if row['id'] in KEYBOARD_ALIASES else {}),
+                        **({'shortcut': 'Ctrl L'} if row['id'] == 'menu.arrange' else {})}
+                       for row in STUDIO_COMMANDS) + tuple(
+    {'id': id, 'label': label, 'shortcut': chord, 'contexts': [context],
+     'group': 'input', 'action': {'client': id}, 'effect': id in _KEYBOARD_WRITES, 'approve': False,
+     'agent_callable': False, 'read_only': id not in _KEYBOARD_WRITES, 'operation': 'write' if id in _KEYBOARD_WRITES else 'read',
+     'enabled_when': {}, 'order': 200 + index, 'keyboard_only': True}
+    for index, (id, label, chord, context) in enumerate(_KEYBOARD_GLOBAL))

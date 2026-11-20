@@ -1921,7 +1921,7 @@ def _secrets():
 
 
 def r_settings_action(s, req):
-    from .settings_owner import SettingsOwner, read_router_settings
+    from .settings_owner import SettingsOwner, read_router_settings, keyboard_settings
     body = req.body or {}
     function, args = body.get('function'), body.get('args') or []
     companion = s.files['companion']
@@ -1929,6 +1929,11 @@ def r_settings_action(s, req):
     from .access_owner import FUNCTIONS as ACCESS_FUNCTIONS, access_action
     if function in ACCESS_FUNCTIONS:
         return {'ok': True, 'result': access_action(settings, function, list(args))}
+    if function in ('readKeybindings', 'setKeybinding', 'resetKeybindings'):
+        try:
+            return {'ok': True, 'result': keyboard_settings(function, args, settings)}
+        except ValueError as refused:
+            raise Refused(str(refused)) from None
     if function == 'exposeSettingsPage':
         if len(args) != 1:
             raise Refused('Choose a Settings page.')
@@ -2007,6 +2012,7 @@ def r_settings_action(s, req):
         from .settings_owner import dock_layout as one_dock_layout
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {},
+                  **keyboard_settings(settings=settings),
                   'appearanceSettings': rows, 'homeLayout': settings.read().get('homeLayout', {}),
                   'dockLayout': one_dock_layout(settings=settings)['dockLayout']}
         try:

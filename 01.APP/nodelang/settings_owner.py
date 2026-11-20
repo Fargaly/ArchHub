@@ -917,3 +917,87 @@ THEME = {
     'l_line': '#e3ddd0',
     'l_accent': '#c96442',
 }
+
+def keyboard_settings(function='readKeybindings', args=(), settings=None):
+    """One override map; invalid saved keyboard data never hides other Settings owners."""
+    from .command_registry import STUDIO_COMMANDS, KEYBOARD_ALIASES
+    from .nograph_server import JsonFile
+    settings = settings or JsonFile(state_directory() / 'settings/settings.json', {})
+    if type(args) not in (list, tuple):
+        raise ValueError('Use a list of keyboard settings arguments.')
+    commands = {row['id']: row for row in STUDIO_COMMANDS if row.get('shortcut') and row['id'] not in KEYBOARD_ALIASES
+                and 'tray' not in row['contexts']}
+    contexts = {id: set(row['contexts']) for id, row in commands.items()}
+    for alias, id in KEYBOARD_ALIASES.items():
+        if id in contexts:
+            contexts[id].update(next(row['contexts'] for row in STUDIO_COMMANDS if row['id'] == alias))
+
+    def normalized(value):
+        if type(value) is not str or len(value) > 64:
+            raise ValueError('Use a keyboard shortcut of at most 64 characters.')
+        if not value:
+            return ''
+        parts = value.split(' ')
+        modifiers, key = parts[:-1], parts[-1]
+        if modifiers != [name for name in ('Ctrl', 'Shift', 'Alt') if name in modifiers]:
+            raise ValueError('Use Ctrl, Shift and Alt once each, before the key.')
+        key = {'Del': 'Delete', 'Esc': 'Escape'}.get(key, key)
+        if not (len(key) == 1 and key.isascii() and key.isprintable() or
+                re.fullmatch(r'F(?:[1-9]|1[0-9]|2[0-4])|Delete|Backspace|Enter|Home|End|PageUp|PageDown|Insert', key)):
+            raise ValueError('Choose one letter, number, function key or navigation key.')
+        if len(key) == 1:
+            key = key.upper()
+        chord = ' '.join([*modifiers, key])
+        if chord in ('Alt F4', 'Ctrl Alt Delete', 'Ctrl Shift Escape', 'Ctrl Shift >', 'Ctrl Shift .',
+                     'Ctrl +', 'Ctrl =', 'Ctrl Shift +', 'Ctrl -', 'Ctrl 0', 'Shift !', 'Shift 1',
+                     'F6', '/', '+', '=', '-', '0', 'I', 'U'):
+            raise ValueError('That shortcut is reserved by system, navigation or zoom controls.')
+        return chord
+
+    defaults = {id: normalized(row['shortcut']) for id, row in commands.items()}
+
+    def checked(values):
+        if type(values) is not dict or len(values) > len(commands) or any(id not in commands for id in values):
+            raise ValueError('Choose a registered keyboard action.')
+        result = {id: normalized(chord) for id, chord in values.items()}
+        effective = {**defaults, **result}
+        ids = list(commands)
+        for index, left in enumerate(ids):
+            for right in ids[index + 1:]:
+                overlap = bool(contexts[left] & contexts[right] or (contexts[left] | contexts[right]) & {'navigation', 'session', 'canvas'})
+                default_pair = effective[left] == defaults[left] and effective[right] == defaults[right]
+                if effective[left] and effective[left] == effective[right] and overlap and not default_pair:
+                    raise ValueError('That shortcut already runs ' + commands[right]['label'] + '.')
+        return result
+
+    def present(values, error=''):
+        return {'keybindings': values, 'keyboardError': error, 'keyboardCommands': [
+            {'id': id, 'label': row['label'], 'contexts': sorted(contexts[id]),
+             'default': defaults[id], 'value': values.get(id, defaults[id]), 'changed': id in values}
+            for id, row in commands.items()]}
+
+    with settings.lock:
+        if function == 'resetKeybindings':
+            if args:
+                raise ValueError('Reset keyboard shortcuts takes no values.')
+            settings.update({'keybindings': {}})
+            return present({})
+        try:
+            held = checked(settings.read().get('keybindings', {}))
+        except ValueError as failed:
+            if function != 'readKeybindings':
+                raise
+            return present({}, 'Saved keyboard shortcuts could not be read. Defaults are active; use Reset all shortcuts. ' + str(failed))
+        if function == 'readKeybindings':
+            return present(held)
+        if function != 'setKeybinding' or len(args) != 2 or type(args[0]) is not str or args[0] not in commands:
+            raise ValueError('Choose a registered keyboard action and its shortcut.')
+        id, value = args
+        changes = dict(held)
+        if value is None:
+            changes.pop(id, None)
+        else:
+            changes[id] = value
+        changes = checked(changes)
+        settings.update({'keybindings': changes})
+        return present(changes)

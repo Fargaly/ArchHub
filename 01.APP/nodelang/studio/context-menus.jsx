@@ -23,7 +23,7 @@
       const bindings = {};
       rows.forEach((row,index) => (bindings[row.id] ||= []).push({...row,order:index}));
       return commandsForContext(registry,contextNames[kind] || kind,{},bindings).map(row => {
-        const tuple = [row.label,row.icon,row.shortcut,row.action,row.danger,row.disabledReason || row.disabled];
+        const tuple = [row.label,row.icon,(window.UI.shortcutFor?.(row.id)??row.shortcut),row.action,row.danger,row.disabledReason || row.disabled];
         tuple.command = row;
         return tuple;
       });

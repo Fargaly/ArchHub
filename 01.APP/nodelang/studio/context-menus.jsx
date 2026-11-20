@@ -33,27 +33,37 @@
   window.UI.commandGroups = commandGroups;
   window.UI.commandContextNames = contextNames;
   function paletteCommands(s,u,api,{query='',mode='All',context=null,actionState=null}={}) {
+    let contextual = [];
     if(context){
-      return (contextCommandGroups({...context,nodeId:context.id,close:u.close},s,u,actionState,context.more,
+      contextual = (contextCommandGroups({...context,nodeId:context.id,close:u.close},s,u,actionState,context.more,
         more=>u.show('Search',{commandContext:{...context,more}})) || []).flat().map(row=>row.command)
         .filter(row=>(mode==='All'||row.group===mode)&&row.label.toLowerCase().includes(query.toLowerCase()));
+      if (mode !== 'Workflows' && (mode !== 'All' || !query.trim())) return contextual;
     }
+    const workflows = [...(s.templates || []).filter(t => !t.path).map(t => ({
+      label: t.title,
+      commandId: 'palette.template',
+      action: () => u.show('Skill', {id: t.id})
+    })), ...(s.graphs || []).map(g => ({
+      label: g.name || g.title || g.id,
+      commandId: 'palette.graph',
+      action: async () => {
+        const opened = await u.act(() => api.selectGraph(g.id));
+        if (!opened || opened.cancelled) return;
+        if (g.path) await u.go('canvas', g.path);
+        else await u.go('canvas');
+      }
+    }))];
     // A card the catalogue marks not available (no engine, or coming soon) cannot be added, so it is not offered here;
     // an agent session is a conversation record, not a skill, so it is not offered as a node either.
     const agentSessions = (s.templates || []).filter(t => t.kind === 'agent-session').map(t => t.id);
-    const bindings = [...s.catalogue.filter(c => !c.unavailable && !agentSessions.includes(c.id)).map(c => ({
+    const bindings = context ? workflows : [...workflows, ...s.catalogue.filter(c => !c.unavailable && !agentSessions.includes(c.id)).map(c => ({
         label: c.name,
         commandId: 'palette.add_node',
         action: async () => {
           await u.act(() => api.addNode(c.name));
           u.go('canvas');
         }
-      })), ...s.templates.filter(t => !t.path).map(t => ({
-        label: t.title,
-        commandId: 'palette.template',
-        action: () => u.show('Skill', {
-          id: t.id
-        })
       })), ...s.tasks.map(t => ({
         label: t.title,
         commandId: 'palette.task',
@@ -66,13 +76,6 @@
         label: p.name + ' · not joined',
         commandId: 'palette.agent',
         action: () => u.go('workshop')
-      })), ...(s.graphs || []).map(g => ({
-        label: g.name || g.title || g.id,
-        commandId: 'palette.graph',
-        action: async () => {
-          const opened = await u.act(() => api.selectGraph(g.id));
-          if (opened && !opened.cancelled) await u.go('canvas', g.id);
-        }
       })), ...(s.hosts || []).map(h => ({
         label: h.name + (h.state ? ' · ' + ({absent: 'Not installed', unavailable: 'Not available', 'prerequisites-ready': 'Ready to connect', 'needs-sign-in': 'Needs sign-in', installed: 'Installed', connected: 'Connected', listening: 'Connected'}[h.state] || h.state) : ''),
         commandId: 'palette.host',
@@ -95,9 +98,10 @@
     const registry=window.ArchHubCommandRegistry;
     const held={};
     for(const binding of bindings)(held[binding.commandId] ||= []).push(binding);
-    return commandsForContext(registry.commands,'palette',{},held).map(row=>({...row,group:row.paletteGroup || 'Pages'}))
+    const rows = commandsForContext(registry.commands,'palette',{},held).map(row=>({...row,group:row.paletteGroup || 'Pages'}))
       .filter(row=>(mode==='All'||row.group===mode)&&row.label.toLowerCase().includes(query.toLowerCase()))
       .sort((a,b)=>registry.palette_order.indexOf(a.group)-registry.palette_order.indexOf(b.group));
+    return contextual.concat(rows);
   }
   window.UI.paletteCommands = paletteCommands;
   function declaredCommandGroups(selection,s,u,actionState) {

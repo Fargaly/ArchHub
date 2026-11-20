@@ -199,6 +199,16 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
+    ifc_write = engine == 'revit.export_ifc'
+    if ifc_write:
+        from .nodeslib_v2_engines import ifc_export_request
+        effect = ifc_export_request(params, feeds, document)
+        if continuation and not _RELEASING.get(False):
+            continuation = {**continuation, 'ifc_binding': {'params': copy.deepcopy(params),
+                            'feeds': copy.deepcopy(feeds), 'effect': effect}}
+        if _RELEASING.get(False) and params.get('_ifc_effect') != effect:
+            raise ValueError('IFC inputs or workspace changed after approval. Run again.')
+        params = {**params, **{key: value for key, value in effect.items() if key != 'pending_write'}, '_ifc_effect': effect}
     bcf_write = False
     if engine == 'daily.ifc_check_bcf':
         from .daily_work_nodes import bcf_request, BCF_VERSIONS
@@ -212,7 +222,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
             continuation = {**continuation, 'bcf_binding': {'node': node['id'], 'source': source,
                             'digest': digest, 'version': params['bcf_version'], 'output': params['bcf_path'],
                             'version_input': version_input}}
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or engine in ('thing.file.write', 'script.python'))):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or ifc_write or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
@@ -1402,6 +1412,14 @@ def approval_current(document, continuation, identity):
     current = document.get('properties', {}).get('canvasRun', {})
     if not current.get('id') or current['id'] != expected.get('id') or current.get('inputs', {}).get(identity) != expected.get('inputs', {}).get(identity):
         return False
+    binding = continuation.get('ifc_binding')
+    if binding:
+        from .nodeslib_v2_engines import ifc_export_request
+        try:
+            if ifc_export_request(binding['params'], binding['feeds'], document) != binding['effect']:
+                return False
+        except (OSError, ValueError, KeyError):
+            return False
     binding = continuation.get('bcf_binding')
     if binding:
         from .daily_work_nodes import resolve_bcf_version
@@ -1587,6 +1605,11 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         signatures = {key: input_signature(nodes[key], incoming[key], path) for key in nodes}
         previous = document.get('properties', {}).get('canvasRun', {})
         invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)], wires=wires)
+        if previous and _resume is None:
+            from .hook_decision import approval_status
+            closed = [key for key in nodes if nodes[key].get('result', {}).get('status') == 'Waiting for approval'
+                      and approval_status(os.environ, nodes[key]['result'].get('output', {}).get('approvalId')) not in ('pending', 'releasing')]
+            invalid.update(canvas_documents.downstream(document, closed, wires=wires))
         if previous and (invalid or again) and _resume is None:
             from .hook_decision import ask_reviews, withdraw_approval
             pending = {c['id'] for c in ask_reviews() if c['status'] == 'pending'}

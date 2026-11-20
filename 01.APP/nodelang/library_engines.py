@@ -1763,6 +1763,7 @@ ENGINE_SOCKETS = {
     "library.rule_check": {"source": ("pass", "fail", "report", "out"), "target": ("in",)},
     "revit.set_parameter_by_name": {"source": ("elements", "out"), "target": ("elements", "parameter", "value", "grant")},
     "excel.write_range": {"source": ("file", "out"), "target": ("rows", "grant")},
+    "revit.export_ifc": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "views")},
     "revit.create_sheets": {"source": ("sheets", "out"), "target": ("rows", "grant")},
     "revit.renumber_rename": {"source": ("elements", "out"), "target": ("elements", "number_format", "name_format", "grant")},
 }
@@ -1938,6 +1939,11 @@ LIBRARY_ITEM_ENGINES.update({
                       "params": {"changes": "[]"}},
     "g_host_health": {"engine": "host.health", "params": {"host": ""}},
     "g_evidence_attach": {"engine": "evidence.attach", "params": {"path": ""}},
+    "file_export_ifc": {"engine": "revit.export_ifc", "params": {"project_id": "", "session": "", "document": "", "path": "", "version": "From Projects", "setup": "", "views": []},
+                        "paramDefs": [{"id": "document", "type": "file", "name": "Revit document"},
+                                      {"id": "path", "type": "file", "name": "IFC output"},
+                                      {"id": "views", "type": "list", "name": "View IDs (empty exports the model)"},
+                                      {"id": "version", "type": "choice", "name": "IFC version", "options": ["From Projects", "IFC4", "IFC2x3", "IFC4.3", "IFC4DTV", "IFC4x3DTV"]}]},
     "g_approval_gate": {"engine": "approval.gate",
                         "params": {"operation": "revit.write", "scope": "revit.write"}},
     "g_rule_check": {"engine": "library.rule_check",
@@ -2033,6 +2039,7 @@ LIBRARY_PRESENTATION = (
     )),
     ("file", (
         ("f_write_table", "Write Excel / CSV", "Write rows to an Excel or CSV file"),
+        ("file_export_ifc", "IFC export", "Export the selected Revit document after approval"),
     )),
     ("text", (
         ("text_ops", "Text ops", "Replace, split, join, format or pad text"),

@@ -849,6 +849,15 @@ def preference_settings(function='readControls', args=(), settings=None):
     from .session_files import profile_directory
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     from .daily_work_nodes import BCF_VERSIONS
+    from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
+    if args and args[0] == 'Projects.IFC version' and function in ('setAppearance', 'resetAppearance'):
+        if function == 'setAppearance':
+            if args[1] not in IFC_PROJECT_VERSIONS:
+                raise ValueError('Choose IFC4, IFC2x3 or IFC4.3.')
+            settings.update({'ifcVersion': args[1]})
+        else:
+            settings.update({}, remove=['ifcVersion'])
+        function, args = 'readControls', ()
     identity, key = 'Projects.Working subfolder', 'projectWorkingSubfolder'
     if args and args[0] == 'Projects.BCF version' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
@@ -877,7 +886,11 @@ def preference_settings(function='readControls', args=(), settings=None):
            'label': 'BCF version', 'type': 'choice', 'options': list(BCF_VERSIONS), 'default': BCF_VERSIONS[-1],
            'value': settings.read().get('bcfVersion', BCF_VERSIONS[-1]),
            'description': 'Version written by issue exchange. BCF input is read in its recorded version.'}
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf]}
+    ifc = {'id': 'Projects.IFC version', 'storageKey': 'ifcVersion', 'page': 'Projects', 'group': 'IFC and BCF',
+           'label': 'IFC version', 'type': 'choice', 'options': list(IFC_PROJECT_VERSIONS), 'default': IFC_PROJECT_VERSIONS[0],
+           'value': settings.read().get('ifcVersion', IFC_PROJECT_VERSIONS[0]),
+           'description': 'Version used by IFC export unless its node or wire selects another version.'}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc]}
 
 
 def preference_setting(identity):

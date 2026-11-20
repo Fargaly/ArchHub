@@ -50,15 +50,18 @@ def test_palette_uses_one_engine_set_and_hides_engine_less_speckle_cards():
     assert "s_speckle_diff" not in served
     assert "h_write" not in served
     for item in ("b_override_colour", "file_write_excel", "file_write_csv", "file_schedule_excel",
-                 "file_export_dwg", "file_export_ifc"):
+                 "file_export_dwg"):
         assert item not in served
     for item in ("b_all_category", "b_get_parameter", "r_xl_range", "b_set_parameter",
-                 "b_create_sheets", "b_renumber", "g_approval_gate"):
+                 "b_create_sheets", "b_renumber", "g_approval_gate", "file_export_ifc"):
         assert item in served
     assert served["s_sort"]["engine"] == "shape.sort"
     assert served["l_if_handoff"]["engine"] == "control.if"
     assert served["l_merge_handoff"]["engine"] == "control.merge"
     for item in served.values():
+        if item.get('available') is False:
+            assert item.get('noEngine'), item['id']
+            continue
         assert engine_runs(item["engine"], PIPELINE_ENGINES), item["id"]
         assert not item.get("noEngine"), item["id"]
     assert LIBRARY_ITEM_ENGINES["t_sort"]["engine"] == "shape.sort"

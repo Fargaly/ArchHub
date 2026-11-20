@@ -121,9 +121,13 @@ def _verified_write_grant(
         raise ValueError("approval grant input digest does not match")
     if path is not None and Path(str(grant.get("path"))).resolve() != path.resolve():
         raise ValueError("approval grant path does not match")
-    if _WRITE_GRANT_VERIFIER is None:
+    verifier = _WRITE_GRANT_VERIFIER
+    if verifier is None and operation == "revit.export_ifc":
+        from .hook_decision import verify_canvas_ifc_grant
+        verifier = verify_canvas_ifc_grant
+    if verifier is None:
         raise ValueError("verified approval grant verifier is not bound")
-    answer = _WRITE_GRANT_VERIFIER({
+    answer = verifier({
         "grant": dict(grant),
         "operation": operation,
         "scope": scope,
@@ -494,7 +498,47 @@ def publish_package(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": files, "folder": str(path), "receipt": answer["receipt"]}, "%d sheets published" % len(files)
 
 
+IFC_PROJECT_VERSIONS = ('IFC4', 'IFC2x3', 'IFC4.3')
+_IFC_DEFAULT_VERSIONS = {'IFC4': 'IFC4RV', 'IFC2x3': 'IFC2x3CV2', 'IFC4.3': 'IFC4x3RV'}
+
+
+def ifc_export_request(params, feeds, document):
+    from .session_files import resolve_setting
+    from .clean_revit_adapter import _ifc_scoped_paths, _IFC_SCHEMAS
+    values = {**params, **{k: v for k, v in feeds.items() if k in ('project_id', 'session', 'document', 'path', 'version', 'setup', 'views')}}
+    version = values.get('version', 'From Projects')
+    if version in ('', None, 'From Projects'):
+        version = resolve_setting(document or {}, 'Projects.IFC version')['value']
+    version = _IFC_DEFAULT_VERSIONS.get(version, version)
+    if version not in _IFC_SCHEMAS:
+        raise ValueError('Choose a supported IFC version.')
+    request = {k: values.get(k, [] if k == 'views' else '') for k in ('project_id', 'session', 'document', 'path', 'setup', 'views')}
+    request['version'] = version
+    _source, _destination, target, registration = _ifc_scoped_paths(request)
+    pending = {'kind': 'ifc-export', 'operation': 'revit.export_ifc', 'target': target, 'content': request,
+               'intent': 'IFCEXPORT', 'author': 'archhub/canvas',
+               'why': 'Canvas IFC export for document %s; registered workspace %s.' % ((document or {}).get('id', ''), registration)}
+    return {**request, 'pending_write': pending}
+
+
 def revit_export(params: Mapping[str, object], feeds: Mapping[str, object]):
+    if params.get('_ifc_effect') is not None or params.get('format') == 'ifc':
+        from .hook_decision import canvas_ifc_grant
+        effect = params.get('_ifc_effect')
+        if not isinstance(effect, dict):
+            raise ValueError('Run IFC export through its Canvas approval.')
+        request = {'project_id': params.get('project_id'), 'session': params.get('session'),
+                   'document': params.get('document'), 'path': params.get('path'),
+                   'version': params.get('version'), 'setup': params.get('setup'), 'views': params.get('views')}
+        if {**request, 'pending_write': effect.get('pending_write')} != effect:
+            raise ValueError('IFC node parameters differ from the reviewed request.')
+        grant = canvas_ifc_grant(effect)
+        answer = _confirmed_write(_revit('revit.export_ifc', {**effect, 'grant': grant,
+                                  'mods_store': params.get('mods_store')}), 'revit.export_ifc')
+        files = answer.get('result')
+        if not isinstance(files, list) or len(files) != 1 or files[0] != effect['path'] or not answer['receipt'].get('ifc_sha256'):
+            raise ValueError('IFC export did not confirm its exact output and digest.')
+        return {'files': files, 'receipt': answer['receipt'], 'out': files}, 'Exported IFC'
     fmt = _text(params, "format", "dwg").casefold()
     if fmt not in ("dwg", "ifc"):
         raise ValueError("format must be dwg or ifc")
@@ -661,6 +705,7 @@ def evidence_attach(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 
 ENGINES = {
+    "revit.export_ifc": revit_export,
     "revit.elements_of_category": revit_elements_of_category,
     "revit.get_parameter": revit_get_parameter,
     "revit.set_parameter_by_name": revit_set_parameter,

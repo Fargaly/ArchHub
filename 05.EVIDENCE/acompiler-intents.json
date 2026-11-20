@@ -12340,6 +12340,21 @@
         "03.TOOLS/tools/real_app_check/scenarios/home_drafts.mjs"
       ]
     },
+    "LAUNCHTRAY": {
+      "source": "Build 19: forward the installed tray and BABOOM entry points to the existing ArchHub window. Match the installed launcher and its admitted flags; keep foreign processes refused. Coordinator release assignment 9df7d82e.",
+      "scope": [
+        "01.APP/nodelang/launcher.py",
+        "02.TESTS/tests_replica/test_launcher_owner_forwarding.py"
+      ]
+    },
+    "SETTINGSAREAS": {
+      "source": "Founder 2026-11-20: the installed Settings must match the approved design. Restore its eleven areas, make search and Changed navigate the real owner controls, and preserve honest scope behavior. Build 19 Settings assignment 542e.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/settings_design_areas.test.cjs"
+      ]
+    },
     "QUOTACONTINUITY": {
       "source": "Founder 2026-11-20 09:26: work must never stop when any agent/model hits quota; auto-release stalled/quota-hit tasks with handover across all tasks, seat-coordinator lease failover, and mixed fallback_models with Retry-After cooldown.",
       "scope": [

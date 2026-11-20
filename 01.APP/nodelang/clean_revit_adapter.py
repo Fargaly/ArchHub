@@ -5,9 +5,12 @@ Each session owns its port. Capabilities and approval belong to the graph.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import socket
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -21,6 +24,7 @@ _READ_TIMEOUT = 30.0
 _REVIT_WRITE_OPS = {
     "revit.set_parameter_by_name",
     "revit.create_sheets",
+    "revit.export_ifc",
     "revit.renumber_rename",
 }
 
@@ -1367,12 +1371,226 @@ def _require_write_grant(op_id: str, arguments: Mapping[str, object]) -> Mapping
         arguments, operation=op_id, scope="revit.write",
         input_digest=nodeslib._digest_payload(_effect_arguments(arguments)),
     )
+    if op_id == "revit.export_ifc":
+        pending = arguments.get("pending_write")
+        if not isinstance(pending, Mapping) or pending.get("kind") != "ifc-export":
+            raise PermissionError("IFC export requires a typed pending export")
+        _source, _destination, target, _digest = _ifc_scoped_paths(arguments)
+        if pending.get("target") != target:
+            raise PermissionError("IFC export requires a typed pending export bound to the approved path")
     from .domains.selfext import before_write_hooks
     annotations = before_write_hooks(arguments.get("mods_store"), op_id, arguments)
     if annotations:
         grant = dict(grant)
         grant["mods_before_write"] = annotations
     return grant
+
+
+
+_IFC_SCHEMAS = {
+    "IFC2x2": b"IFC2X2", "IFCBCA": b"IFC2X2",
+    "IFC2x3": b"IFC2X3", "IFC2x3CV2": b"IFC2X3", "IFC2x3BFM": b"IFC2X3",
+    "IFC2x3FM": b"IFC2X3", "IFCCOBIE": b"IFC2X3",
+    "IFC4RV": b"IFC4", "IFC4DTV": b"IFC4", "IFCSG": b"IFC4",
+    "IFC4x3RV": b"IFC4X3", "IFC4x3DTV": b"IFC4X3",
+}
+
+
+def _ifc_scoped_paths(arguments):
+    from .workspace_roots_catalogue import read_registered_roots, root_bound_registration
+
+    project = arguments.get("project_id")
+    roots, _pin = read_registered_roots()
+    if not isinstance(project, str) or project not in roots:
+        raise ValueError("IFC export requires a registered project")
+    root = Path(roots[project]["path"]).resolve()
+    paths = []
+    for name, suffix in (("document", ".rvt"), ("path", ".ifc")):
+        value = arguments.get(name)
+        if not isinstance(value, str) or value.startswith(("\\\\", "//")):
+            raise ValueError("IFC %s must be an absolute local %s path" % (name, suffix))
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() != suffix
+                or any(":" in part for part in path.parts[1:]) or path != path.resolve()
+                or not path.is_relative_to(root)):
+            raise ValueError("IFC %s must be a canonical %s path in the registered project" % (name, suffix))
+        paths.append(path)
+    source, destination = paths
+    logical = "workspace-roots/%s/%s" % (project, destination.relative_to(root).as_posix())
+    _container, digest, current = root_bound_registration(logical)
+    if current.get("privacy") != "private" or Path(current["path"]).resolve() != root:
+        raise ValueError("IFC export requires the current private project workspace")
+    if not source.is_file() or not destination.parent.is_dir():
+        raise ValueError("IFC export needs a saved RVT and an existing output folder")
+    if destination.exists():
+        raise ValueError("IFC output already exists")
+    return source, destination, logical, digest
+
+
+_IFC_EXPORT_SETUP = r"""
+var map = new Revit.IFC.Export.Utility.IFCExportConfigurationsMap(Doc);
+map.AddBuiltInConfigurations();
+map.AddSavedConfigurations(null);
+if (!map.HasName(setup))
+    throw new Exception("unknown IFC export setup: " + setup);
+var configuration = map[setup];
+if (configuration.IFCVersion != version)
+    throw new Exception("IFC setup version differs from the approved version");
+if (configuration.IFCFileType.ToString() != "Ifc" ||
+    configuration.ExportLinkedFiles != Revit.IFC.Export.Utility.LinkedFileExportAs.DontExport ||
+    configuration.ExportUserDefinedPsets || configuration.ExportUserDefinedParameterMapping)
+    throw new Exception("IFC setup requires linked files, external mapping or a different output format");
+if (configuration.VisibleElementsOfCurrentView != (viewId != ElementId.InvalidElementId) ||
+    (configuration.UseActiveViewGeometry && viewId == ElementId.InvalidElementId))
+    throw new Exception("IFC setup and approved view scope differ");
+configuration.ActiveViewId = configuration.UseActiveViewGeometry ? viewId : ElementId.InvalidElementId;
+configuration.UpdateOptions(Doc, options, viewId, !Revit.IFC.Common.Utility.OptionsUtil.UseLegacyParameterMapping());
+"""
+
+
+def _ifc_script(source, staged, version, setup, view):
+    return r"""
+string source = %s, folder = %s, name = %s, requestedVersion = %s, setup = %s;
+if (Doc == null || Doc.IsFamilyDocument || Doc.IsLinked || String.IsNullOrEmpty(Doc.PathName) ||
+    !String.Equals(System.IO.Path.GetFullPath(Doc.PathName), source, StringComparison.OrdinalIgnoreCase))
+    throw new Exception("active Revit document differs from the approved RVT");
+var versionType = typeof(IFCVersion);
+if (!Enum.IsDefined(versionType, requestedVersion))
+    throw new Exception("IFC version unavailable on this Revit: " + String.Join(", ", Enum.GetNames(versionType)));
+var version = (IFCVersion)Enum.Parse(versionType, requestedVersion);
+var viewId = ElementId.InvalidElementId;
+if (%dL != 0) {
+    var view = Doc.GetElement(global::RevitMCPCore.RevitIds.Id(%dL)) as View;
+    if (view == null || view.IsTemplate)
+        throw new Exception("approved IFC view is unavailable in the source document");
+    viewId = view.Id;
+}
+using (var options = new IFCExportOptions()) {
+    options.FileVersion = version;
+    options.FilterViewId = viewId;
+    %s
+    if (options.FileVersion != version || options.FilterViewId != viewId)
+        throw new Exception("IFC setup changed the approved version or view");
+    using (var transaction = new Transaction(Doc, "ArchHub IFC export")) {
+        if (transaction.Start() != TransactionStatus.Started)
+            throw new Exception("IFC export transaction did not start");
+        bool exported = false;
+        try { exported = Doc.Export(folder, name, options); }
+        finally {
+            if (transaction.RollBack() != TransactionStatus.RolledBack)
+                throw new Exception("IFC export transaction did not roll back");
+        }
+        if (!exported) throw new Exception("Revit IFC export returned false");
+    }
+}
+result = requestedVersion;
+""" % (_cs_string(str(source)), _cs_string(str(staged.parent)), _cs_string(staged.name),
+       _cs_string(version), _cs_string(setup), view, view, _IFC_EXPORT_SETUP if setup else "")
+
+
+_IFC_STEP_TOKEN = re.compile(rb"/\*|\*/|'|[();]")
+_IFC_STEP_SCHEMA = re.compile(rb"FILE_SCHEMA\s*\(\s*\(\s*'([A-Z0-9_]+)'\s*\)\s*\)")
+_IFC_STEP_CHUNK = 1024 * 1024
+
+
+def _ifc_step_digest(path, schema_family):
+    """Hash one Revit STEP exchange while checking its HEADER and DATA framing."""
+    markers = (b"ISO-10303-21", b"HEADER", b"ENDSEC", b"DATA", b"ENDSEC", b"END-ISO-10303-21")
+    error = "Revit returned an incomplete IFC or the wrong schema"
+    digest = hashlib.sha256()
+    prefix = bytearray()
+    phase, depth, skip = 0, 0, 0
+    quoted, comment, schema_seen = False, False, False
+
+    def remember(fragment):
+        # Revit control statements and FILE_SCHEMA fit in this prefix.
+        # Entity records can be larger than any read buffer.
+        remaining = 1024 - len(prefix)
+        if remaining:
+            prefix.extend((fragment if prefix else fragment.lstrip())[:remaining])
+
+    with path.open("rb") as stream:
+        while block := stream.read(_IFC_STEP_CHUNK):
+            digest.update(block)
+            # A slash/star delimiter can straddle the buffer boundary.
+            size = len(block)
+            data = block + stream.peek(1)[:1] if block.endswith((b"/", b"*")) else block
+            position = skip
+            for match in _IFC_STEP_TOKEN.finditer(data, position):
+                if match.start() >= size:
+                    break
+                token = match[0]
+                if comment:
+                    comment = token != b"*/"
+                else:
+                    remember(data[position:match.start()])
+                    if quoted or token == b"'":
+                        # Adjacent doubled quotes close and immediately reopen the value.
+                        quoted = token != b"'" if quoted else True
+                        remember(token)
+                    elif token == b"/*":
+                        comment = True
+                        remember(b" ")
+                    elif token == b";" and depth == 0:
+                        statement = bytes(prefix).strip()
+                        if (phase < len(markers) and len(prefix) < 1024
+                                and statement == markers[phase]):
+                            if phase == 2 and not schema_seen:
+                                raise RevitUnreachable(error)
+                            phase += 1
+                        elif phase == 2 and statement.startswith(b"FILE_SCHEMA"):
+                            schema = _IFC_STEP_SCHEMA.fullmatch(statement)
+                            if (schema_seen or len(prefix) == 1024 or schema is None
+                                    or schema[1].split(b"_", 1)[0] != schema_family):
+                                raise RevitUnreachable(error)
+                            schema_seen = True
+                        elif not ((phase == 2 and b"(" in statement) or
+                                  (phase == 4 and statement.startswith(b"#"))):
+                            raise RevitUnreachable(error)
+                        prefix.clear()
+                    else:
+                        depth += (token == b"(") - (token == b")")
+                        if depth < 0 or token == b"*/":
+                            raise RevitUnreachable(error)
+                        remember(token)
+                position = match.end()
+            if not comment:
+                remember(data[position:size])
+            skip = max(0, position - size)
+    if phase != len(markers) or depth or quoted or comment or prefix:
+        raise RevitUnreachable(error)
+    return digest.hexdigest()
+
+
+def _ifc_export(arguments):
+    from .host_brokers import EXEC_WAIT_LIMIT
+
+    version, setup, port = (arguments.get(key) for key in ("version", "setup", "session"))
+    views = arguments.get("views", [])
+    if not isinstance(version, str) or version not in _IFC_SCHEMAS:
+        raise ValueError("choose an explicit IFC version: " + ", ".join(_IFC_SCHEMAS))
+    if not isinstance(setup, str):
+        raise ValueError("IFC setup must be a name or an empty string")
+    if not isinstance(port, str) or port not in {str(value) for value in BROKER_PORTS}:
+        raise ValueError("set the reviewed Revit session port")
+    if (not isinstance(views, list) or len(views) > 1
+            or any(type(view) is not int or not 0 < view < 2**63 for view in views)):
+        raise ValueError("IFC export accepts at most one explicit Revit view ID")
+    source, destination, logical, digest = _ifc_scoped_paths(arguments)
+    session = _session_for(port, live_sessions())
+    with tempfile.TemporaryDirectory(prefix=".archhub-ifc-", dir=destination.parent) as folder:
+        staged = Path(folder) / destination.name
+        script = _ifc_script(source, staged, version, setup, views[0] if views else 0)
+        answer = _execute(session, script, "ArchHub IFC export", timeout=EXEC_WAIT_LIMIT, transaction_mode=False)
+        if answer.get("status") != "ok":
+            raise RevitUnreachable("Revit refused IFC export: %s" % answer.get("error"))
+        if answer.get("result") != version or staged.is_symlink() or not staged.is_file():
+            raise RevitUnreachable("Revit did not produce the approved IFC export")
+        file_digest = _ifc_step_digest(staged, _IFC_SCHEMAS[version])
+        if _ifc_scoped_paths(arguments) != (source, destination, logical, digest):
+            raise RevitUnreachable("registered IFC project changed before publication")
+        os.link(staged, destination)  # An output created after review is never replaced.
+    return session, {"status": "ok", "result": [str(destination)], "ifc_sha256": file_digest}
 
 
 def _script_for(op_id: str, arguments: Mapping[str, object]) -> str | None:
@@ -1547,9 +1765,11 @@ def broker_call(service: str, route: str, body: Mapping[str, object] | None = No
 
 
 def _execute(session: Mapping[str, object], script: str, transaction: str,
-             *, timeout: float | None = None) -> dict:
+             *, timeout: float | None = None, transaction_mode: bool = True) -> dict:
     """The one script transport; callers retain their admission and result contracts."""
     body = {"code": script, "transaction_name": transaction}
+    if not transaction_mode:
+        body["transaction"] = False
     if timeout is None:
         return _call(session["port"], "/exec", body)
     return _call(session["port"], "/exec", body, timeout=timeout)
@@ -1645,15 +1865,18 @@ def authoring(script: str, transaction: str, params: Mapping[str, object], *, ti
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared Revit operation against a live session."""
     write_grant = _require_write_grant(op_id, arguments) if op_id in _REVIT_WRITE_OPS else None
-    # Arguments are checked into the script before any host is asked.
-    script = _script_for(op_id, arguments)
-    if script is None:
-        raise RevitUnreachable(
-            "this adapter does not yet carry out %s" % op_id
-        )
-    sessions = live_sessions()
-    session = _session_for(arguments.get("instance"), sessions)
-    answer = _execute(session, script, "ArchHub write" if write_grant else "ArchHub read")
+    if op_id == "revit.export_ifc":
+        session, answer = _ifc_export(arguments)
+    else:
+        # Arguments are checked into the script before any host is asked.
+        script = _script_for(op_id, arguments)
+        if script is None:
+            raise RevitUnreachable(
+                "this adapter does not yet carry out %s" % op_id
+            )
+        sessions = live_sessions()
+        session = _session_for(arguments.get("instance"), sessions)
+        answer = _execute(session, script, "ArchHub write" if write_grant else "ArchHub read")
     if answer.get("status") != "ok":
         raise RevitUnreachable(
             "Revit refused %s: %s" % (op_id, answer.get("error"))
@@ -1674,6 +1897,8 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
             "grant_digest": write_grant.get("digest"),
             "result_digest": nodeslib._digest_payload(answer.get("result")),
         }
+        if "ifc_sha256" in answer:
+            result["receipt"]["ifc_sha256"] = answer["ifc_sha256"]
         if write_grant.get("mods_before_write"):
             # Project the already-fired hook into the accepted count receipt;
             # retain its canonical scope evidence without firing it a second time.

@@ -418,10 +418,10 @@ def _desktop_launch_is_admitted(peer, *, product_root=None, python_executable=No
         # Exact installed VBS launch. Forwarded Qt/plugin or Python options are
         # not application arguments and do not gain Desktop mint authority.
         return canonical(args[2]) == canonical(root / "nodelang/launcher.py")
-    if (len(args) == 4 and args[:2] == ("-E", "-s") and args[3] == "--silent"
+    if (len(args) == 4 and args[:2] == ("-E", "-s") and args[3] in ("--silent", "--tray", "--baboom")
             and Path(args[2]).is_absolute()):
-        # The Startup shortcut runs the same installed VBS launch with --silent.
-        # That flag only hides the first window; it gains no other authority.
+        # The same installed VBS launch with one launch flag: --silent (Startup shortcut), --tray (the update
+        # relaunch), --baboom (Ask BABOOM). A flag only picks the first view; it gains no other authority.
         return canonical(args[2]) == canonical(root / "nodelang/launcher.py")
     return args == ("-m", "nodelang.desktop") and canonical(peer.cwd) == canonical(root)
 

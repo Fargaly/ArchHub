@@ -19,9 +19,9 @@ def running(tmp_path, monkeypatch):
     monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
     counts = dict.fromkeys(('one', 'two', 'three'), 0)
     original = canvas_documents.run_thing
-    def effect(engine, params, feeds):
+    def effect(engine, params, feeds, document=None):
         if engine != 'thing.agent':
-            return original(engine, params, feeds)
+            return original(engine, params, feeds, document=document)
         key = params['agent']
         counts[key] += 1
         return {'result': counts[key]}, key
@@ -148,10 +148,10 @@ def test_failure_keeps_error_and_blocks_downstream(running, monkeypatch):
     from nodelang import canvas_documents, session_files
     path, counts, run = running
     effect = canvas_documents.run_thing
-    def failed(engine, params, feeds):
+    def failed(engine, params, feeds, document=None):
         if params.get('agent') == 'two':
             raise ValueError('Counting effect refused')
-        return effect(engine, params, feeds)
+        return effect(engine, params, feeds, document=document)
     monkeypatch.setattr(canvas_documents, 'run_thing', failed)
     approve(run())
     document = session_files.read_document(path)
@@ -224,8 +224,7 @@ def test_compiled_browser_uses_same_run_and_existing_approve_card(running):
         assert result.returncode == 0, result.stderr
         assert counts == {'one': 2, 'two': 2, 'three': 3}
     finally:
-        server.httpd.shutdown()
-        server.httpd.server_close()
+        server.close()
         thread.join(5)
 
 
@@ -320,7 +319,10 @@ sys.path.insert(0, sys.argv[3])
 from pathlib import Path
 from nodelang import canvas_documents, session_files
 counter = Path(sys.argv[2])
-def effect(engine, params, feeds):
+original = canvas_documents.run_thing
+def effect(engine, params, feeds, document=None):
+    if engine != 'thing.agent':
+        return original(engine, params, feeds, document=document)
     counter.write_text(counter.read_text() + '1' if counter.exists() else '1')
     os._exit(91)
 canvas_documents.run_thing = effect
@@ -411,9 +413,9 @@ def test_unconfirmed_file_requires_explicit_recovery(tmp_path, monkeypatch, deci
     saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': doc})['document']
     paused = owner.dispatch({'action': 'run', 'path': str(path), 'document': saved})
     effect, calls = canvas_documents.run_thing, []
-    def crash(engine, params, feeds):
+    def crash(engine, params, feeds, document=None):
         calls.append(engine)
-        effect(engine, params, feeds)
+        effect(engine, params, feeds, document=document)
         raise SystemExit('crash before outcome')
     with monkeypatch.context() as fault:
         fault.setattr(canvas_documents, 'run_thing', crash)
@@ -445,10 +447,10 @@ def test_retry_from_failed_node_reuses_upstream(running, monkeypatch):
     path, counts, run = running
     effect = canvas_documents.run_thing
     failing = {'three': True}
-    def flaky(engine, params, feeds):
+    def flaky(engine, params, feeds, document=None):
         if failing.get(params.get('agent')):
             raise ValueError('Third effect refused once')
-        return effect(engine, params, feeds)
+        return effect(engine, params, feeds, document=document)
     monkeypatch.setattr(canvas_documents, 'run_thing', flaky)
     approve(run())
     held = session_files.read_document(path)
@@ -510,10 +512,10 @@ def test_run_budget_stops_deterministically_and_nothing_polls(running, monkeypat
     from nodelang import canvas_documents, session_files
     path, counts, run = running
     effect = canvas_documents.run_thing
-    def slow(engine, params, feeds):
+    def slow(engine, params, feeds, document=None):
         if params.get('agent') == 'one':
             time.sleep(0.2)
-        return effect(engine, params, feeds)
+        return effect(engine, params, feeds, document=document)
     monkeypatch.setattr(canvas_documents, 'run_thing', slow)
     stopped = run(budget_s=0.05)
     assert counts == {'one': 1, 'two': 0, 'three': 0}

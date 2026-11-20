@@ -8854,7 +8854,9 @@
         "02.TESTS/tests_js/studio_footerretry.test.cjs",
         "02.TESTS/tests_js/wire_agents.test.cjs",
         "02.TESTS/tests_js/wsadd.test.cjs",
-        "02.TESTS/tests_js/studio_workshop_detail.test.cjs"
+        "02.TESTS/tests_js/studio_workshop_detail.test.cjs",
+        "02.TESTS/tests_js/command_registry.test.cjs",
+        "02.TESTS/tests_js/studio_wsinject.test.cjs"
       ]
     },
     "STUDIOFIX": {
@@ -12326,6 +12328,12 @@
         "06.CLOUD/cloud_backend/cockpit_assets/admin.html",
         "06.CLOUD/cloud_backend/tests/test_founder_actions_are_audited.py",
         "06.CLOUD/cloud_backend/tests/test_community_owner_recovery.py"
+      ]
+    },
+    "COMPOSERONESEND": {
+      "source": "Build 19 Studio composer: dispatch a submitted draft once and restore a refused draft only if the user has not edited or sent another draft. Keep independent messages and all composer entry points working. Workshop 9ad8d55c54da4e8caccf5a83beae05ab and 26722f1e6942489ca8afa7e8b350bbfd.",
+      "scope": [
+        "01.APP/nodelang/studio/ui.jsx"
       ]
     }
   },

@@ -365,9 +365,15 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
                     _caller_context(ctx))
 
     @server.tool(name="task.release")
-    def task_release(id: str, ctx: Context) -> dict[str, object]:
-        """Give a claimed task back to the open pool."""
-        return call("task_release", {"id": id}, _caller_context(ctx))
+    def task_release(id: str, ctx: Context, reason: str = "",
+                     handover: dict[str, object] | None = None) -> dict[str, object]:
+        """Give a claimed task back to the open pool, optionally recording reason and a handover snapshot."""
+        payload: dict[str, object] = {"id": id}
+        if reason:
+            payload["reason"] = reason
+        if handover is not None:
+            payload["handover"] = handover
+        return call("task_release", payload, _caller_context(ctx))
 
     @server.tool(name="task.complete")
     def task_complete(id: str, ctx: Context, result: str = "") -> dict[str, object]:
@@ -379,7 +385,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
                          agents: list[str] | None = None, plan: list[str] | None = None,
                          progress: dict[str, str] | None = None, folders: list[str] | None = None,
                          references: list[str] | None = None,
-                         handover: dict[str, str] | None = None) -> dict[str, object]:
+                         handover: dict[str, object] | None = None) -> dict[str, object]:
         """Write this task's session fields into its .archhub file. Does not switch the open canvas.
         handover: what is done, what is next and where the results are, for the next agent of any vendor."""
         values: dict[str, object] = {}

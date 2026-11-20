@@ -329,13 +329,104 @@ def _leave(history, task, owner, now):
     return members, _seat(members, now)
 
 
-def release(history, task, owner, revision=None):
+COORDINATOR_SEAT_ID = "seat-coordinator"
+_RELEASE_REASONS = frozenset({"", "quota", "stalled", "manual"})
+
+
+def release(history, task, owner, revision=None, *, reason="", handover=None):
+    if type(reason) is not str or reason not in _RELEASE_REASONS:
+        raise ValueError("Release reason must be quota, stalled, or manual")
+    if handover is not None:
+        update_session(history, task, {"handover": handover})
     def statement(expected):
         members, (status, holder, label, lease) = _leave(history, task, owner, time.time())
         return ("UPDATE workshop_tasks SET status=?, owner=?, owner_label=?, lease_until=?, members=?, "
                 "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND status='claimed'",
                 (status, holder, label, lease, json.dumps(members), _now(), task, expected))
-    return _update(history, task, revision, statement, holder=owner)
+    won = _update(history, task, revision, statement, holder=owner)
+    if won:
+        from .workshop_mailbox import record_activity
+        with history._transaction(write=True):
+            record_activity(history, owner, "release", task, reason=reason or "manual", handover=handover is not None)
+    return won
+
+
+def reap_stalled(history, *, now=None, alive_fn=None, quota_fn=None):
+    """Atomically release claimed tasks whose lease expired, owner died, or owner hit quota."""
+    now = time.time() if now is None else float(now)
+    released = []
+    from .workshop_mailbox import record_activity
+    with history._transaction(write=True):
+        _ensure(history)
+        claimed = history._db.execute(
+            "SELECT id, title, owner, lease_until, session_path, revision, write_open FROM workshop_tasks "
+            "WHERE status!='done' AND owner IS NOT NULL AND NOT (id LIKE 'declared-%' AND " + _LIVE_ELSEWHERE + ")",
+            (now,),
+        ).fetchall()
+        for row_id, title, owner, lease_until, session_path, revision, write_open in claimed:
+            reason = None
+            if lease_until is not None and lease_until < now:
+                reason = "lease_expired"
+            elif alive_fn is not None and not alive_fn(owner):
+                reason = "owner_dead"
+            elif quota_fn is not None and quota_fn(owner):
+                reason = "quota_exhausted"
+            if reason is None:
+                continue
+            outcome = "unknown" if write_open else "interrupted"
+            updated = history._db.execute(
+                "UPDATE workshop_tasks SET outcome=?, status='open', owner=NULL, owner_label=NULL, "
+                "lease_until=NULL, write_open=0, "
+                "members=CASE WHEN json_valid(members) THEN (SELECT json_group_array(json_set(value,'$.lease_until',NULL)) "
+                "FROM json_each(workshop_tasks.members)) ELSE members END, "
+                "revision=revision+1 WHERE id=? AND revision=? AND status!='done' AND owner=?",
+                (outcome, row_id, revision, owner),
+            ).rowcount == 1
+            if not updated:
+                continue
+            record_activity(history, "system", "handover", row_id, previous_owner=owner, reason=reason)
+            released.append({
+                "id": row_id,
+                "title": title,
+                "previous_owner": owner,
+                "reason": reason,
+                "session_path": session_path,
+            })
+    return released
+
+
+def ensure_coordinator_seat(history):
+    """Ensure the reserved seat-coordinator row exists in workshop_tasks."""
+    now_iso = _now()
+    with history._transaction(write=True):
+        _ensure(history)
+        history._db.execute(
+            "INSERT OR IGNORE INTO workshop_tasks(id, title, status, created_by, created_at, updated_at) "
+            "VALUES(?, 'Coordinator Seat', 'open', 'system', ?, ?)",
+            (COORDINATOR_SEAT_ID, now_iso, now_iso),
+        )
+    return get(history, COORDINATOR_SEAT_ID)
+
+
+def claim_coordinator_seat(history, owner, label=None, lease_seconds=120):
+    """Atomically claim the reserved seat-coordinator row if free, expired, or already held by owner."""
+    if type(lease_seconds) is not int or not 30 <= lease_seconds <= 86400:
+        raise ValueError("Lease must be 30 to 86400 seconds")
+    ensure_coordinator_seat(history)
+    reap_stalled(history)
+    now = time.time()
+    holder_label = label or owner
+    members = json.dumps([{"owner": owner, "label": holder_label, "lease_until": now + lease_seconds, "seen": now}])
+    with history._transaction(write=True):
+        row = _locked(history, COORDINATOR_SEAT_ID)
+        if row is None:
+            return False
+        return history._db.execute(
+            "UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, members=?, "
+            "outcome=NULL, write_open=0, updated_at=?, revision=revision+1 "
+            "WHERE id=? AND revision=? AND status!='done' AND (owner IS NULL OR owner=? OR lease_until IS NULL OR lease_until<?)",
+            (owner, holder_label, now + lease_seconds, members, _now(), COORDINATOR_SEAT_ID, row["revision"], owner, now),
+        ).rowcount == 1
 
 
 def complete(history, task, owner, result="", revision=None):
@@ -1037,6 +1128,7 @@ def rows(history, task=None, *, include_archived=True, settle=True):
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         return []
     if settle:
+        reap_stalled(history)
         _settle_lapsed(history)
     _ensure(history)
     now = time.time()
@@ -1311,7 +1403,7 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
 
 
 _SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
-_HANDOVER = ("done", "next", "results")
+_HANDOVER = ("done", "next", "results", "summary", "next_step", "files_touched", "blocker", "resume_prompt", "updated_at")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
 _ABSOLUTE = re.compile(
     r"(?:\b[A-Za-z]:|\\\\[^\\/\s\"'<>|*?:]+)(?:\\[^\\/\n\"'<>|*?:]+)*\\(?:[^\\/\s\"'<>|*?:,](?:(?!\.[A-Za-z0-9]{1,8}\s|[.;)!?]\s)[^\\/\n\"'<>|*?:,])*(?=[.,;)!?](?:\s|$)|[/\\\n]|$)|[^\\/\s\"'<>|*?:]+)"   # C:\a b\c.txt, \\server\share, C:\John Smith
@@ -1495,8 +1587,24 @@ def update_session(history, task, values):
             note = values["handover"]
             if type(note) is not dict or not note or set(note) - set(_HANDOVER):
                 raise ValueError("A handover note says what is done, what is next and where the results are")
-            held["handover"] = {key: _short_text(_clean_note(history, row, _short_text(note[key], "handover " + key, 8000)),
-                                                 "handover " + key, 1000) for key in _HANDOVER if key in note}
+            cleaned_handover = {}
+            for key in _HANDOVER:
+                if key not in note:
+                    continue
+                val = note[key]
+                if key == "files_touched" and type(val) is list:
+                    if len(val) > 40:
+                        raise ValueError("Task handover files_touched must be a short list")
+                    cleaned_handover[key] = [
+                        _short_text(_clean_note(history, row, _short_text(item, "handover files_touched", 500)),
+                                    "handover files_touched", 500)
+                        for item in val
+                    ]
+                else:
+                    cleaned_handover[key] = _short_text(
+                        _clean_note(history, row, _short_text(val, "handover " + key, 8000)),
+                        "handover " + key, 1000)
+            held["handover"] = cleaned_handover
         if "folders" in values:
             held["folders"] = _session_list(values["folders"], "folders")
         if "references" in values:

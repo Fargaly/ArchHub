@@ -1050,7 +1050,16 @@ class WorkshopInjection:
             hit = self._budget[key] = (time.monotonic(), verdict)
         return hit[1]
 
-    def _coordinator(self, declarations):
+    def _coordinator(self, declarations, history=None):
+        if history is not None:
+            from . import workshop_tasks
+            seat = workshop_tasks.get(history, workshop_tasks.COORDINATOR_SEAT_ID)
+            if seat and seat.get("status") == "claimed" and seat.get("owner") and not seat.get("lease_expired"):
+                holder = seat["owner"]
+                matched = [row for row in declarations if row.get("current") and (
+                    row.get("session") == holder or row.get("native_session_id") == holder or row.get("agent") == holder)]
+                if matched:
+                    return matched
         current = [row for row in declarations if row["current"] and row["runtime"] == "claude"]
         if self._coordinator_native_id is None or not any(row.get("native_session_id") == self._coordinator_native_id for row in current):
             discover = getattr(self.transport, "discover", None)
@@ -1197,17 +1206,17 @@ class WorkshopInjection:
         self._push_escalation(history, note, declarations, now)
         return True
 
-    def _seats(self, declarations):
+    def _seats(self, declarations, history=None):
         """The coordinator's seats, discovered at most once per watcher pass."""
         if getattr(self, "_pass_seats", None) is None:
-            self._pass_seats = [row for row in self._coordinator(declarations)
+            self._pass_seats = [row for row in self._coordinator(declarations, history=history)
                                 if self.transport is not None and row.get("native_session_id")]
         return self._pass_seats
 
     def _push_escalation(self, history, note, declarations, now):
         """Push a committed escalation note to one coordinator seat under the note's one dispatch claim (the seat is
         recorded on the claim); True when this watcher dispatched it."""
-        seats = self._seats(declarations)
+        seats = self._seats(declarations, history=history)
         if not seats:
             return False   # no coordinator now: the note stays unclaimed for a later pass
         row = seats[0]
@@ -1751,7 +1760,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
     optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind"}, "pending":set(), "seen":set(),
-                "task_create": {"parent"}, "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
+                "task_create": {"parent"}, "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": {"reason", "handover"},
                 "task_complete": {"result"},
                 "task_set_session": {"scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},
                 "task_open": set(), "task_archive": set()}
@@ -1892,7 +1901,7 @@ def _task(history, method, body, identity):
     if method == "task_claim":
         won = workshop_tasks.claim(history, task, me, label, body.get("lease_seconds"))
     elif method == "task_release":
-        won = workshop_tasks.release(history, task, me)
+        won = workshop_tasks.release(history, task, me, reason=body.get("reason") or "", handover=body.get("handover"))
     else:
         result = body.get("result", "")
         if type(result) is not str or len(result.encode("utf-8")) > 20000:

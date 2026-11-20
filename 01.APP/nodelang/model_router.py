@@ -203,20 +203,22 @@ def composer_chat(body, *, on_delta=None):
     if paused(agent):
         raise ModelRouteRefused('This agent reached its token cap and is paused.', reason_code='agent_paused')
     free = _is_openrouter_free_route(destination)
+    fallbacks = settings['fallback_models']
+    free_only = free and all(_is_openrouter_free_route(resolve_model_route(item)) for item in fallbacks)
     started = time.monotonic()
     record = dict(id=str(uuid4()), ts=time.time(), agent=agent, model=destination.model,
                   provider=destination.provider, tokens=None, ms=0, outcome='refused')
     def credential(name):
         import keyring
         return keyring.get_password('ArchHub', name) or ''
-    models = [resolve_model_route(item).model for item in settings['fallback_models']]
+    models = [resolve_model_route(item).model for item in fallbacks]
     env = {'OPENROUTER_FREE_MODELS': ','.join(models)}
     try:
         result = route_chat(route, [{'role': 'system', 'content': profile.get('prompt') or profile.get('purpose') or
             'You are BABOOM, the ArchHub assistant. Answer the message. Do not claim tools or changes ran.'},
             {'role': 'user', 'content': prompt.strip()}],
-            free_only=free, environ=env, secrets_loader=credential,
-            fallback_routes=settings['fallback_models'] if free else None,
+            free_only=free_only, environ=env, secrets_loader=credential,
+            fallback_routes=fallbacks,
             on_delta=on_delta if free else None,
             # A canvas Model node may wire a typed generation value for this one call; router.json stays the default.
             response_byte_limit=_FREE_CHAT_TRACE_BYTES, **{**settings['generation'],
@@ -1810,11 +1812,33 @@ def _answer_tool_calls(_destination: ModelRoute, payload: object) -> list:
     return result
 
 
-def _remember_unavailable(kind: str, model: object, trace: Optional["_FreeChatTrace"] = None) -> None:
+def _retry_after_seconds(headers: object) -> Optional[float]:
+    if headers is None:
+        return None
+    raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return None
+    seconds = float(text)
+    if not (seconds == seconds and seconds > 0):
+        return None
+    return max(5.0, min(600.0, seconds))
+
+
+def _remember_unavailable(
+    kind: str,
+    model: object,
+    trace: Optional["_FreeChatTrace"] = None,
+    *,
+    cooldown_seconds: Optional[float] = None,
+) -> None:
     if type(model) is not str or not model or model == "openrouter/free":
         return
+    wait = _TEMPORARY_UNAVAILABLE_SECONDS if cooldown_seconds is None else max(5.0, min(600.0, float(cooldown_seconds)))
     with _SESSION_MODEL_LOCK:
-        _UNAVAILABLE_UNTIL[(kind, model)] = time.monotonic() + _TEMPORARY_UNAVAILABLE_SECONDS
+        _UNAVAILABLE_UNTIL[(kind, model)] = time.monotonic() + wait
     if trace is not None:
         trace.add("skipped unavailable " + model, "remembered", None)
 
@@ -2917,13 +2941,25 @@ def route_chat(
                 call.setdefault("extra_content", {"google": {"thought_signature": "skip_thought_signature_validator"}})
     api_key = None
     key_source = "not required"
-    if destination.needs_key:
-        api_key, key_source = discover_key(
-            destination.family,
+    family_keys: dict[str, tuple[Optional[str], str]] = {}
+
+    def _key_for(target: ModelRoute) -> tuple[Optional[str], str]:
+        if not target.needs_key:
+            return None, "not required"
+        cached = family_keys.get(target.family)
+        if cached is not None:
+            return cached
+        resolved = discover_key(
+            target.family,
             environ=environ,
             secrets_loader=secrets_loader,
             cloud_session=session if isinstance(session, Mapping) else None,
         )
+        family_keys[target.family] = resolved
+        return resolved
+
+    if fallback_routes is None and destination.needs_key:
+        api_key, key_source = _key_for(destination)
     trace = _FreeChatTrace(free_only and destination.family == "openrouter", environ=environ)
     send = urllib.request.urlopen if opener is None else opener
     attempts = _openrouter_free_attempts(
@@ -2935,11 +2971,17 @@ def route_chat(
         timeout=timeout,
     )
     if fallback_routes is not None:
-        if not free_only or type(fallback_routes) is not list or len(fallback_routes) > 8:
-            raise ModelRouteRefused('Configured fallbacks require a bounded free-only request.')
-        attempts = tuple(resolve_model_route(item) for item in [route, *fallback_routes])
-        if any(not _is_openrouter_free_route(item) for item in attempts):
+        if type(fallback_routes) is not list or len(fallback_routes) > 8:
+            raise ModelRouteRefused('Configured fallbacks must be a list of at most eight routes.')
+        raw_attempts = tuple(resolve_model_route(item) for item in [route, *fallback_routes])
+        if free_only and any(not _is_openrouter_free_route(item) for item in raw_attempts):
             raise ModelRouteRefused('Configured fallbacks must all be free models.')
+        attempts = tuple(item for item in raw_attempts if not _temporarily_unavailable(item.family, item.model))
+        if not attempts:
+            raise ModelRouteRefused(
+                'All configured routes are temporarily rate-limited.',
+                reason_code='provider_rate_limited',
+            )
     if free_only and destination.family == "openrouter" and tool_turn and not attempts:
         trace.close("free_model_exhausted")
         raise _openrouter_free_exhausted_refusal()
@@ -2957,13 +2999,23 @@ def route_chat(
             raise _openrouter_free_exhausted_refusal()
         attempt_started = trace.start()
         try:
+            api_key, key_source = _key_for(attempt)
             payload = _any_llm_chat(
                 attempt, rows, send=send, timeout=attempt_timeout, api_key=api_key,
                 max_tokens=max_tokens, temperature=temperature, top_p=top_p, tools=tool_rows,
                 free_only=free_only, reasoning_effort=reasoning_effort,
                 byte_limit=response_byte_limit, on_delta=on_delta,
             )
-        except ModelRouteRefused:
+        except ModelRouteRefused as refused:
+            trace.add(attempt.model, refused.reason_code or "refused", attempt_started)
+            if refused.reason_code == "free_model_unavailable":
+                _remember_unavailable("openrouter", attempt.model, trace)
+            elif refused.reason_code == "provider_rate_limited":
+                _remember_unavailable(attempt.family, attempt.model, trace)
+            if fallback_routes is not None and index + 1 < len(attempts) and refused.reason_code in {
+                "provider_rate_limited", "free_model_unavailable", "provider_timeout"
+            }:
+                continue
             raise
         except urllib.error.HTTPError as refused:
             refused_status = refused.code
@@ -2971,6 +3023,9 @@ def route_chat(
             trace.add(attempt.model, failure.reason_code or "refused", attempt_started)
             if failure.reason_code == "free_model_unavailable":
                 _remember_unavailable("openrouter", attempt.model, trace)
+            elif refused_status == 429 or failure.reason_code == "provider_rate_limited":
+                retry_after = _retry_after_seconds(getattr(refused, "headers", None))
+                _remember_unavailable(attempt.family, attempt.model, trace, cooldown_seconds=retry_after)
             if fallback_routes is None and free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
                 try:
                     return _free_only_after_first_openrouter_failure(
@@ -2991,7 +3046,8 @@ def route_chat(
                 except ModelRouteRefused as fallback_refused:
                     raise fallback_refused from refused
             if (fallback_routes is not None and index + 1 < len(attempts) and
-                    refused_status in {400, 404, 429, 502, 503, 504}):
+                    (refused_status in {400, 404, 429, 502, 503, 504} or
+                     failure.reason_code in {"provider_rate_limited", "free_model_unavailable", "provider_timeout"})):
                 continue
             if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
                 continue
@@ -3000,6 +3056,8 @@ def route_chat(
             timed_out = isinstance(unreachable, TimeoutError) or isinstance(
                 getattr(unreachable, "reason", None), TimeoutError)
             trace.add(attempt.model, "dispatch_timeout" if timed_out else "dispatch_transport_uncertain", attempt_started)
+            if fallback_routes is not None and index + 1 < len(attempts) and timed_out:
+                continue
             if free_only and attempt.family == "openrouter" and timed_out:
                 trace.close("free_model_exhausted")
                 raise _openrouter_free_exhausted_refusal() from unreachable
@@ -3061,6 +3119,12 @@ def route_chat(
             trace.add(attempt.model, refused.reason_code or "refused", attempt_started)
             if refused.reason_code == "free_model_unavailable":
                 _remember_unavailable("openrouter", attempt.model, trace)
+            elif refused.reason_code == "provider_rate_limited":
+                _remember_unavailable(attempt.family, attempt.model, trace)
+            if fallback_routes is not None and index + 1 < len(attempts) and refused.reason_code in {
+                "provider_rate_limited", "free_model_unavailable", "provider_timeout"
+            }:
+                continue
             if fallback_routes is None and free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(refused):
                 try:
                     return _free_only_after_first_openrouter_failure(

@@ -60,9 +60,9 @@ def _checked_router_settings(values):
     route(values['default_model'])
     fallbacks = values['fallback_models']
     if type(fallbacks) is not list or len(fallbacks) > 8:
-        raise ValueError('Choose at most eight free fallback models.')
+        raise ValueError('Choose at most eight fallback models.')
     for value in fallbacks:
-        route(value, free=True)
+        route(value)
     providers = values['providers']
     if (type(providers) is not dict or set(providers) != {'openrouter'} or
             type(providers['openrouter']) is not dict or

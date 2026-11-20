@@ -131,6 +131,9 @@ CALLED_HERE = {
     "/founder/api/feedback/{feedback_id}/reply": lambda c: ("/founder/api/feedback/%s/reply" % c["fb"], {"text": "Thanks."}),
     "/founder/api/community/ban": lambda c: ("/founder/api/community/ban", {"user": c["user"], "reason": "x", "typed": "BAN"}),
     "/founder/api/community/unban": lambda c: ("/founder/api/community/unban", {"user": c["user"]}),
+    # Unsigned on purpose: a refused recovery is still one audit row (test_community_owner_recovery covers success).
+    "/founder/api/community/{community_id}/owner": lambda c: ("/founder/api/community/legacy-audit/owner",
+                                                              {"owner": c["user"], "typed": "RECOVER"}),
     "/founder/api/packs/{pack_id}/takedown": lambda c: ("/founder/api/packs/pk_audit/takedown", {"reason": "x", "typed": "TAKEDOWN"}),
     "/founder/api/packs/{pack_id}/restore": lambda c: ("/founder/api/packs/pk_down/restore", {}),
     "/founder/api/companies/{company_id}/invite/resend": lambda c: ("/founder/api/companies/%s/invite/resend" % c["co"], {"email": "pending.audit@studio.example"}),
@@ -141,9 +144,10 @@ CALLED_HERE = {
 
 
 def _founder_post_routes() -> set:
-    import main
-    return {route.path for route in main.app.routes
-            if route.path.startswith("/founder/api/") and "POST" in (getattr(route, "methods", None) or ())}
+    from tests.test_one_signin_one_cloud_address import registered_routes
+
+    return {route.path for route in registered_routes()
+            if (route.path or "").startswith("/founder/api/") and "POST" in (getattr(route, "methods", None) or ())}
 
 
 def test_every_founder_post_route_is_accounted_for():

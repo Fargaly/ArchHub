@@ -2749,22 +2749,26 @@ def create_community(owner_user_id: str, owner_pub: str) -> str:
     return community_id
 
 
-def recover_community_owner(community_id: str, *, owner_user_id: str, owner_pub: str, signature: str) -> bool:
+def recover_community_owner(community_id: str, *, owner_user_id: str, owner_pub: str, signature: str,
+                            audit: Optional[dict] = None) -> bool:
     """The explicit recovery for an existing community with no trusted owner (an operator action on the founder's
     decision): bind it to a registered account whose Ed25519 key signed this exact community and account. Possession
     of the key is required, not proof of ownership; the founder's decision is. Never replaces an enrolled owner: a
-    competing enrolment returns False and changes nothing."""
+    competing enrolment returns False and changes nothing. ``audit`` (the founder_action_log fields) is written in
+    the SAME transaction as the enrolment: if the audit row cannot be written, no owner is enrolled."""
     from community_join import enrol_statement, verify_signature
     if get_user(owner_user_id) is None:
         raise ValueError("recovery refused: the owner must be a registered account")
     if not verify_signature(owner_pub, enrol_statement(community_id, owner_user_id), signature):
         raise ValueError("recovery refused: the signature does not prove possession of owner_pub for this community")
-    with connect() as con:
+    with connect() as con:  # one connection, one commit: the owner row and its audit row land together or not at all
         try:
             con.execute("INSERT INTO community_owners (community_id, owner_user_id, owner_pub, enrolled_at) VALUES (?, ?, ?, ?)",
                         (community_id, owner_user_id, owner_pub, int(time.time())))
         except sqlite3.IntegrityError:
             return False
+        if audit is not None:
+            _insert_founder_action(con, **audit)
     return True
 
 
@@ -2858,12 +2862,17 @@ def community_membership_view() -> list[dict]:
             "JOIN users u ON u.id = m.user_id ORDER BY m.community_id, m.joined_at").fetchall()
         left = {row[0]: int(row[1]) for row in con.execute(
             "SELECT community_id, COUNT(*) FROM community_optouts GROUP BY community_id")}
+        owners = {row[0]: {"enrolled": True, "email": row[1], "platform": row[2] == PLATFORM_COMMUNITY_OWNER}
+                  for row in con.execute("SELECT o.community_id, u.email, o.owner_pub FROM community_owners o"
+                                         " LEFT JOIN users u ON u.id = o.owner_user_id")}
     view: dict = {}
     for row in members:
         view.setdefault(row["community_id"], []).append(
             {"email": row["email"], "name": row["full_name"], "role": row["role"],
              "joined_at": row["joined_at"]})
-    return [{"community_id": cid, "members": view.get(cid, []), "left": left.get(cid, 0)}
+    # owner: who the cloud trusts for this community's join-codes; enrolled False means it needs recovery.
+    return [{"community_id": cid, "members": view.get(cid, []), "left": left.get(cid, 0),
+             "owner": owners.get(cid, {"enrolled": False, "email": None, "platform": False})}
             for cid in sorted(set(view) | set(left))]
 
 
@@ -3437,17 +3446,24 @@ def all_founder_flags() -> dict:
 
 
 # --- Founder action audit log ----------------------------------------------
+def _insert_founder_action(con, *, actor: str, command: str, action: str,
+                           target: Optional[str], result: str, ok: bool) -> int:
+    """One founder_action_log row on the caller's connection (and so inside the caller's transaction)."""
+    cur = con.execute(
+        "INSERT INTO founder_action_log "
+        "(ts, actor, command, action, target, result, ok) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (int(time.time()), actor, command[:1000], action,
+         (target or None), result[:2000], 1 if ok else 0),
+    )
+    return int(cur.lastrowid)
+
+
 def log_founder_action(*, actor: str, command: str, action: str,
                         target: Optional[str], result: str, ok: bool) -> int:
     with connect() as con:
-        cur = con.execute(
-            "INSERT INTO founder_action_log "
-            "(ts, actor, command, action, target, result, ok) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (int(time.time()), actor, command[:1000], action,
-             (target or None), result[:2000], 1 if ok else 0),
-        )
-        return int(cur.lastrowid)
+        return _insert_founder_action(con, actor=actor, command=command, action=action,
+                                      target=target, result=result, ok=ok)
 
 
 def record_payment_event(*, kind: str, user_id: Optional[str], stripe_object: Optional[str],

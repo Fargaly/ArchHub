@@ -1197,6 +1197,41 @@ def api_community_unban(payload: dict = Body(default={}),
     return JSONResponse({"ok": True, "email": account["email"], "banned": False})
 
 
+@router.post("/api/community/{community_id}/owner")
+def api_community_owner_recovery(community_id: str, payload: dict = Body(default={}),
+                                 founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Recover the owner of an existing community that has none enrolled: the founder binds it to a registered
+    account whose Ed25519 key signed this exact community and account. Never re-binds an enrolled owner. Needs
+    {"typed": "RECOVER"}. Every attempt, refused or not, is one audit row. A recovery and its audit row are one
+    transaction (no owner without its audit row); a refusal writes its audit row and nothing else."""
+    route = "POST /founder/api/community/%s/owner" % community_id
+    account = _account(str(payload.get("owner") or ""))
+    owner_pub = str(payload.get("owner_pub") or "")
+
+    def record(error: str = "") -> dict:
+        return {"owner": account["email"] if account else None, "owner_pub": owner_pub[:64],
+                **({"refused": error} if error else {"enrolled": True})}
+
+    def refuse(status: int, error: str) -> JSONResponse:
+        _audit(founder, route, "community.owner.recover", target=community_id, ok=False, result=record(error))
+        return JSONResponse({"ok": False, "error": error}, status_code=status)
+
+    if not _typed(payload.get("typed"), "RECOVER"):
+        return refuse(400, "type RECOVER to confirm")
+    if account is None:
+        return refuse(404, "no such user")
+    audit = {"actor": (founder.get("email") or "").strip().lower(), "command": route,
+             "action": "community.owner.recover", "target": community_id, "result": json.dumps(record())[:2000], "ok": True}
+    try:
+        enrolled = db.recover_community_owner(community_id, owner_user_id=account["id"], owner_pub=owner_pub,
+                                              signature=str(payload.get("signature") or ""), audit=audit)
+    except ValueError as refused:
+        return refuse(400, str(refused))
+    if not enrolled:
+        return refuse(409, "this community already has an enrolled owner")
+    return JSONResponse({"ok": True, "community_id": community_id, "owner": account["email"]})
+
+
 _TAKEN_DOWN = "taken_down"
 
 

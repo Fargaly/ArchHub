@@ -80,7 +80,15 @@ def register_canvas_tools(server):
     def canvas_list_open() -> dict:
         """The .archhub file open in the ArchHub window now, then recent files."""
         from .session_files import SessionFiles
-        return {'files': SessionFiles().open_files()}
+        access = getattr(server, '_desktop_access', None)
+        signer = None
+        if access is not None:
+            from .cloud_session import DesktopAccessRefused
+            verdict = access.check(bind_resume=True)
+            if not verdict["admitted"]:
+                raise DesktopAccessRefused(verdict["state"])
+            signer = verdict["_sign_resume_pointer"]
+        return {'files': SessionFiles(sign_resume_pointer=signer).open_files()}
 
     @server.tool(name='canvas.new')
     def canvas_new(path: str, ctx: Context, title: str = '') -> dict:
@@ -229,9 +237,16 @@ def register_canvas_tools(server):
         """Run the workflow (or up to one node), effects included, with their existing approvals."""
         from .enforce import guard_effect
         from .session_files import run_document
+        access = getattr(server, '_desktop_access', None)
+        subject = access.require()["subject"] if access is not None else None
+
+        def invoke(*args, **kwargs):
+            access.require(subject=subject)
+            return guard_effect(*args, **kwargs)
+
         def change(document):
             roots = [_end(document, node + '.x')[0]['id']] if node else None
-            ran = run_document(document, invoke=guard_effect, roots=roots, path=path)
+            ran = run_document(document, invoke=invoke if access is not None else guard_effect, roots=roots, path=path)
             for n in document['nodes']:
                 if n['id'] in ran['results']:
                     n['result'] = {k: v for k, v in ran['results'][n['id']].items() if k in ('status', 'output', 'error', 'display')}

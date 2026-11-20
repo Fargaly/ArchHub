@@ -12,22 +12,19 @@ refused exchange fails out loud, sign-out forgets the session.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import threading
 import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
 from nodelang import cloud_signin
-from nodelang.cloud_session import signed_in_cloud_account
-
-ROOT = Path(__file__).resolve().parents[2]
-
+from nodelang.cloud_session import DesktopAccess, signed_in_cloud_account
 
 class _FakeCloud(BaseHTTPRequestHandler):
     """archhub-cloud as the desktop sees it: google/start, exchange, me, logout."""
@@ -59,7 +56,12 @@ class _FakeCloud(BaseHTTPRequestHandler):
         if parsed.path == "/v1/me":
             auth = self.headers.get("Authorization", "")
             self.server.seen.append(("me", auth))
-            self._json(200, {"user_id": "u-42", "email": "Ahmed@Example.com", "plan": "studio"})
+            if self.server.me_redirect:
+                self.send_response(302)
+                self.send_header("Location", self.server.me_redirect)
+                self.end_headers()
+                return
+            self._json(self.server.me_status, self.server.me_body)
             return
         self._json(404, {"error": "no such route"})
 
@@ -90,6 +92,9 @@ def cloud(monkeypatch):
     server.seen = []
     server.google_down = False
     server.refuse_exchange = False
+    server.me_status = 200
+    server.me_redirect = None
+    server.me_body = {"user_id": "u-42", "email": "Ahmed@Example.com", "plan": "studio"}
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -238,33 +243,60 @@ def test_google_is_the_only_method():
     assert cloud_signin.METHODS == ("google",)
 
 
-def test_the_app_declares_the_sign_in_routes():
-    declared = (ROOT / "01.APP/nodelang" / "universal_application.py").read_text(encoding="utf-8")
-    for route in (
-        '("GET", "/api/universal/cloud-session", "read")',
-        '("GET", "/api/universal/cloud-signin", "read")',
-        '("POST", "/api/universal/cloud-signin", "execute")',
-        '("POST", "/api/universal/cloud-signout", "execute")',
-    ):
-        assert route in declared, route
-    server = (ROOT / "01.APP/nodelang" / "application_server.py").read_text(encoding="utf-8")
-    for path in ("/api/universal/cloud-session", "/api/universal/cloud-signin",
-                 "/api/universal/cloud-signout"):
-        assert server.count(path) >= 1, path
+def test_studio_endpoint_uses_one_google_login_and_reports_its_real_phase(cloud, tmp_path, monkeypatch):
+    from nodelang import cloud_session
+    from nodelang.nograph_server import NoGraphServer
 
+    record = tmp_path / "login" / "cloud.json"
+    base = f"http://127.0.0.1:{cloud.server_port}"
+    monkeypatch.setattr(cloud_signin, "_CURRENT", {"attempt": None})
+    monkeypatch.setattr(cloud_signin, "cloud_session_path", lambda: record)
+    monkeypatch.setattr(cloud_session, "cloud_session_path", lambda: record)
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+    monkeypatch.setattr(NoGraphServer, "ensure_cloud_relay", lambda _server: None)
+    opened = []
+    begin = cloud_signin.begin
 
-def test_the_studio_signs_in_through_the_cloud_not_a_typed_email():
-    studio = ROOT / "01.APP/nodelang" / "studio"
-    account = (studio / "studio-account.jsx").read_text(encoding="utf-8")
-    assert "ARCHHUB_CLOUD_SIGNIN" in account and "Continue with Google" in account
-    assert "Email me a sign-in link" not in account and "'magic'" not in account
-    assert "field('WORK EMAIL'" not in account, "a typed email is not an identity"
-    page = (studio / "studio.html").read_text(encoding="utf-8")
-    for name in ("ARCHHUB_CLOUD_SESSION", "ARCHHUB_CLOUD_SIGNIN",
-                 "ARCHHUB_CLOUD_SIGNIN_STATUS", "ARCHHUB_CLOUD_SIGNOUT"):
-        assert name in page, name
-    shell = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
-    assert "ARCHHUB_CLOUD_SIGNOUT" in shell and "ARCHHUB_CLOUD_SESSION" in shell
+    def browser_redirect(method):
+        return begin(method, base_url=base, path=record, opener=opened.append)
+
+    monkeypatch.setattr(cloud_signin, "begin", browser_redirect)
+    server = NoGraphServer(tmp_path / "app", desktop_access=DesktopAccess(record)).start()
+
+    def call(path, body=None, subject=""):
+        request = urllib.request.Request(server.public_url + "/api/universal/" + path,
+            data=json.dumps(body).encode() if body is not None else None, headers={
+                "X-ArchHub-Session": server.browser_session_token,
+                "X-ArchHub-CSRF": server.browser_csrf_token,
+                "X-ArchHub-Desktop-Subject": subject,
+                "Content-Type": "application/json",
+            })
+        try:
+            with urllib.request.urlopen(request, timeout=8) as reply:
+                return reply.status, json.load(reply)
+        except urllib.error.HTTPError as failed:
+            return failed.code, json.load(failed)
+
+    try:
+        assert call("desktop-access")[1]["state"] == "signed_out"
+        assert call("cloud-session")[0] == 401
+        assert "must be google" in call("cloud-signin", {"method": "magic", "email": "typed@example.com"})[1]["error"]
+        assert opened == [] and cloud.seen == []
+        assert call("cloud-signin", {"method": "google"})[0] == 200
+        _wait(cloud_signin._CURRENT["attempt"], phases=("waiting",))
+        assert call("cloud-signin")[1]["phase"] == "waiting"
+        assert call("cloud-signin", {"method": "google"})[1]["phase"] == "waiting"
+        assert len(opened) == 1
+        assert not call("desktop-access")[1]["admitted"]
+        _browser_that_follows(opened[0])
+        assert _wait(cloud_signin._CURRENT["attempt"])["phase"] == "done"
+        assert call("cloud-signin")[1]["phase"] == "done"
+        assert call("desktop-access")[1]["subject"] == "u-42"
+        assert call("cloud-session", subject="u-42")[0] == 200
+        assert call("cloud-signout", {})[1]["signed_in"] is False
+        assert call("desktop-access")[1]["state"] == "signed_out"
+    finally:
+        server.close()
 
 
 def test_the_old_mailed_marker_is_refused(cloud, tmp_path):
@@ -318,3 +350,282 @@ def test_sign_out_returns_before_the_cloud_answers(tmp_path):
     assert signed_in_cloud_account(record) is None, "the file is forgotten before the cloud answers"
     assert started.wait(2), "the cloud is still told"
     released.set()
+
+
+def _saved_desktop_session(cloud, record):
+    base = f"http://127.0.0.1:{cloud.server_port}"
+    cloud_signin.write_cloud_session(record, {"token": "ah_" + "q" * 40,
+                                               "email": "edited-metadata@example.com",
+                                               "user_id": "edited-metadata",
+                                               "cloud_base_url": base})
+    return base
+
+
+def test_desktop_access_fails_closed_and_recovers_with_a_fresh_cloud_answer(cloud, tmp_path):
+    record = tmp_path / "cloud.json"
+    gate = DesktopAccess(record)
+    assert gate.check()["state"] == "signed_out" and cloud.seen == []
+    _saved_desktop_session(cloud, record)
+    assert gate.check() == {"ok": True, "admitted": True, "state": "admitted",
+                            "subject": "u-42", "email": "ahmed@example.com"}
+    cloud.me_status = 503
+    assert gate.check() == {"ok": True, "admitted": False, "state": "unavailable",
+                            "subject": None, "email": None}
+    cloud.me_status = 401
+    assert gate.check()["state"] == "session_invalid"
+    cloud.me_status = 200
+    cloud.me_body = {"email": "unbound@example.net"}
+    assert gate.check()["state"] == "unavailable"
+    cloud.me_body = {"user_id": "u-43", "email": "UserB@example.com"}
+    assert gate.check()["subject"] == "u-43"
+    cloud_signin.write_cloud_session(record, {"expires_at": int(time.time()) - 1})
+    previous = len(cloud.seen)
+    assert gate.check()["state"] == "session_invalid" and len(cloud.seen) == previous
+
+
+def test_desktop_access_does_not_forward_bearer_on_redirect(cloud, tmp_path):
+    record = tmp_path / "cloud.json"
+    base = _saved_desktop_session(cloud, record)
+    # Another actual HTTP endpoint should see zero requests, even on localhost.
+    sink = HTTPServer(("127.0.0.1", 0), _FakeCloud)
+    sink.seen = []
+    worker = threading.Thread(target=sink.serve_forever, daemon=True)
+    worker.start()
+    cloud.me_redirect = f"http://127.0.0.1:{sink.server_port}/v1/me"
+    try:
+        assert DesktopAccess(record).check()["state"] == "unavailable"
+        code, _ = cloud_signin.http_json("GET", base + "/v1/me",
+                                       headers={"Authorization": "Bearer redirect-test"})
+        assert code == 302
+        assert len(cloud.seen) == 2 and sink.seen == []
+    finally:
+        sink.shutdown()
+        sink.server_close()
+
+
+def test_desktop_http_admission_protects_work_and_rebinds_initial_canvas(cloud, tmp_path, monkeypatch):
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import SessionFiles
+
+    record = tmp_path / "cloud.json"
+    state = tmp_path / "desktop"
+    calls = []
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+
+    def initial(_files, body, **options):
+        if body["action"] == "run":
+            cloud.me_status = 503  # Admission passed, but a downstream effect has not yet begun.
+            return options["invoke"]("fixture", lambda *_: pytest.fail("offline effect dispatched"), {}, {})
+        calls.append(body["action"])
+        return {"ok": True, "path": "first-user-original.archhub"}
+
+    monkeypatch.setattr(SessionFiles, "dispatch", initial)
+    server = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+
+    def call(path, body=None, *, subject="u-42"):
+        req = urllib.request.Request(server.public_url + path,
+            data=json.dumps(body).encode() if body is not None else None, headers={
+                "X-ArchHub-Session": server.browser_session_token,
+                "X-ArchHub-CSRF": server.browser_csrf_token,
+                "X-ArchHub-Desktop-Subject": subject,
+                "Content-Type": "application/json",
+            })
+        try:
+            with urllib.request.urlopen(req, timeout=8) as reply:
+                return reply.status, json.load(reply)
+        except urllib.error.HTTPError as failed:
+            return failed.code, json.load(failed)
+
+    status = "/api/universal/desktop-access"
+    try:
+        assert call(status)[1]["state"] == "signed_out"
+        code, denied = call("/api/session-files", {"action": "initial"})
+        assert (code, denied["code"], denied["state"], calls) == (401, "desktop_access_required", "signed_out", [])
+        _saved_desktop_session(cloud, record)
+        assert call(status)[1]["subject"] == "u-42"
+        assert call("/api/session-files", {"action": "initial"})[1]["path"] == "first-user-original.archhub"
+        code, rejected = call("/api/session-files", {"action": "run"})
+        assert (code, rejected["code"], rejected["state"]) == (503, "desktop_access_required", "unavailable")
+        assert call("/api/session-files", {"action": "initial"})[0] == 503
+        cloud.me_status = 200
+        cloud.me_body = {"user_id": "u-43", "email": "b@example.com"}
+        assert call(status)[1]["subject"] == "u-43"
+        assert call("/api/session-files", {"action": "initial"})[0] == 401
+        assert call("/api/commands", subject="u-43")[0] == 200
+        assert calls == ["initial"]
+    finally:
+        server.close()
+
+
+def test_native_desktop_tool_and_trigger_are_blocked_without_cloud_admission(tmp_path):
+    import anyio
+    from mcp import types
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.native_agent_mcp import build_server
+
+    gate = DesktopAccess(tmp_path / "cloud.json")
+    server = build_server(desktop_access=gate, mailbox_call=lambda *_: pytest.fail("offline mailbox reached"))
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+    request = types.CallToolRequest(params=types.CallToolRequestParams(name="task.list", arguments={}))
+    result = anyio.run(handler, request).root
+    assert result.isError
+    assert json.loads(result.content[0].text)["code"] == "desktop_access_required"
+    triggers = TriggerService(files=object(), require_access=gate.require)
+    assert triggers.dispatch(("unopened.archhub", "t1"), "trigger.schedule", {}) == "desktop_access_required"
+    assert not triggers.running and not triggers.fired
+
+
+def test_cloud_answer_cannot_admit_after_local_signout(cloud, tmp_path):
+    record = tmp_path / "cloud.json"
+    _saved_desktop_session(cloud, record)
+
+    def signout_during_probe(_endpoint, _bearer):
+        cloud_signin.write_cloud_session(record, {"token": None})
+        return 200, {"user_id": "u-42", "email": "a@example.com"}
+
+    assert DesktopAccess(record, fetch=signout_during_probe).check()["state"] == "session_invalid"
+
+
+def test_simultaneous_admissions_share_only_the_inflight_cloud_verdict(cloud, tmp_path, monkeypatch):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from nodelang import cloud_session
+
+    record = tmp_path / "cloud.json"
+    _saved_desktop_session(cloud, record)
+    started, follower, release = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+
+    class ObservedFuture(Future):
+        def result(self):
+            follower.set()
+            return super().result()
+
+    def fetch(_endpoint, _bearer):
+        calls.append(1)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(5)
+            return 200, {"user_id": "u-42", "email": "a@example.com"}
+        return 503, {}
+
+    monkeypatch.setattr(cloud_session, "Future", ObservedFuture)
+    gate = DesktopAccess(record, fetch=fetch)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(gate.check)
+        try:
+            assert started.wait(5)
+            second = workers.submit(gate.check)
+            assert follower.wait(5)
+        finally:
+            release.set()
+        assert first.result()["admitted"] and second.result()["admitted"]
+    assert len(calls) == 1
+    assert gate.check()["state"] == "unavailable"
+    assert len(calls) == 2
+
+
+def _desktop_request(server, path, *, body=None, subject=""):
+    req = urllib.request.Request(server.public_url + path, data=json.dumps(body).encode() if body is not None else None,
+        headers={"X-ArchHub-Session": server.browser_session_token,
+                 "X-ArchHub-CSRF": server.browser_csrf_token,
+                 "X-ArchHub-Desktop-Subject": subject, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as error:
+        return error.code, json.load(error)
+
+
+def test_queued_canvas_write_is_refused_even_if_the_cloud_reconnects(cloud, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from nodelang import canvas_documents
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import new_document, read_document, write_document
+
+    record = tmp_path / "cloud.json"
+    _saved_desktop_session(cloud, record)
+    path = tmp_path / "fixture.archhub"
+    document = new_document("Before")
+    write_document(path, document)
+    original = path.read_bytes()
+    queued = threading.Event()
+    lock = canvas_documents.locked
+
+    @contextmanager
+    def observing_lock(candidate, *args, **kwargs):
+        if Path(candidate) == path:
+            queued.set()
+        with lock(candidate, *args, **kwargs):
+            yield
+
+    monkeypatch.setattr(canvas_documents, "locked", observing_lock)
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+    server = NoGraphServer(tmp_path / "profile", desktop_access=DesktopAccess(record)).start()
+    payload = {"action": "autosave", "path": str(path), "document": {**document, "title": "After"}}
+    try:
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            with lock(path):
+                write = workers.submit(_desktop_request, server, "/api/session-files", body=payload, subject="u-42")
+                assert queued.wait(5)
+                cloud.me_status = 503
+                assert _desktop_request(server, "/api/universal/desktop-access")[1]["state"] == "unavailable"
+                cloud.me_status = 200
+                assert _desktop_request(server, "/api/universal/desktop-access")[1]["admitted"]
+            code, result = write.result()
+        assert (code, result["code"]) == (503, "desktop_access_required")
+        assert path.read_bytes() == original
+        status, _ = _desktop_request(server, "/api/session-files", body=payload, subject="u-42")
+        assert status == 200 and read_document(path)["title"] == "After"
+    finally:
+        server.close()
+
+
+def test_relaunch_automatically_recovers_only_the_bound_credentials(cloud, tmp_path, monkeypatch):
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import new_document, write_document
+
+    state = tmp_path / "profile"
+    state.mkdir(exist_ok=True)
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+    metadata = state / "data/sessions"
+    metadata.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "retained.archhub"
+    document = new_document("Retained")
+    write_document(path, document)
+    original = path.read_bytes()
+    pointer = metadata / "current.json"
+    pointer.write_text(json.dumps({"id": document["id"], "path": str(path)}), encoding="utf-8")
+    record = state / "brain/cloud.json"
+    base = _saved_desktop_session(cloud, record)
+
+    def open_as(subject):
+        app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+        app.native_file_picker = lambda *args: str(path)
+        return app, lambda action: _desktop_request(app, "/api/session-files", body={"action": action}, subject=subject)
+
+    server, call = open_as("u-42")
+    try:
+        assert call("initial")[1]["path"] == ""  # an unsigned legacy pointer is never replayed
+        assert call("open")[1]["document"]["title"] == "Retained"
+        assert "desktop_resume" in json.loads(pointer.read_bytes())
+    finally:
+        server.close()
+    server, call = open_as("u-42")
+    try:
+        assert call("initial")[1]["path"] == str(path)
+    finally:
+        server.close()
+
+    cloud_signin.write_cloud_session(record, {"token": "ah_" + "r" * 40, "cloud_base_url": base})
+    cloud.me_body = {"user_id": "u-43", "email": "b@example.com"}
+    monkeypatch.setattr("sys.argv", ["launcher.py", str(path)])  # an old deep link cannot bypass account binding
+    server, call = open_as("u-43")
+    try:
+        assert call("initial")[1]["path"] == ""
+        assert call("catalogue")[1]["recent"] == []
+        assert call("open")[1]["document"]["title"] == "Retained"  # explicit Windows-profile picker still works
+        assert path.read_bytes() == original
+    finally:
+        server.close()

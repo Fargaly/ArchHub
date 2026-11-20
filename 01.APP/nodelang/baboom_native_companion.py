@@ -1948,8 +1948,11 @@ def create_baboom_native_companion_window(
             if binding != self._approval_binding or not self._pending_task_utterance:
                 self._approval_bridge.settled.emit(binding, "This review expired. Request a fresh review.")
                 return
-            self._approval_binding = ""
             if decision == "approve":
+                require = getattr(controller._host._transport, "require_desktop_access", None)
+                if require is not None:
+                    require()
+                self._approval_binding = ""
                 self._executing_approval_binding = binding
                 self._execute_task()
             else:

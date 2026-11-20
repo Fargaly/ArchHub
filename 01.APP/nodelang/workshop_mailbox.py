@@ -1291,6 +1291,13 @@ class WorkshopInjection:
             raise
 
     def tick(self, *, now=None):
+        from .cloud_session import DesktopAccessRefused
+        require = getattr(self.owner, 'require_desktop_access', None)
+        if require is not None:
+            try:
+                require()
+            except DesktopAccessRefused:
+                return
         now = time.time() if now is None else now
         with self._tick_lock, application_history() as history:
             self._flush_reads(history)

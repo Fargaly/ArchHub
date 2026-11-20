@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from .user_paths import state_directory
 
+from concurrent.futures import Future
 import json
 import os
 import hashlib
+import hmac
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 _ACCOUNT_PENDING = object()
@@ -114,16 +117,27 @@ _FOUNDER_TTL_SECONDS = 600.0
 _founder_verdicts: dict[str, tuple[float, str | None]] = {}
 
 
+class _NoCloudRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+def open_cloud_request(request, *, timeout):
+    """A pinned cloud request never carries credentials through a redirect."""
+    return urllib.request.build_opener(_NoCloudRedirect()).open(request, timeout=timeout)
+
+
 def _cloud_get(url: str, bearer: str, timeout: float = 6.0):
     """(HTTP status, JSON object or None) of a GET with the bearer; (None, None) if unreachable."""
     import urllib.error
-    import urllib.request
     request = urllib.request.Request(url, method="GET", headers={
         "Authorization": "Bearer " + bearer, "Accept": "application/json",
-        "User-Agent": "ArchHub-desktop/2.0"})
+        "User-Agent": "ArchHub-desktop/2.0", "Cache-Control": "no-cache, no-store"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as answer:
-            code, raw = int(answer.status), answer.read(65536)
+        with open_cloud_request(request, timeout=timeout) as answer:
+            code, raw = int(answer.status), answer.read(65537)
+        if len(raw) > 65536:
+            return code, None
     except urllib.error.HTTPError as refused:
         return int(refused.code), None
     except (OSError, ValueError):
@@ -149,6 +163,108 @@ def _pinned_base(held: dict) -> str:
     from . import cloud_relay
     pin = getattr(cloud_relay, "pinned_cloud_base", None)
     return pin(value) if pin is not None else cloud_relay.DEFAULT_BASE
+
+
+_DESKTOP_ERRORS = {
+    "signed_out": "Sign in to ArchHub to continue.",
+    "session_invalid": "This ArchHub session cannot be used. Sign in again with the active account.",
+    "unavailable": "ArchHub could not verify your account online. Check the connection and retry.",
+}
+
+
+class DesktopAccessRefused(PermissionError):
+    code = "desktop_access_required"
+
+    def __init__(self, state):
+        super().__init__(_DESKTOP_ERRORS[state])
+        self.state = state
+        self.status = 503 if state == "unavailable" else 401
+
+
+class DesktopAccess:
+    """Admit work using a fresh server verdict for the current protected account."""
+
+    def __init__(self, path=None, *, fetch=None):
+        self._path = path
+        self._fetch = fetch
+        self._in_flight = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _verdict(state, subject=None, email=None):
+        return {"ok": True, "admitted": state == "admitted", "state": state,
+                "subject": subject, "email": email}
+
+    @staticmethod
+    def _usable(held):
+        expires = held.get("expires_at")
+        return not held.get("refused_at") and (
+            expires is None or type(expires) in (int, float) and expires > time.time())
+
+    def _verify(self, base, bearer):
+        key = hashlib.sha256((base + "|" + bearer).encode()).digest()
+        with self._lock:
+            pending = self._in_flight.get(key)
+            leader = pending is None
+            if leader:
+                pending = self._in_flight[key] = Future()
+        if not leader:
+            return pending.result()
+        try:
+            result = (self._fetch or _cloud_get)(base + ME_PATH, bearer)
+        except Exception:
+            result = None, None  # private transport details never enter a refusal
+        finally:
+            with self._lock:
+                self._in_flight.pop(key, None)
+        pending.set_result(result)
+        return result
+
+    def check(self, *, expected_bearer=None, bind_resume=False):
+        from .cloud_signin import read_cloud_session
+
+        try:
+            path = self._path or cloud_session_path()
+            held = read_cloud_session(path)
+            bearer = held.get("token")
+            if not isinstance(bearer, str) or not bearer:
+                return self._verdict("signed_out")
+            if not self._usable(held) or (expected_bearer is not None and bearer != expected_bearer):
+                return self._verdict("session_invalid")
+            base = _pinned_base(held)
+            code, account = self._verify(base, bearer)
+            if code in (401, 403):
+                return self._verdict("session_invalid")
+            if code != 200 or not isinstance(account, dict):
+                return self._verdict("unavailable")
+            subject, email = account.get("user_id"), account.get("email")
+            if (type(subject) not in (int, str) or not 0 < len(str(subject).strip()) <= 128
+                    or not isinstance(email, str) or "@" not in email or len(email) > 320):
+                return self._verdict("unavailable")
+            subject, email = str(subject).strip(), email.strip().casefold()
+            # Signout/rotation during the network call invalidates that response.
+            current = read_cloud_session(path)
+            if current.get("token") != bearer or not self._usable(current) or _pinned_base(current) != base:
+                return self._verdict("session_invalid")
+        except (OSError, ValueError, TypeError):
+            return self._verdict("unavailable")
+
+        verdict = self._verdict("admitted", subject, email)
+        if bind_resume:
+            def sign_pointer(identity, path):
+                payload = json.dumps([subject, identity, path], ensure_ascii=False, separators=(",", ":"))
+                return hmac.digest(bearer.encode(), b"ArchHub desktop resume v1\0" + payload.encode(), "sha256").hex()
+
+            verdict["_sign_resume_pointer"] = sign_pointer
+        return verdict
+
+    def require(self, *, subject=None, expected_bearer=None):
+        result = self.check(expected_bearer=expected_bearer)
+        if not result["admitted"]:
+            raise DesktopAccessRefused(result["state"])
+        if subject is not None and subject != result["subject"]:
+            raise DesktopAccessRefused("session_invalid")
+        return result
 
 
 def signed_in_founder_account(path: Path | None = None, *, fetch=None) -> str | None:

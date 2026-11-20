@@ -50,7 +50,12 @@
    document.body.appendChild(tag);
   })));
   if(readyFailure)throw readyFailure;
-  await window.ArchHubAPI.ready;
+  let entryObserver;
+  const signInReady=new Promise(resolve=>{
+   const shown=()=>{if(document.querySelector('[data-desktop-admission]')){entryObserver?.disconnect();resolve();return true;}return false;};
+   if(!shown()){entryObserver=new window.MutationObserver(shown);entryObserver.observe(document.getElementById('root'),{childList:true,subtree:true});}
+  });
+  try{await Promise.race([window.ArchHubAPI.ready,signInReady]);}finally{entryObserver?.disconnect();}
   if(boot.dataset.hold==='1')return;
   boot.remove();
  })().catch((bootFailure) => {

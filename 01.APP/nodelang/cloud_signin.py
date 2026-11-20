@@ -29,7 +29,7 @@ from typing import Callable, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .cloud_relay import DEFAULT_BASE, SIGN_IN_AGAIN as _SIGN_IN_AGAIN, pinned_cloud_base
-from .cloud_session import cloud_session_path
+from .cloud_session import cloud_session_path, open_cloud_request
 from .http_server import create_http_server
 
 WAIT_SECONDS = 300.0
@@ -211,7 +211,7 @@ def http_json(method: str, url: str, *, body: Optional[dict] = None,
     sent.update(headers or {})
     request = urllib.request.Request(url, data=data, headers=sent, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_cloud_request(request, timeout=timeout) as response:
             raw = response.read()
             status = response.status
     except urllib.error.HTTPError as failed:

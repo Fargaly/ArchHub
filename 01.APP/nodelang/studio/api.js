@@ -14,7 +14,51 @@ const listeners=new Set();
 let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0, accountEpoch=0;
 let graphNavigation=Promise.resolve(), requestedGraph=null;
 let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=false, accountSignInPending=false;
-let activeSurface='home', canvasRefresh=null, accountKnown=false;
+const nativeReview=Boolean(window.ARCHHUB_NATIVE_APPROVAL);
+let desktopAccess={admitted:false,state:'pending',subject:null,email:null,ready:false},desktopSubject=null,desktopCheck=null,desktopGeneration=0,lockedSnapshot=null;
+const suspendedDesktop=new Map(),desktopWaiters=new Set();
+const desktopRoutes=new Set(['/api/universal/desktop-access','/api/universal/cloud-signin','/api/universal/cloud-signout','/api/window-command','/api/universal/window-command']);
+const desktopAdmitted=()=>nativeReview||desktopAccess.admitted===true;
+function desktopError(){const error=Error('Sign in to archhub.io and reconnect before continuing.');error.response={code:'desktop_access_required',state:desktopAccess.state};return error;}
+function requireDesktop(){if(!desktopAdmitted())throw desktopError();}
+function desktopSnapshot(){return desktopAdmitted()?state:lockedSnapshot||(lockedSnapshot={...copy(initialState),desktopAccess});}
+function showDesktopAccess(values){desktopAccess={...desktopAccess,...values};lockedSnapshot={...copy(initialState),desktopAccess};publish({desktopAccess});}
+function lockDesktop(stateName='unavailable'){
+ if(nativeReview)return;
+ if(desktopAccess.admitted){accountEpoch++;scopeEpoch++;runEpoch++;composerGeneration++;clearTimeout(autosaveTimer);clearTimeout(solveTimer);window.cancelAnimationFrame(projectAfterPaint);keepDraftForRecovery(currentEditState().unsaved,sessionPath);}
+ showDesktopAccess({admitted:false,state:stateName,subject:null,email:null,ready:false});
+}
+const waitForDesktop=()=>desktopAdmitted()?Promise.resolve():new Promise(resolve=>desktopWaiters.add(resolve));
+async function changeDesktopSubject(subject){
+ if(!desktopSubject||desktopSubject===subject){desktopSubject=subject;return;}
+ keepDraftForRecovery(currentEditState().unsaved,sessionPath);
+ suspendedDesktop.set(desktopSubject,{document:sessionDocument,path:sessionPath,revision:sessionRevision,history:fileHistory,future:fileFuture,dirty:localDirty,conflict:saveConflict,failed:saveFailed,breadcrumbs:sessionBreadcrumbs,view:state.desktopView});
+ clearCanvas();fileNavigation++;runEpoch++;sessionDocument=null;sessionPath='';sessionRevision=0;fileHistory=[];fileFuture=[];localDirty=false;saveConflict=null;saveFailed=false;sessionBreadcrumbs=[];systemProjection=null;preferenceContext='';reportedEditState=null;reportedEditFile=null;
+ desktopSubject=subject;localRecoveryRequested=false;
+ const held=suspendedDesktop.get(subject);
+ if(held){sessionDocument=held.document;sessionPath=held.path;sessionRevision=held.revision;fileHistory=held.history;fileFuture=held.future;localDirty=held.dirty;saveConflict=held.conflict;saveFailed=held.failed;sessionBreadcrumbs=held.breadcrumbs;publish({desktopView:held.view});suspendedDesktop.delete(subject);}
+}
+async function refreshDesktopAccess(force=false){
+ if(nativeReview)return desktopAccess;
+ if(desktopCheck&&!force)return desktopCheck;
+ const generation=++desktopGeneration;
+ const work=(async()=>{
+  try{
+   if(accountSignInPending){const phase=await request('/api/universal/cloud-signin');if(generation!==desktopGeneration)return desktopAccess;if(['done','failed','idle'].includes(phase.phase))accountSignInPending=false;showDesktopAccess({signingIn:accountSignInPending,notice:phase.phase==='failed'?(phase.error||'Sign-in failed. Try again.'):'Complete sign-in in your browser.'});}
+   const answer=await request('/api/universal/desktop-access');if(generation!==desktopGeneration)return desktopAccess;
+   if(answer.admitted!==true||answer.state!=='admitted'||typeof answer.subject!=='string'||!answer.subject){lockDesktop(['signed_out','session_invalid'].includes(answer.state)?answer.state:'unavailable');return desktopAccess;}
+   const switching=Boolean(desktopSubject&&desktopSubject!==answer.subject);
+   if(switching)lockDesktop('switching');
+   await changeDesktopSubject(answer.subject);if(generation!==desktopGeneration)return desktopAccess;
+   showDesktopAccess({admitted:true,state:'admitted',subject:answer.subject,email:answer.email||null,ready:ready&&!switching});
+   if(switching&&ready){if(sessionDocument)projectFile();else await api.newSession();showDesktopAccess({ready:true});void refreshAccount().catch(()=>{});void api.listWorkspaces().catch(()=>{});}
+   for(const resolve of desktopWaiters)resolve();desktopWaiters.clear();return desktopAccess;
+  }catch(error){if(generation===desktopGeneration)lockDesktop('unavailable');return desktopAccess;}
+ })();desktopCheck=work;try{return await work;}finally{if(desktopCheck===work)desktopCheck=null;}
+}
+window.addEventListener('offline',()=>lockDesktop('unavailable'));
+window.addEventListener('online',()=>{void refreshDesktopAccess(true);});
+let activeSurface='home', canvasRefresh=null;
 let providerRoster=[], workingAgents=[], agentsChecked=false;
 let controlsGeneration=0, preferenceGeneration=0, notificationGeneration=0;
 let appearanceWrites=Promise.resolve();
@@ -56,6 +100,7 @@ async function signIn() {
 }
 const projectTemplateWindow=window.crypto.randomUUID();
 async function request(path,body=undefined,readRetry=true,signal=undefined) {
+ if(!desktopRoutes.has(path))requireDesktop();
  const requestEpoch=scopeEpoch, requestAccountEpoch=accountEpoch, requestCanvas=commands?.getSnapshot()?.canvas||canvas;
  if(path==='/api/universal/focus'&&!window.ARCHHUB_AUTHORITY){path='/api/universal/gesture';body={expected_scope:body.expected_scope,roots:body.selected_roots,focus:body.primary_root};}
  let acknowledgementMode='';
@@ -73,14 +118,15 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  }
  const polled=body===undefined||POLLED.has(body.function)&&(path==='/api/universal/workshop'?body.action==='data-api':path==='/api/universal/settings-action');
  const readKey=polled?path+JSON.stringify({...body,request_id:undefined}):null, cached=readKey&&conditional.get(readKey);
- const response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
- 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio',...(cached?{'If-None-Match':cached.etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+ let response;try{response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
+ 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio',...(cached?{'If-None-Match':cached.etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(error){if(requestAccountEpoch===accountEpoch&&!desktopRoutes.has(path))lockDesktop('unavailable');throw error;}
  if(response.status===304){
   if(!cached||requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
   return cached.result;
  }
  const data=await response.json();
  if(requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
+ if(data?.code==='desktop_access_required'){lockDesktop(data.state||'unavailable');const failure=Error(data.error||'Sign in to continue.');failure.status=response.status;failure.response=data;throw failure;}
  if(response.status===403&&/browser session|session lease|credential digest|browser-session/i.test(data.error||'')) {
   if(readRetry){renewing=renewing||signIn().finally(()=>{renewing=null;});await renewing;
    // A refused write is never replayed. Only the next deliberate action uses the renewed session.
@@ -112,17 +158,20 @@ async function routerChat(prompt,agent,replyTo,task,extra) {
 }
 // extra: {continue:true} for the thread's running chat, {fresh:true} for a session made for this start, or nothing
 async function streamChat(prompt,agent,replyTo,task,extra) {
+ requireDesktop();const streamAccount=accountEpoch;
  const generation=++composerGeneration;let answer='',who='Routing',steps=[];
  publish({composerAnswer:{answer:'',provider:'Routing',model:'Free model'}});
- const response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
-  'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',
-  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(extra||{}),...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});
- if(!response.ok){const result=await response.json();throw Error(result.error||'The model request was refused.');}
+ let response;try{response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
+  'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'',
+  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(extra||{}),...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});}catch(error){if(streamAccount===accountEpoch)lockDesktop('unavailable');throw error;}
+ if(streamAccount!==accountEpoch)throw Error('The account changed while this request was in flight.');
+ if(!response.ok){const result=await response.json();if(result.code==='desktop_access_required')lockDesktop(result.state||'unavailable');throw Error(result.error||'The model request was refused.');}
+ if(streamAccount!==accountEpoch||!desktopAdmitted()){await response.body.cancel();throw desktopError();}
  const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',result;
- try{for(;;){const {done,value}=await reader.read();pending+=decoder.decode(value||new window.Uint8Array(),{stream:!done});
+ try{for(;;){const {done,value}=await reader.read();if(streamAccount!==accountEpoch||!desktopAdmitted()){await reader.cancel();throw desktopError();}pending+=decoder.decode(value||new window.Uint8Array(),{stream:!done});
   let split;while((split=pending.indexOf('\n\n'))>=0){const block=pending.slice(0,split);pending=pending.slice(split+2);
    for(const line of block.split('\n'))if(line.startsWith('data:')){const data=JSON.parse(line.slice(5));
-    if(data.error)throw Error(data.error);
+    if(data.code==='desktop_access_required')lockDesktop(data.state||'unavailable');if(data.error)throw Error(data.error);
     if(data.step){if(data.step.who)who=data.step.who;else steps=[...steps.filter(s=>s.id!==data.step.id),data.step];if(generation===composerGeneration)publish({composerAnswer:{provider:who,model:who==='Routing'?'Free model':'ACP',answer,steps}});}
     if(data.delta){answer+=data.delta;if(generation===composerGeneration)publish({composerAnswer:{provider:who,model:who==='Routing'?'Free model':'ACP',answer,steps}});}
     if(data.result){result=data.result;if(generation===composerGeneration)publish({composerAnswer:result});}
@@ -301,17 +350,16 @@ async function refreshAgents() {
 }
 async function refreshAccount() {
  const account=await request('/api/universal/cloud-session');
- if(accountKnown&&((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true))){clearCanvas();await commands.load({home:activeSurface!=='canvas',navigation:true});project();}
- accountKnown=true;
+ if(!desktopAdmitted())return {};
  let attempt=null;
  if(accountSignInPending){
   attempt=await request('/api/universal/cloud-signin');
   if(['done','failed','idle'].includes(attempt.phase)||account.signed_in===true)accountSignInPending=false;
  }
- publish({profile:{...state.profile,id:account.signed_in===true?(account.user_id||account.email||''):'',
-  name:account.signed_in===true?(account.display_name||account.name||''):'',
-  email:account.email||'',signedIn:account.signed_in===true,checking:account.checking===true,
-  isFounder:account.signed_in===true&&account.founder===true},
+ publish({profile:{...state.profile,id:desktopAccess.subject||'',
+  name:String(account.user_id||'')===desktopSubject?(account.display_name||account.name||''):'',
+  email:desktopAccess.email||'',signedIn:desktopAdmitted(),checking:false,
+  isFounder:String(account.user_id||'')===desktopSubject&&account.founder===true},
   sync:account.signed_in===true?'Account connected':accountSignInPending?'Complete sign-in in your browser':account.state==='expired'?'Sign in again':'Signed out',
   ...(attempt?.phase==='failed'?{connectionNotice:attempt.error||'Sign-in failed. Try again.'}:{})});
  return copy(state.profile);
@@ -359,7 +407,7 @@ window.addEventListener('archhub:update-ready',()=>{
  refreshApplicationUpdate().catch(error=>console.warn('Update status read will retry',error));
 });
 async function refreshLive() {
- if(!ready||document.hidden||listeners.size===0)return state.tasks;
+ if(!ready||!desktopAdmitted()||document.hidden||listeners.size===0)return state.tasks;
  if(activeSurface==='canvas'){
   if(!canvasRefresh)canvasRefresh=api.tickSchedules(true)
    .catch(error=>{if(error.status===403)clearCanvas();publish({connectionNotice:error.message});}).finally(()=>{canvasRefresh=null;});
@@ -385,8 +433,8 @@ function clearCanvas(){
  workingAgents=[];agentsChecked=false;
  publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
 }
-function watchRefresh(){stopRefresh();if(ready&&listeners.size&&!document.hidden)refreshTimer=window.setInterval(refreshLive,ownerRefreshMs);}
-document.addEventListener('visibilitychange',()=>{watchRefresh();reportedSurface=null;reportSurface();if(!document.hidden)refreshLive();});
+function watchRefresh(){stopRefresh();if(listeners.size&&!document.hidden)refreshTimer=window.setInterval(async()=>{await refreshDesktopAccess();if(desktopAdmitted())await refreshLive();},ownerRefreshMs);}
+document.addEventListener('visibilitychange',()=>{watchRefresh();reportedSurface=null;reportSurface();if(!document.hidden)void refreshDesktopAccess(true).then(()=>{if(desktopAdmitted())return refreshLive();return null;});});
 window.addEventListener('pagehide',stopRefresh);
 window.addEventListener('pageshow',watchRefresh);
 const canvasOperation=(op,args)=>[
@@ -494,12 +542,14 @@ api.speak=text=>{
 };
 Object.assign(api,{
  async signIn(enabled=true){
+  if(!enabled){desktopGeneration++;lockDesktop('signed_out');}
   const result=await request(enabled?'/api/universal/cloud-signin':'/api/universal/cloud-signout',enabled?{method:'google'}:{});
-  accountSignInPending=enabled;
-  await refreshAccount();return result;
+  accountSignInPending=enabled;showDesktopAccess({signingIn:enabled,notice:''});
+  await refreshDesktopAccess(true);if(desktopAdmitted())await refreshAccount();return result;
  },
  syncAccount:refreshAccount,
  async windowAction(action){
+  if(action!=='quit')requireDesktop();
   if(typeof window.ARCHHUB_WINDOW_ACTION!=='function')throw Error('Open ArchHub from its desktop shortcut to use window controls.');
   const result=await window.ARCHHUB_WINDOW_ACTION(action);
   publish({app:{...state.app,hidden:result.visible===false,quit:action==='quit'}});return result;
@@ -519,7 +569,7 @@ Object.assign(api,{
   }
   throw Error('Choose a saved graph or a completed node result to export.');
  },
- getSnapshot:()=>state,subscribe(fn){listeners.add(fn);watchRefresh();if(!state.chatAgents)api.listChatAgents();return()=>{listeners.delete(fn);if(listeners.size===0)stopRefresh();};},
+ getSnapshot:desktopSnapshot,refreshDesktopAccess,readDesktopView:()=>desktopAdmitted()?copy(state.desktopView||{}):{},rememberDesktopView:view=>{if(desktopAdmitted()&&desktopAccess.ready)publish({desktopView:copy(view)});},subscribe(fn){listeners.add(fn);watchRefresh();if(desktopAdmitted()&&!state.chatAgents)api.listChatAgents();return()=>{listeners.delete(fn);if(listeners.size===0)stopRefresh();};},
  listTasks:refreshTasks,listAgentsWorking:refreshAgents,
  async setTaskActivity(id,values){const result=await workshop('setTaskActivity',[id,values]);await refreshTasks();return result;},
  async listWorkshopMessages(before){const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());const page=await workshop('listWorkshopMessages',[before??null]);return epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())?page:null;},
@@ -1248,7 +1298,7 @@ api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value,destination=state.settingsDestination){
  const identity=state.profile.id;
- const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this preference edit.');return settingsAction('setAppearance',[id,value],destination);});
+ const admittedEpoch=accountEpoch;const write=appearanceWrites.then(()=>{if(admittedEpoch!==accountEpoch)throw desktopError();if(identity!==state.profile.id)throw Error('Your account changed. Retry this preference edit.');return settingsAction('setAppearance',[id,value],destination);});
  appearanceWrites=write.catch(()=>{});
  return write.then(result=>preferenceChanged(id,result));
 }
@@ -1797,6 +1847,7 @@ let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], sol
 // A drop's redraw, waiting for the frame after the drop is painted (the edit itself is already in the document).
 let projectAfterPaint=0;
 function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false,afterPaint=false){
+ requireDesktop();
  if(!sessionDocument)throw Error('Open a session first.');
  const before=copy(sessionDocument);
  if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
@@ -1814,6 +1865,7 @@ function scheduleSolve(ids,param){
  clearTimeout(solveTimer);solveTimer=setTimeout(()=>runSolve().catch(error=>notice('Solve failed: '+error.message)),Number(state.canvasPolicy?.solve_debounce_ms??120));
 }
 async function runSolve(){
+ if(!desktopAdmitted())return;
  const changed=[...solveIds].filter(id=>sessionDocument?.nodes.some(n=>n.id===id)),params=solveParams;solveIds=new Set();solveParams=[];
  if(!sessionDocument||!changed.length)return;
  const id=sessionDocument.id,epoch=runEpoch;solveCount++;
@@ -1864,9 +1916,9 @@ function refuseUnresolvedSave(){
  throw Error(saveConflictMessage);
 }
 function saveNow(){
- const id=sessionDocument?.id;
+ const id=sessionDocument?.id,writeAccount=accountEpoch;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
-  if(sessionDocument?.id!==id)return {cancelled:true};
+  if(writeAccount!==accountEpoch||!desktopAdmitted()||sessionDocument?.id!==id)return {cancelled:true};
   refuseUnresolvedSave();
   const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision;
   const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base}).catch(error=>{rememberSaveConflict(error,currentPath);throw error;});
@@ -1913,7 +1965,7 @@ const DRAFT_PREFIX='archhub.draft.';
 // answer a ping within one poll. A closed window drops its lease at pagehide; a crashed one simply stops beating.
 // A live window is never offered, and is re-asked at click time.
 const ALIVE_PREFIX='archhub.alive.', LEASE_POLLS=2;  // short: the live ping, not the timestamp, protects a live window
-let draftRevision=0;
+let draftRevision=0,localRecoveryRequested=false;
 const pollMs=()=>Number(state.canvasPolicy?.file_poll_ms??1000);
 function beat(){
  try{window.localStorage.setItem(ALIVE_PREFIX+editView,String(Date.now()));}
@@ -1965,43 +2017,47 @@ function leaseStale(view){
   return !Number.isFinite(stamp)||Date.now()-stamp>LEASE_POLLS*pollMs();
  }catch(error){console.warn('Page lease unreadable; treated as open:',error.message);return false;}
 }
+const draftKey=()=>DRAFT_PREFIX+encodeURIComponent(desktopSubject||'unattributed')+'.'+editView;
 function keepDraftForRecovery(unsaved,file){
  // Written on EVERY edit (not only when the dirty flag flips), in order: the stored draft is always the latest bytes.
  try{
-  if(unsaved&&sessionDocument)window.localStorage.setItem(DRAFT_PREFIX+editView,JSON.stringify({view:editView,file,revision:++draftRevision,locked:viewLockHeld,document:portableDocument()}));
-  else window.localStorage.removeItem(DRAFT_PREFIX+editView);
+  if(unsaved&&sessionDocument)window.localStorage.setItem(draftKey(),JSON.stringify({subject:desktopSubject,view:editView,file,revision:++draftRevision,locked:viewLockHeld,document:portableDocument()}));
+  else window.localStorage.removeItem(draftKey());
  }catch(error){console.warn('Draft not kept for recovery:',error.message);}
 }
-function storedDrafts(){
- const found=[];
+function storedDrafts(includeLocal=localRecoveryRequested){
+ const found=[];if(!desktopAdmitted()||!desktopSubject)return found;
  try{
   for(let index=0;index<window.localStorage.length;index++){
    const key=window.localStorage.key(index);
-   if(!key?.startsWith(DRAFT_PREFIX)||key===DRAFT_PREFIX+editView)continue;
+   if(!key?.startsWith(DRAFT_PREFIX)||key===draftKey())continue;
    const draft=JSON.parse(window.localStorage.getItem(key)||'null');
-   if(draft?.view&&draft.document)found.push({view:draft.view,file:draft.file||'',key,locked:draft.locked===true});
+   if((draft?.subject===desktopSubject||includeLocal&&!draft?.subject)&&draft?.view&&draft.document)found.push({view:draft.view,file:draft.file||'',key,locked:draft.locked===true});
   }
  }catch(error){console.warn('Drafts from closed windows unreadable:',error.message);}
  return found;
 }
 let orphanCheck=null;
-function refreshOrphanDrafts(){
+function refreshOrphanDrafts(includeLocal=localRecoveryRequested){
  // One check at a time; only drafts whose owner is stale AND silent are offered.
  if(orphanCheck)return orphanCheck;
  orphanCheck=(async()=>{
-  const candidates=storedDrafts();
+  const candidates=storedDrafts(includeLocal);
   const answers=await Promise.all(candidates.map(ownerAlive));
   publish({orphanDrafts:candidates.filter((_draft,index)=>!answers[index])});
  })().catch(error=>console.warn('Closed-window drafts not checked:',error.message)).finally(()=>{orphanCheck=null;});
  return orphanCheck;
 }
 function orphanDrafts(){return state.orphanDrafts||[];}
+api.recoverLocalWork=async()=>{requireDesktop();if(orphanCheck)await orphanCheck;localRecoveryRequested=true;return refreshOrphanDrafts(true);};
 // Another window closing (lease removed) or changing its draft changes what can be recovered here.
 window.addEventListener?.('storage',event=>{
  if(event.key===null||event.key.startsWith(ALIVE_PREFIX)||event.key.startsWith(DRAFT_PREFIX))refreshOrphanDrafts();
 });
 api.resolveOrphanDraft=async(view,keep)=>{
- const key=DRAFT_PREFIX+view,draft=JSON.parse(window.localStorage.getItem(key)||'null');
+ requireDesktop();
+ const key=orphanDrafts().find(draft=>draft.view===view)?.key;if(!key)throw Error('That draft is not available for this account.');const draft=JSON.parse(window.localStorage.getItem(key)||'null');
+ if(draft?.subject&&draft.subject!==desktopSubject)throw Error('That draft belongs to another account.');
  if(!draft?.document)throw Error('That draft is no longer here.');
  if(await ownerAlive({view,locked:draft.locked===true}))throw Error('That window is still open; choose there.');
  try{
@@ -2016,7 +2072,7 @@ api.resolveOrphanDraft=async(view,keep)=>{
  }catch(error){publish({orphanDraftError:error.message});throw error;}
 };
 // A reloaded tab whose old page left an unsaved draft does not retire it: that draft holds until kept or discarded.
-try{if(retiredEditView&&window.localStorage.getItem(DRAFT_PREFIX+retiredEditView))retiredEditView=null;}
+try{if(retiredEditView){for(let index=0;index<window.localStorage.length;index++){const key=window.localStorage.key(index);if(key===DRAFT_PREFIX+retiredEditView||key?.startsWith(DRAFT_PREFIX)&&key.endsWith('.'+retiredEditView)){retiredEditView=null;break;}}}}
 catch(error){console.warn('Previous page draft unreadable:',error.message);}
 Promise.resolve().then(refreshOrphanDrafts);
 // The desktop asks the live page right before an automatic close; no answer means it does not close.
@@ -2024,13 +2080,14 @@ window.__archhubEditState=()=>{reportEditState(true);return currentEditState();}
 function queueAutosave(){
  reportEditState();  // the first edit is protected at once, not at the next file poll
  const now=currentEditState();keepDraftForRecovery(now.unsaved,now.file);  // every edit refreshes the stored draft
- if(saveConflict)return;
+ if(saveConflict||!desktopAdmitted())return;
  clearTimeout(autosaveTimer);autosaveTimer=setTimeout(()=>{
   saveNow().catch(error=>{saveFailed=true;reportEditState();if(!saveConflict)notice('Autosave failed: '+error.message);});
  },Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));
 }
 // The open file is shared with agents: pick up their edits (file revision), no background solve.
 async function pollFile(force=false){
+ if(!desktopAdmitted()){beat();return;}
  reportEditState();  // on the file poll's own cadence (canvasPolicy.file_poll_ms)
  beat();refreshOrphanDrafts();  // this window's heartbeat; a crashed window's draft becomes recoverable
  const navigation=fileNavigation;
@@ -2048,6 +2105,7 @@ async function pollFile(force=false){
 if(typeof window.setInterval==='function')window.setInterval(()=>pollFile().catch(()=>{}),Number(state.canvasPolicy?.file_poll_ms??1000));
 function portableDocument(){return copy(sessionDocument);}
 async function adoptFile(document,path='',navigation=++fileNavigation,recoveredDraft=null){
+ requireDesktop();
  if(recoveredDraft===null)refuseUnresolvedSave();
  const checked=await sessionRequest('validate',{document});
  if(navigation!==fileNavigation)return {cancelled:true};
@@ -2095,6 +2153,7 @@ api.resolveSaveConflict=async keep=>{
  }
 };
 api.newSession=async title=>{
+ requireDesktop();
  sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});
  const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
  return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom},properties:{viewportSaved:false}});
@@ -2113,16 +2172,16 @@ api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(ope
 api.importSession=async file=>{const navigation=++fileNavigation;if(!file.name.toLowerCase().endsWith('.archhub')||file.size>8388608)throw Error('Choose an .archhub file up to 8 MiB.');return adoptFile(JSON.parse(await file.text()),'',navigation);};
 api.saveSession=async(path=sessionPath,saveAs=false)=>{
  if(sessionDocument && sessionDocument.properties?.viewportSaved!==true)api.setSessionViewport(window.UI?.requestCanvasViewport?.() || sessionDocument.viewport);
- const navigation=fileNavigation,previousPath=sessionPath;await flushAutosave();
+ const navigation=fileNavigation,previousPath=sessionPath,writeAccount=accountEpoch;await flushAutosave();
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
- if(navigation!==fileNavigation)return {cancelled:true};
+ if(navigation!==fileNavigation||writeAccount!==accountEpoch||!desktopAdmitted())return {cancelled:true};
  const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,copy_source:saveAs?sessionPath:undefined,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath}).catch(error=>{rememberSaveConflict(error,path);throw error;});
  if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };
 api.saveSessionAs=()=>api.saveSession('',true);
-api.getSessionDocument=()=>copy(portableDocument());
+api.getSessionDocument=()=>desktopAdmitted()?copy(portableDocument()):null;
 api.pickNodeParameter=async(id,key,type)=>{const picked=await request(type==='folder'?'/api/universal/workspace-roots':'/api/universal/pick-file',type==='folder'?{action:'browse'}:{title:'Choose '+key});if(!picked.path){if(picked.note)throw Error(picked.note);return {cancelled:true};}return api.setNodeParam(id,key,picked.path);};
 api.hasSessionEdits=()=>fileHistory.length>0;
 api.readSystemGraph=async()=>{
@@ -2423,15 +2482,15 @@ api.setPortVisibility=async(id,port,value)=>fileEdit(d=>{const n=d.nodes.find(n=
 api.setPromotedParameter=async(id,key,value)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.parameterPresentation={...n.parameterPresentation,[key]:value};});
 api.updateGraph=async(id,values)=>fileEdit(d=>{if(values.name)d.title=values.name;d.properties={...d.properties,...values};});
 api.exportRecipe=async()=>portableDocument();
-api.solveNow=()=>runSolve();api.getSessionPath=()=>sessionPath;
+api.solveNow=()=>runSolve();api.getSessionPath=()=>desktopAdmitted()?sessionPath:'';
 api.saveSkill=async name=>{if(name)fileEdit(d=>{d.title=String(name).trim()||d.title;});const saved=await api.saveSession();await api.refreshLibraryPorts();return saved;};
 api.openTemplateGraph=async id=>{const row=state.templates.find(t=>t.id===id);if(row?.path)return api.openSession(row.path);return api.openStarter(id);};
 api.readSessionsFolder=()=>settingsAction('readSessionsFolder').then(result=>{publish({sessionsFolder:result.sessionsFolder});return result;});
 api.chooseSessionsFolder=async()=>{await flushAutosave();const result=await settingsAction('setSessionsFolder',[]);sessionPath=result.moved?.find(([old])=>old===sessionPath)?.[1]||sessionPath;publish({sessionsFolder:result.sessionsFolder,sessionFile:sessionPath});await api.refreshLibraryPorts();return result;};
-window.addEventListener('pagehide',()=>{if(sessionDocument&&localDirty&&!saveConflict){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath,base_revision:sessionRevision});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
+window.addEventListener('pagehide',()=>{if(desktopAdmitted()&&sessionDocument&&localDirty&&!saveConflict){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath,base_revision:sessionRevision});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
 
 const initialState=copy(state);
-api.ready=(async()=>{
+async function loadDesktop(){
  const initialNavigation=fileNavigation;
  // The native Qt owner supplies one reviewed payload and the existing bound decision bridge.
  if(window.ARCHHUB_NATIVE_APPROVAL){
@@ -2449,10 +2508,6 @@ api.ready=(async()=>{
   api.decline=id=>decideNative(id,'decline');
   publish({nativeApproval:true,approvals:[card]});return state;
  }
- session=window.ARCHHUB_BOOT;
- try {const saved=typeof sessionStorage==='undefined'?null:JSON.parse(sessionStorage.getItem('archhub.studio.session')||'null');session=session?{...session,lastGraphId:saved?.lastGraphId}:saved;}
- catch {notice('The saved browser session could not be read. Reconnecting this window.');}
- if((!session?.token||!session?.csrf)&&!window.ARCHHUB_AUTHORITY?.canvas_key)await signIn();else window.__archhubSession=session;
  // COMMANDREGISTRY: served by the owner; this is a disposable projection, never a settings store.
  window.ArchHubCommandRegistry = await request('/api/commands');
  Object.assign(NAVIGATION_ROUTES,Object.fromEntries(window.ArchHubCommandRegistry.commands.filter(c=>c.action.route).map(c=>[c.action.route,c.label])));
@@ -2474,6 +2529,7 @@ api.ready=(async()=>{
    else await api.newSession();
   }
  }catch(error){
+  if(!desktopAdmitted())throw error;
   if(initialNavigation===fileNavigation){
    notice(error.message||String(error));
    // A file that failed to open is not the open file: the new session must not save over it or project it again.
@@ -2482,7 +2538,7 @@ api.ready=(async()=>{
   }
  }
  publish({learning:{...state.learning,layer:'Host'},connectionNotice:state.connectionNotice||''});
- ready=true;watchRefresh();
+ ready=true;showDesktopAccess({ready:true});watchRefresh();
  void api.loadLibrary();
  void api.refreshRouter?.().catch(error=>notice(error.message));
  // Account/network discovery must not hold the usable graph behind its timeout.
@@ -2494,13 +2550,22 @@ api.ready=(async()=>{
   }
  })();
  return state;
+}
+api.ready=(async()=>{
+ if(nativeReview)return loadDesktop();
+ session=window.ARCHHUB_BOOT;
+ try {const saved=typeof sessionStorage==='undefined'?null:JSON.parse(sessionStorage.getItem('archhub.studio.session')||'null');session=session?{...session,lastGraphId:saved?.lastGraphId}:saved;}
+ catch {notice('The saved browser session could not be read. Reconnecting this window.');}
+ if((!session?.token||!session?.csrf)&&!window.ARCHHUB_AUTHORITY?.canvas_key)await signIn();else window.__archhubSession=session;
+ await refreshDesktopAccess();
+ let opened=null;while(opened===null){await waitForDesktop();try{opened=await loadDesktop();}catch(error){if(desktopAdmitted())throw error;}}return opened;
 })();
 // WIRE-projects: tick existing schedule nodes while the desktop is open, including hidden pages.
 api.ready.then(()=>{
  if(state.nativeApproval || typeof window.setInterval!=='function')return;
  let ticking=false;
  const tick=()=>{
-  if(ticking||document.hidden||activeSurface==='canvas')return;ticking=true;
+  if(ticking||!desktopAdmitted()||document.hidden||activeSurface==='canvas')return;ticking=true;
   return api.tickSchedules()
    .catch(failure=>notice(failure.message+' Review Schedules, then retry.'))
    .finally(()=>{ticking=false;});

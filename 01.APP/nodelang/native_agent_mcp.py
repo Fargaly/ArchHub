@@ -94,7 +94,8 @@ def _mailbox_call(method, body, context, **limits):
     return call(method, body, context, **limits)
 
 
-def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_catalogue=False):
+def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_catalogue=False,
+                 desktop_access=None):
     """The shared message tools are available before any Work identity is needed."""
     from contextlib import asynccontextmanager
     import logging
@@ -110,6 +111,8 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
             wake.set()
 
     server = FastMCP("archhub-agent", lifespan=startup)
+    server._desktop_access = desktop_access
+    server._desktop_admitted = None
     call = _mailbox_call if mailbox_call is None else mailbox_call
     declared = set()
     import threading
@@ -258,6 +261,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         # tool call, then after 1, 2 and 4 s, kept every agent session at 30-58% of a core; "the app is very slow".)
         recovery = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds']
         interval, looked, due = budget, time.monotonic() - budget, time.monotonic()
+        observed_version = None
         import random
         # After an install every agent's connector starts at once: their first polls spread over the short budget.
         if stopped.wait(random.uniform(0, budget)):
@@ -273,6 +277,16 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
                 version, looked = store_version(), time.monotonic()
                 turn = looked >= due or (version is None and woken)   # no readable store number: a tool call polls, as before
                 new = False
+                if desktop_access is not None:
+                    changed = version != observed_version
+                    observed_version = version
+                    if not (turn or woken or changed):
+                        continue
+                    if not desktop_access.check()["admitted"]:
+                        with lock:
+                            pages.clear()
+                        due = time.monotonic() + min(max(interval, 1.0), recovery)
+                        continue
                 for context in pending:
                     if stopped.is_set():
                         return
@@ -442,6 +456,8 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
     shown = {}  # per caller: message ids already handed over in a tool result, never attached again
     server._mcpfresh_level = "notice"
     server._mcpfresh_active = 0
+    access = server._desktop_access
+    subject = None
     order = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
 
     @lowlevel.set_logging_level()
@@ -449,8 +465,16 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
         levels[id(lowlevel.request_context.session)] = level
         server._mcpfresh_level = level
 
-    async def deliver_pending(request):
+    def desktop_refusal(refused):
+        error = {"ok": False, "code": refused.code, "state": refused.state, "error": str(refused)}
+        return types.ServerResult(types.CallToolResult(
+            isError=True, content=[types.TextContent(type="text", text=json.dumps(error))]))
+
+    async def deliver_pending(request, expected_subject):
         result = await original(request)
+        if expected_subject is not None and expected_subject != subject:
+            from .cloud_session import DesktopAccessRefused
+            return desktop_refusal(DesktopAccessRefused("session_invalid"))
         if request.params.name in server._direct_host_tools:
             return result
         try:
@@ -486,9 +510,30 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
         return result
 
     async def with_pending(request):
+        nonlocal subject
+        if access is not None:
+            import anyio
+            from .cloud_session import DesktopAccessRefused
+            try:
+                verdict = await anyio.to_thread.run_sync(access.require)
+            except DesktopAccessRefused as refused:
+                return desktop_refusal(refused)
+            if subject != verdict["subject"]:
+                previous = subject
+                with lock:
+                    for key in epochs:
+                        epochs[key] += 1
+                    shown.clear()
+                    pages.clear()
+                    subject = verdict["subject"]
+                if previous is not None:
+                    return desktop_refusal(DesktopAccessRefused("session_invalid"))
+                if server._desktop_admitted is not None:
+                    server._desktop_admitted()
+        expected_subject = subject
         server._mcpfresh_active += 1
         try:
-            return await deliver_pending(request)
+            return await deliver_pending(request, expected_subject)
         finally:
             server._mcpfresh_active -= 1
 
@@ -835,18 +880,26 @@ def main():
     parser.add_argument("--mailbox-send", action="store_true", help="Legacy CLI adapter to the same Workshop mailbox; JSON on stdin")
     parser.add_argument("--mailbox-read", action="store_true", help="Native task receipt reader over the same mailbox")
     args = parser.parse_args()
+    from .cloud_session import DesktopAccess, DesktopAccessRefused
+    access = DesktopAccess()
     if args.mailbox_send or args.mailbox_read:
         import json as mailbox_json
         import sys
+        try:
+            access.require()
+        except DesktopAccessRefused as refused:
+            print(mailbox_json.dumps({"ok": False, "code": refused.code, "state": refused.state, "error": str(refused)}))
+            return
         body = mailbox_json.loads(sys.stdin.buffer.read(65537))
         print(mailbox_json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context(),
                                               **({} if args.mailbox_read else {"one_shot": True}))))
         return
-    server = build_server()
+    server = build_server(desktop_access=access)
     # The Workshop is the gateway: hooks+rules are applied to this agent off the start path.
     import threading
     from .workshop_gateway import on_connect
-    threading.Thread(target=on_connect, name="archhub-gateway", daemon=True).start()
+    server._desktop_admitted = lambda: threading.Thread(
+        target=on_connect, name="archhub-gateway", daemon=True).start()
     import anyio
     import json
     count = int(os.environ.pop('ARCHHUB_MCP_CONTINUATION', '0'))

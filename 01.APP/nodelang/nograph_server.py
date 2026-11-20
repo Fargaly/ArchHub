@@ -53,6 +53,15 @@ ROUTER_FILE = 'router.json'
 _SERVER = None  # the running NoGraphServer (one per app process)
 
 
+from .cloud_session import DesktopAccessRefused
+
+
+_DESKTOP_STATUS = '/api/universal/desktop-access'
+_DESKTOP_PUBLIC = frozenset({
+    _DESKTOP_STATUS, '/api/universal/cloud-signin', '/api/universal/cloud-signout',
+})
+
+
 class Refused(Exception):
     def __init__(self, message, status=409, *, code=None):
         super().__init__(message)
@@ -160,12 +169,19 @@ class Cached:
 
 
 class NoGraphServer:
-    def __init__(self, state_dir, *, host='127.0.0.1', port=0, engines=None, agent_source=None):
+    def __init__(self, state_dir, *, host='127.0.0.1', port=0, engines=None, agent_source=None, desktop_access=None):
         _STORE_VERSION_CLOSED[0] = False  # a new server may keep a store watcher again
         self.state_dir = Path(state_dir)
         self.settings_dir = self.state_dir / 'settings'
         self.settings_dir.mkdir(parents=True, exist_ok=True)
         self.engines = engines
+        self.desktop_access = desktop_access
+        self._desktop_subject = None
+        self._desktop_epoch = 0
+        self._desktop_connected = False
+        self._desktop_loss = "session_invalid"
+        self._desktop_warmed = False
+        self.desktop_ready = None
         self.browser_bootstrap_token = secrets.token_urlsafe(32)
         self.browser_session_token = secrets.token_urlsafe(32)
         self.browser_csrf_token = secrets.token_urlsafe(32)
@@ -211,6 +227,66 @@ class NoGraphServer:
         # what it made, never while a relay is being started (close() must not wait for a slow start).
         self._owned_lock = threading.Lock()
 
+    def desktop_status(self, *, bind_resume=False, admission=False):
+        if self.desktop_access is None:
+            return {"ok": True, "admitted": False, "state": "unavailable", "subject": None, "email": None}
+        with self._account_lock:
+            began = self._desktop_epoch
+        result = self.desktop_access.check(bind_resume=bind_resume)
+        with self._account_lock:
+            if not result["admitted"]:
+                if self._desktop_connected:
+                    self._desktop_connected = False
+                    self._desktop_epoch += 1
+                    self._desktop_loss = result["state"]
+                return result
+            if began != self._desktop_epoch:
+                return {"ok": True, "admitted": False, "state": self._desktop_loss,
+                        "subject": None, "email": None}
+            self._desktop_connected = True
+            subject = result["subject"]
+            switched = self._desktop_subject is not None and self._desktop_subject != subject
+            if switched:
+                self._desktop_epoch += 1
+                self._desktop_loss = "session_invalid"
+                self._session.reset(None)
+                self._account_key, self._account = None, None
+            self._desktop_subject = subject
+            ready = not self._desktop_warmed
+            self._desktop_warmed = True
+            if admission:
+                result["_epoch"] = self._desktop_epoch
+        if ready:
+            self._start_admitted_services()
+            if self.desktop_ready is not None:
+                self.desktop_ready()
+        if switched and self.cloud_relay is not None:
+            threading.Thread(target=self.ensure_cloud_relay, kwargs={'restart': True},
+                             name='archhub-relay-account-switch', daemon=True).start()
+        return result
+
+    def require_desktop_access(self, *, expected_subject=None):
+        if self.desktop_access is None:
+            return
+        result = self.desktop_status(bind_resume=expected_subject is not None, admission=True)
+        if not result["admitted"]:
+            raise DesktopAccessRefused(result["state"])
+        if expected_subject is not None and expected_subject != result["subject"]:
+            raise DesktopAccessRefused("session_invalid")
+        self.ensure_current_desktop_access(result)
+        return result
+
+    def ensure_current_desktop_access(self, admission):
+        if admission is not None and admission["_epoch"] != self._desktop_epoch:
+            raise DesktopAccessRefused(self._desktop_loss)
+
+    def invoke_admitted_effect(self, admission, *args, **kwargs):
+        from .enforce import guard_effect
+        self.ensure_current_desktop_access(admission)
+        self.require_desktop_access(expected_subject=admission["subject"])
+        self.ensure_current_desktop_access(admission)
+        return guard_effect(*args, **kwargs)
+
     def busy_reason(self):
         """Why an update restart must wait now, read from this desktop's own live work; None when idle.
 
@@ -244,14 +320,20 @@ class NoGraphServer:
             import_module('.' + module, __package__)
         from .model_router import request_profiles
         request_profiles()
-        self._messages.value = _list_messages()
-        self._messages.at = time.time()
-        self._session.value = self._read_session()
+        if self.desktop_access is None:
+            self._messages.value = _list_messages()
+            self._messages.at = time.time()
+            self._session.value = self._read_session()
         self.triggers = None  # F38: TriggerService scans session files; build it after listen
         self.thread = threading.Thread(target=self.httpd.serve_forever, name='archhub-nograph-http', daemon=True)
         self.thread.start()
         port_file = self.state_dir / "nograph-http-port"
         port_file.write_text("%d\n" % self.port, encoding="ascii")
+        if self.desktop_access is None:
+            self._start_admitted_services()
+        return self
+
+    def _start_admitted_services(self):
         # Hosts and local probes are Cached: start their background refresh without blocking listen.
         self._hosts.get()
         self._local.get()
@@ -260,7 +342,6 @@ class NoGraphServer:
         threading.Thread(target=self._warm_after_listen, name='archhub-nograph-warm', daemon=True).start()
         threading.Thread(target=_refresh_opencode_plugin, args=(self.state_dir,), name='archhub-opencode-plugin',
                          daemon=True).start()
-        return self
 
     def _start_workshop_injection(self):
         if os.environ.get('ARCHHUB_DISABLE_WORKSHOP_WATCH', '').strip().lower() in ('1', 'true', 'yes'):
@@ -287,7 +368,8 @@ class NoGraphServer:
             if self._closing.is_set():
                 return  # closing: the warm-up makes nothing more
             from .canvas_triggers import TriggerService
-            service = TriggerService(pause_settings=self.files['settings'])
+            service = TriggerService(pause_settings=self.files['settings'],
+                                     require_access=self.require_desktop_access if self.desktop_access else None)
             if not self._own('triggers', service):
                 return
             service.refresh()
@@ -351,7 +433,8 @@ class NoGraphServer:
                 agents = McpWorkshopAgents(mailbox_path=profile_database())
                 made = start_cloud_relay(
                     state_dir=self.state_dir, respond=lambda _text: {}, execute=lambda _text: {},
-                    app_kinds=(HOST_READ, HOST_EFFECT), workshop_caller=agents.call)
+                    app_kinds=(HOST_READ, HOST_EFFECT), workshop_caller=agents.call,
+                    desktop_access=self.desktop_access)
             except Exception as refused:  # noqa: BLE001
                 print('  cloud relay: not started -- %s' % refused, flush=True)
                 made = None
@@ -523,7 +606,7 @@ class NoGraphServer:
 
             def send_json(self, status, payload, headers=()):
                 raw = json.dumps(payload, separators=(',', ':'), default=str).encode('utf-8')
-                if status == 200:
+                if status == 200 and self.path.partition('?')[0] != _DESKTOP_STATUS:
                     # RFC 9110 conditional read: an unchanged answer to a Studio poll is a bodiless 304.
                     etag = '"%s"' % hashlib.sha256(raw).hexdigest()[:32]
                     headers = (*headers, ('ETag', etag))
@@ -605,18 +688,24 @@ class NoGraphServer:
                     if path == '/baboom/companion' and method == 'POST':
                         # BABOOM's own companion process (loopback, per-boot token it was started with).
                         from .baboom_companion_process import HEADER, door
-                        self.send_json(200, door(self.headers.get(HEADER), self.body()))
+                        body = self.body()
+                        self.send_json(200, door(self.headers.get(HEADER), body,
+                                                require_access=owner.require_desktop_access))
                         return
                     if path == '/api/universal/session' and method == 'POST':
                         owner._sign_in(self)
                         return
                     if not self.admitted():
                         raise Refused('Browser session required. Reopen ArchHub.', 403)
+                    admitted = None
+                    if path not in _DESKTOP_PUBLIC:
+                        admitted = owner.require_desktop_access(
+                            expected_subject=self.headers.get('X-ArchHub-Desktop-Subject', ''))
                     if path == '/api/router/chat':
                         turn = threading.get_ident()
                         owner._chat_turns.add(turn)
                         try:
-                            owner._router_chat(self)
+                            owner._router_chat(self, admission=admitted)
                         finally:
                             owner._chat_turns.discard(turn)
                         return
@@ -627,16 +716,22 @@ class NoGraphServer:
                         raise Refused('This action needs a POST from the Studio.', 405)
                     query = parse_qs(parsed.query, keep_blank_values=True)
                     body = self.body(SESSION_BODY if path == '/api/session-files' else MAX_BODY) if method == 'POST' else None
+                    owner.ensure_current_desktop_access(admitted)
                     writes = isinstance(body, dict) and (
                         path in ('/api/session-files', '/api/session-model') and body.get('action') not in _SESSION_READ_ACTIONS
                         or path == WORKSHOP_PATH and (body.get('action') != 'data-api' or body.get('function') not in _WORKSHOP_READ_FUNCTIONS))
                     if writes:
                         _drop_column()  # a write can change a task row (its path, plan, messages, status)
-                    result = route[1](owner, SimpleNamespace(method=method, path=path, query=query, body=body, handler=self))
+                    from .canvas_documents import lock_admission
+                    check = (lambda: owner.ensure_current_desktop_access(admitted)) if admitted is not None else None
+                    with lock_admission(check):
+                        result = route[1](owner, SimpleNamespace(method=method, path=path, query=query, body=body,
+                                                                  handler=self, desktop_admission=admitted))
+                    owner.ensure_current_desktop_access(admitted)
                     if writes:
                         _drop_column()  # and a read on another thread during the write must not stay shared
                     self.send_json(200, result if isinstance(result, dict) else {'ok': True, 'result': result})
-                except Refused as refusal:
+                except (Refused, DesktopAccessRefused) as refusal:
                     if method == 'POST' and not self._body_read:
                         # Unread POST bytes can reset the socket before Windows receives the refusal.
                         self.close_connection = True
@@ -659,6 +754,8 @@ class NoGraphServer:
                     body = {'ok': False, 'error': str(refusal)}
                     if refusal.code:
                         body['code'] = refusal.code
+                    if isinstance(refusal, DesktopAccessRefused):
+                        body['state'] = refusal.state
                     self.send_json(refusal.status, body)
                 except (ValueError, TypeError, KeyError, OSError, RecursionError) as error:
                     self.send_json(400, {'ok': False, 'error': str(error) or type(error).__name__})
@@ -691,7 +788,8 @@ class NoGraphServer:
                 'mouse_double_click_ms': _mouse_double_click_ms(),
                 'home_load_ms': LIBRARY_ITEM_ENGINES['tool_workshop']['params'].get('home_load_ms', 3000),
                 # The dock is drawn from his one saved layout at the first frame: no default layout shows first.
-                'dock_layout': dock_layout(settings=self.files['settings'])['dockLayout'],
+                'dock_layout': (None if self.desktop_access is not None
+                                else dock_layout(settings=self.files['settings'])['dockLayout']),
                 'workshop': {'root': 'app:workshop', 'scope': 'app:workshop'}, 'nograph': True}).encode('utf-8'))
             headers += [('Content-Security-Policy', "default-src 'none'; connect-src 'self'; img-src 'self' data:; "
                          "style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline' "
@@ -729,9 +827,13 @@ class NoGraphServer:
         handler.body()
         handler.send_json(200, {'ok': True, 'token': self.browser_session_token, 'csrf': self.browser_csrf_token})
 
-    def _router_chat(self, handler):
+    def _router_chat(self, handler, *, admission=None):
         body = handler.body()
-        cancelled = self.admit_chat()
+        self.ensure_current_desktop_access(admission)
+        halted = self.admit_chat()
+
+        def cancelled():
+            return halted() or (admission is not None and admission["_epoch"] != self._desktop_epoch)
         streaming = False
 
         def event(value):
@@ -1009,7 +1111,6 @@ def record_edit_state(s, body):
 def r_session_files(s, req):
     from .canvas_documents import CanvasSaveConflict
     from .session_files import SessionFiles
-    from .enforce import guard_effect
     action = (req.body or {}).get('action')
     if action == 'edit_state':
         return record_edit_state(s, req.body or {})
@@ -1019,7 +1120,11 @@ def r_session_files(s, req):
     if canvas_job:
         s._canvas_jobs = getattr(s, '_canvas_jobs', 0) + 1
     try:
-        result = SessionFiles().dispatch(req.body, invoke=guard_effect, picker=s.native_file_picker,
+        from .enforce import guard_effect
+        admitted = getattr(req, 'desktop_admission', None)
+        invoke = (lambda *args, **kwargs: s.invoke_admitted_effect(admitted, *args, **kwargs)) if admitted else guard_effect
+        signer = admitted.get('_sign_resume_pointer') if admitted else None
+        result = SessionFiles(sign_resume_pointer=signer).dispatch(req.body, invoke=invoke, picker=s.native_file_picker,
                                          save_picker=s.native_save_file_picker, stopped=s.is_halted)
     except CanvasSaveConflict as conflict:
         raise Refused(str(conflict), 400, code='canvas_save_conflict') from conflict
@@ -1199,8 +1304,11 @@ def r_node_library(s, req):
         return {'ok': True, 'templates': listing(s._hosts.get() or [])}
     if req.query.get('templates') == ['1']:
         # Starters (Book ch.12) plus every saved skill. A skill is {id:'skill:<id>', title, path}.
-        from .session_files import skill_template_rows
-        return {'ok': True, 'templates': [*listing(s._hosts.get() or []), *skill_template_rows()]}
+        from .session_files import SessionFiles, skill_template_rows
+        admitted = getattr(req, 'desktop_admission', None)
+        signer = admitted.get('_sign_resume_pointer') if admitted else None
+        paths = SessionFiles(sign_resume_pointer=signer).known_paths() if signer is not None else None
+        return {'ok': True, 'templates': [*listing(s._hosts.get() or []), *skill_template_rows(paths)]}
     from .library_engines import engine_categories, library_catalogue
     groups = library_catalogue()
     return {'ok': True, 'groups': groups, 'categories': engine_categories(groups), 'wire_parameters': []}
@@ -2345,6 +2453,12 @@ def r_application_update(s, req):
     return application_update_status(s) if req.method == 'GET' else application_update_action(s, req.body)
 
 
+def r_desktop_access(s, req):
+    if req.method != 'GET':
+        raise Refused('Desktop access status requires GET.', 405)
+    return s.desktop_status()
+
+
 def r_cloud_session(s, req):
     summary = s._session.get() or {'signed_in': False, 'email': '', 'state': 'signed_out'}
     return {'ok': True, **{key: value for key, value in summary.items() if key != '_cache_key'},
@@ -2369,6 +2483,10 @@ def r_cloud_signout(s, req):
     from .cloud_signin import sign_out
     result = sign_out()
     with s._account_lock:
+        if getattr(s, 'desktop_access', None) is not None:
+            s._desktop_epoch += 1
+            s._desktop_connected = False
+            s._desktop_loss = "session_invalid"
         s._session.reset({'signed_in': False, 'email': '', 'state': 'signed_out', '_cache_key': ''})
         s._account_key, s._account = None, None
     return {'ok': True, **result}
@@ -2674,6 +2792,7 @@ ROUTES = {
     '/api/universal/pick-file': ('native picker', r_pick_file),
     '/api/universal/mods': ('settings/mods.json + selfext review', r_mods),
     '/api/universal/application-update': ('application_update', r_application_update),
+    _DESKTOP_STATUS: ('cloud_session', r_desktop_access),
     '/api/universal/cloud-session': ('cloud_signin (cloud.json)', r_cloud_session),
     '/api/universal/cloud-signin': ('cloud_signin', r_cloud_signin),
     '/api/universal/cloud-signout': ('cloud_signin', r_cloud_signout),

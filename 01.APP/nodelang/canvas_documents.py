@@ -23,6 +23,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 # The .archhub document owner node: its typed parameters.
@@ -632,6 +633,17 @@ def _lock_path(path):
 
 _THREAD_LOCKS = {}
 _THREAD_GUARD = threading.Lock()
+_LOCK_ADMISSION = ContextVar('canvas_lock_admission', default=None)
+
+
+@contextmanager
+def lock_admission(check):
+    """Recheck a request after waiting for its existing file lock."""
+    receipt = _LOCK_ADMISSION.set(check)
+    try:
+        yield
+    finally:
+        _LOCK_ADMISSION.reset(receipt)
 
 
 @contextmanager
@@ -654,6 +666,9 @@ def locked(path, timeout=10.0):
                         raise TimeoutError('Another editor holds this file; retry.')
                     time.sleep(DOCUMENT_NODE['params']['lock_poll_seconds'])
             try:
+                check = _LOCK_ADMISSION.get()
+                if check is not None:
+                    check()
                 yield
             finally:
                 handle.seek(0)

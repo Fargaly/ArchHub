@@ -195,7 +195,7 @@ def settings_changed():
         link.tell('settings')
 
 
-def door(token, body):
+def door(token, body, *, require_access=None):
     """/baboom/companion on the app's local server: the running link's answer, token-checked."""
     import hmac
     link = _LINK['current']
@@ -203,6 +203,10 @@ def door(token, body):
         return {'ok': False, 'error': 'BABOOM companion refused: wrong token.'}
     if not isinstance(body, dict):
         return {'ok': False, 'error': 'BABOOM companion request must be an object.'}
+    if require_access is not None:
+        require_access()
+    if body.get('op') == 'desktop-access':
+        return {'ok': True}
     try:
         return link.answer(body)
     except (ValueError, TypeError, KeyError) as refused:
@@ -267,6 +271,9 @@ class DoorTransport:
 
     def respond_baboom_command(self, *, utterance, on_progress=None):
         return _call('respond', utterance=utterance)['result']
+
+    def require_desktop_access(self):
+        _call('desktop-access')
 
     def execute_baboom_command(self, *, utterance):
         return _call('execute', utterance=utterance)['result']

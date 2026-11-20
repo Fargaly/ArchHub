@@ -21,10 +21,11 @@ class WindowCommands(QObject):
     voiceFinished = pyqtSignal(str, 'QVariantMap')
     companionHomeChanged = pyqtSignal()
 
-    def __init__(self, view, window, quit_application, origin, title_bar=None):
+    def __init__(self, view, window, quit_application, origin, title_bar=None, *, require_access=None):
         super().__init__(view.page())
         self.view, self.window, self.quit_application, self.title_bar = view, window, quit_application, title_bar
         self.origin = QUrl(origin)
+        self.require_access = require_access
         self.companion_home = (None, [])  # the composer box and the busy boxes above it, as the page last reported
         self.companion_sees = (0, False)  # Home's count of what needs the user, and BABOOM's panel open, likewise
         from .baboom_native_voice import BaboomVoiceInput
@@ -52,8 +53,13 @@ class WindowCommands(QObject):
         cancel = self._voice_cancel = threading.Event()
 
         def capture():
+            from .cloud_session import DesktopAccessRefused
             try:
+                if self.require_access is not None:
+                    self.require_access()
                 result = {'ok': True, 'text': self._voice_input.capture_once(cancel=cancel)}
+            except DesktopAccessRefused as refused:
+                result = {'ok': False, 'code': refused.code, 'state': refused.state, 'error': str(refused)}
             except BaboomVoiceCancelled:
                 result = {'ok': True, 'cancelled': True}
             except BaboomVoiceError as exc:
@@ -224,13 +230,13 @@ class CloseToTray(QObject):
         return False
 
 
-def bind_window_commands(view, window, quit_application, origin, title_bar=None):
+def bind_window_commands(view, window, quit_application, origin, title_bar=None, *, require_access=None):
     page = view.page()
     channel = page.webChannel()
     if channel is None:
         channel = QWebChannel(page)
         page.setWebChannel(channel)
-    commands = WindowCommands(view, window, quit_application, origin, title_bar)
+    commands = WindowCommands(view, window, quit_application, origin, title_bar, require_access=require_access)
     channel.registerObject("desktopWindow", commands)
     resource = QFile(":/qtwebchannel/qwebchannel.js")
     if not resource.open(QIODevice.OpenModeFlag.ReadOnly):

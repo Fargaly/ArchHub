@@ -58,9 +58,10 @@ def companion_shows_as(state_dir):
     return 'Tray' if choice == 'Screen' and studio_surface().startswith('settings/') else choice
 
 
-def start(state_dir, app_root, url=''):
+def start(state_dir, app_root, url='', *, require_access=None):
     """Start the Goose brain and join the Workshop. Never raises into the app; the reason is kept."""
     _STATE['state_dir'] = state_dir
+    _STATE['require_access'] = require_access
     if startup_choice(state_dir) == 'off':
         _STATE['error'] = 'BABOOM is turned off in Settings.'
         return None
@@ -240,6 +241,13 @@ def accept_turn(token, text, message_id):
 
 def _adapter(native_id, text, message_id, pids):
     """Workshop delivery to BABOOM: accepted now, answered in the thread when its turn ends."""
+    from .cloud_session import DesktopAccessRefused
+    require = _STATE.get('require_access')
+    if require is not None:
+        try:
+            require()
+        except DesktopAccessRefused as refused:
+            return 'failed', 'goose-acp', str(refused)
     if _STATE['brain'] is None:
         return 'failed', 'goose-acp', reason()
     threading.Thread(target=_answer, args=(text, message_id), name='archhub-baboom-turn', daemon=True).start()

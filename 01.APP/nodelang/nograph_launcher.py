@@ -121,10 +121,11 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     started = time.perf_counter()
 
     def boot_server():
+        from .cloud_session import DesktopAccess
         from .nograph_server import NoGraphServer
         from .pipeline_engines import PIPELINE_ENGINES
         return NoGraphServer(state_dir, port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
-                             engines=PIPELINE_ENGINES).start()
+                             engines=PIPELINE_ENGINES, desktop_access=DesktopAccess()).start()
 
     if app is None:
         server = boot_server()
@@ -184,7 +185,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         except Exception:  # noqa: BLE001 - priority is a courtesy; BABOOM still starts
             print('  BABOOM     : running at normal priority', flush=True)
         from .baboom_nograph import start
-        if start(Path(state_dir), Path(__file__).resolve().parents[1], server.public_url) is None:
+        if start(Path(state_dir), Path(__file__).resolve().parents[1], server.public_url,
+                 require_access=server.require_desktop_access) is None:
             return
         try:
             # The companion window runs in its own process (founder: "why isn't it running outside the program?"):
@@ -200,7 +202,10 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             companion['error'] = str(refused)
             print('  BABOOM     : companion unavailable (%s)' % refused, flush=True)
     companion = {}
-    threading.Thread(target=start_baboom, name='archhub-baboom', daemon=True).start()
+    server.desktop_ready = lambda: threading.Thread(
+        target=start_baboom, name='archhub-baboom', daemon=True).start()
+    if server.desktop_access is None:
+        server.desktop_ready()
     if os.environ.get('ARCHHUB_TEST_NO_OPEN'):
         confirm_boot()
         threading.Event().wait()
@@ -231,6 +236,13 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
                                   % json.dumps(str(words or '')))
 
     def open_launch(arguments):
+        if '--baboom' in arguments:
+            from .cloud_session import DesktopAccessRefused
+            try:
+                server.require_desktop_access()
+            except DesktopAccessRefused as refused:
+                show_unavailable(str(refused))
+                return
         return _open_launch(arguments, companion, show_home, show_unavailable)
 
     class Asker(QObject):
@@ -303,7 +315,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         tray.activated.connect(lambda reason: reason == QSystemTrayIcon.ActivationReason.Trigger and open_window())
         tray.show()
     from .studio_downloads import install_studio_downloads
-    window_commands = bind_window_commands(view, window, quit_app, server.public_url, title_bar)  # Studio window buttons
+    window_commands = bind_window_commands(view, window, quit_app, server.public_url, title_bar,
+                                           require_access=server.require_desktop_access)  # Studio window buttons
     from .baboom_nograph import set_studio_surface
     from .window_commands import CompanionFollows, StudioGone
     StudioGone(window, view.page(), set_studio_surface)  # the pet comes back when the Studio is gone
@@ -385,8 +398,9 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
 
         def warm():
             try:
-                from .model_router import prewarm_default_provider
-                prewarm_default_provider()
+                if server.desktop_status()["admitted"]:
+                    from .model_router import prewarm_default_provider
+                    prewarm_default_provider()
             except Exception as failure:
                 print('  router     : background provider warm skipped (%s)' % type(failure).__name__, flush=True)
         threading.Thread(target=warm, name='archhub-provider-warm', daemon=True).start()

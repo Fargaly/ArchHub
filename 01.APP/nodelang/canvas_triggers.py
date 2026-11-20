@@ -33,10 +33,11 @@ TRIGGER_NODE = {'id': 'canvas.triggers', 'params': {'min_every_seconds': 10, 'fi
 
 
 class TriggerService:
-    def __init__(self, files=None, *, pause_settings=None):
+    def __init__(self, files=None, *, pause_settings=None, require_access=None):
         from .session_files import SessionFiles
         self.files = files or SessionFiles()
         self.pause_settings = pause_settings
+        self.require_access = require_access
         self.paused = pause_settings is not None and pause_settings.read().get('automationsPaused') is True
         self.lock = threading.Lock()
         self.pause_epoch = object()
@@ -302,7 +303,15 @@ class TriggerService:
         session's run history; nothing runs until approve()."""
         from .canvas_documents import locked
         from .session_files import read_document
+        from .cloud_session import DesktopAccessRefused
         automatic = reason not in ('approved', 'manual')
+        if self.require_access is not None:
+            try:
+                self.require_access()
+            except DesktopAccessRefused:
+                if automatic:
+                    return 'desktop_access_required'
+                raise
         with self.lock:
             if self.stopped.is_set():
                 return 'superseded'
@@ -376,8 +385,22 @@ class TriggerService:
             if self._asks(key):
                 return self.dispatch(key, kind, {}, reason, epoch=expected['epoch'])
         from . import canvas_documents as docs
+        from .cloud_session import DesktopAccessRefused
         from .enforce import guard_effect
         from .session_files import TriggerWaitingForApproval, run_document, run_outcome
+
+        try:
+            admission = self.require_access() if self.require_access is not None else None
+        except DesktopAccessRefused:
+            return {'outcome': 'desktop_access_required'}
+
+        def require_current_access():
+            if admission is not None and self.require_access()["subject"] != admission["subject"]:
+                raise DesktopAccessRefused("session_invalid")
+
+        def invoke(*args, **kwargs):
+            require_current_access()
+            return guard_effect(*args, **kwargs)
         path, node_id = key
         started = time.time()
         trigger = {}
@@ -407,7 +430,8 @@ class TriggerService:
                 if not _schedule_matches(document, key, kind, expected['params']):
                     raise _Superseded()
             downstream = sorted(docs.downstream(document, [node_id]))
-            ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True,
+            ran = run_document(document, invoke=invoke if admission is not None else guard_effect,
+                               roots=downstream, path=path, again=True,
                                stopped=stopped if expected is not None else None, trigger_admission=admit_trigger)
             run['id'] = ran['run']['id']
             run.update(run_outcome(ran))
@@ -434,6 +458,11 @@ class TriggerService:
             run.update(state='failed', failedNode='', error=str(refused)[:500])
             self._history(key, {**run, 'end': time.time()})
         entry = self._record(key, kind, started, outcome)
+        try:
+            require_current_access()
+        except DesktopAccessRefused as refused:
+            entry['workshop_error'] = str(refused)
+            return entry
         entry.update(self._post(key, trigger, reason, outcome, started))
         return entry
 
@@ -487,6 +516,8 @@ class TriggerService:
     def approve(self, path, run_id):
         """Claim the asking run before dispatch so repeated approvals cannot run it twice."""
         from .session_files import claim_run_approval
+        if self.require_access is not None:
+            self.require_access()
         node = claim_run_approval(path, run_id)
         return self.dispatch((str(path), node['id']), node['type'], dict(node['params']), reason='approved')
 

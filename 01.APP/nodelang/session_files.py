@@ -664,10 +664,12 @@ def catalogue():
             if not item.get('hidden') or item.get('id') == 'data.field']
 
 
-def load_skills():
+def load_skills(paths=None):
     """Saved Canvas sessions, read by the Library and reusable-node engine."""
     found = []
     for path in sorted(sessions_directory().glob('*.archhub')):
+        if paths is not None and str(path) not in paths:
+            continue
         try:
             skill = read_document(path)
         except (OSError, ValueError):
@@ -676,10 +678,10 @@ def load_skills():
     return found
 
 
-def skill_template_rows():
+def skill_template_rows(paths=None):
     """Each saved skill as the Library template row. id is skill:<document id>."""
     return [{'id': 'skill:' + row['skill']['id'], 'title': row['skill']['title'], 'path': str(row['path'])}
-            for row in load_skills()]
+            for row in load_skills(paths)]
 
 
 def profile_directory():
@@ -1813,7 +1815,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
 
 class SessionFiles:
     """Files are data; recent paths and crash recovery remain local to the profile."""
-    def __init__(self, directory=None):
+    def __init__(self, directory=None, *, sign_resume_pointer=None):
+        self.sign_resume_pointer = sign_resume_pointer
         self.directory = Path(directory) if directory else sessions_directory()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.metadata = Path(directory) if directory else profile_directory() / 'data' / 'sessions'
@@ -1831,11 +1834,17 @@ class SessionFiles:
 
     def recent(self):
         with _METADATA_LOCK, canvas_documents.locked(self.metadata/'recent.json'):
-            return self._recent()
+            return [{key: value for key, value in row.items() if key != 'desktop_resume'}
+                    for row in self._recent() if self._owns_resume_pointer(row)]
+
+    def known_paths(self):
+        return None if self.sign_resume_pointer is None else {row['path'] for row in self.recent()}
 
     def remember(self, path, document):
         with _METADATA_LOCK, canvas_documents.locked(self.metadata/'recent.json'):
-            rows = [{'id':str(path), 'path':str(path), 'name':document['title'], 'title':document['title']}] + [r for r in self._recent() if r['path'] != str(path)]
+            row = {'id': str(path), 'path': str(path), 'name': document['title'], 'title': document['title']}
+            self._sign_pointer(row)
+            rows = [row] + [r for r in self._recent() if r['path'] != str(path)]
             target = self.metadata/'recent.json'
             with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
                 temporary = stream.name
@@ -1849,14 +1858,31 @@ class SessionFiles:
     def _current(self, identity, path):
         with _METADATA_LOCK:
             current = self.metadata/'current.json'
+            pointer = {'id': identity, 'path': str(local_path(path)) if path else ''}
+            self._sign_pointer(pointer)
             with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
                 temporary = stream.name
-                json.dump(stamp_test_write({'id':identity,'path':str(local_path(path)) if path else ''}),stream)
+                json.dump(stamp_test_write(pointer), stream)
             try:
                 _metadata_io(os.replace, temporary, current)
             finally:
                 if os.path.exists(temporary):
                     os.unlink(temporary)
+
+    def _sign_pointer(self, pointer):
+        if self.sign_resume_pointer is not None:
+            pointer['desktop_resume'] = self.sign_resume_pointer(pointer['id'], pointer['path'])
+
+    def _owns_resume_pointer(self, held):
+        if self.sign_resume_pointer is None:
+            return True
+        if not isinstance(held, dict):
+            return False
+        from hmac import compare_digest
+        identity, path, signature = (held.get(key) for key in ('id', 'path', 'desktop_resume'))
+        return (all(type(value) is str for value in (identity, path, signature))
+                and len(signature) == 64 and signature.isascii()
+                and compare_digest(signature, self.sign_resume_pointer(identity, path)))
 
     def current_path(self):
         """The file the founder has open. Every reader asks here; none of them writes this choice."""
@@ -1871,11 +1897,21 @@ class SessionFiles:
             rows = []
             current = self.metadata/'current.json'
             if current.exists():
-                held = json.loads(current.read_text(encoding='utf-8'))
-                path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
-                rows.append({'path':path,'open_in_app':True})
+                held = self._load_resume_pointer(current)
+                if held and self._owns_resume_pointer(held):
+                    path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
+                    rows.append({'path':path,'open_in_app':True})
             rows += [{'path':r['path'],'open_in_app':False,'title':r.get('title','')} for r in self.recent() if r['path'] not in {x['path'] for x in rows}]
             return rows
+
+    def _load_resume_pointer(self, path):
+        try:
+            held = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+            return {} if self.sign_resume_pointer is not None and not isinstance(held, dict) else held
+        except (OSError, ValueError):
+            if self.sign_resume_pointer is None:
+                raise
+            return {}  # old/unreadable pointers never authorize automatic document recovery
 
     def import_file(self, path):
         """A Node-RED/Langflow .json flow opens as a new .archhub beside the session files; a SKILL.md
@@ -1952,16 +1988,22 @@ class SessionFiles:
         if action == 'catalogue':
             return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory),
                     'sessions':[{'id':row['skill']['id'], 'title':row['skill']['title'], 'path':str(row['path']),
-                                 'kind':document_kind(row['skill'])} for row in load_skills()]}
+                                 'kind':document_kind(row['skill'])} for row in load_skills(self.known_paths())]}
         if action == 'initial':
             import sys
             launch = next((a for a in sys.argv[1:] if str(a).lower().endswith('.archhub')), None)
             current = self.metadata/'current.json'
             with _METADATA_LOCK:
-                held = json.loads(current.read_text(encoding='utf-8')) if current.exists() else {}
+                held = self._load_resume_pointer(current)
+            if self.sign_resume_pointer is not None and (
+                    not self._owns_resume_pointer(held)
+                    or launch and str(Path(launch).resolve()) != held.get('path')):
+                return {'ok': True, 'document': new_document(), 'path': ''}
             recovery = Path(held['path']) if held.get('path') else self.directory/(held['id']+'.archhub') if held else self.directory/'autosave.archhub'
             selected_path = Path(launch) if launch else recovery
             before_migration = read_document(selected_path) if selected_path.exists() else None
+            if self.sign_resume_pointer is not None and (not before_migration or before_migration['id'] != held['id']):
+                return {'ok': True, 'document': new_document(), 'path': ''}
             migrated = split_sessions(str(selected_path)) if before_migration else []
             if migrated:
                 before_migration.setdefault('properties', {})['sessionMigration'] = 1

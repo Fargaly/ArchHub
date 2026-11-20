@@ -388,7 +388,7 @@ def remote_gate(tool: object, arguments: object, *, environment=None) -> dict:
     return decision
 
 
-def run_remote_effect(tool: object, arguments: object) -> dict:
+def run_remote_effect(tool: object, arguments: object, *, require_access=None) -> dict:
     """canvas.run, host.exec and connector.call on this machine, after decide()."""
     if tool not in EFFECT_TOOLS:
         raise PermissionError("not a remote effect: %r" % (tool,))
@@ -405,7 +405,12 @@ def run_remote_effect(tool: object, arguments: object) -> dict:
             match = [item["id"] for item in document.get("nodes", [])
                      if item.get("id") == node or item.get("title") == node]
             roots = match[:1] or None
-        ran = run_document(document, roots=roots)
+        def invoke(*args, **kwargs):
+            from .enforce import guard_effect
+            require_access()
+            return guard_effect(*args, **kwargs)
+
+        ran = run_document(document, roots=roots, invoke=invoke if require_access is not None else None)
         return {"ok": True, "results": list(ran.get("results", ()))[:20]}
     from .host_brokers import ENGINES
     engine = args.get("engine") if tool == "host.exec" else args.get("name")
@@ -486,17 +491,24 @@ class CloudRelay:
         host_effect: Optional[Callable[[object, object], object]] = None,
         environment: Optional[Mapping[str, str]] = None,
         app_kinds: tuple[str, ...] = APP_KINDS,
+        desktop_access=None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         # A remote read runs this: host_read, unless a caller supplies its own.
         self.host_reader = host_reader or host_read
+        if host_effect is None and desktop_access is not None:
+            from functools import partial
+            host_effect = partial(run_remote_effect, require_access=self._require_desktop_access)
         self.host_effect = host_effect or run_remote_effect
         self.environment = environment
         self.token = str(token)
         self.respond = respond
         self.execute = execute
         self.claimed_by = claimed_by
-        self.opener = opener or urllib.request.urlopen
+        from .cloud_session import open_cloud_request
+        self.opener = opener or open_cloud_request
+        self.desktop_access = desktop_access
+        self._desktop_subject = None
         self.timeout = float(timeout)
         self.map_script = map_script
         self.hosts = hosts
@@ -569,6 +581,8 @@ class CloudRelay:
         """Claim one instruction, answer it, post the answer. None when idle."""
         if self._stop.is_set():
             return None  # stopping: claim nothing new
+        if self.desktop_access is not None:
+            self._require_desktop_access(rebind=True)
         if callable(self.consent):
             allowed = self.consent()
             if allowed is None:
@@ -619,8 +633,24 @@ class CloudRelay:
                 self.last_error = "%s: %s" % (type(exc).__name__, exc)
         return {"task": str(task["id"]), "ok": ok, "result": text}
 
+    def _require_desktop_access(self, *, rebind=False):
+        if self.desktop_access is None:
+            return
+        from .cloud_session import DesktopAccessRefused
+        current = self.session_loader() if self.session_loader is not None else None
+        if not current or not current.get("token"):
+            raise DesktopAccessRefused("session_invalid")
+        verdict = self.desktop_access.require(subject=self._desktop_subject, expected_bearer=current["token"])
+        if current["token"] != self.token:
+            if not rebind or self._desktop_subject is None:
+                raise DesktopAccessRefused("session_invalid")
+            self.token = current["token"]
+            self.base_url = pinned_cloud_base(current.get("base_url"))
+        self._desktop_subject = verdict["subject"]
+
     def _hold_or_refuse(self, tool: object, arguments: object):
         """decide() for one claimed call. None means run it; a dict means hold."""
+        self._require_desktop_access()
         decision = remote_gate(tool, arguments, environment=self.environment)
         if decision.get("verdict") == "refuse":
             raise PermissionError("ArchHub refused: " + "; ".join(
@@ -880,6 +910,7 @@ def start_cloud_relay(
     session_transport: object = None,
     application_session_owner: object = None,
     app_kinds: tuple[str, ...] = APP_KINDS,
+    desktop_access=None,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist.
 
@@ -921,6 +952,7 @@ def start_cloud_relay(
         workshop_caller=workshop_caller,
         session_caller=session_caller,
         app_kinds=app_kinds,
+        desktop_access=desktop_access,
     )
     return relay.start()
 

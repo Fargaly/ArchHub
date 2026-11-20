@@ -35,13 +35,37 @@
     set('hover',surfaces[3]);set('accent-soft',soft);set('accent-ink',ensure(read(light?'accent-press':'accent-hi'),[...surfaces,soft,mix(soft,accent,.2)]));
     set('ink2',ensure(read('ink-soft'),surfaces));set('ink3',ensure(mix(read('ink-soft'),panel,.2),surfaces));
   }
-  function App() {
+  const DESKTOP_SIGNIN_ACTIONS={'appShell.DesktopSignIn':'SignIn','appShell.DesktopRetry':'Retry'};
+  const DESKTOP_QUIT_ACTIONS={'appShell.DesktopQuit':'Quit'};
+  function QuitDesktop(){const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(DESKTOP_QUIT_ACTIONS,{Quit:()=>api.windowAction('quit')});return <><Btn ghost onClick={event=>runAction('appShell.DesktopQuit',event)}>Quit ArchHub</Btn><window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/></>;}
+  function SignInControls() {
+    const s=useData(),access=s.desktopAccess||{};
+    const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(DESKTOP_SIGNIN_ACTIONS,{
+      SignIn:async()=>{const result=await api.signIn(true);return {...result,message:'Complete sign-in in your browser.'};},
+      Retry:async()=>{const result=await api.refreshDesktopAccess(true);return {...result,message:result.admitted?'Account verified.':'Not signed in. Your work stays locked.'};},
+    });
+    const busy=actionState.status==='waiting';
+    return <><p>Sign in to archhub.io to use ArchHub. An internet connection is required.</p><p role="status">{access.admitted?'Opening your workspace…':access.signingIn?'Complete sign-in in your browser.':access.state==='pending'?'Checking your account…':access.state==='unavailable'?'Connection lost. Reconnect to continue.':access.state==='session_invalid'?'Your session could not be verified. Sign in again.':'Sign in with your account to continue.'}</p><window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/><div className="flex"><Btn p disabled={busy} onClick={event=>runAction('appShell.DesktopSignIn',event)}>Sign in with your browser</Btn><Btn disabled={busy} onClick={event=>runAction('appShell.DesktopRetry',event)}>Retry</Btn><QuitDesktop/></div></>;
+  }
+  function DesktopSignIn() {
+
+    return <main className="grid" data-desktop-admission style={{minHeight:'100vh',placeContent:'center',padding:32}}><Card style={{padding:32,maxWidth:480}}><ArchMark size={56}/><h1>ArchHub</h1><SignInControls/></Card></main>;
+  }
+  function DesktopEntry() {
+    const s=useData(),opened=React.useRef(null),access=s.desktopAccess||{};
+    if(window.ARCHHUB_NATIVE_APPROVAL)return <App/>;
+    if(access.admitted&&access.ready)opened.current=access.subject;
+    if(!opened.current)return <DesktopSignIn/>;
+    return <App key={opened.current} desktopAccess={access}/>;
+  }
+  function App({desktopAccess}) {
     const s = useData();
-    const [route, setRoute] = React.useState('home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
-      [canvasOpened, setCanvasOpened] = React.useState(false),
-      [task, setTask] = React.useState(''),
-      [taskFace, setTaskFace] = React.useState('canvas'),  // the thread pane beside the canvas: one value, the same from one session to the next
-      [composerDraft, setComposerDraft] = React.useState({}),
+    const restoredView=api.readDesktopView?.()||{};
+    const [route, setRoute] = React.useState(restoredView.route||'home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
+      [canvasOpened, setCanvasOpened] = React.useState(restoredView.canvasOpened||false),
+      [task, setTask] = React.useState(restoredView.task||''),
+      [taskFace, setTaskFace] = React.useState(restoredView.taskFace||'canvas'),  // the thread pane beside the canvas: one value, the same from one session to the next
+      [composerDraft, setComposerDraft] = React.useState(restoredView.composerDraft||{}),
       [modal, setModal] = React.useState(null),
       [toast, setToast] = React.useState(''),
       [advanced, setAdvanced] = React.useState(false),
@@ -66,6 +90,7 @@
       }).catch(error => setToast(error.message));
       return () => {live = false;};
     }, []);
+    React.useEffect(()=>{if(desktopAccess?.admitted&&desktopAccess.ready)api.rememberDesktopView({route,canvasOpened,task,taskFace,composerDraft});},[route,canvasOpened,task,taskFace,composerDraft,desktopAccess?.admitted,desktopAccess?.ready]);
     const agentLoadGeneration = React.useRef(0);
     const reloadWorkshop = async () => {
       const generation = ++agentLoadGeneration.current;
@@ -158,7 +183,7 @@
       return () => window.removeEventListener("archhub:notice", notice);
     }, []);
     React.useEffect(() => {
-      const openHome = () => { api.setActiveSurface?.('home'); setRoute('home'); setModal(null); };
+      const openHome = () => { if(!api.getSnapshot().desktopAccess?.admitted&&!window.ARCHHUB_NATIVE_APPROVAL)return;api.setActiveSurface?.('home'); setRoute('home'); setModal(null); };
       window.addEventListener('archhub:open-home', openHome);
       return () => window.removeEventListener('archhub:open-home', openHome);
     }, []);
@@ -390,6 +415,7 @@
     }, [toast, s.runtimeParameters?.toast_visible_ms]);
     React.useEffect(() => {
       const key = e => {
+        if(!api.getSnapshot().desktopAccess?.admitted&&!window.ARCHHUB_NATIVE_APPROVAL)return;
         if(e.defaultPrevented||e.isComposing)return;
         const typing=e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
         const match=id=>(!typing||e.ctrlKey||e.metaKey)&&window.UI.matchesShortcut(id,e);
@@ -455,6 +481,7 @@
     }, [modal, companion, route, task, taskFace]);
     React.useEffect(() => {
       const openRequestedTask = event => {
+        if(!api.getSnapshot().desktopAccess?.admitted&&!window.ARCHHUB_NATIVE_APPROVAL)return;
         const id = event.detail?.task_id;
         if (typeof id === 'string' && id.trim()) openTaskFile(id);
       };
@@ -463,7 +490,7 @@
     }, [s.tasks, openTaskFile]);
     React.useEffect(() => {
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
-    }, [route, taskFace]);
+    }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
     const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
@@ -474,6 +501,7 @@
       appearance: 'Appearance',
       updates: 'Updates & About'
     }[route] || 'Account'} full />;
+    if(desktopAccess&&(!desktopAccess.admitted||!desktopAccess.ready))return <DesktopSignIn/>;
     return <Ctx.Provider value={value}>
   <input className="sr-only" ref={fileInput} aria-label="Choose project file" type="file" multiple onChange={async e => {
         for (const f of e.target.files || []) {
@@ -965,12 +993,7 @@
             m,
             u
           }, event)}>Disconnect</Btn>}</div>{c?.checked && <Chip c={A.ok}>Checked</Chip>}<window.UI.ConnectorTools connection={c} /></>;
-    } else if (k === 'Sign in') body = <><p>Sign in with your account and bring your work with you.</p><Btn p onClick={event => executeAction("appShell.SignInWithYourBrowser.86", {
-        api,
-        saved
-      }, event)}>Sign in with your browser</Btn><Btn onClick={event => executeAction("appShell.ContinueAndSignInLater.87", {
-        close
-      }, event)}>Continue and sign in later</Btn></>;else if (k === 'Talk') {
+    } else if (k === 'Sign in') body = <SignInControls/>;else if (k === 'Talk') {
       const talk = () => {
         const generation = voiceGeneration.current;
         return api.startVoiceInput({
@@ -1051,7 +1074,7 @@
         }, event)}>Retry</button></div> : this.props.children;
     }
   }
-  window.ReactDOM.createRoot(document.getElementById('root')).render(<Boundary><App /></Boundary>);
+  window.ReactDOM.createRoot(document.getElementById('root')).render(<Boundary><DesktopEntry /></Boundary>);
 })();
 (() => {
   function appShellArchHubMenu1({

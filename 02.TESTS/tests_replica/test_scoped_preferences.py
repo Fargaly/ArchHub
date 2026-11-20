@@ -131,6 +131,35 @@ def test_scoped_preferences_round_trip_node_binding_and_atomic_import(tmp_path, 
     root_rows=roots.read()
     roots.write({'roots':[{**row,'path':str(work2)} if row['root_id']=='tower' else row for row in root_rows['roots']]})
     unchanged_after_refusal('setAppearance','Appearance.Theme','Dark')
+    roots.write(root_rows)
+    call('readPreferences')
+    from nodelang.settings_owner import PreferenceScope
+    validate=PreferenceScope.validate
+    during={}
+    def switch_during_validation(context,scope,values,maps):
+        validate(context,scope,values,maps)
+        files.set_session_fields(path,{'project':'tower2'})
+        during['session']=path.read_bytes()
+    before={str(file):file.read_bytes() for file in (prefs.path,roots.path)}
+    with patch.object(PreferenceScope,'validate',switch_during_validation):
+        try:call('setAppearance','Appearance.Theme','Dark')
+        except Refused as error:assert error.code=='settings_destination_changed'
+        else:raise AssertionError('mid-request destination switch was accepted')
+    assert all(file.read_bytes()==before[str(file)] for file in (prefs.path,roots.path))
+    assert path.read_bytes()==during['session'],'refused edit changed the independently updated session'
+    files.set_session_fields(path,{'project':'tower'})
+    call('readPreferences')
+    other=files.new_document('Other session');other['properties']['project']='tower2'
+    other_path=files.document_path(files.sessions_directory(),other);files.write_document(other_path,other)
+    def open_during_validation(context,scope,values,maps):
+        validate(context,scope,values,maps)
+        files.SessionFiles().dispatch({'action':'open','path':str(other_path)})
+    before={str(file):file.read_bytes() for file in (prefs.path,roots.path,path,other_path)}
+    with patch.object(PreferenceScope,'validate',open_during_validation):
+        try:call('setAppearance','Appearance.Theme','Dark')
+        except Refused as error:assert error.code=='settings_destination_changed'
+        else:raise AssertionError('mid-request session switch was accepted')
+    assert all(file.read_bytes()==before[str(file)] for file in (prefs.path,roots.path,path,other_path))
     assert prefs.read()['unrelated']==42
     print(json.dumps({'result':'PASS','workspace_edit_global_bytes_unchanged':True,'readback':'real r_settings_action readControls',
                       'precedence':'session then workspace then global','reset':'inherits','keyboard':'export/import/session/reset','nodes':'Settings-to-node and node-to-Settings agree in workspace and session scopes',

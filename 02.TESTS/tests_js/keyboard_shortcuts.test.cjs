@@ -110,10 +110,14 @@ test('session switching rejects stale preference reads and flushes edits before 
   fetch:async(url,options)=>{
    const body=options?.body?JSON.parse(options.body):null;requests.push({url,body});
    if(url==='/api/commands')return response({commands:[]});
+   if(url==='/api/universal/workspace-roots')return response({roots:[{root_id:'tower2',label:'Example',path:'C:/probe',privacy:'private'}]});
    if(body?.function==='readKeybindings')return response({ok:true,result:{keybindings:{},keyboardCommands:[],keyboardError:''}});
    if(body?.function==='readLibraryCollapsed')return response({ok:true,result:{libraryCollapsed:[]}});
+   if(body?.function==='readPreferences')return new Promise(resolve=>{window.releasePreferenceRead=()=>resolve(response({ok:true,result:preferences('second','User')}));});
    if(body?.function==='readEffectivePreferences')return new Promise(resolve=>pending.set(body.context.session,()=>resolve(response({ok:true,result:preferences(body.context.session)}))));
-   if(body?.function==='setSettingsScope')return response({ok:true,result:preferences('second',body.args[0])});
+   if(body?.function==='readOperations')return new Promise(resolve=>{window.releaseOperationsRead=()=>resolve(response({ok:true,result:{settingsScope:'User',activeWorkspace:'old-workspace',workspacePolicies:{tower2:{rules:'Retain the actual policy'}},devices:[{id:'read-device'}],backups:[{id:'read-backup'}]}}));});
+   if(body?.function==='readControls')return new Promise(resolve=>{window.releaseControlRead=()=>resolve(response({ok:true,result:{...preferences('second','User'),companion:{readDuringScopeWrite:true}}}));});
+   if(body?.function==='setSettingsScope'){if(window.deferScope)return new Promise(resolve=>{window.releaseScopeWrite=()=>resolve(response({ok:true,result:preferences('second',body.args[0])}));});return response({ok:true,result:preferences('second',body.args[0])});}
    if(body?.function==='setAppearance'){
     held={...held,properties:{...held.properties,revision:held.properties.revision+1,settings:{[body.args[0]]:body.args[1]}}};
     const result={...preferences('second','Session'),appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:body.args[1],default:'Dark'}]};
@@ -137,10 +141,13 @@ test('session switching rejects stale preference reads and flushes edits before 
    return new Promise(()=>{});
   }};
  vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),context);
- window.ArchHubAPI.setActiveSurface('canvas');
+ window.ArchHubAPI.setActiveSurface('home');
  const turn=()=>new Promise(resolve=>setImmediate(resolve));
  for(let i=0;i<50&&!pending.has('first');i++)await turn();
  assert.equal(pending.has('first'),true);
+ await window.ArchHubAPI.ready;
+ for(let i=0;i<50&&!window.ArchHubAPI.getSnapshot().workspaces.some(row=>row.id==='tower2');i++)await turn();
+ assert.equal(window.ArchHubAPI.getSnapshot().workspaces.some(row=>row.id==='tower2'),true,'Home discovers local workspaces while controls and network discovery are held');
  await window.ArchHubAPI.openSession('C:/probe/second.archhub');
  for(let i=0;i<50&&!pending.has('second');i++)await turn();
  pending.get('first')();await turn();
@@ -151,7 +158,11 @@ test('session switching rejects stale preference reads and flushes edits before 
  assert.equal(window.ArchHubAPI.getSnapshot().keybindings['menu.copy'],'Ctrl Alt C');
  assert.equal(window.ArchHubAPI.getSnapshot().keyboardPending,false);
  window.ArchHubAPI.setActiveSurface('settings/Appearance');
+ const olderRead=window.ArchHubAPI.refreshPreferences();
  await window.ArchHubAPI.setSettingsScope('Session');
+ window.releasePreferenceRead();await olderRead;
+ assert.equal(window.ArchHubAPI.getSnapshot().settingsScope,'Session','an older read cannot undo an accepted scope selection');
+ assert.equal(window.ArchHubAPI.getSnapshot().settingsDestination.scope,'Session');
  window.ArchHubAPI.setSessionViewport({x:10,y:20,zoom:1});
  const begin=requests.length;
  await window.ArchHubAPI.setSetting('Appearance.Theme','Light');
@@ -188,5 +199,22 @@ test('session switching rejects stale preference reads and flushes edits before 
  await firstWrite;await queuedWrite;
  const destinations=requests.slice(queueBegin).filter(row=>row.body?.function==='setAppearance').map(row=>row.body.context.settingsDestination.scope);
  assert.deepEqual(destinations,['Session','Session'],'queued edits keep the scope shown when each edit began');
+ await window.ArchHubAPI.listWorkspaces();
+ const operations=window.ArchHubAPI.refreshSettingsOperations();await turn();
+ await window.ArchHubAPI.setSettingsScope('Workspace');
+ window.releaseOperationsRead();await operations;
+ assert.equal(window.ArchHubAPI.getSnapshot().settingsScope,'Workspace','late readOperations cannot undo the selected scope');
+ assert.equal(window.ArchHubAPI.getSnapshot().settingsDestination.scope,'Workspace');
+ assert.equal(window.ArchHubAPI.getSnapshot().devices[0].id,'read-device');
+ assert.equal(window.ArchHubAPI.getSnapshot().backups[0].id,'read-backup');
+ assert.equal(window.ArchHubAPI.getSnapshot().workspaces.find(row=>row.id==='tower2').rules,'Retain the actual policy');
+ await window.ArchHubAPI.setSettingsScope('User');window.deferScope=true;
+ const writing=window.ArchHubAPI.setSettingsScope('Workspace');await turn();
+ const reading=window.ArchHubAPI.refreshSettingsControls();await turn();
+ window.releaseScopeWrite();await writing;
+ window.releaseControlRead();await reading;
+ assert.equal(window.ArchHubAPI.getSnapshot().settingsScope,'Workspace','readControls begun during a scope write cannot undo its accepted destination');
+ assert.equal(window.ArchHubAPI.getSnapshot().settingsDestination.scope,'Workspace');
+ assert.equal(window.ArchHubAPI.getSnapshot().companion.readDuringScopeWrite,true,'the unrelated owner still loads');
  assert.deepEqual(warnings,[]);
 });

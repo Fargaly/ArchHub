@@ -16,7 +16,7 @@ let graphNavigation=Promise.resolve(), requestedGraph=null;
 let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=false, accountSignInPending=false;
 let activeSurface='home', canvasRefresh=null, accountKnown=false;
 let providerRoster=[], workingAgents=[], agentsChecked=false;
-let controlsGeneration=0, notificationGeneration=0;
+let controlsGeneration=0, preferenceGeneration=0, notificationGeneration=0;
 let appearanceWrites=Promise.resolve();
 let composerGeneration=0;
 let updateGeneration=0, updateActionPending=false;
@@ -380,7 +380,7 @@ async function refreshLive() {
 }
 function stopRefresh(){if(refreshTimer!==null){window.clearInterval(refreshTimer);refreshTimer=null;}}
 function clearCanvas(){
- scopeEpoch++;accountEpoch++;canvas=null;commands?.clear();defaults.clear();conditional.clear();state=copy(initialState);providerRoster=[];controlsGeneration++;notificationGeneration++;
+ scopeEpoch++;accountEpoch++;canvas=null;commands?.clear();defaults.clear();conditional.clear();state=copy(initialState);providerRoster=[];controlsGeneration++;preferenceGeneration++;notificationGeneration++;
  workingAgents=[];agentsChecked=false;
  publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
 }
@@ -1182,13 +1182,22 @@ async function settingsAction(functionName, args=[], destination=state.settingsD
  const graph=state.graph.id;
  const sessionWrite=state.settingsScope==='Session'&&['setAppearance','resetAppearance','setKeybinding','resetKeybindings','importPreferences','resetPreferences'].includes(functionName);
  if(sessionWrite){await flushAutosave();if(graph!==state.graph.id)throw Error('The session changed. Retry this settings edit.');}
+ const preferenceRead=['readPreferences','readEffectivePreferences'].includes(functionName);
+ const preferenceEpoch=preferenceGeneration;
+ const preferenceWrite=['setAppearance','resetAppearance','setKeybinding','resetKeybindings','setSettingsScope','importPreferences','resetPreferences'].includes(functionName);
+ if(preferenceWrite)preferenceGeneration++;
  const generation=functionName==='readControls'?controlsGeneration:++controlsGeneration;
- const response=await request('/api/universal/settings-action',{function:functionName,args,context:{session:state.graph.id,surface:activeSurface,settingsDestination:destination}}).catch(error=>{if(error.response?.code==='settings_destination_changed')publish({settingsScopeNotice:error.message});throw error;});
- const result=response.result;
+ const response=await request('/api/universal/settings-action',{function:functionName,args,context:{session:state.graph.id,surface:activeSurface,settingsDestination:destination}}).catch(error=>{if(error.response?.code==='settings_destination_changed')publish({settingsDestination:null,settingsScopeNotice:error.message});throw error;}).finally(()=>{if(preferenceWrite)preferenceGeneration++;});
+ let result=response.result;
  if(identity!==state.profile.id)throw Error('Your account changed while this action ran. Refresh the page before retrying.');
  if(!result||typeof result!=='object'||Array.isArray(result)||result.ok===false)throw Error(result?.error||result?.message||'Settings owner did not confirm the action. Refresh and retry.');
  // A newer write answered for what it changed; what nothing has loaded yet (the dock layout at boot, say) still comes from this read,
  // or a write during the boot read would leave that owner unread and its screen on defaults until the next restart.
+ if(preferenceRead&&preferenceEpoch!==preferenceGeneration)return result;
+ if(!preferenceWrite&&preferenceEpoch!==preferenceGeneration){
+  result={...result};
+  for(const key of ['appearanceSettings','keybindings','keyboardCommands','keyboardError','settingsScope','settingsScopes','settingsDestination','settingsScopeNotice','activeWorkspace'])delete result[key];
+ }
  if(['readControls','readKeybindings'].includes(functionName)&&generation!==controlsGeneration){
   const missing=Object.fromEntries(CONTROL_KEYS.filter(key=>Object.hasOwn(result,key)&&state[key]===undefined).map(key=>[key,result[key]]));
   const unread=Array.isArray(result.appearanceSettings)?result.appearanceSettings.filter(row=>!state.settings.some(held=>held.id===row.id)):[];
@@ -1257,7 +1266,7 @@ api.setDockLayout=layout=>settingsAction('setDockLayout',[layout]);  // the user
 const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel'];
 api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
 api.setApplicationSetting=async(key,value)=>{const saved=await settingsAction('setApplicationSetting',[key,value]);await refreshLiveUpdatePolicy();return saved;};
-api.setSettingsScope=scope=>settingsAction('setSettingsScope',[scope,sessionDocument?.properties?.project||state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.settingsDestination?.session??state.graph.id]);
+api.setSettingsScope=(scope,destination=state.settingsDestination)=>settingsAction('setSettingsScope',[scope,destination?.workspace??sessionDocument?.properties?.project??state.activeWorkspace??'',destination?.session??state.graph.id],destination);
 api.refreshPreferences=()=>settingsAction('readPreferences');
 api.importPreferences=(payload,destination=state.settingsDestination)=>settingsAction('importPreferences',[payload],destination);
 api.resetPreferences=(destination=state.settingsDestination)=>settingsAction('resetPreferences',[],destination);
@@ -2465,7 +2474,7 @@ api.ready=(async()=>{
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{
   // The saved sessions arrive with the Library catalogue above (one read of every file), so the tasks never wait behind a second one.
-  for(const refresh of [refreshSettingsControls,refreshApplicationUpdate,refreshAccount,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
+  for(const refresh of [api.listWorkspaces,refreshSettingsControls,refreshApplicationUpdate,refreshAccount,api.listProviders,refreshTasks,refreshAgents]){
    if(activeSurface==='canvas')break;
    try{await refresh();}catch(error){if(refresh!==refreshApplicationUpdate)publish({connectionNotice:error.message});}
   }

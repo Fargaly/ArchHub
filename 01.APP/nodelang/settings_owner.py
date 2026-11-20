@@ -1055,6 +1055,11 @@ class PreferenceScope:
     def assert_destination(self, expected=None, *, require_available=True):
         expected = self.binding if expected is None else expected
         try:
+            if self.path or self.document is None:
+                from .session_files import SessionFiles
+                active = SessionFiles().current_path()
+                if (Path(active) if active else None) != (Path(self.path) if self.path else None):
+                    raise ValueError('The active session changed. Refresh Settings and choose its scope again.')
             current = PreferenceScope(self.settings, self.workspaces, self.path,
                                       document=None if self.path else self.document)
             if type(expected) is not dict or expected != current.destination():
@@ -1151,6 +1156,7 @@ class PreferenceScope:
             raise ValueError(keyboard['keyboardError'])
 
     def _write(self, scope, values, keyboard=True):
+        self.assert_destination()
         if scope == 'User':
             patch = {self.keys[id]: value for id, value in values.items() if id in self.keys}
             remove = [key for id, key in self.keys.items() if id not in values]
@@ -1262,5 +1268,6 @@ def write_preference(document, identity, value):
     props = document.setdefault('properties', {})
     values = {**props.get('settings', {}), identity: value}
     owner.validate('Session', values, {**owner.maps(), 'Session': values})
+    owner.assert_destination()
     props['settings'] = values
     return owner.read()

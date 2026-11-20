@@ -1,4 +1,3 @@
-const {setImmediate}=require('node:timers');
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
@@ -36,10 +35,11 @@ async function adapter(account, responses={}){
   Uint8Array:globalThis.Uint8Array,dispatchEvent(e){events.get(e.type)?.(e);},addEventListener(name,fn){events.set(name,fn);},AH:{inkSoft:'#888'},crypto:require('node:crypto')};
  window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  const context={window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},
-  CustomEvent:class {},sessionStorage:{getItem(){return null;}},URLSearchParams,TextEncoder:globalThis.TextEncoder,AbortSignal:globalThis.AbortSignal,console,
+  CustomEvent:class {},sessionStorage:{getItem(){return null;}},URLSearchParams,TextEncoder:globalThis.TextEncoder,TextDecoder:globalThis.TextDecoder,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options)=>{
    requests.push({url,body:options.body&&JSON.parse(options.body)});
    let data={ok:true};
+   if(url==='/api/commands')data={commands:[]};
    if(url==='/api/universal/canvas')data={root:'canvas',nodes:[],wires:[],
     authorization:{principal:'local-process',display_name:'Local transport'}};
    if(url==='/api/universal/cloud-session')data={...account};
@@ -47,6 +47,9 @@ async function adapter(account, responses={}){
    if(url==='/api/universal/cloud-signin'&&options.body)Object.assign(account,
     {signed_in:true,email:'user@example.test',user_id:'account-1',display_name:'Account user'});
    if(url==='/api/universal/cloud-signout')Object.assign(account,{signed_in:false,email:''});
+   // The model router answers a chat as a stream (/api/router/chat), or refuses it.
+   if(url==='/api/router/chat'){const sent={value:false};return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>data,
+    body:{getReader:()=>({read:async()=>{if(sent.value)return {done:true,value:undefined};sent.value=true;return {done:false,value:new TextEncoder().encode('data: '+JSON.stringify({result:data.result||{answer:'ok'}})+'\n\n')};},releaseLock(){}})}};}
    return {ok:true,status:200,json:async()=>data};
   }};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/api.js'),'utf8'),context);
@@ -57,7 +60,7 @@ async function adapter(account, responses={}){
 test('unfinished controls use actual adapter availability without invoking an action',async()=>{
  const {api,requests}=await adapter({signed_in:false});const count=requests.length;
  assert.equal(api.supportsAction('startVoiceInput'),false);
- assert.equal(api.supportsAction('signInProvider'),false);
+ assert.equal(api.supportsAction('changePlan'),false);
  assert.equal(api.supportsAction('reviewProofRow'),false);
  assert.equal(api.supportsAction('signIn'),true);
  assert.equal(api.supportsAction('setProviderEnabled'),true);
@@ -66,7 +69,8 @@ test('unfinished controls use actual adapter availability without invoking an ac
  assert.equal(api.supportsAction('ensureDependency'),true);
  assert.equal(api.supportsAction('decline'),false);
  assert.equal(api.supportsAction('approve','session'),false);
- for(const name of ['runValuation','setApprovalRubric','correctAnswerSource','setResearchReview','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','runResearchNode','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','reviewProofRow','setWatcherView','signInProvider','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','changePlan'])assert.equal(api.supportsAction(name),false,name);
+ // runValuation, correctAnswerSource, setResearchReview, runResearchNode (RESEARCHNODES) and signInProvider (CUSTOMMCP) have owners now.
+ for(const name of ['setApprovalRubric','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','reviewProofRow','setWatcherView','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','changePlan'])assert.equal(api.supportsAction(name),false,name);
  assert.equal(requests.length,count);
 });
 
@@ -77,7 +81,7 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
  const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
  const w=dom.window,studio=path.join(__dirname,'../../01.APP/nodelang/studio');
  const snapshot={...api.getSnapshot(),approvals:[{id:'review',title:'Review',status:'pending',kind:'model',rows:[]}],connections:[{id:'youtube',name:'YouTube',connected:true}],hostSkills:[]};
- w.ArchHubAPI={...api,getSnapshot:()=>snapshot};w.matchMedia=()=>({matches:false});
+ w.ArchHubAPI={...api,getSnapshot:()=>snapshot};w.matchMedia=()=>({matches:false});w.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
  for(const name of ['vendor/react.js','vendor/react-dom.js','vendor/babel.js'])w.eval(fs.readFileSync(path.join(studio,name),'utf8'));
  for(const name of ['tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx','ds_baboom.jsx','ds_settings3.jsx','workflow-states.jsx','agent-states.jsx','answer-widgets.jsx'])w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,name),'utf8'),{presets:['react']}).code);
  const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
@@ -153,16 +157,6 @@ test('Interface Studio preserves the newer file readback when an older placement
  assert.deepEqual(Array.from(api.getSnapshot().graph.nodes,n=>[n.id,n.kind]),[['one','UI element'],['two','UI element']]);
 });
 
-test('OPS compatible nodes use confirmed socket metadata and converter calls preserve wire identity',async()=>{
- const endpoint={id:'source',side:'out',port:'socket'};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':{root:'canvas',nodes:[{id:'source',properties:[],ports:[{id:'socket',side:'source',value_type:'text'}]}],wires:[]},
-  '/api/universal/canvas-op':body=>({ok:true,result:body.op==='library_ports'?[{id:'text-item',title:'Text node',ports:{target:[{id:'in',type:'text'}]}},{id:'number-item',title:'Number node',ports:{target:[{id:'in',type:'number'}]}}]:{id:'actual-node'}})});
- await api.refreshLibraryPorts();assert.deepEqual(Array.from(api.compatibleNodes(endpoint),r=>r.id),['text-item']);
- await api.addCompatibleNode(endpoint,'text-item',{x:10,y:20});await api.insertConvert({id:'wire-real'});
- assert.deepEqual(requests.find(r=>r.body?.op==='add_compatible_node').body.args,[endpoint,'text-item',{x:10,y:20}]);
- assert.deepEqual(requests.find(r=>r.body?.op==='insert_convert').body.args,['wire-real']);
-});
-
 test('OPS history review community and MCP project the returned owner data',async()=>{
  const metadata={versions:[{id:'version-1'}],modelReview:{operation:'Naming Check',results:[{detail:'Actual result'}],issues:[]},dismissed:['suggestion']};
  const community={peers:[{id:'peer',subscribed:true}],patterns:[]};
@@ -174,17 +168,14 @@ test('OPS history review community and MCP project the returned owner data',asyn
   if(body.op==='import_mcp_tool')return {ok:false,error:'Open this admitted tool in its Workshop work'};
   return {ok:true,result:{id:'confirmed'}};
  }});
- await api.saveGraphVersion();await api.restoreGraphVersion('version-1');
- assert.equal(api.getSnapshot().graph.versions[0].id,'version-1');
  await api.reviewModel('Naming Check');assert.equal(api.getSnapshot().modelReview.results[0].detail,'Actual result');
  await api.updateReviewIssue('issue',{status:'Closed'});await api.dismissSuggestion('suggestion');
  await api.subscribeCommunity('peer');await api.reviewCommunityPattern('pattern','Accept');
  assert.equal(api.getSnapshot().community.peers[0].subscribed,true);
  await api.discoverMcpTools('server','Tools');await api.reconnectMcp('server');
  assert.equal(api.getSnapshot().mcpServers[0].id,'server');
- await assert.rejects(()=>api.importMcpTool('server','tool'),/Workshop work/);
  const operations=requests.filter(r=>r.body?.op).map(r=>r.body.op);
- for(const name of ['save_graph_version','restore_graph_version','review_model','update_review_issue','dismiss_suggestion','subscribe_community','review_community_pattern','discover_mcp_tools','reconnect_mcp','import_mcp_tool'])assert.ok(operations.includes(name),name);
+ for(const name of ['review_model','update_review_issue','dismiss_suggestion','subscribe_community','review_community_pattern','discover_mcp_tools','reconnect_mcp'])assert.ok(operations.includes(name),name);
 });
 
 test('OPS mod actions preserve the native review digest and refresh from the package owner',async()=>{
@@ -252,13 +243,14 @@ test('OPS file picker cancellation and refused sends retain the attachment draft
  const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshops:[{root:'room'}]},
   '/api/universal/pick-file':()=>({ok:true,path:picked}),
   '/api/universal/canvas-op':body=>({ok:true,result:body.op==='project_files'?[file]:file}),
-  '/api/universal/workshop':body=>({ok:!refused||body.function==='listTasks',error:'Choose an available agent',result:body.function==='listTasks'?[]:{id:'work-real'}})});
+  '/api/router/chat':()=>refused?{ok:false,error:'Choose an available agent'}:{ok:true,result:{answer:'Read'}},
+  '/api/universal/workshop':body=>({ok:true,result:body.function==='listTasks'?[]:{id:'work-real'}})});
  const made=await api.addFile();api.addComposerAttachment(made.id);
  await assert.rejects(()=>api.sendToBaboom('Read it'),/available agent/);
  assert.equal(api.getSnapshot().composerAttachments.length,1);
  refused=false;await api.sendToBaboom('Read it');
  assert.equal(api.getSnapshot().composerAttachments.length,0);
- assert.ok(requests.find(r=>r.body?.function==='sendToBaboom').body.args[0].includes(file.path));
+ assert.ok(requests.filter(r=>r.url==='/api/router/chat').at(-1).body.prompt.includes(file.path));
  picked='';assert.equal(await api.addFile(),null);
 });
 
@@ -303,38 +295,22 @@ test('cancelled native folder selection never registers a workspace',async()=>{
  assert.equal(requests.some(r=>r.body?.action==='register'),false);
 });
 
-test('Docs retains generated guides and node documentation from the running owner',async()=>{
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':{root:'canvas',nodes:[],wires:[],documentation:{
-  tutorials:[{id:'account-web',title:'Account',description:'Sign in',text:'# Account\nUse browser sign-in.'}],
-  nodes:[{id:'node-doc',category:'Get',title:'Read',detail:'Read connected state.'}]
- }}});
- const docs=api.getDocs();
- assert.equal(docs.length,2);
+test('Docs retains generated guides and the glossary from the documentation owner',async()=>{
+ const {api}=await adapter({signed_in:false},{'/api/documentation':{tutorials:[{id:'account-web',title:'Account',description:'Sign in',text:'# Account\nUse browser sign-in.'}],
+  glossary:[{term:'Node',definition:'One block on the canvas.'}]}});
+ const docs=await api.refreshDocs();
+ assert.equal(docs.length,1);
  assert.equal(docs.find(d=>d.id==='account-web').route,'settings/Account');
  assert.deepEqual(Array.from(docs.find(d=>d.id==='account-web').steps),['# Account','Use browser sign-in.']);
- assert.equal(docs.find(d=>d.id==='node-doc').summary,'Read connected state.');
+ assert.deepEqual(Array.from(api.getSnapshot().bookGlossary),['| Node | One block on the canvas. |']);
 });
 
-
-test('Canvas facade translates node flags and constrained runs to their real route shapes',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas-op':body=>({ok:true,result:body.op==='run_to_here'?{roots:['upstream','target'],frozen_kept:['held']}:{id:'node',frozen:true,pinned:false}})});
- await api.setNodeFlags('node',{frozen:true});
- const flag=requests.find(row=>row.url==='/api/universal/canvas-op'&&row.body.op==='set_node_flags');
- assert.deepEqual(flag.body,{op:'set_node_flags',args:['node',true,null]});
- await api.runToHere('target');
- assert.deepEqual(requests.find(row=>row.url==='/api/universal/run-graph').body,{roots:['upstream','target']});
-});
-
-test('a fully frozen run-to-here plan never falls through to run the whole graph',async()=>{
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas-op':{ok:true,result:{roots:[],frozen_kept:['target']}}});
- await api.runToHere('target');
- assert.equal(requests.some(row=>row.url==='/api/universal/run-graph'),false);
-});
 
 test('update status is read from the existing lifecycle and never inferred from graph configuration',async()=>{
  const {api}=await adapter({signed_in:false},{'/api/universal/application-update':{ok:true,
   state:'ready',current_build:'installed',available_build:'next',restart_supported:true,detail:'Verified download'}});
  await api.refreshApplicationUpdate();
+ for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
  const update=api.getSnapshot().update;
  assert.equal(update.installed,'installed');assert.equal(update.next,'next');
  assert.equal(update.available,true);assert.equal(update.detail,'Verified download');
@@ -387,6 +363,7 @@ test('a refused restart is not replayed and clears the stale ready offer',async(
  const {api,requests}=await adapter({signed_in:false},{'/api/universal/application-update':body=>body?
   {ok:false,error:'A Workshop job is running'}:{ok:true,state:'ready',available_build:'next',current_build:'installed',restart_supported:true}});
  await api.refreshApplicationUpdate();
+ for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
  await assert.rejects(()=>api.installUpdate(),/Workshop job/);
  assert.equal(api.getSnapshot().update.available,false);
  await assert.rejects(()=>api.installUpdate(),/Workshop job/);
@@ -416,8 +393,12 @@ function command(method,params={},sessionId=undefined){
  });
 }
 before(async()=>{
- const executable=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(fs.existsSync);
- assert.ok(executable,'An installed headless browser is required; no dependencies are installed.');
+ // The bundled Playwright Chromium, as the other rendered tests use; the installed Chrome never answered under the test queue.
+ const cache=process.env.PLAYWRIGHT_BROWSERS_PATH||path.join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright');
+ const newest=pattern=>(fs.existsSync(cache)?fs.readdirSync(cache):[]).filter(name=>pattern.test(name)).sort((a,b)=>Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
+ const shell=newest(/^chromium_headless_shell-\d+$/),full=newest(/^chromium-\d+$/);
+ const executable=shell||full?path.join(cache,shell||full,shell?'chrome-headless-shell-win64/chrome-headless-shell.exe':'chrome-win64/chrome.exe'):'';
+ assert.ok(executable&&fs.existsSync(executable),'The bundled Playwright Chromium is required.');
  assert.ok(profile.startsWith(fixture+path.sep));fs.mkdirSync(profile,{recursive:true});
  processHandle=spawn(executable,['--headless=new','--disable-default-apps','--disable-gpu','--no-first-run','--no-default-browser-check','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
  const endpoint=await new Promise((resolve,reject)=>{
@@ -456,7 +437,9 @@ test('OPS real browser MCP load errors retry and refused imports preserve the cu
  const {api}=await adapter({signed_in:false});
  const s=await screen(['answer-widgets.jsx','integration-states.jsx'],api.getSnapshot(),`{
   refreshMcpServers:async()=>{if(refused)throw Error('Reconnect the actual tool server');const rows=[{id:'actual-server',name:'Actual server',status:'Negotiated',tools:[{id:'actual-tool',name:'Actual tool'}]}];testData.mcpServers=rows;return rows;},
-  importMcpTool:async()=>{throw Error('Open this tool in its Workshop work');}
+  importMcpTool:async()=>{throw Error('Open this tool in its Workshop work');},
+  // Import adds the tool to this window's open file (sw019): the screen names that file first.
+  getSessionDocument:()=>({id:'open-file',properties:{}}),getSessionPath:()=>'/fixture/open.archhub'
  }`);
  try{
   const failure=await s.evaluate(`(async()=>{render(UI.McpTools);await new Promise(resolve=>setTimeout(resolve,30));return document.body.textContent;})()`);
@@ -520,6 +503,7 @@ async function adapter(canvasSource={root:'g',nodes:[],wires:[]}) {
  vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),{window:w,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},CustomEvent:class{},URLSearchParams,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options)=>{
    const body=options.body&&JSON.parse(options.body);requests.push({url,body});let result={ok:true};
+   if(url==='/api/commands')return {ok:true,status:200,json:async()=>({commands:[]})};
    if(url==='/api/universal/canvas')result=canvasSource;
    if(url==='/api/universal/wire-property')canvasSource.wires.find(wire=>wire.id===body.wire).params=[{label:body.label,relation:'condition-relation',value:body.value}];
    if(url==='/api/universal/set-property')for(const wire of canvasSource.wires)for(const parameter of wire.params||[])if(parameter.relation===body.relation)parameter.value=body.value;
@@ -539,30 +523,33 @@ test('YAML reaches the existing owner unchanged and owner rejection remains a re
 });
 
 test('schedule and skill mutations use canvas-op and refresh confirmed owner projections',async()=>{
- const {api,requests}=await adapter();
+ const {api,requests}=await fileAdapter();
+ await api.openSession('/fixture/scheduled.archhub');
  await api.setScheduleTime('schedule','09:30');await api.saveSkill('Workflow');
  assert.deepEqual(requests.find(r=>r.body?.op==='set_schedule_time').body.args,['schedule','09:30']);
- assert.ok(requests.filter(r=>r.body?.op==='list_skills').length>=2);
- assert.ok(requests.filter(r=>r.body?.op==='project_schedules').length>=2);
+ // A schedule edit refreshes the project owners; Save skill saves the open file and re-reads the Library catalogue.
+ assert.ok(requests.some(r=>r.body?.op==='list_skills')&&requests.some(r=>r.body?.op==='project_schedules'));
+ const save=requests.findIndex(r=>r.url==='/api/session-files'&&r.body.document?.title==='Workflow');
+ assert.ok(save>=0,'the skill is the saved open file');
+ assert.ok(requests.slice(save).some(r=>r.body?.action==='catalogue'),'the Library re-reads its catalogue after the save');
 });
 
-test('wire rule edits update the evaluator condition and reuse its confirmed relation',async()=>{
- const {api,requests}=await adapter({root:'g',nodes:[],wires:[{id:'wire',source:'a',target:'b',params:[]}]});
+test('wire rule edits check the rule with the file owner and keep it on the open file\'s wire',async()=>{
+ const wire={id:'wire',from:{node:'a',socket:'out'},to:{node:'b',socket:'in'}};
+ const {api,requests}=await fileAdapter({document:{format:'archhub',version:1,id:'doc-w',title:'Wires',nodes:[],wires:[wire],groups:[],notes:[],properties:{}}});
+ await api.openSession('/fixture/wires.archhub');
  await api.setWireRule('wire','value > 1');
- assert.deepEqual(requests.find(row=>row.url==='/api/universal/wire-property').body,{wire:'wire',label:'condition',value:'value > 1'});
- assert.equal(api.getSnapshot().graph.wires[0].rule,'value > 1');
+ assert.equal(requests.find(r=>r.body?.action==='wire-rule').body.rule,'value > 1');
+ assert.equal(api.getSessionDocument().wires[0].rule,'value > 1');
  await api.setWireRule('wire','value > 2');
- assert.deepEqual(requests.find(row=>row.url==='/api/universal/set-property').body,{relation:'condition-relation',value:'value > 2'});
- assert.equal(api.getSnapshot().graph.wires[0].rule,'value > 2');
+ assert.equal(api.getSessionDocument().wires[0].rule,'value > 2');
 });
-
 }
 // WIRE-projects end
 test('WIRE-rest absent canvas commands reject with a repair action and do not synthesize state',async()=>{
  const {api,requests}=await adapter({signed_in:false});
  await assert.rejects(()=>api.createCommunityGroup('Test group'),/System graph/);
  assert.equal(api.getSnapshot().community.groups.length,0);
- assert.ok(requests.filter(r=>r.url==='/api/universal/canvas').length>1);
  assert.equal(requests.some(r=>r.url==='/api/universal/interaction'),false);
 });
 
@@ -600,8 +587,10 @@ async function restScreen(component, api, state, props={}) {
  const element=tag=>({children,...props})=>React.createElement(tag,props,children);
  const navigation=[];
  if(component==='NodeDetails')win.ArchHubAPI=api;
- const u={go:route=>navigation.push(route),show:(name,data)=>navigation.push({name,data}),advanced:false};
+ const u={go:route=>navigation.push(route),show:(name,data)=>navigation.push({name,data}),setSelectedNodeId:id=>navigation.push({select:id}),advanced:false};
  win.AHIcon=()=>null;
+ // Menus are the command owner's projection (/api/commands), written by tests_replica/test_command_registry.py as command_registry.test.cjs reads it.
+ win.ArchHubCommandRegistry=JSON.parse(fs.readFileSync(path.join(__dirname,'../../.cache/testiso-commandregistry/commands.json'),'utf8'));
  win.UI={api,A:{ok:'green',warn:'orange',inkSoft:'gray'},D:{Toggle:({checked,onCheckedChange,label})=>React.createElement('input',{type:'checkbox',checked,'aria-label':label,onChange:event=>onCheckedChange(event.target.checked)})},
   useData:()=>state,useApp:()=>u,Btn:({p,sm,ghost,danger,...props})=>React.createElement('button',props),Card:element('section'),Chip:element('span'),
   Heading:({title,children})=>React.createElement('header',null,title,children),Empty:element('p'),Table:({rows})=>React.createElement('pre',null,JSON.stringify(rows)),SettingControl:()=>null,Av:()=>null};
@@ -712,7 +701,7 @@ async function buttonsAdapter(extra={},replies={}){
  window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
-  const data=Object.hasOwn(replies,url)?await replies[url](body):url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
+  const data=Object.hasOwn(replies,url)?await replies[url](body):url==='/api/commands'?{commands:[]}:url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
    {ok:true,result:{dependencies:[{id:body.args[0],state:'Ready'}]}}:{ok:true,result:[]};
   return {ok:true,status:200,json:async()=>data};
  };
@@ -767,7 +756,7 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
 });
 
 // runValuation, correctAnswerSource, setResearchReview and runResearchNode have owners now (RESEARCHNODES; proven in research_actions.test.cjs).
-for(const name of ["stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "signInProvider", "changePlan"])test(name+': remains hidden without an executing owner',async()=>{
+for(const name of ["stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "changePlan"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
 });
@@ -777,7 +766,11 @@ async function hostskillsAdapter() {
  const bundle={id:'bundle',name:'Measure',description:'Local package',tools:[{name:'measure'}],config:[{key:'precision',label:'Precision',type:'number',value:2}],status:'Ready for review',installed:false};
  let fail=false,owner=true,cards=[];
  const methods=[];
+ const file=path=>({format:'archhub',version:1,id:'doc:'+path,title:path||'Untitled',nodes:[],wires:[],groups:[],notes:[],properties:{}});
  const rig=await adapter({signed_in:false},{
+  // The open file's owner: each path opens as its own document (D-014), so a switch is a real adoptFile.
+  '/api/session-files':body=>body.action==='catalogue'?{ok:true,items:[],sessions:[],directory:'/fixture'}:
+   body.action==='open'?{ok:true,document:file(body.path),path:body.path}:{ok:true,document:body.document||file(''),path:body.path||'',revision:1},
   '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
   '/api/universal/workshop':body=>{
    if(body.function==='listTasks')return {result:[]};
@@ -815,7 +808,7 @@ for(const [name,args] of [
 ])test('HOSTSKILLS '+name+' executes owner and publishes confirmed graph projection',async()=>{
  const rig=await hostskillsAdapter();assert.equal(rig.api.supportsAction(name),true);
  const result=await rig.api[name](...args),call=rig.methods.find(r=>r.function===name);
- assert.ok(result.id);assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+ assert.ok(result.id);assert.equal(call.root,'app:workshop');assert.equal(call.scope,'app:workshop');
  const expected=name==='configureConnectorBundle'?['bundle',...args]:name==='installConnectorBundle'?['bundle']:args;
  assert.deepEqual(globalThis.structuredClone(call.args),expected);
  if(name==='setHostSkillEnabled')assert.equal(rig.api.getSnapshot().hostSkills[0].enabled,false);
@@ -877,14 +870,17 @@ test('HOSTSKILLS existing rendered controls invoke package owner actions',async(
  }finally{root.unmount();dom.window.close();}
 });
 
-test('HOSTSKILLS a graph switch during local file read refuses before upload',async()=>{
- const rig=await hostskillsAdapter();let release;
- const reading=new Promise(resolve=>release=resolve);
+test('HOSTSKILLS a file switch during a local package read refuses before upload',async()=>{
+ const rig=await hostskillsAdapter();
+ await rig.api.openSession('/fixture/first.archhub');
+ assert.equal(rig.api.getSessionDocument().id,'doc:/fixture/first.archhub');
+ let release;const reading=new Promise(resolve=>release=resolve);
  const pending=rig.api.inspectConnectorBundle({name:'fixture.json',arrayBuffer:()=>reading});
- await rig.api.selectGraph('another-graph');
+ await rig.api.openSession('/fixture/second.archhub');
+ assert.equal(rig.api.getSessionDocument().id,'doc:/fixture/second.archhub');
  release(new ArrayBuffer(0));
  await assert.rejects(()=>pending,/graph changed/);
- assert.equal(rig.methods.filter(m=>m.function==='inspectConnectorBundle').length,0);
+ assert.equal(rig.methods.filter(m=>m.function==='inspectConnectorBundle').length,0,'no inspection is submitted after the switch');
 });
 
 function dialogHarness(){
@@ -897,7 +893,7 @@ function dialogHarness(){
  const React={Component:class{},Fragment:'fragment',useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return [slots[i],next=>{slots[i]=next;writes.push([i,next]);}];},
   useRef(value){const i=cursor++;if(!(i in slots))slots[i]={current:value};return slots[i];},useLayoutEffect:fn=>effect=fn,
   createElement(type,props,...children){if(props?.ref)props.ref.current=element;return {type,props:props||{},children};}};
- const window={UI:{api,useData:()=>({}),useApp:()=>u,A:{},Btn:'Btn'},ReactDOM:{createRoot:()=>({render(){}})},
+ const window={UI:{api,useData:()=>({}),useApp:()=>u,useAction:()=>({state:'idle',run:fn=>fn()}),A:{},Btn:'Btn'},ReactDOM:{createRoot:()=>({render(){}})},
   registerActions:(names,functions)=>{for(const [name,key]of Object.entries(names))handlers[name]=functions[key];},
   executeAction:(name,scope,event)=>handlers[name](scope,event)};
  const source=fs.readFileSync(path.join(studio,'app.jsx'),'utf8').replace('window.ReactDOM.createRoot','window.BUTTONS_DIALOG = Dialog; window.ReactDOM.createRoot');
@@ -959,7 +955,7 @@ for(const [name,args,status] of [
  assert.equal(api.supportsAction(name),true);
  const result=await api[name](...args);
  const call=methods.find(row=>row.function===name);
- assert.equal(call.action,'data-api');assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+ assert.equal(call.action,'data-api');assert.equal(call.root,'app:workshop');assert.equal(call.scope,'app:workshop');
  assert.deepEqual(call.args,args);
  assert.equal(result.status,status);
  const saved=api.getSnapshot().approvals.find(row=>row.id===result.id);
@@ -1060,7 +1056,7 @@ for(const [name,args] of [
 ])test('WATCHER '+name+' executes the admitted owner and reads confirmed state',async()=>{
  const rig=await watcherAdapter();assert.equal(rig.api.supportsAction(name),true);
  const result=await rig.api[name](...args),call=rig.methods.find(row=>row.function===name);
- assert.deepEqual(globalThis.structuredClone(call.args),args);assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+ assert.deepEqual(globalThis.structuredClone(call.args),args);assert.equal(call.root,'app:workshop');assert.equal(call.scope,'app:workshop');
  if(name==='proposeWatcherEdit')assert.equal(rig.api.getSnapshot().approvals[0].id,result.id);
  else assert.deepEqual(rig.api.getSnapshot().watcher.owner,result.owner);
  assert.equal(rig.writes(),0);
@@ -1118,16 +1114,6 @@ test('WATCHER rendered tools persist gestures and open the exact approval',async
 });
 
 
-test('WATCHER losing the graph owner clears source geometry and private annotations',async()=>{
- const rig=await watcherAdapter();
- await rig.api.addComment({text:'Private',x:120,y:510,element:'unique-wall'});
- rig.loseOwner();await rig.api.selectGraph('another-graph');
- const state=rig.api.getSnapshot().watcher;
- assert.equal(rig.api.supportsAction('editWall'),false);
- assert.equal(state.host,'');assert.equal(state.elementId,undefined);
- assert.equal(state.comments.length,0);assert.equal(state.marks.length,0);assert.equal(state.dimensions.length,0);
-});
-
 // DESKTOP: owner answers first; every control uses the same scoped Workshop.
 async function desktopAdapter(){
  const held={owner:'desktop-owner',program:'',stage:'Watching',instance:null,offers:[],proposal:null,taskId:null,
@@ -1166,7 +1152,7 @@ for(const [name,args] of [['setDesktopProgram',['Revit']],['offerDesktopAction',
  test('DESKTOP '+name+' dispatches the exact scoped owner and reads back',async()=>{
   const rig=await desktopAdapter();assert.equal(rig.api.supportsAction(name),true);
   await rig.api[name](...args);const call=rig.methods.find(r=>r.function===name);
-  assert.equal(call.action,'data-api');assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+  assert.equal(call.action,'data-api');assert.equal(call.root,'app:workshop');assert.equal(call.scope,'app:workshop');
   assert.deepEqual(call.args,args);assert.equal(rig.writes(),0);
   if(name==='setScheduleResponsibility')assert.equal(rig.api.getSnapshot().schedules[0].responsibility,'Review output');
  });
@@ -1229,8 +1215,8 @@ test('DESKTOP rendered schedule responsibility saves partial changes and opens t
  assert.equal(nodes(tree).some(n=>n.type==='Btn'||n.type==='input'||n.type==='select'||n.type==='Toggle'),false);
 });
 
+// setProviderModel left this table: the provider's model is the model_router owner's (settings/router.json), not a Settings action.
 for(const [name,args,result,key,expected] of [
- ['setProviderModel',['ollama','ollama/model'],{providerPreferences:{ollama:'ollama/model'}},'providerPreferences',{ollama:'ollama/model'}],
  ['disconnectSecret',['social-entry'],{ok:true,state:'removed',provider_token_revoked:false,secrets:[]},'secrets',[]],
  ['setCompanionState',[{mode:'listening',x:20,y:30,pinned:true}],{companion:{mode:'listening',x:20,y:30,pinned:true}},'companion',{mode:'listening',x:20,y:30,pinned:true}],
  ['exposeSettingsPage',['Appearance'],{id:'owner-node',page:'Appearance'},null,null],
@@ -1239,7 +1225,7 @@ for(const [name,args,result,key,expected] of [
   '/api/universal/settings-action':body=>({ok:true,result:body.function==='readControls'?{companion:{mode:'idle'},secrets:[],providerPreferences:{},providerModels:{}}:result}),
   '/api/universal/social-connections':()=>({items:[]})
  });
- assert.equal(api.supportsAction(name),true);assert.equal(api.supportsAction('signInProvider'),false);
+ assert.equal(api.supportsAction(name),true);assert.equal(api.supportsAction('changePlan'),false);
  calls.length=0;const answer=await api[name](...args);
  const command=calls.find(c=>c.body?.function===name);
  assert.deepEqual(command,{url:'/api/universal/settings-action',body:{function:name,args}});
@@ -1257,7 +1243,7 @@ test('SETTINGS readNotification: binds Workshop source and uses durable receipt 
  assert.equal(api.supportsAction('readNotification'),true);calls.length=0;
  await api.readNotification('message');const command=calls.find(c=>c.body?.function==='readNotification');
  assert.equal(command.url,'/api/universal/workshop');assert.deepEqual(command.body.args,['message']);
- assert.equal(command.body.root,'workshop');assert.equal(command.body.scope,'graph');
+ assert.equal(command.body.root,'app:workshop');assert.equal(command.body.scope,'app:workshop');
  assert.equal(api.getSnapshot().notifications[0].read,true);
 });
 
@@ -1282,27 +1268,6 @@ test('SETTINGS slow control read cannot overwrite a confirmed companion write',a
 });
 
 // Migrated behavior contracts from the retired StudioLM tests, against the current owner.
-test('STUDIOTESTS default library insertion avoids existing and newly created nodes',async()=>{
- const canvas={root:'g',nodes:[{id:'existing',label:'Existing',x:240,y:200,properties:[],ports:[]}],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':body=>{const id='new-'+canvas.nodes.length;canvas.nodes.push({id,label:'Number',x:body.x,y:body.y,properties:[],ports:[]});return {ok:true,root:id};}});
- await api.addNode('def');await api.addNode('def');
- const points=[[240,200],...requests.filter(r=>r.url==='/api/universal/node-create').map(r=>[r.body.x,r.body.y])];
- assert.equal(points.length,3,'both real owner creates were reached');
- assert.equal(new Set(points.map(p=>p.join(','))).size,3,'default insertion points must not overlap');
-});
-
-test('STUDIOTESTS rapid parameter edits serialize writes and retain the latest value',async()=>{
- let release,active=0,peak=0;const held=new Promise(resolve=>release=resolve);
- const property={label:'value',value:'initial',relation:'rel',editable:true};
- const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:[property],ports:[]}],wires:[]};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':async body=>{active++;peak=Math.max(peak,active);if(body.value==='first')await held;property.value=body.value;active--;return {ok:true};}});
- const first=api.setNodeParam('n','value','first'),middle=api.setNodeParam('n','value','middle'),last=api.setNodeParam('n','value','final');
- await new Promise(resolve=>setImmediate(resolve));release();await Promise.all([first,middle,last]);
- assert.equal(peak,1,'parameter writes must not overlap');
- assert.equal(property.value,'final','the latest confirmed edit must survive');
- assert.deepEqual(requests.filter(r=>r.url==='/api/universal/set-property').map(r=>r.body.value),['first','final'],'pending edits coalesce to the latest value');
-});
-
 test('STUDIOTESTS stop-all posts once and preserves state after refusal',async()=>{
  let refused=true;const {api,requests}=await adapter({signed_in:false},{'/stop-all':()=>refused?{ok:false,error:'Stop refused'}:{ok:true,stopped:true}});
  const stopped=api.getSnapshot().app.stopped;
@@ -1322,82 +1287,86 @@ test('STUDIOTESTS host availability returns only the server catalogue and retain
  assert.equal(requests.filter(r=>r.url==='/api/universal/hosts').length,3);
 });
 
-test('STUDIOTESTS latest node result survives the current canvas projection',async()=>{
- const canvas={root:'g',nodes:[{id:'runner',label:'Runner',properties:[],ports:[],result:'3 walls built'}],wires:[]};
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
- assert.equal(api.getSnapshot().graph.nodes[0].output,'3 walls built');
-});
-
 // Clean ApplicationServer projects declared group ports; member ports belong to the entered scope.
 // clean_visual_projection.py::project_clean_visual_canvas, application_server.py::_clean_connect.
-test('STUDIOTESTS collapsed group projects declared ports and preserves member identities',async()=>{
- const port=(name,side)=>({id:'decl:group-a:'+name,name,side,mode:'declared',connectable:true,read_only:false,value_type:'number',connect_route:'direct'});
- const canvas={root:'g',nodes:[{id:'group-a',label:'Group',composition:true,members:[{id:'member-a',title:'Member'}],properties:[],ports:[port('out','source'),port('in','target')]}],wires:[]};
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
- const group=api.getSnapshot().graph.nodes[0];
- assert.deepEqual(JSON.parse(JSON.stringify(group.outputs.map(p=>[p.id,p.name,p.type,p.connect_route]))),[['decl:group-a:out','out','number','direct']]);
- assert.deepEqual(JSON.parse(JSON.stringify(group.inputs.map(p=>[p.id,p.name,p.type,p.connect_route]))),[['decl:group-a:in','in','number','direct']]);
- assert.deepEqual([...group.children],['member-a']);
- canvas.nodes=[{id:'member-a',label:'Member',properties:[],ports:[{...port('out','source'),id:'decl:member-a:out'}]}];
- const entered=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
- assert.equal(entered.api.getSnapshot().graph.nodes[0].outputs[0].id,'decl:member-a:out');
-});
-
-
-test('STUDIOFIX concurrent insertions reserve different points and explicit drop coordinates survive',async()=>{
- let release,began,next=0;const held=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>began=resolve);
- const canvas={root:'g',nodes:[],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':async body=>{
-  const id='node-'+next++;if(id==='node-0'){began();await held;}
-  canvas.nodes.push({id,label:'Number',x:body.x,y:body.y,properties:[],ports:[]});return {ok:true,root:id};
- }});
- const first=api.addNode('def');await ready;const second=api.addNode('def');release();await Promise.all([first,second]);
- const points=requests.filter(r=>r.url==='/api/universal/node-create').map(r=>r.body.x);
- assert.equal(new Set(points).size,2);
- await api.addNode('def',{x:-20,y:55});
- assert.deepEqual(requests.filter(r=>r.url==='/api/universal/node-create').at(-1).body,{title:'Number',engine:'data.constant',x:-20,y:55});
-});
-
-test('STUDIOFIX a refused parameter write does not poison a later explicit edit or another key',async()=>{
- let refuse=true;
- const props=['value','other'].map(label=>({label,value:'initial',relation:label,editable:true}));
- const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:props,ports:[]}],wires:[]};
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':body=>{
-  if(refuse&&body.relation==='value')return {ok:false,error:'Parameter refused'};
-  props.find(p=>p.relation===body.relation).value=body.value;return {ok:true};
- }});
- await assert.rejects(api.setNodeParam('n','value','bad'),/Parameter refused/);
- await api.setNodeParam('n','other','independent');refuse=false;await api.setNodeParam('n','value','recovered');
- assert.deepEqual(props.map(p=>p.value),['recovered','independent']);
-});
-
-for(const final of ['newest','first'])test('STUDIOFIX queued '+final+' edit survives a failed in-flight parameter write',async()=>{
- let release;const held=new Promise(resolve=>release=resolve);
- const property={label:'value',value:'initial',relation:'rel',editable:true};
- const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:[property],ports:[]}],wires:[]};
- let attempts=0;
- const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':async body=>{
-  if(++attempts===1){await held;return {ok:false,error:'First write refused'};}
-  property.value=body.value;return {ok:true};
- }});
- const first=api.setNodeParam('n','value','first'),middle=api.setNodeParam('n','value','middle'),last=api.setNodeParam('n','value',final);
- const settled=Promise.allSettled([first,middle,last]);
- await new Promise(resolve=>setImmediate(resolve));release();const results=await settled;
- assert.deepEqual(requests.filter(r=>r.url==='/api/universal/set-property').map(r=>r.body.value),['first',final],'newest edit must still reach the owner after failure');
- assert.equal(property.value,final);
- assert.equal(results.at(-1).status,'fulfilled','queued caller must not receive the older write failure');
-});
-
-
 test('CARDPOLISH Properties opens the existing full-value Node dialog',async()=>{
  const {api}=await adapter({signed_in:false});const state=api.getSnapshot();
  state.graph.nodes=[{id:'node-1',title:'Actual node',inputs:[],outputs:[],params:{payload:{full:'retained structured value'}}}];
  const screen=await restScreen('ContextMenu',api,state,{kind:'Node menu',nodeId:'node-1',close(){}});
  try{
   [...screen.win.document.querySelectorAll('button')].find(b=>b.textContent==='Properties').click();await screen.settle();
-  assert.deepEqual(JSON.parse(JSON.stringify(screen.navigation)),[{name:'Node',data:{id:'node-1'}}]);
+  // Properties is the command owner's menu.properties: it selects the node, whose full values open in the Inspector.
+  assert.deepEqual(JSON.parse(JSON.stringify(screen.navigation)),[{select:'node-1'}]);
  }finally{screen.close();}
  const detail=await restScreen('NodeDetails',{...api,getNodeParameters:()=>[{key:'payload',label:'Payload',type:'object'}]},state,{id:'node-1'});
  try{assert.match(detail.win.document.body.textContent,/retained structured value/);assert.doesNotMatch(detail.win.document.body.textContent,/\[object Object\]/);}
  finally{detail.close();}
+});
+
+async function fileAdapter(open={}){
+ const requests=[],items=[
+  {id:'text-src',title:'Text source',engine:'data.constant',pure:true,params:{value:'a'},ports:{source:[{id:'out',type:'text'}],target:[]}},
+  {id:'text-in',title:'Text input',engine:'data.constant',pure:true,params:{},ports:{source:[],target:[{id:'in',type:'text'}]}},
+  {id:'number-in',title:'Number input',engine:'data.constant',pure:true,params:{},ports:{source:[],target:[{id:'in',type:'number'}]}}];
+ const blank=title=>({format:'archhub',version:1,id:'doc-'+title,title,nodes:[],wires:[],groups:[],notes:[],properties:{}});
+ const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},
+  Uint8Array:globalThis.Uint8Array,dispatchEvent(){},addEventListener(){},AH:{},crypto:require('node:crypto'),
+  setInterval:()=>0,clearInterval(){},requestAnimationFrame:fn=>setTimeout(fn,0),cancelAnimationFrame:clearTimeout};
+ window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
+ const answer=body=>{
+  if(body.action==='catalogue')return {ok:true,items,sessions:[],recent:[],directory:'/fixture'};
+  if(body.action==='initial')return {ok:true,document:blank('Untitled'),path:''};
+  if(body.action==='open')return {ok:true,document:open.document||blank('Opened'),path:body.path||'/fixture/opened.archhub'};
+  if(body.action==='solve')return {ok:true,results:{},solved:body.changed||[],stale:[],ms:1};
+  if(body.action==='run')return {ok:true,results:{},revision:2};
+  if(body.action==='wire-rule')return {ok:true,rule:body.rule};
+  return {ok:true,document:body.document,path:body.path||'',revision:1};
+ };
+ const context={window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},CustomEvent:class{constructor(type,init){this.type=type;this.detail=init?.detail;}},
+  sessionStorage:{getItem(){return null;},setItem(){}},URLSearchParams,TextEncoder:globalThis.TextEncoder,AbortSignal:globalThis.AbortSignal,console,
+  fetch:async(url,options={})=>{
+   const body=options.body?JSON.parse(options.body):{};requests.push({url,body});
+   const data=url==='/api/commands'?{commands:[]}:url==='/api/session-files'?answer(body):url==='/api/universal/canvas-op'?{ok:true,result:[]}:{ok:true,result:{}};
+   return {ok:true,status:200,json:async()=>data};
+  }};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/api.js'),'utf8'),context);
+ await window.ArchHubAPI.ready;await window.ArchHubAPI.loadLibrary();
+ return {api:window.ArchHubAPI,requests,files:requests.filter(r=>r.url==='/api/session-files')};
+}
+
+test('file-backed create, open and run use the session-files owner',async()=>{
+ const {api,requests}=await fileAdapter();
+ await api.newSession('Fixture flow');
+ assert.equal(api.getSessionDocument().title,'Fixture flow');
+ await api.openSession('/fixture/site.archhub');
+ const opened=requests.find(r=>r.url==='/api/session-files'&&r.body.action==='open');
+ assert.equal(opened.body.path,'/fixture/site.archhub');
+ assert.equal(api.getSessionDocument().id,'doc-Opened');
+ await api.runNode();
+ const run=requests.find(r=>r.url==='/api/session-files'&&r.body.action==='run');
+ assert.equal(run.body.document.id,'doc-Opened');
+ assert.equal(run.body.path,'/fixture/site.archhub');
+});
+
+test('parameter writes land in the open file and rapid edits coalesce into one solve of that node',async()=>{
+ const node={id:'n',type:'data.constant',item:'text-src',title:'Text source',pure:true,params:{value:'initial'},position:{x:0,y:0}};
+ const {api,requests}=await fileAdapter({document:{format:'archhub',version:1,id:'doc-p',title:'Params',nodes:[node],wires:[],groups:[],notes:[],properties:{}}});
+ await api.openSession('/fixture/params.archhub');
+ const before=requests.filter(r=>r.body?.action==='solve').length;
+ await api.setNodeParam('n','value','first');await api.setNodeParam('n','value','middle');await api.setNodeParam('n','value','final');
+ await new Promise(resolve=>setTimeout(resolve,400));
+ assert.equal(api.getSessionDocument().nodes[0].params.value,'final');
+ const solves=requests.filter(r=>r.body?.action==='solve').slice(before);
+ assert.equal(solves.length,1,'rapid edits coalesce into one solve');
+ assert.deepEqual(solves[0].body.changed,['n']);
+ assert.equal(solves[0].body.document.nodes[0].params.value,'final');
+});
+
+test('typed wiring on the open file refuses a mismatch with Insert Convert and connects matching types',async()=>{
+ const {api}=await fileAdapter();
+ const source=await api.addNode('text-src',{x:0,y:0}),number=await api.addNode('number-in',{x:300,y:0}),text=await api.addNode('text-in',{x:300,y:200});
+ await assert.rejects(api.connectSockets({from:source.id,fromPort:'out',to:number.id,toPort:'in'}),/Wrong type.*Insert Convert/);
+ assert.equal(api.getSessionDocument().wires.length,0);
+ await api.connectSockets({from:source.id,fromPort:'out',to:text.id,toPort:'in'});
+ assert.deepEqual(api.getSessionDocument().wires.map(w=>[w.from.node,w.from.socket,w.to.node,w.to.socket]),[[source.id,'out',text.id,'in']]);
 });

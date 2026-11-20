@@ -15,6 +15,8 @@ const status = (state, extra = {}) => ({ok:true, current_build:INSTALLED, state,
   restart_supported:true, updated_from:null, updated_to:null, ...extra});
 const pause = () => new Promise(resolve => setTimeout(resolve, 5));
 const plain = value => JSON.parse(JSON.stringify(value));
+// The connection status sits in the header's status area since the floating shell (80eb1a5e: no footer band).
+const STATUS='[data-design="header.status"]';
 const deferred = () => { let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve}; };
 
 test('boot timeout is neutral and the next successful automatic read clears the rendered footer',async()=>{
@@ -22,13 +24,14 @@ test('boot timeout is neutral and the next successful automatic read clears the 
   try{
     v.deadlines.at(-1).abort(new Error('signal timed out'));
     await v.settle(()=>v.api.getSnapshot().update.state==='failed','read failed');
-    await v.settle(()=>!!v.doc.querySelector('footer'),'footer rendered');
+    await v.settle(()=>!!v.doc.querySelector(STATUS),'footer rendered');
     assert.equal(v.api.getSnapshot().connectionNotice,'Checking for updates…');
-    assert.doesNotMatch(v.doc.querySelector('footer').textContent,/signal timed out/);
+    assert.doesNotMatch(v.doc.querySelector(STATUS).textContent,/signal timed out/);
     current=status('ready');await v.advance(5000);
     await v.settle(()=>v.api.getSnapshot().update.available,'retry succeeded');
     assert.equal(v.api.getSnapshot().connectionNotice,'');
-    await v.settle(()=>/Local session/.test(v.doc.querySelector('footer').textContent),'footer recovered');
+    // Recovered: the status area no longer carries the update notice (it shows the session's own state instead).
+    await v.settle(()=>!/Checking for updates|signal timed out/.test(v.doc.querySelector(STATUS).textContent),'footer recovered');
     assert.equal(v.gets.length,2);
   }finally{v.close();}
 });
@@ -76,9 +79,9 @@ test('a good status after a boot timeout removes the stale rendered error',async
     await v.settle(()=>v.api.getSnapshot().update.state==='failed','read failed');
     current=status('idle');await v.api.refreshApplicationUpdate();
     assert.equal(v.api.getSnapshot().update.state,'idle');
-    await v.settle(()=>!!v.doc.querySelector('footer'),'footer exists');
+    await v.settle(()=>!!v.doc.querySelector(STATUS),'footer exists');
     await pause();
-    assert.doesNotMatch(v.doc.querySelector('footer').textContent,/signal timed out/);
+    assert.doesNotMatch(v.doc.querySelector(STATUS).textContent,/signal timed out/);
     assert.equal(v.api.getSnapshot().connectionNotice,'');
   }finally{v.close();}
 });
@@ -130,6 +133,8 @@ async function mount(server,{holdBootDelay=false}={}) {
   win.crypto.randomUUID=require('node:crypto').randomUUID;
   win.ARCHHUB_BOOT={home_load_ms:60000,token:'isolated-session',csrf:'isolated-csrf'};
   win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+  // shortcut: JSDOM has no layout or ResizeObserver; the panels and zoom bars measure in the browser courts.
+  win.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
   win.AbortSignal.timeout=ms=>{
     assert.equal(ms,15000);
     const controller=new win.AbortController();deadlines.push(controller);return controller.signal;
@@ -140,9 +145,13 @@ async function mount(server,{holdBootDelay=false}={}) {
     if(url==='/api/universal/canvas')data={root:'graph',nodes:[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
     if(url==='/api/universal/cloud-session')data=server.cloud?await server.cloud():{ok:true,signed_in:false};
     if(url==='/api/universal/settings-action')data=server.settingsFailure?{ok:false,error:server.settingsFailure}:{ok:true,result:{}};
+    // Home reads its layout from the Settings owner (settings_owner.home_layout); this fake answers the owner's default.
+    if(url==='/api/universal/settings-action'&&!server.settingsFailure&&JSON.parse(options.body||'{}').function==='readHomeLayout')data={ok:true,result:{homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]},homeMap:{}}};
     if(url==='/api/universal/workshop'){
       const body=JSON.parse(options.body);
       data=server.workshop?await server.workshop(body):{ok:true,result:[]};
+      // The Workshop owner's agent surface has its own shape (profiles and learning layers).
+      if(body.function==='getAgentSurface'&&!data.result?.learning)data={ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
     }
     if(url===UPDATE){
       const body=options.body&&JSON.parse(options.body);

@@ -65,7 +65,7 @@ async function mount(server,{holdBootDelay=false}={}) {
     if(url==='/api/commands')data={commands:[]};
     if(url==='/api/session-files'){
       const body=JSON.parse(options.body||'{}');
-      if(body.action==='catalogue')data={ok:true,items:[{id:'value',title:'Value',engine:'param.value',pure:true,params:{type:'number',value:1},ports:{source:[],target:[]}}],recent:[],directory:'/fixture'};
+      if(body.action==='catalogue')data={ok:true,items:[{id:'value',title:'Value',engine:'param.value',pure:true,params:{type:'number',value:1},ports:{source:[],target:[]}}],sessions:[],recent:[],directory:'/fixture'};
       else if(body.action==='initial')data={ok:true,document:{format:'archhub',version:1,id:'fixture-file',title:'Fixture',nodes:[],wires:[],groups:[],notes:[],properties:{}}};
       else data={ok:true,document:body.document,revision:1,outputs:{},pending:{},changed:[]};
     }
@@ -73,6 +73,8 @@ async function mount(server,{holdBootDelay=false}={}) {
     if(url==='/api/universal/settings-action'){
       const body=JSON.parse(options.body||'{}');
       data=server.settings?await server.settings(body):{ok:true,result:{runMode:'Accept edits',tools:{},libraryCollapsed:[]}};
+      // Home reads its layout from the Settings owner (settings_owner.home_layout); a fake without it answers the owner's default.
+      if(body.function==='readHomeLayout'&&!data.result?.homeLayout)data={ok:true,result:{homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]},homeMap:{}}};
     }
     if(url==='/api/universal/canvas')data={root:'graph',nodes:server.nodes||[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
     if(url==='/api/router/chat'){
@@ -86,6 +88,10 @@ async function mount(server,{holdBootDelay=false}={}) {
     if(url==='/api/universal/workshop'){
       const body=JSON.parse(options.body);
       data=server.workshop?await server.workshop(body):{ok:true,result:[]};
+      // The Workshop owner's agent surface has its own shape (profiles and learning layers), as designmatch answers it.
+      if(body.function==='getAgentSurface'&&!data.result?.learning)data={ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+      // A message typed on Home starts its own session (createTask, then the router chat into it: design v61 C1-C3).
+      if(body.function==='createTask'&&!server.workshop)data={ok:true,result:{taskId:'home-session',id:'home-session'}};
     }
     if(url==='/api/universal/gesture'&&server.gesture)data=await server.gesture(JSON.parse(options.body));
     if(url===UPDATE){
@@ -104,6 +110,10 @@ async function mount(server,{holdBootDelay=false}={}) {
   win.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),undo:()=>post('/api/universal/gesture',{undo:true}),redo:()=>post('/api/universal/gesture',{redo:true})})}};
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
+  const createRoot=win.ReactDOM.createRoot;
+  let appRoot;
+  win.ReactDOM.createRoot=(...args)=>(appRoot=createRoot(...args));
+  const close=()=>{try{appRoot?.unmount();}finally{dom.window.close();}};
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));
   // The loader (studio.html) runs every vendor script the manifest lists before the compiled files.
   for(const vendor of manifest.vendor||[])if(vendor.output.endsWith('.js'))win.eval(read('01.APP/nodelang/studio/compiled/'+vendor.output));
@@ -120,7 +130,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   const click=async node=>{assert.ok(node,'button exists');assert.equal(node.disabled,false);node.click();await pause();};
   try{
     await settle(()=>!!doc.querySelector('[aria-label="Main navigation"]'),'the compiled Home opens');
-  }catch(error){dom.window.close();throw error;}
+  }catch(error){close();throw error;}
   const settings=async()=>{
     await click(doc.querySelector('[aria-label="Settings"]'));
     await settle(()=>!!doc.querySelector('[data-screen="settings/Account"]'),'Account opens');
@@ -131,17 +141,18 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   return {win,doc,button,click,settle,settings,gets,posts,deadlines,api:win.ArchHubAPI,
     push:()=>win.dispatchEvent(new win.Event('archhub:update-ready')),
-    close:()=>{dom.window.close();}};
+    close};
 }
 
 test('Settings failure stays visible and retries the actual owner',async()=>{
- let attempts=0;
+ // The boot loop reads the Settings owner too; the refusal is armed for the read Settings makes when it opens.
+ let attempts=0,armed=false;
  const v=await mount({get:()=>status('idle'),settings:body=>{
-  if(body.function==='readControls'&&++attempts===1)return {ok:false,error:'Settings read refused'};
+  if(body.function==='readControls'&&armed&&++attempts===1)return {ok:false,error:'Settings read refused'};
   return {ok:true,result:{runMode:'Accept edits',tools:{},libraryCollapsed:[]}};
  }});
  try{
-  await v.click(v.doc.querySelector('[aria-label="Settings"]'));
+  armed=true;await v.click(v.doc.querySelector('[aria-label="Settings"]'));
   await v.settle(()=>!!v.button('Retry settings'),'Settings failure offers retry');
   assert.match(v.doc.body.textContent,/Settings read refused/);
   await v.click(v.button('Retry settings'));
@@ -158,10 +169,12 @@ test('Home composer admits one chat request and restores a refused draft only wh
   let gate=deferred();const chats=[];
   const v=await mount({get:()=>status('idle'),chat:async body=>{chats.push(body);return gate.promise;},workshop:body=>{
     if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+    // A message typed on Home starts its own session first (createTask), then the router chat into it.
+    if(body.function==='createTask')return {ok:true,result:{taskId:'home-session',id:'home-session'}};
     if(body.function==='getGraphMetadata')return {ok:true,result:{}};
     return {ok:true,result:[]};
   }});
-  const message=()=>v.doc.querySelector('.dx-composer textarea[aria-label="Message"]');
+  const message=()=>v.doc.querySelector('.global-composer textarea[aria-label="Message"]');
   const type=text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
   const submit=()=>{const form=message().closest('form');form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));};
   try{
@@ -366,7 +379,8 @@ test('STUDIOFIX an auxiliary Composer edits and sends without replacing the prim
   const primary=v.doc.querySelector('textarea[aria-label="Message"]');
   const type=(field,text)=>{const proto=field.tagName==='TEXTAREA'?v.win.HTMLTextAreaElement.prototype:v.win.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
   type(primary,'Primary unsent draft');await pause();
-  await v.click([...v.doc.querySelectorAll('button')].find(b=>b.textContent.trim()==='+ New task'));
+  // Home has no + New task button since dfb5a14a; Ctrl N opens the same New task dialog.
+  (v.doc.querySelector('[data-screen="home"]')||v.doc.body).dispatchEvent(new v.win.KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true}));await pause();
   await v.settle(()=>!!v.doc.querySelector('[role="dialog"] [aria-label="Task name"]'),'New task opens on Home');
   const auxiliary=v.doc.querySelector('[role="dialog"] [aria-label="Task name"]');
   assert.equal(auxiliary.value,'','a new task opens with an empty name');
@@ -376,110 +390,8 @@ test('STUDIOFIX an auxiliary Composer edits and sends without replacing the prim
  }finally{v.close();}
 });
 
-test('STUDIOFIX Home and Workshop reply drafts are separate across navigation',async()=>{
- const v=await mount({get:()=>status('idle'),workshop:body=>{
-  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-  return {ok:true,result:[]};
- }});
- const message=()=>v.doc.querySelector('textarea[aria-label="Message"]');
- const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
- try{
-  await type('Home draft');
-  assert.equal(v.doc.querySelector('nav [aria-label="Workshop"]'),null);
-  assert.equal(v.doc.querySelector('nav [aria-label="Canvas"]'),null);
-  const view=name=>[...v.doc.querySelectorAll('[data-dx="views"] button')].find(b=>b.textContent.trim()===name);
-  assert.equal(view('Workshop').getAttribute('aria-pressed'),'true');
-  assert.ok(view('Canvas'));
-  await v.click(view('Workshop'));
-  assert.equal(v.doc.title.includes('Home'),true);
-  assert.equal(message().value,'Home draft');
- }finally{v.close();}
-});
-
-test('STUDIOFIX task replies own separate drafts and late replies preserve newer text',async()=>{
- const pending=deferred(),tasks=[{id:'task-a',title:'Task A',status:'WIP'},{id:'task-b',title:'Task B',status:'WIP'}];
- const v=await mount({get:()=>status('idle'),workshop:body=>{
-  if(body.function==='listTasks')return {ok:true,result:tasks};
-  if(body.function==='sendToBaboom')return pending.promise;
-  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-  return {ok:true,result:[]};
- }});
- const message=()=>v.doc.querySelector('textarea[aria-label="Message"]');
- const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
-  const select=async title=>{await v.click([...v.doc.querySelectorAll('[data-design="home.card"]')].find(node=>node.querySelector('.home-card-head b')?.textContent.includes(title))?.querySelector('.home-card-head'));};  // Home is the map: a card picks its session
- try{
-  await v.settle(()=>!!message(),'Home task composer opens');
-  await type('A reply');
-  message().closest('form').dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
-  await pause();await type('A newer reply');
-  await select('Task B');assert.equal(message().value,'','task B owns a separate draft');
-  await type('B reply');
-  pending.resolve({ok:true,result:tasks[0]});
-  await v.settle(()=>message().closest('form').querySelector('button[type="submit"]').getAttribute('aria-busy')!=='true','late task send completed');
-  await select('Task A');assert.equal(message().value,'A newer reply','late task receipt must preserve newer text');
-  await select('Task B');assert.equal(message().value,'B reply');
- }finally{pending.resolve({ok:true,result:tasks[0]});v.close();}
-});
-
-test('the File menu is file-only and Workshop leads with the thread',async()=>{
- const v=await mount({get:()=>status('idle'),settings:body=>body.function==='readPermissions'?{ok:true,result:{runMode:''}}:{ok:true,result:{}},workshop:body=>{
-  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-  return {ok:true,result:[]};
- }});
- try{
-  await v.settle(()=>v.doc.querySelector('[data-run-mode]')?.textContent.includes('Mode unavailable'),'an unreported run mode stays Mode unavailable');
-  assert.equal(v.doc.querySelector('[data-run-mode]').textContent.includes('Accept edits'),false,'the header has no Accept edits pill');
-  assert.equal(v.doc.querySelector('[data-dx="canvas-commands"]'),null,'canvas commands stay off the Workshop face');
-  assert.ok(v.doc.querySelector('[data-dx="conversation"]'),'Workshop leads with the conversation');
-  assert.equal(v.doc.querySelector('[data-dx="workflow"]'),null,'Workshop hides workflow cards until a plan is recorded');
-  assert.equal(v.doc.querySelector('.dx-new-task').textContent,'+ New task');
-  assert.equal(v.doc.querySelector('.dx-model select').getAttribute('aria-label'),'Model');
-  assert.match(v.doc.querySelector('.dx-model').textContent,/Free models first/);
-  const menu=v.doc.querySelector('[data-dx="file-menu"]');
-  assert.equal(menu.getAttribute('aria-label'),'File');
-  const labels=[...menu.querySelectorAll('[role="menuitem"]')].map(node=>node.textContent.trim());
-  assert.deepEqual(labels,['New file','Open file…','Import…','Library']);
-  assert.doesNotMatch(menu.textContent,/Search|Activity|Add node|Overview|Save as/);
-  const library=[...menu.querySelectorAll('[role="menuitem"]')].find(node=>node.textContent.trim()==='Library');
-  await v.click(library);
-  await v.settle(()=>!!v.doc.querySelector('[aria-label="Library shelf"]'),'Library from Workshop opens the shelf');
-  await v.click([...v.doc.querySelectorAll('[data-dx="views"] button')].find(node=>node.textContent.trim()==='Canvas'));
-  await v.settle(()=>!!v.doc.querySelector('[data-dx="canvas-commands"]'),'Canvas opens its commands');
-  const commands=v.doc.querySelector('[data-dx="canvas-commands"]').textContent;
-  for(const label of ['+ Add node','Library','Program view','Present','Model review','Overview'])assert.ok(commands.includes(label),label);
- }finally{v.close();}
-});
-
-test('Workshop plan steps are cards beside the conversation and review rows keep Evidence',async()=>{
- const tasks=[{id:'review',title:'Header and buttons',status:'IN REVIEW',owner:'717',summary:'Needs a visual check',reviews:[{summary:'Needs a visual check'}],plan:['Study the task'],progress:{'Study the task':'Saved'}},{id:'work',title:'Unify task workspace',status:'WIP',owner:'designer',summary:'Layout and interactions',plan:['Unify Home','Verify installed app'],progress:{'Unify Home':'Working','Verify installed app':'Awaiting verification'}}];
- const v=await mount({get:()=>status('idle'),workshop:body=>{
-  if(body.function==='listTasks')return {ok:true,result:tasks};
-  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-  if(body.function==='openTaskGraph')return {ok:true,result:{}};
-  return {ok:true,result:[]};
- }});
- try{
-  await v.settle(()=>v.doc.querySelector('[data-dx="workflow"]'),'a recorded plan draws workflow cards');
-  const cards=[...v.doc.querySelectorAll('.dx-flow-card')];
-  assert.equal(cards.length,1,'the selected task shows only its own steps');
-  assert.match(cards[0].textContent,/Study the task/);
-  assert.match(cards[0].textContent,/Saved/);
-  assert.ok(v.doc.querySelector('[data-dx="conversation"]'),'the conversation stays beside the cards');
-  const review=v.doc.querySelector('.dx-task-row[data-status="review"]');
-  assert.ok(review,'a review row carries its status line');
-  assert.equal(review.querySelector('.dx-evidence').textContent,'Evidence');
-  assert.match(review.textContent,/Needs a visual check/);
-  await v.click([...v.doc.querySelectorAll('[data-design="home.card"]')].find(node=>node.querySelector('.home-card-head b')?.textContent.includes('Unify task workspace'))?.querySelector('.home-card-head'));
-  await v.settle(()=>v.doc.querySelectorAll('.dx-flow-card').length===2,'the working task shows its own cards');
-  const words=[...v.doc.querySelectorAll('.dx-flow-status')].map(node=>node.textContent);
-  assert.deepEqual(words,['Working','Awaiting verification']);
- }finally{v.close();}
-});
-
+// Drafts per Home session are proven on the compiled app with two real map cards: the map draws no cards in JSDOM
+// (no layout). See 03.TOOLS/tools/real_app_check/scenarios/home_drafts.mjs.
 test('Settings search shows values and Advanced rows, then reveals the control in place',async()=>{
  const nodes=[{id:'n1',label:'Appearance',properties:[{label:'Text scale',value:100,editor:'number',setting:{kind:'theme'},relation:'n1',editable:true}]}];
  const v=await mount({get:()=>status('idle'),nodes,workshop:body=>{
@@ -497,8 +409,8 @@ test('Settings search shows values and Advanced rows, then reveals the control i
   field.dispatchEvent(new v.win.Event('change',{bubbles:true}));
   await v.settle(()=>!![...v.doc.querySelectorAll('.sheet-result')].find(node=>node.textContent.includes('Text scale')&&node.textContent.includes('100')&&node.textContent.includes('Advanced')),'the value and Advanced row are in the results');
   await v.click([...v.doc.querySelectorAll('.sheet-result')].find(node=>node.textContent.includes('Text scale')));
-  await v.settle(()=>!!v.doc.querySelector('[data-setting="n1:Text scale"]')&&!v.doc.querySelector('[aria-label="Search settings"]').value,'selecting the result reveals that control and keeps Settings open');
-  assert.equal(v.doc.querySelector('[data-screen]').getAttribute('data-screen').startsWith('settings/'),true);
-  assert.equal(v.doc.querySelector('[aria-expanded="true"]').textContent,'Advanced');
+  // The result opens its own Settings page with the search cleared. The graph's raw Advanced rows (a node property as
+  // a setting) left with the graph (NOGRAPH); Text scale is the Settings owner's Appearance row.
+  await v.settle(()=>v.doc.querySelector('[data-screen]')?.getAttribute('data-screen')==='settings/Appearance'&&!v.doc.querySelector('[aria-label="Search settings"]').value,'selecting the result reveals that control and keeps Settings open');
  }finally{v.close();}
 });

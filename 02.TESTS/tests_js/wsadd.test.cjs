@@ -123,8 +123,7 @@ test('verified recovery keeps the existing workspace controls and truthful row s
       assert.equal(buttons.filter(b => b.textContent === 'Open').length, 2);
       assert.equal(buttons.filter(b => b.textContent === 'Remove').length, 1, 'built-in is not removable');
       assert.equal(buttons.filter(b => b.getAttribute('aria-label')?.startsWith('Privacy ')).length, 2);
-      assert.match(page.text, /Source: Application graph/);
-      assert.match(page.text, /Projection: match/);
+      // The graph Source and Projection labels left with the graph registry (NOGRAPH 0903af61); the rows above are the behaviour.
     } finally {page.close();}
   }
 });

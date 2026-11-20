@@ -6,9 +6,14 @@ const vm=require('node:vm');
 const React=require('react');
 const {renderToStaticMarkup}=require('react-dom/server');
 const {transformSync}=require('esbuild');
+// Receipts are quiet (a91abe50): a routine delivered or answered message shows none; only a message that needs
+// attention (queued, or failed) carries a status chip. Its wording comes from ui.jsx's deliveryAttention, its one owner.
+const shared={ArchHubAPI:{},AH:{},AH_DS:{},registerActions(){}};
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/ui.jsx'),'utf8'),{loader:'jsx',jsx:'transform'}).code,{window:shared,React,console});
+const deliveryAttention=shared.UI.deliveryAttention;
 
-test('Workshop renders each real projected delivery state alongside its message',()=>{
-  const window={UI:{A:{},D:{},Av:()=>null,TurnUsage:()=>null,AnswerWidget:()=>null,AnswerSources:()=>null},
+test('Workshop marks only the messages whose delivery needs attention',()=>{
+  const window={UI:{A:{},D:{},Av:()=>null,Chip:({c,children,...props})=>React.createElement('span',props,children),deliveryAttention,TurnUsage:()=>null,AnswerWidget:()=>null,AnswerSources:()=>null},
     ArchHubAPI:{executeAction:()=>{},getSnapshot:()=>({providers:[]})}};
   const context=vm.createContext({window,React});
   vm.runInContext(transformSync(fs.readFileSync(path.join(__dirname,
@@ -16,12 +21,12 @@ test('Workshop renders each real projected delivery state alongside its message'
   const html=renderToStaticMarkup(React.createElement(window.UI.Messages,{task:{messages:[
     {id:'m1',who:'You',text:'To Codex',state:'pending'},
     {id:'m2',who:'You',text:'To Cursor',state:'delivered'},
-    {id:'m3',who:'You',text:'To Claude',state:'answered'}]}}));
-  for(const state of ['pending','delivered','answered']) {
-    assert.match(html,new RegExp('data-delivery-state="'+state+'"'));
-    assert.match(html,new RegExp(state,'i'));
-  }
-  assert.match(html,/role="status"/);
+    {id:'m3',who:'You',text:'To Claude',state:'answered'},
+    {id:'m4',who:'You',text:'To Gemini',state:'not_delivered'}]}}));
+  for(const text of ['To Codex','To Cursor','To Claude','To Gemini'])assert.match(html,new RegExp(text));
+  assert.equal(html.split('data-delivery-attention').length-1,2,'only the queued and the failed message carry a receipt');
+  assert.match(html,/role="status"[^>]*>Queued</);
+  assert.match(html,/role="status"[^>]*>not delivered</);
 });
 
 test('Workshop discards an older page that arrives after a graph or account switch',async()=>{
@@ -65,7 +70,7 @@ test('Workshop room renders real mailbox projection even with no Work tasks',asy
       {id:'answered',who:'Cursor',text:'To Claude',state:'answered'}]};
   const data={tasks:[],providers:[],profile:{},graph:{name:'Fixture Workshop'},workshopMessages:page.messages};
   const wrapper=tag=>props=>React.createElement(tag,{},props.children);
-  const window={UI:{A:{lineSoft:'#2a2a31'},D:{},useData:()=>data,useApp:()=>({}),
+  const window={UI:{A:{lineSoft:'#2a2a31'},D:{},useData:()=>data,useApp:()=>({}),deliveryAttention,
     Av:()=>null,Btn:wrapper('button'),Card:wrapper('div'),Chip:wrapper('span'),Composer:()=>null,
     Empty:wrapper('p'),TurnUsage:()=>null,AnswerWidget:()=>null,AnswerSources:()=>null},
     ArchHubAPI:{executeAction:()=>{},getSnapshot:()=>({providers:[]})}};
@@ -74,7 +79,7 @@ test('Workshop room renders real mailbox projection even with no Work tasks',asy
   const html=renderToStaticMarkup(React.createElement(window.UI.Workshop));
   assert.match(html,/Workshop room/);
   for(const row of page.messages){assert.ok(html.includes(row.text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')));}
-  for(const state of ['pending','delivered','answered'])assert.match(html,new RegExp('data-delivery-state="'+state+'"'));
+  if(!process.env.WSINJECT_UI_DATA)assert.equal(html.split('>Queued<').length-1,1,'only the pending message reads Queued');
   if(process.env.WSINJECT_SCREENSHOT){
     const {chromium}=require('playwright');
     const browser=await chromium.launch({headless:true,...(process.env.WSINJECT_CHROME?{executablePath:process.env.WSINJECT_CHROME}:{})});

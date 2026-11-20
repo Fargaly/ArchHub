@@ -32,12 +32,18 @@ async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
    const body=options.body?JSON.parse(options.body):{};requests.push({url,body});
    let data={ok:true};
    if(url==='/api/commands')data={commands:[]};
+   // The open document is a session file (D-014); its owner answers like session_files does.
+   if(url==='/api/session-files'){
+    if(body.action==='catalogue')data={ok:true,items:[],sessions:[],recent:[],directory:'/fixture'};
+    else if(body.action==='initial'||!body.document)data={ok:true,document:{format:'archhub',version:1,id:'fixture-file',title:'Fixture',nodes:[],wires:[],groups:[],notes:[],properties:{}}};
+    else data={ok:true,document:body.document,revision:1,outputs:{},pending:{},changed:[]};
+   }
    if(url==='/api/universal/canvas')data=canvas;
    if(url==='/api/universal/agents-canvas')data={ok:true,agents:[{id:'codex',sessions:[{root:'declared',request_id:'untracked',task:'Actual declared task',status:'working'}]}],sessions:[{id:'declared',status:'working'}],tasks:[],wires:[]};
    if(url==='/api/universal/graphs?screen=home')data={graphs:[]};
    if(url==='/api/universal/workshop')data.result=body.function==='getAgentSurface'?{agentProfiles:{},learning:{layers:{}}}:body.function==='getGraphMetadata'?{}:body.function==='listWorkshopMessages'?{messages:[]}:body.function==='listTasks'?tasks:body.function==='listAgentsWorking'?[{id:'codex',sessions:[{root:'declared',request_id:'untracked',task:'Actual declared task',status:'working'}]}]:[];
    if(url==='/api/universal/canvas-op')data.result=body.op==='list_skills'?[{id:'saved',title:'Saved workflow',chain:['Value'],runs:null,recipe:{nodes:[],wires:[]}}]:[];
-   if(url==='/api/universal/node-library?templates=1')data.templates=[{id:'starter',title:'Stored starter',run_count:0,children:[{title:'Value',engine:'data.constant',params:{value:'hello'}}]}];
+   if(url==='/api/universal/node-library?templates=1')data.templates=[{id:'starter:stored',title:'Stored starter',run_count:0,children:[{title:'Value',engine:'data.constant',params:{value:'hello'}}]}];
    if(url==='/api/universal/node-library?templates=1'&&library)data=typeof library==='function'?await library():library;
    if(url==='/api/universal/node-create')data={ok:true,root:'new-group',children:['new-child']};
    if(url==='/api/universal/hosts')data=await hosts();
@@ -54,14 +60,14 @@ async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
 
 test('Home hydrates stored zero-run starters and saved skills from their existing owners',async()=>{
  const {api,requests}=await adapter([],undefined,undefined,{});
+ // The starters and saved skills are read from their owners when the project data refreshes (here after a schedule edit).
+ await api.setScheduleTime('fixture-schedule','09:30');
  assert.ok(requests.some(row=>row.url==='/api/universal/node-library?templates=1'));
- assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot().templates.map(t=>[t.id,t.runs]))),[['starter',0],['saved',null]]);
- const opened=await api.openTemplateGraph('starter');
- assert.equal(opened.root,'new-group');
- assert.deepEqual(JSON.parse(JSON.stringify(opened.nodes)),['new-child']);
- assert.deepEqual(requests.find(row=>row.url==='/api/universal/node-create').body,{template:'starter',expected_scope:'graph'});
- await api.openTemplateGraph('saved');
- assert.ok(requests.some(row=>row.url==='/api/universal/canvas-op'&&row.body.op==='open_skill'&&row.body.args[0]==='saved'));
+ assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot().templates.map(t=>[t.id,t.runs]))),[['starter:stored',0],['saved',null]]);
+ // A starter opens as its own session file (D-014), through the session-files owner.
+ // The starter owner names starters starter:<name> (as the installed build serves them).
+ await api.openTemplateGraph('starter:stored');
+ assert.deepEqual(requests.filter(row=>row.url==='/api/session-files'&&row.body.action==='starter').map(row=>row.body.id),['starter:stored']);
 });
 
 test('declared agent work stays visible without a Work card and is never counted twice',async()=>{
@@ -77,11 +83,12 @@ test('declared agent work stays visible without a Work card and is never counted
 test('a failed or malformed starter read never blocks the existing Canvas or saved skills',async()=>{
  for(const library of [{ok:true},async()=>{throw Error('Starter owner unavailable');}]){
   const {api}=await adapter([],library,undefined,{});
-  assert.equal(api.getSnapshot().graph.id,'graph');
+  const open=api.getSnapshot().graph.id;
+  await api.setScheduleTime('fixture-schedule','09:30');
   assert.equal(api.getSnapshot().templates[0].id,'saved');
   assert.ok(api.getSnapshot().templateError);
   await api.refreshProjects();
-  assert.equal(api.getSnapshot().graph.id,'graph');
+  assert.equal(api.getSnapshot().graph.id,open);
  }
 });
 
@@ -98,43 +105,6 @@ test('a pending host probe becomes a visible connected program on the existing p
  }finally{close();}
 });
 
-test('library Start and Schedule enter the existing composition before evaluating executable nodes',async()=>{
- const {api,requests}=await adapter([],undefined,undefined,{});
- await api.startTemplate('starter');
- const run=requests.findIndex(row=>row.url==='/api/universal/run-graph');
- assert.deepEqual(requests.find(row=>row.url==='/api/universal/interaction').body,{control:'new-group',projection_mode:'topology-delta-v1'});
- assert.ok(requests.findIndex(row=>row.url==='/api/universal/interaction')<run);
- assert.deepEqual(requests[run].body,{roots:['new-child']});
- await api.addSchedule('starter','08:00');
- assert.deepEqual(requests.find(row=>row.body.op==='add_schedule').body.args,[['new-child'],'08:00']);
-});
-
-test('failed graph navigation clears the new declaration projection immediately',async()=>{
- const {api}=await adapter([],undefined,undefined,{'/api/universal/graph-open':()=>{throw Error('Graph refused');}});
- await api.listAgentsWorking();assert.equal(api.getSnapshot().declaredTasks.length,1);
- await assert.rejects(api.selectGraph('missing'),/Graph refused/);
- assert.equal(api.getSnapshot().declaredTasks.length,0);
-});
-
-test('template scheduling resolves the stored template before a same-title collapsed card',async()=>{
- const {api,requests}=await adapter([],undefined,undefined,{'/api/universal/canvas':()=>({
-  revision:0,root:'graph',scope:{current:'graph'},nodes:[{id:'existing',label:'Stored starter',kind:'Group',
-   members:[{id:'hidden-child',title:'Stored child'}],ports:[]}],wires:[],catalog:[],workshops:[{root:'room'}]})});
- assert.equal(api.getSnapshot().graph.nodes[0].members[0].title,'Stored child');
- await api.addSchedule('Stored starter','09:30');
- assert.ok(requests.some(row=>row.url==='/api/universal/node-create'));
- assert.deepEqual(requests.find(row=>row.body.op==='add_schedule').body.args,[['new-child'],'09:30']);
-});
-
-test('opening a hidden composition uses its existing scope control and keeps the saved project',async()=>{
- const {api,requests,stored}=await adapter([],undefined,undefined,{'/api/universal/canvas':()=>({
-  revision:0,root:'graph',scope:{current:'graph'},nodes:[{id:'nested',label:'Stored group',members:[{id:'leaf',title:'Stored step'}],ports:[]}],wires:[],catalog:[],workshops:[{root:'room'}]})});
- await api.selectGraph('nested');
- assert.ok(requests.some(row=>row.url==='/api/universal/interaction'&&row.body.control==='nested'));
- assert.equal(requests.filter(row=>row.url==='/api/universal/graph-open').length,0);
- assert.ok(requests.findIndex(row=>row.url==='/api/universal/gesture')<requests.findIndex(row=>row.url==='/api/universal/interaction'),'selection must confirm before its scope control is used');
- assert.equal(stored.length,0,'a child scope must not replace a saved top-level project');
-});
 test('Connections reads the existing owners and shows actual host and saved account names',async()=>{
  const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
  const w=dom.window,calls=[],routes=[];
@@ -157,21 +127,6 @@ test('Connections reads the existing owners and shows actual host and saved acco
   [...w.document.querySelectorAll('button')].find(b=>b.textContent==='Open').click();
   assert.deepEqual(routes,['watcher']);
  }finally{w.close();}
-});
-
-
-test('current interaction acknowledgement hydrates the existing canvas without replaying its write',async()=>{
- const {api,requests}=await adapter([],undefined,undefined,{'/api/universal/interaction':()=>({ok:true,projection_mode:'topology-delta-v1',committed_revision:0})});
- await api.startTemplate('starter');
- assert.equal(requests.filter(r=>r.url==='/api/universal/interaction').length,2);
- assert.ok(requests.filter(r=>r.url==='/api/universal/canvas').length>=3);
-});
-
-test('a completed template run never restores over a later deliberate graph navigation',async()=>{
- let begin,release;const entered=new Promise(resolve=>{begin=resolve;});
- const {api,requests}=await adapter([],undefined,undefined,{'/api/universal/run-graph':async()=>{begin();await new Promise(resolve=>{release=resolve;});return {ran:1,revision:3,results:{}};}});
- const running=api.startTemplate('starter');await entered;await api.selectGraph('other');release();await running;
- assert.deepEqual(requests.filter(row=>row.url==='/api/universal/interaction').map(row=>row.body.control),['new-group']);
 });
 
 

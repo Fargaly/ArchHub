@@ -13,7 +13,8 @@ test('BABOOM5 native HTML mounts the actual shared Approve card and awaits its c
   win.structuredClone=globalThis.structuredClone;
   win.qt={webChannelTransport:{}};
   const bridge={settled:{connect:fn=>listeners.add(fn),disconnect:fn=>listeners.delete(fn)},
-    decide:(binding,choice)=>calls.push({binding,choice})};
+    // The native bridge's one decision slot is choose(binding, choice) since 5520a6fa (one decide with run modes).
+    choose:(binding,choice)=>calls.push({binding,choice})};
   win.QWebChannel=function(_,callback){callback({objects:{baboom:bridge}});};
   try {
     for(const script of win.document.querySelectorAll('script')) {

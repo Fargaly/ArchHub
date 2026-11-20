@@ -11,6 +11,11 @@ async function mount(name,props={},server=()=>({ok:true,result:[]})){
   const body=options.body?JSON.parse(options.body):null;if(body)posts.push({url,body});
   let data={ok:true};
   if(url==='/api/commands')data={commands:[]};
+  // The open file (D-014): a node's output is its recorded result in the session document.
+  if(url==='/api/session-files'){
+   const file={format:'archhub',version:1,id:'fixture',title:'Fixture',nodes:[{id:'node',type:'data.constant',title:'Actual output',params:{},position:{x:0,y:0},result:{status:'Done',output:[{value:7}]}}],wires:[],groups:[],notes:[],properties:{}};
+   data=body?.action==='catalogue'?{ok:true,items:[],sessions:[],directory:'/fixture'}:{ok:true,document:body?.document||file,path:'',revision:1,results:{},solved:[],stale:[],ms:1};
+  }
   if(url==='/api/universal/canvas')data={root:'graph',scope:{current:'graph'},nodes:[{id:'node',label:'Actual output',ports:[],properties:[],output:[{value:7}]}],wires:[],catalog:[],workshops:[{root:'workshop'}]};
   else if(url==='/api/universal/workshop')data=await server(body);
   else if(url==='/api/universal/brain-export')data={ok:true,facts:{folders:[{label:'User',facts:[{id:'fact',body:'A real fixture fact',kind:'fact'}]}]}};

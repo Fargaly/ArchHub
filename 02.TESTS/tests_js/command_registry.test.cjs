@@ -124,7 +124,10 @@ test('every existing menu item preserves label, order, state and action calls', 
       if(oldButtons[index].props.disabled)continue;
       old.calls.length=now.calls.length=0;
       await oldButtons[index].props.onClick({});await newButtons[index].props.onClick({});
-      assert.deepEqual(plain(now.calls),plain(old.calls),fixture.kind+' '+shape(oldButtons)[index].label);
+      // #372: Rerun runs the node again (runNode(id, true)); every other control keeps the old calls exactly.
+      const label=shape(oldButtons)[index].label;
+      const expected=plain(old.calls).map(call=>label==='Rerun'&&call[0]==='api.runNode'?[...call,true]:call);
+      assert.deepEqual(plain(now.calls),expected,fixture.kind+' '+label);
       mapped++;
     }
     const contextProps=props(now);
@@ -158,7 +161,10 @@ test('all old palette sources and every navigation page preserve their actions',
   for(let index=0;index<items.length;index++){
     old.calls.length=now.calls.length=0;
     await prior[index].action();await items[index].action();
-    assert.deepEqual(plain(now.calls),plain(old.calls),items[index].label);
+    // a55d4923: a starter or saved-workflow result opens it in Canvas (openTemplateGraph, then Canvas), not the Skill card.
+    const template=state.templates.find(t=>t.title===items[index].label);
+    const expected=template?[['api.openTemplateGraph',template.id],['u.go','canvas']]:plain(old.calls);
+    assert.deepEqual(plain(now.calls),expected,items[index].label);
   }
   console.log('MAPPED existing palette entries: '+items.length+'; unmapped: 0');
 });

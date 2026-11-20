@@ -105,7 +105,8 @@ test('DS-PORT Toggle and changed Row match plate geometry and invoke the owner',
     const off = ui.render('Toggle', {disabled:true,label:'Enabled',onCheckedChange:value => changed.push(value)});
     ui.flush(() => off.click()); assert.deepEqual(changed,[false]);
     const settings = ui.render('Toggle', {variant:'settings',checked:true,label:'Read'});
-    assert.deepEqual(style(settings,['width','height']), {width:'34px',height:'20px'});
+    // Settings controls were aligned to 36px in c062c192 (accepted Studio evidence).
+    assert.deepEqual(style(settings,['width','height']), {width:'36px',height:'20px'});
     let resets = 0;
     const row = ui.render('Row', {k:'Theme',changed:true,hint:'Personal appearance',onReset:() => resets++}, 'Dark');
     assert.deepEqual(style(row,['gridTemplateColumns','minHeight','padding']),

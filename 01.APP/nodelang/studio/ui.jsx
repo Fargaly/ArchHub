@@ -193,7 +193,9 @@
       return () => u.setHomeThreadId(null);
     }, [u.route, taskId, onSent, homeThreadId, u.setHomeThreadId]);
     const [localDraft,setLocalDraft] = React.useState({text:'',revision:0});
-    const draftKey = JSON.stringify([u.route,taskId || '']);
+    // The draft belongs to where it will go: the task, the session picked on Home (homeSession has no taskId), or a new
+    // session (New session on the scope chip, or nothing picked). One key per route and actual target.
+    const draftKey = JSON.stringify([u.route,taskId || toSession?.id || '']);
     const {text} = onSent ? localDraft : u.composerDraft[draftKey] || {text:'',revision:0},
       setDraft = onSent ? setLocalDraft : update => u.setComposerDraft(current => ({
         ...current,[draftKey]:update(current[draftKey] || {text:'',revision:0})
@@ -202,7 +204,7 @@
     const [to, setTo] = React.useState(''),
       [sending, setSending] = React.useState(false),
       [contextOpen, setContextOpen] = React.useState(false);
-    const pending = React.useRef(0);
+    const pending = React.useRef(0), sentRevision = React.useRef(null);
     const choices = window.UI.workshopPeople ? window.UI.workshopPeople(s).choices : [];
     const inputRef = React.useRef(null), [composerWidth, setComposerWidth] = React.useState(760);
     React.useLayoutEffect(() => {
@@ -213,6 +215,15 @@
     useAskBaboom(setTo, inputRef, setText);
     const send = async () => {
       if (!text.trim()) return;
+      // A second submit in the same tick (Enter twice) still sees this draft: it is the same message, sent once.
+      const revision = (onSent ? localDraft : u.composerDraft[draftKey] || {revision: 0}).revision;
+      // The same target and revision is the same message; another target's draft at an equal revision is its own send.
+      if (sentRevision.current === draftKey + '#' + revision) return;
+      sentRevision.current = draftKey + '#' + revision;
+      // A failed send gives its text back only while the box still holds the draft this send cleared: never over newer
+      // typing, and never over a later message that was sent meanwhile (its cleared box is not this send's).
+      const cleared = revision + 1;
+      const restore = () => setDraft(current => current.revision === cleared ? {text, revision: current.revision + 1} : current);
       // DESIGNSYS-050 4.9: the same To-list as the Workshop; a joined agent is @mentioned, a start choice starts that chat agent.
       const turn = window.UI.chatTurn(choices, to, text), {prompt: message, agent} = turn;
       // Each send leaves at once: the draft clears now (a second message 1 s later is its own send)
@@ -223,7 +234,7 @@
       try {
         if (toSession) {
           const sent = await u.act(() => agent === 'BABOOM' ? api.sendToBaboom(message, {taskId: toSession.id, scope: s.graph.id}) : api.sendChatTurn(turn, undefined, toSession.id));
-          if (!sent) { setDraft(current => current.text ? current : {text,revision:current.revision+1}); return; }
+          if (!sent) { restore(); return; }
           await api.listTasks?.();
           u.setToast({text: 'Sent to ' + (toSession.sessionTitle || toSession.title) + '. It is in that session’s thread.', open: () => u.openTaskFile(toSession.id)});  // Home stays; Open goes in
           return;
@@ -233,7 +244,7 @@
           if ((!taskId || agent !== 'BABOOM') && typeof api.apiRouterChat === 'function') return api.sendChatTurn(turn, undefined, taskId || undefined);
           return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id});
         });
-        if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
+        if (!t) restore();
         if (t) {
           if(u.route==='home'&&!taskId&&!onSent){
             // BABOOM or a chat agent: a start opens its session only once it answered; a refused start leaves nothing behind
@@ -241,7 +252,7 @@
             const answered=await u.act(()=>api.sendChatTurn({...turn,fresh:true},undefined,t.taskId));   // fresh: this session was made for this start
             await api.listTasks?.();
             if(answered){await u.openTaskFile(t.taskId);return;}
-            setDraft(current => current.text ? current : {text,revision:current.revision+1});return;}
+            restore();return;}
           if (typeof t.answer === 'string') {
             onSent?.(t);
             return;

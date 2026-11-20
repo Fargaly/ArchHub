@@ -1,5 +1,6 @@
 """Isolated static export check; no application imports, browser or live profile."""
 import json
+import os
 import re
 import subprocess
 import sys
@@ -81,7 +82,7 @@ class StaticSiteTest(unittest.TestCase):
             history = "\n".join(f"## {identity}\n\n- Kept manual entry {i}.\n"
                                 for i, identity in enumerate(local_only))
             path.write_text("# Changelog\n\n## Next build\n\n" + history, encoding="utf-8")
-            with patch.object(sync_changelog, "CHANGELOG", path), patch.object(
+            with patch.dict("os.environ", {"GH_TOKEN": ""}), patch.object(sync_changelog, "CHANGELOG", path), patch.object(
                     sync_changelog.urllib.request, "urlopen", side_effect=response):
                 result = sync_changelog.sync()
                 stamp = path.stat().st_mtime_ns
@@ -92,6 +93,31 @@ class StaticSiteTest(unittest.TestCase):
             self.assertTrue(result.endswith(history))
             self.assertEqual(path.read_text(encoding="utf-8"), result)
 
+
+    def test_release_fetch_authentication_stays_on_the_initial_request(self):
+        from urllib.request import HTTPRedirectHandler
+
+        requests = []
+
+        def response(request, timeout):
+            redirected = HTTPRedirectHandler().redirect_request(
+                request, None, 302, "Found", {}, "https://redirect.example/releases")
+            requests.append((request.get_header("Authorization"), redirected.get_header("Authorization")))
+            self.assertEqual(request.host, "api.github.com")
+            return BytesIO(b"[]")
+
+        with patch.object(sync_changelog.urllib.request, "urlopen", side_effect=response):
+            with patch.dict("os.environ", {"GH_TOKEN": "placeholder-env"}):
+                self.assertEqual(sync_changelog.fetch_releases(), [])
+                self.assertEqual(sync_changelog.fetch_releases("placeholder-helper"), [])
+                self.assertEqual(sync_changelog.fetch_releases(""), [])
+            with patch.dict(os.environ):
+                os.environ.pop("GH_TOKEN", None)
+                self.assertEqual(sync_changelog.fetch_releases(), [])
+        self.assertEqual(requests, [
+            ("Bearer placeholder-env", None), ("Bearer placeholder-helper", None),
+            (None, None), (None, None),
+        ])
 
     def test_deploy_context_rejects_public_identity_matches(self):
         def render_identity(site, *release):

@@ -4,6 +4,8 @@ Run from the repository root (stdlib only):
 
     python 03.TOOLS/packaging/website/sync_changelog.py
 
+Set GH_TOKEN in the environment to use the authenticated GitHub API quota.
+
 Keeps the empty ``## Next build`` slot, writes every published stable build as a
 heading (newest first), and preserves older hand-written entries that are not
 on GitHub. Release bodies that only carry the Build block become honest
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import urllib.request
 from pathlib import Path
@@ -26,12 +29,16 @@ SYNC_CHANGELOG_NODE = {'id': 'website.sync_changelog', 'params': {'request_secon
 BUILD_HEADING = re.compile(r"^## (20\d{6}-(?:\d{4}-[0-9a-f]+|\d{6}-[1-9]\d*-[1-9]\d*-[0-9a-f]{40}))\s*$", re.M)
 
 
-def fetch_releases() -> list[dict]:
+def fetch_releases(token: str | None = None) -> list[dict]:
+    if token is None:
+        token = os.environ.get("GH_TOKEN")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "archhub-changelog-sync"}
     rows: list[dict] = []
     page = 1
     while True:
         request = urllib.request.Request(f"{API}?per_page=100&page={page}", headers=headers)
+        if token:
+            request.add_unredirected_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(request, timeout=SYNC_CHANGELOG_NODE['params']['request_seconds']) as response:
             batch = json.load(response)
         if not batch:
@@ -99,8 +106,8 @@ def existing_entries(text: str) -> dict[str, str]:
     return found
 
 
-def sync() -> str:
-    releases = fetch_releases()
+def sync(token: str | None = None) -> str:
+    releases = fetch_releases(token)
     if not releases:
         raise SystemExit("GitHub returned no releases")
     current = CHANGELOG.read_text(encoding="utf-8") if CHANGELOG.exists() else "# Changelog\n\n## Next build\n"

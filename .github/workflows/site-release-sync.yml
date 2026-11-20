@@ -58,6 +58,8 @@ jobs:
           python-version: "3.12"
       - name: Rewrite CHANGELOG.md from published releases
         if: github.event_name != 'workflow_run' || steps.published.outputs.confirmed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python 03.TOOLS/packaging/website/sync_changelog.py
       - name: Commit when the changelog moved
         if: github.event_name != 'workflow_run' || steps.published.outputs.confirmed == 'true'

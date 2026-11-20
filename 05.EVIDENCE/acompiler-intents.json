@@ -204,6 +204,13 @@
         "05.EVIDENCE/guardownscratch/"
       ]
     },
+    "REVITIFCEXPORT": {
+      "source": "2026-11-20 Workshop Projects report 038: implement the existing Revit IFC export consumer with exact project, document, version and output admission; verify the installed API signatures and protect existing output with disposable tests.",
+      "scope": [
+        "01.APP/nodelang/clean_revit_adapter.py",
+        "02.TESTS/tests_replica/test_recomp_revit_adapter.py"
+      ]
+    },
     "REVITWALLLEVEL": {
       "source": "2026-11-20 F405: require an explicit available Revit level before creating walls, keep valid pipeline behavior and verify the selection and transaction path with no live model changes.",
       "scope": [

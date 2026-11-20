@@ -166,7 +166,8 @@ test('SETTINGSMATCH review: header keeps what waits for you, the account check e
     await page.getByRole('heading', {name: 'Sign in'}).first().waitFor();
     await page.getByRole('button', {name: 'Close dialog', exact: true}).click();
     // 3 + 4. Models: no empty section heading, no constant value, one label per switch.
-    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Models', exact: true}).click();
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Agents', exact: true}).click();
+    await page.getByRole('navigation', {name: 'Agents pages'}).getByRole('button', {name: 'Models & BABOOM', exact: true}).click();
     await page.locator('select[aria-label="Default model"]').waitFor();
     assert.equal(await page.getByRole('heading', {name: 'Follow through', exact: true}).count(), 0);
     assert.equal(await page.getByRole('heading', {name: 'Knowledge', exact: true}).count(), 0);
@@ -260,12 +261,13 @@ test('SETTINGSMATCH second review: value boxes open, Retry stays visible, no emp
     assert.ok(box && box.width > 10 && box.x >= header.x && box.x + box.width <= header.x + header.width, JSON.stringify({box, header}));
     assert.equal(await page.locator('.header-error-text').getAttribute('title'), error);
     // 3 + 4. Changed only on Appearance with nothing changed: no bare headings, one line instead.
-    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Appearance', exact: true}).click();
-    await page.getByRole('button', {name: 'Changed only', exact: true}).click();
-    await page.getByText('Nothing changed from the defaults.', {exact: true}).waitFor();
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Look', exact: true}).click();
+    await page.getByRole('button', {name: /^Changed \d+$/}).click();
+    await page.getByText('No settings differ from their defaults.', {exact: true}).waitFor();
     assert.equal(await page.getByRole('heading', {name: 'Interface', exact: true}).count(), 0);
     assert.equal(await page.getByRole('heading', {name: 'Canvas', exact: true}).count(), 0);
-    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Models', exact: true}).click();
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Agents', exact: true}).click();
+    await page.getByRole('navigation', {name: 'Agents pages'}).getByRole('button', {name: 'Models & BABOOM', exact: true}).click();
     const fallback = page.locator('.sheet-field').filter({hasText: 'Fallback order'}).locator(':scope > div');
     await fallback.waitFor();
     assert.equal((await fallback.innerText()).trim(), 'None');

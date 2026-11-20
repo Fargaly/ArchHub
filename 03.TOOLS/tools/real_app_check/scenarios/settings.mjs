@@ -11,8 +11,9 @@ export const steps=[
  'Late startup preserves the newer saved workflow',
  'Installed Projects preserves workspace selection, files and registrations',
  'Installed Settings recovers a stale scope without replaying a write',
+ 'Installed Projects creates the selected Office folder tree through its native picker',
 ];
-export default async function({step,js,until,clickText,cdp,out}){
+export default async function({step,js,until,clickText,cdp,out,native}){
  const runs=fs.readdirSync(out,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&entry.name.startsWith('run-'));assert.equal(runs.length,1);
  const isolated=path.join(out,runs[0].name),folder=path.join(isolated,'settings-fixture');fs.mkdirSync(folder,{recursive:true});
  const file=path.join(folder,'settings.archhub'),globalFile=path.join(isolated,'state/settings/settings.json'),workspaceFile=path.join(isolated,'state/settings/workspaces.json');
@@ -228,6 +229,37 @@ export default async function({step,js,until,clickText,cdp,out}){
    return {pass:true,got:{pending,actualStaleDestinationRefused:true,refusalCode:refusal.code,refusedWriteChangedNoOwner:true,readOnlyRefreshReplayedNoWrite:true,explicitSessionLight:true,globalAndWorkspaceUnchanged:true},expected_http:['409 /api/universal/settings-action']};
   }finally{
    await js('globalThis.__archhubScopeWitness?.restore();true').catch(()=>{});await call('openSession',[before.path]);await call('refreshPreferences',[]);await call('setSettingsScope',[before.scope]);if(before.workspace)await call('selectWorkspace',[before.workspace]);assert.equal(await js('window.ArchHubAPI.getSessionDocument().id'),before.id);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
+  }
+ });
+ await step(steps[9],async()=>{
+  const fill=async(label,value)=>js(`(()=>{const e=[...document.querySelectorAll('input')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});if(!e)throw Error('Input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  assert.equal(typeof native,'function','The isolated native-dialog helper is required');
+  const before=await js('(()=>{const a=window.ArchHubAPI,s=a.getSnapshot();return {path:a.getSessionPath(),document:a.getSessionDocument(),workspace:s.activeWorkspace};})()');
+  const initialIds=new Set(json(workspaceFile).roots.map(row=>row.root_id));
+  const parent=path.join(folder,'Office customer'),source=path.join(folder,'Office source'),target=path.join(parent,'Office created');
+  fs.mkdirSync(parent);fs.mkdirSync(path.join(source,'Alpha','Beta'),{recursive:true});fs.mkdirSync(path.join(source,'Gamma'));fs.writeFileSync(path.join(source,'marker.txt'),'Synthetic source stays here');
+  const tree=(root)=>{const rows=[];const visit=relative=>{for(const name of fs.readdirSync(path.join(root,relative)).sort()){const entry=path.join(relative,name),full=path.join(root,entry),directory=fs.statSync(full).isDirectory();rows.push({path:entry.replaceAll('\\','/'),directory,...(directory?{}:{bytes:fs.readFileSync(full).toString('base64')})});if(directory)visit(entry);}};visit('');return rows;};
+  const sourceBefore=tree(source),savedFiles=[...new Set([before.path,file])].map(path=>({path,bytes:fs.readFileSync(path)}));
+  const call=(method,args)=>js('(async()=>window.ArchHubAPI['+JSON.stringify(method)+'](...'+JSON.stringify(args)+'))()');
+  try{
+   const added=await call('addWorkspace',[{folder:parent}]);const parentId=added.root.root_id;
+   assert(!json(workspaceFile).roots.some(row=>path.normalize(row.path)===path.normalize(source)),'Chooser source must remain unregistered');
+   assert.equal(await js("(()=>{const e=[...document.querySelectorAll('nav button')].find(e=>e.getAttribute('aria-label')==='Settings'||e.textContent.trim()==='Settings');if(!e)throw Error('Settings rail unavailable');e.click();return true;})()"),true);
+   assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);assert.equal(await clickText('Projects'),true);assert.equal(await until(()=>js("Boolean([...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='New project'&&e.getClientRects().length))"),Boolean),true);assert.equal(await clickText('New project'),true);
+   await fill('Project name','Office created');await select('Parent workspace',parentId);await select('New project folders','Office project tree');
+   assert.equal(await js("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Create project')?.disabled"),true);
+   assert.equal(await clickText('Choose template folder'),true);
+   const dialog=await native({kind:'pick-folder',title:'Choose a project folder template',folder:source});assert.equal(dialog.closed,true,dialog.error||'The real folder chooser did not close');assert.equal(path.normalize(dialog.folder),path.normalize(source));
+   assert.equal(await until(()=>js("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Create project')?.disabled===false"),Boolean),true);
+   assert.equal(await clickText('Create project'),true);
+   const created=await until(()=>js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>w.name==="Office created")'),Boolean);assert(created?.id);
+   assert.deepEqual(tree(target),sourceBefore.filter(row=>row.directory));assert.deepEqual(tree(source),sourceBefore);
+   const registered=json(workspaceFile).roots.find(row=>row.root_id===created.id);assert.equal(path.normalize(registered.path),path.normalize(target));assert.equal(registered.privacy,'private');
+   assert(!json(workspaceFile).roots.some(row=>path.normalize(row.path)===path.normalize(source)));assert.deepEqual(await js('window.ArchHubAPI.getSessionDocument()'),before.document);for(const saved of savedFiles)assert.deepEqual(fs.readFileSync(saved.path),saved.bytes);
+   return {pass:true,got:{template:'Office project tree',nativePicker:dialog,sourceWasUnregistered:true,folders:tree(target),noFilesCopied:true,sourceUnchanged:true,registration:created.id,canvasDocumentUnchanged:true,savedCanvasBytesUnchanged:true}};
+  }finally{
+   for(const row of json(workspaceFile).roots.filter(row=>!initialIds.has(row.root_id)))await call('removeWorkspace',[row.root_id]);
+   if(before.workspace)await call('selectWorkspace',[before.workspace]);assert.deepEqual(new Set(json(workspaceFile).roots.map(row=>row.root_id)),initialIds);for(const saved of savedFiles)assert.deepEqual(fs.readFileSync(saved.path),saved.bytes);
   }
  });
 }

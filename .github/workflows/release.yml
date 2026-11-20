@@ -582,8 +582,9 @@ jobs:
           $source = Get-Content -Raw selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
           $block = [regex]::Match($source, '(?s)export const steps=\[(.*?)\];').Groups[1].Value
           $names = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-          if ($names.Count -ne 6) { throw 'The Settings scenario must declare exactly six cases.' }
-          $names | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
+          if ($names.Count -ne 7) { throw 'Declare the six Settings cases and one startup witness.' }
+          $names[0..5] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
+          $names[6] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-startup.json') -Encoding utf8
           @{repository=$env:PUBLISHED_REPOSITORY;build=$env:PUBLISHED_BUILD;workflow_source=$env:GITHUB_SHA;setup_verified=$false;setup_sha256=$null;setup_bytes=$null;install_exit=$null;installed_root=$null;installed_build=$null;first_run_python=$null;first_run_python_version=$null;first_run_exit=$null;ui_exit=$null} |
             ConvertTo-Json | Set-Content (Join-Path $evidence 'install.json') -Encoding utf8
           if (-not [string]::IsNullOrWhiteSpace($env:PUBLISHED_CANDIDATE)) {
@@ -687,6 +688,10 @@ jobs:
             else { @{asked=$asked;result='NOT EXERCISED';did='Install or actual-window check did not reach this case; no pass claimed.'} }
           })
           $rows | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'settings-results.json') -Encoding utf8
+          $startup = Get-Content -Raw (Join-Path $evidence 'declared-startup.json') | ConvertFrom-Json
+          $found = @($actual | Where-Object { $_.asked -ceq $startup })
+          $startupResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$startup;result='NOT EXERCISED';did='The actual-window check did not reach the startup witness; no pass claimed.'} }
+          $startupResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'startup-result.json') -Encoding utf8
       - name: Retain install identity, actual window and all six outcomes
         if: always()
         uses: actions/upload-artifact@v7
@@ -698,6 +703,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/setup.log
             ${{ runner.temp }}/archhub-verify-published/first-run.log
             ${{ runner.temp }}/archhub-verify-published/settings-results.json
+            ${{ runner.temp }}/archhub-verify-published/startup-result.json
             ${{ runner.temp }}/archhub-verify-published/settings/report.json
             ${{ runner.temp }}/archhub-verify-published/settings/steps.json
             ${{ runner.temp }}/archhub-verify-published/settings/*.png

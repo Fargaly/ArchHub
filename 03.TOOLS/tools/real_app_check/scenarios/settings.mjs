@@ -8,6 +8,7 @@ export const steps=[
  'Shortcut capture changes the actual Search command',
  'Invalid import refuses without changing any preference owner',
  'Reset inherits and reopening retains workspace preferences',
+ 'Late startup preserves the newer saved workflow',
 ];
 export default async function({step,js,until,clickText,cdp,out}){
  const runs=fs.readdirSync(out,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&entry.name.startsWith('run-'));assert.equal(runs.length,1);
@@ -85,5 +86,42 @@ export default async function({step,js,until,clickText,cdp,out}){
   assert.equal(await clickText('Reset Theme'),true);const inherited=await until(snapshot,s=>s.theme==='Light');assert.equal(inherited.theme,'Light');assert.equal(json(file).properties.settings?.['Appearance.Theme'],undefined);
   await js(`window.ArchHubAPI.openSession(${JSON.stringify(file)})`);await js('window.ArchHubAPI.refreshPreferences()');
   const got=await until(snapshot,s=>s.theme==='Light');assert.equal(got.theme,'Light');assert.equal(json(workspaceFile).roots.find(w=>w.root_id===workspaceId).settings['Appearance.Theme'],'Light');return {pass:true,got:{reopened:got.theme,sessionOverrideRemoved:true,workspaceRetained:true}};
+ });
+ await step(steps[6],async()=>{
+  await js('window.ArchHubAPI.ready.then(()=>true)');
+  const ordinaryPath=path.join(folder,'startup-ordinary.archhub'),chosenPath=path.join(folder,'startup-chosen.archhub');
+  const current=()=>js('(()=>{const api=window.ArchHubAPI;return {id:api.getSessionDocument()?.id,title:api.getSessionDocument()?.title,path:api.getSessionPath()};})()');
+  const reload=async()=>{
+   const previous=await js('performance.timeOrigin');await cdp('Page.reload',{ignoreCache:true});
+   const ready=await until(async()=>{try{return await js('performance.timeOrigin!=='+JSON.stringify(previous)+'&&Boolean(window.ArchHubAPI?.ready)');}catch(error){if(/context|navigat/i.test(error.message))return false;throw error;}},Boolean);
+   assert.equal(ready,true,'The reloaded installed page did not expose its API');
+  };
+  await js('(async()=>{const api=window.ArchHubAPI;await api.addWorkspace({folder:'+JSON.stringify(folder)+'});await api.newSession("Startup ordinary open");await api.saveSession('+JSON.stringify(ordinaryPath)+');})()');
+  const ordinary=await current(),ordinaryBytes=fs.readFileSync(ordinaryPath);assert.equal(json(ordinaryPath).id,ordinary.id);
+  await reload();await js('window.ArchHubAPI.ready.then(()=>true)');
+  assert.deepEqual(await current(),ordinary,'Ordinary startup did not reopen the saved workflow');assert.deepEqual(fs.readFileSync(ordinaryPath),ordinaryBytes);
+  function delayInitialResponse(){
+   const browser=globalThis,original=browser.fetch;let release,stopped=false;
+   const probe=browser.__archhubStartupWitness={held:false,release(){release?.();},restore(){stopped=true;browser.fetch=original;release?.();}};
+   browser.fetch=function(...args){
+    const pending=Reflect.apply(original,this,args);let body;
+    try{body=JSON.parse(args[1]?.body||'{}');}catch{return pending;}
+    const url=new browser.URL(typeof args[0]==='string'?args[0]:args[0].url,browser.location.href);
+    if(url.pathname!=='/api/session-files'||body.action!=='initial')return pending;
+    return pending.then(response=>stopped?response:new Promise(resolve=>{release=()=>resolve(response);probe.held=true;browser.fetch=original;}));
+   };
+  }
+  const script=await cdp('Page.addScriptToEvaluateOnNewDocument',{source:'('+delayInitialResponse.toString()+')()'});
+  try{
+   await reload();assert.equal(await until(()=>js('Boolean(globalThis.__archhubStartupWitness?.held)'),Boolean),true,'The real initial-file response was not held');
+   await js('(async()=>{const api=window.ArchHubAPI;await api.newSession("Saved while startup was pending");await api.saveSession('+JSON.stringify(chosenPath)+');})()');
+   const chosen=await current(),chosenBytes=fs.readFileSync(chosenPath);assert.equal(json(chosenPath).id,chosen.id);assert.equal(path.normalize(chosen.path),path.normalize(chosenPath));
+   await js('globalThis.__archhubStartupWitness.release();true');await js('window.ArchHubAPI.ready.then(()=>true)');
+   assert.deepEqual(await current(),chosen,'A late initial-file response replaced the newer saved workflow');assert.deepEqual(fs.readFileSync(chosenPath),chosenBytes);
+   return {pass:true,got:{ordinary,chosen,ordinaryFileReread:true,newerFileReread:true,realInitialResponseDelayed:true,sourceBytesModified:false}};
+  }finally{
+   await js('globalThis.__archhubStartupWitness?.restore();true').catch(()=>{});
+   await cdp('Page.removeScriptToEvaluateOnNewDocument',{identifier:script.result.identifier});
+  }
  });
 }

@@ -216,7 +216,10 @@
         d.b.style.flex = d.sum * (d.total - d.upper) / d.total + ' 1 0';
       } else if (d.kind === 'sash') {
         const limits = d.side === 'left' ? LEFT : RIGHT;
-        d.value = Math.round(Math.max(limits.min, Math.min(limits.max, d.side === 'left' ? event.clientX - bounds.left : bounds.right - event.clientX)));
+        // Relative to where the press landed: the pane follows the pointer's travel, not the pointer's position, so
+        // grabbing the 6 px sash anywhere never jumps the width by the grab offset (it was 3 px: 378 for 375).
+        const travel = event.clientX - d.x;
+        d.value = Math.round(Math.max(limits.min, Math.min(limits.max, d.side === 'left' ? d.from + travel : d.from - travel)));
         ws.style.setProperty(d.side === 'left' ? '--lw' : '--rw', d.value + 'px');
       } else if (d.kind === 'tab') {
         if (!d.moved && Math.hypot(event.clientX - d.x, event.clientY - d.y) < 6) return;
@@ -286,7 +289,7 @@
     };
     const edge = (side, label, limits, value) => <div className="sash v" data-sash={side} role="separator" aria-orientation="vertical" aria-label={label} tabIndex={sash(side) === 6 ? 0 : -1}
       aria-valuemin={limits.min} aria-valuemax={limits.max} aria-valuenow={value}
-      onPointerDown={event => { if (sash(side) !== 6) return; event.preventDefault(); grab(event, {kind: 'sash', side}); }}
+      onPointerDown={event => { if (sash(side) !== 6) return; event.preventDefault(); grab(event, {kind: 'sash', side, x: event.clientX, from: value}); }}
       onDoubleClick={() => executeAction('ui.select', () => side === 'left' ? change(setLeftWidth(current.current, LEFT.base)) : onRightWidth(RIGHT.base))}
       onKeyDown={event => nudge(event, side)} />;
     return <div ref={root} id="home-context" className={'dockws' + (dragging ? ' dragging' : '')} data-dock-workspace="" onPointerMove={move} onPointerUp={end} onPointerCancel={end}

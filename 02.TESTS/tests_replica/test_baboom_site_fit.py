@@ -1,10 +1,12 @@
 """Exercise the real site adapter over loopback, without model or external traffic."""
 from contextlib import contextmanager
 import hashlib
+import html
 import http.client
 import importlib.util
 import json
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -149,6 +151,129 @@ def test_desktop_rejects_prepared_signin_prose_even_with_a_citation(sites, monke
         monkeypatch.setattr(candidate, 'answer', cited_signin)
         assert baboom_standard.ask_standard('project folders') == expected
     candidate.complete.assert_not_called()
+
+
+@pytest.mark.parametrize('english,arabic,keywords,citation,href,quote,arabic_quote', [
+    ('What is ArchHub?', 'ما هو آرك هب؟', 'ArchHub Windows desktop app',
+     'getting-started', 'https://archhub.io/docs/getting-started/',
+     'ArchHub is a Windows desktop app.', 'آرك هب تطبيق سطح مكتب لنظام ويندوز.'),
+    ('How do I add a subtask?', 'كيف أضيف مهمة فرعية؟', 'add subtask properties workshop',
+     'workshop', 'https://archhub.io/docs/workshop/',
+     'In Properties, enter a title in New subtask and choose Add subtask.',
+     'في الخصائص، أدخل عنوانًا في مهمة فرعية جديدة واختر إضافة مهمة فرعية.'),
+    ('How do I add a tool server?', 'كيف أضيف خادم أدوات؟', 'add tool server settings connections MCP',
+     'connectors', 'https://archhub.io/docs/connectors/',
+     'Enter a server address, a command or an MCP JSON snippet, then choose Add tool server.',
+     'أدخل عنوان الخادم أو أمرًا أو مقطع MCP JSON، ثم اختر إضافة خادم أدوات.'),
+    ('Where do project folders go?', 'أين توضع مجلدات المشروع؟', 'project folders',
+     'STD-21', '/folders%20with%20spaces.html',
+     'Project folders belong in the standard CDE container.', None),
+])
+@pytest.mark.parametrize('in_arabic', [False, True])
+def test_prepared_site_answers_from_cited_guides_in_both_languages(
+        sites, english, arabic, keywords, citation, href, quote, arabic_quote, in_arabic):
+    candidate = sites[1]
+    selected = arabic_quote if in_arabic and arabic_quote else quote
+
+    def complete(token, system, user, *args):
+        assert token == 'synthetic-reader'
+        if system.startswith('Rewrite'):
+            return keywords
+        assert f'[{citation}]' in user and selected in user
+        return f'{selected} [{citation}]'
+
+    candidate.complete.side_effect = complete
+    with running(candidate) as port:
+        reply = post(port, arabic if in_arabic else english, '/', signed_in=True)
+    assert f'{selected} [{citation}]' in reply['answer']
+    if in_arabic and not arabic_quote:
+        assert 'النص الأصلي الموثق بالإنجليزية' in reply['answer']
+    assert [link['href'] for link in reply['links']] == [href]
+    assert candidate.complete.call_count == 2
+
+
+def test_arabic_reply_does_not_rewrite_the_meaning_of_a_verified_quote(sites):
+    candidate = sites[1]
+    false_translation = 'آرك هب تطبيق للتنبؤ بالطقس.'
+    candidate.complete.side_effect = [
+        'ArchHub Windows desktop app',
+        'ArchHub is a Windows desktop app. [getting-started]',
+        false_translation,
+    ]
+    with running(candidate) as port:
+        reply = post(port, 'ما هو آرك هب؟', '/', signed_in=True)
+        assert 'النص الأصلي الموثق بالإنجليزية' in reply['answer']
+        assert 'ArchHub is a Windows desktop app. [getting-started]' in reply['answer']
+        assert false_translation not in reply['answer']
+        assert candidate.complete.call_count == 2
+        candidate.complete.side_effect = [
+            'ArchHub Windows desktop app', f'{false_translation} [getting-started]']
+        refused = post(port, 'ما هو آرك هب؟', '/', signed_in=True)
+    assert refused['links'] == []
+    assert 'لم أجد إجابة' in refused['answer']
+
+
+@pytest.mark.parametrize('question,expected', [
+    ('How do I bake sourdough?', 'I could not find an answer'),
+    ('كيف أخبز خبز العجين المخمر؟', 'لم أجد إجابة'),
+])
+def test_prepared_site_refuses_out_of_scope(sites, question, expected):
+    candidate = sites[1]
+    candidate.complete.side_effect = lambda *args: 'bake sourdough' if args[1].startswith('Rewrite') else 'OUT_OF_SCOPE'
+    with running(candidate) as port:
+        reply = post(port, question, '/', signed_in=True)
+    assert expected in reply['answer']
+    assert reply['links'] == []
+
+
+@pytest.mark.parametrize('question,keywords,unsupported', [
+    ('Can ArchHub teleport Revit models?', 'ArchHub Revit connectors',
+     'ArchHub can teleport Revit models. [connectors]'),
+    ('Can I set project units in Settings Projects?', 'ArchHub Settings project units',
+     'You can change project units in Settings Projects. [getting-started]'),
+])
+def test_prepared_site_rejects_unsupported_capability_with_a_real_citation(
+        sites, question, keywords, unsupported):
+    candidate = sites[1]
+    candidate.complete.side_effect = [keywords, unsupported]
+    with running(candidate) as port:
+        reply = post(port, question, '/', signed_in=True)
+    assert reply['links'] == []
+    assert 'I could not find an answer' in reply['answer']
+    assert candidate.complete.call_count == 2
+
+
+@pytest.mark.parametrize('question,phrase', [
+    ('What is ArchHub and how do I use its Canvas?', 'ArchHub is a Windows desktop app.'),
+    ('يعني إيه أرك هب وأستخدم الكانفاس إزاي؟', 'آرك هب تطبيق سطح مكتب لنظام ويندوز.'),
+])
+def test_signed_out_overview_reads_public_guide_without_model(sites, question, phrase):
+    candidate = sites[1]
+    with running(candidate) as port:
+        reply = post(port, question, '/')
+    assert phrase in reply['answer'] and '[getting-started]' in reply['answer']
+    assert [link['href'] for link in reply['links']] == ['https://archhub.io/docs/getting-started/']
+    candidate.complete.assert_not_called()
+    candidate.cloud.assert_not_called()
+
+
+def test_chat_guide_passages_are_present_at_the_built_public_citation_urls(tmp_path, monkeypatch):
+    website = load('public_website', ROOT / '03.TOOLS/packaging/website/build_site.py')
+    monkeypatch.setattr(website, 'catalogue', lambda: {'categories': [], 'nodes': [], 'starters': []})
+    output = tmp_path / 'website'
+    website.build_site(output, 'citation-test', 'https://example.test/citation-test/setup.exe', '0' * 64)
+    pages = {}
+    chunks = list(baboom_standard.public_doc_chunks(ROOT / '01.APP/nodelang/site_export.py'))
+    assert len({chunk['id'] for chunk in chunks}) == 9
+    for chunk in chunks:
+        slug = chunk['id']
+        if slug not in pages:
+            page = (output / 'docs' / slug / 'index.html').read_text(encoding='utf-8')
+            article = page.split('<main ', 1)[1].split('</main>', 1)[0]
+            pages[slug] = ' '.join(html.unescape(re.sub(r'<[^>]*>', '', article.replace('</li>', ' '))).split())
+        for line in chunk['text'].splitlines():
+            visible = re.sub(r'^(?:- |\d+\. )', '', line.strip())
+            assert ' '.join(visible.split()) in pages[slug], (slug, visible)
 
 
 def test_real_persona_manifest_has_exact_hash_and_keeps_user_data_excluded(tmp_path):

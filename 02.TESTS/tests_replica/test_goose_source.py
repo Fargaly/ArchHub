@@ -449,6 +449,29 @@ def test_a_failing_cargo_reports_both_streams_and_its_own_exit_code(tmp_path, mo
     assert "Compiling pctx_registry v0.1.3" in captured.err + captured.out                              # stdout
 
 
+@pytest.mark.parametrize("ci", [False, True])
+def test_cargo_logs_unencodable_output_and_keeps_its_exit_code(tmp_path, monkeypatch, ci):
+    import contextlib
+    import io
+    from types import SimpleNamespace
+
+    if ci:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    else:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(build_goose, "idle_or_away", lambda: True)
+    output = io.BytesIO()
+    stream = io.TextIOWrapper(output, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout" if ci else "stderr", stream)
+    child = SimpleNamespace(stdout=iter(["Compiling caf\u00e9\u240d\n", "link failed\n"]), returncode=101)
+    monkeypatch.setattr(build_goose.subprocess, "Popen", lambda *args, **kwargs: contextlib.nullcontext(child))
+
+    with pytest.raises(build_goose.subprocess.CalledProcessError) as failure:
+        build_goose._cargo(["cargo", "build"], tmp_path, {})
+    assert failure.value.returncode == 101
+    assert output.getvalue().decode("cp1252").splitlines() == ["Compiling caf\u00e9\\u240d", "link failed"]
+
+
 def test_the_desktop_keeps_only_a_bounded_tail(tmp_path, monkeypatch, capfd):
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(build_goose, "desk_idle_or_away", lambda: True)

@@ -10,6 +10,7 @@ goose-pin.json is the one typed declaration: the goose.source node, whose params
 """
 from __future__ import annotations
 
+from builtins import UnicodeEncodeError
 import collections
 import hashlib
 import json
@@ -89,6 +90,14 @@ def _run(argv, cwd, env=None, capture=False):
 CARGO_TAIL_LINES = 200   # how much of cargo's own output a failed desktop run prints
 
 
+def _write_cargo_output(stream, text):
+    try:
+        stream.write(text)
+    except UnicodeEncodeError:
+        stream.write(text.encode(stream.encoding, "backslashreplace").decode(stream.encoding))
+    stream.flush()
+
+
 def _cargo(cargo_args, cwd, env):
     """The heavy compile runs only while the desk is idle or away (founder rule R100), queued by run-heavy.
     cargo's stdout and stderr come through one explicit pipe (never inherited console handles, which a hidden or
@@ -103,13 +112,11 @@ def _cargo(cargo_args, cwd, env):
                               creationflags=0 if on_ci else HIDDEN) as child:
             for line in child.stdout:
                 if on_ci:
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
+                    _write_cargo_output(sys.stdout, line)
                 tail.append(line)
         if child.returncode:
             if not on_ci:
-                sys.stderr.write("".join(tail))
-                sys.stderr.flush()
+                _write_cargo_output(sys.stderr, "".join(tail))
             raise subprocess.CalledProcessError(child.returncode, cargo_args)
         return
     raise RuntimeError("Goose compile not started: the desktop is in use. Queue it again through run-heavy.")

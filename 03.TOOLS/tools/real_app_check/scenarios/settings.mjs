@@ -2,6 +2,29 @@ import { performance } from 'node:perf_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+async function waitForOutageView(inspect, matches) {
+ const deadline = performance.now() + 150_000;
+ let view = await inspect();
+ let remaining = deadline - performance.now();
+ while (!matches(view) && remaining > 0) {
+  await sleep(Math.min(1000, remaining));
+  view = await inspect();
+  remaining = deadline - performance.now();
+ }
+ return view;
+}
+
+function compareOutageObservation(probe, view, transition) {
+ const online = probe.status === 200 && probe.listed;
+ const offline = probe.status === 503 && probe.refused;
+ assert(online || offline, 'Unexpected protected workspace response.');
+ if (online) assert(view.restored, 'The service admitted the original account but Studio did not restore its private view.');
+ if (offline) assert(view.locked, 'The service refused work but Studio did not lock its private view.');
+ return transition === 'disconnect' ? offline : online;
+}
+
 export const steps=[
  'Installed desktop starts locked with usable sign-in and no private work',
  'Installed Settings opens all eleven areas',
@@ -16,7 +39,14 @@ export const steps=[
  'Installed Projects creates the selected Office folder tree through its native picker',
 ];
 const declaredSteps=steps;
-export default async function({input,step:recordStep,js,until,clickText,cdp,out,native}){
+export default async function({input,label,shot,step:recordStep,js,until,clickText,cdp,out,native}){
+ const outageRequested = input?.verifyAccountOutage === true;
+ let stopProtected = false;
+ const observation = {statuses:[], lockedScreenshot:null, sameAccount:false, savedFilePreserved:false, draftPreserved:false};
+ function outageEvidence(result, instruction) {
+  fs.writeFileSync(path.join(out, 'account-outage.json'), JSON.stringify({result, instruction, observation}, null, 2));
+ }
+ if (outageRequested) outageEvidence('NOT EXERCISED', 'Waiting for the signed-in Projects fixture. Keep the QA machine online.');
  const entry=await recordStep(declaredSteps[0],async()=>{
   const access=await until(()=>js("window.ArchHubAPI?.getSnapshot()?.desktopAccess"),value=>value&&value.state!=='pending');
   assert(access&&typeof access.admitted==='boolean','The installed admission decision was not shown');
@@ -49,7 +79,7 @@ export default async function({input,step:recordStep,js,until,clickText,cdp,out,
   }finally{await js('globalThis.__archhubAdmissionWitness?.restore();true').catch(()=>{});}
  });
  const steps=declaredSteps.slice(1),authenticated=entry?.got?.authenticated===true;
- const step=(asked,run)=>authenticated?recordStep(asked,run):recordStep(asked,async()=>({not_exercised:'No legitimate QA account admitted this isolated installed window. Authenticated assertions remain unverified; no bypass or founder credentials were used.'}));
+ const step=(asked,run)=>stopProtected?recordStep(asked,async()=>({not_exercised:'Outage exercise stopped before safe continuation.'})):authenticated?recordStep(asked,run):recordStep(asked,async()=>({not_exercised:'No legitimate QA account admitted this isolated installed window. Authenticated assertions remain unverified; no bypass or founder credentials were used.'}));
 
  const runs=fs.readdirSync(out,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&entry.name.startsWith('run-'));assert.equal(runs.length,1);
  const isolated=path.join(out,runs[0].name),folder=path.join(isolated,'settings-fixture');fs.mkdirSync(folder,{recursive:true});
@@ -205,6 +235,78 @@ export default async function({input,step:recordStep,js,until,clickText,cdp,out,
    assert.equal(await js('document.querySelector(\'[role="dialog"][aria-label="New task"] select[aria-label="Workspace"]\')?.value'),workspaceId);assert.equal(await clickText('Cancel'),true);
    assert.deepEqual(await current(),edited);assert.equal(await dirty(),true);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
    const held=await js('globalThis.__archhubProjectsWitness.held');
+   if (outageRequested) {
+    // The existing Projects witness holds only its local autosave while the operator changes connectivity.
+    stopProtected = true;
+    try {
+     const account = await js("(async()=>{const a=await window.ArchHubAPI.refreshDesktopAccess(true);return a.admitted && a.subject;})()");
+     assert(typeof account === 'string' && account.length > 0);
+     const savedPath = await js('window.ArchHubAPI.getSessionPath()');
+     assert.equal(path.normalize(savedPath), path.normalize(baseline));
+     const draft = await js('window.ArchHubAPI.getSessionDocument()');
+     assert(held > 0 && await dirty());
+     // Use the same loopback transport as the admission check; keep the cloud credential in its owner.
+     async function probe(subject) {
+      const lease = window.__archhubSession;
+      const response = await fetch('/api/universal/workspace-roots', {
+       method:'POST', cache:'no-store',
+       headers:{'Content-Type':'application/json','X-ArchHub-Session':lease.token,'X-ArchHub-CSRF':lease.csrf,'X-ArchHub-Desktop-Subject':subject},
+       body:JSON.stringify({action:'list'})
+      });
+      const data = await response.json();
+      return {status:response.status, listed:data.ok !== false && Array.isArray(data.roots),
+       refused:data.ok === false && data.code === 'desktop_access_required' && data.state === 'unavailable'
+        && Object.keys(data).every(key => ['ok','code','state','error'].includes(key))};
+     }
+     const read = () => js('('+probe.toString()+')('+JSON.stringify(account)+')');
+     const online = await read();
+     observation.statuses.push(online.status);
+     assert(online.status === 200 && online.listed);
+     outageEvidence('NOT EXERCISED', 'Disconnect the dedicated QA machine from the account service now. Keep loopback available.');
+     function inspectView(subject) {
+      const api = window.ArchHubAPI, snapshot = api.getSnapshot(), access = snapshot.desktopAccess;
+      const entry = document.querySelector('[data-desktop-admission]');
+      const home = document.querySelector('[data-home-page]');
+      return {
+       locked:!access.admitted && access.state === 'unavailable' && !!entry?.getClientRects().length
+        && !home && api.getSessionDocument() === null && !api.getSessionPath() && !snapshot.graph?.nodes?.length,
+       restored:access.admitted && access.ready && access.subject === subject && !entry && !!home?.getClientRects().length
+      };
+     }
+     const inspect = () => js('('+inspectView.toString()+')('+JSON.stringify(account)+')');
+     await waitForOutageView(inspect, view => view.locked);
+     const denial = await read();
+     observation.statuses.push(denial.status);
+     if (!compareOutageObservation(denial, await inspect(), 'disconnect')) {
+      stopProtected = false;
+      outageEvidence('NOT EXERCISED', 'No outage observed before the deadline.');
+      return {not_exercised:'Operator outage was not observed.',got:{accountOutage:observation}};
+     }
+     assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
+     assert.equal(label,'INSTALLED BUILD','Installed Windows evidence is required for the outage verdict.');
+     observation.lockedScreenshot = path.basename(await shot('Account service outage - locked Studio'));
+     outageEvidence('NOT EXERCISED', '503 and locked Studio observed. Reconnect the same QA machine now.');
+     await waitForOutageView(inspect, view => view.restored);
+     const reopened = await read();
+     observation.statuses.push(reopened.status);
+     if (!compareOutageObservation(reopened, await inspect(), 'reconnect')) {
+      outageEvidence('NOT EXERCISED', 'Reconnect was not observed before the deadline.');
+      return {not_exercised:'Same-account reconnect was not exercised.',got:{accountOutage:observation}};
+     }
+     observation.sameAccount = true;
+     assert.equal(await js('window.ArchHubAPI.getSessionPath()'),savedPath);
+     assert.deepEqual(await js('window.ArchHubAPI.getSessionDocument()'),draft);
+     assert.equal(await dirty(),true);
+     assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
+     observation.savedFilePreserved = true;
+     observation.draftPreserved = true;
+     stopProtected = false;
+     outageEvidence('PASS', 'Live workspace list returned 200, then data-free 503 with locked Studio, then 200 for the same account. The saved bytes, path and dirty document matched.');
+    } catch (error) {
+     outageEvidence('FAIL', 'The outage assertions failed. Inspect the Projects step.');
+     return {pass:false,why:'The account outage evidence did not satisfy the installed assertions.',got:{accountOutage:observation}};
+    }
+   }
    await js('globalThis.__archhubProjectsWitness.restore();window.ArchHubAPI.saveSession()');const savedBytes=fs.readFileSync(baseline);assert.notDeepEqual(savedBytes,baselineBytes);assert.equal(await dirty(),false);
    await call('newSession',['Different disposable Canvas']);await call('openSession',[baseline]);assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),savedBytes);
    const adds=Array.from({length:10},(_,i)=>path.join(folder,'parallel-add-'+i));for(const directory of adds)fs.mkdirSync(directory);
@@ -224,12 +326,14 @@ export default async function({input,step:recordStep,js,until,clickText,cdp,out,
    }
    assert.equal(rows().find(row=>path.normalize(row.path)===path.normalize(folder)).root_id,workspaceId);
    assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),savedBytes);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
-   return {pass:true,got:{workspace:workspaceId,created:projectPath,layout:'Empty folder',unsavedNote:note,sessionDirtyRetained:true,baselineBytesUnchangedUntilExplicitSave:true,realAutosavesHeld:held,explicitSaveAndReopen:true,canvasEditRetained:true,savedCanvasBytesUnchanged:true,newTaskDefault:workspaceId,originalIdRetained:true,normalFileReopened:true,parallelRegisters:adds.length,mixedCreateRegister:mixed.length,mixedCreateUnregister:removed.length}};
+   return {pass:true,...(outageRequested?{expected_http:['503 /api/universal/workspace-roots']}:{}),got:outageRequested?{accountOutage:observation}:{workspace:workspaceId,created:projectPath,layout:'Empty folder',unsavedNote:note,sessionDirtyRetained:true,baselineBytesUnchangedUntilExplicitSave:true,realAutosavesHeld:held,explicitSaveAndReopen:true,canvasEditRetained:true,savedCanvasBytesUnchanged:true,newTaskDefault:workspaceId,originalIdRetained:true,normalFileReopened:true,parallelRegisters:adds.length,mixedCreateRegister:mixed.length,mixedCreateUnregister:removed.length}};
   }finally{
+   if (!stopProtected) {
    await js('globalThis.__archhubProjectsWitness?.restore();true').catch(()=>{});
    for(const row of rows().filter(row=>!initialIds.has(row.root_id)))await call('removeWorkspace',[row.root_id]);
    await call('openSession',[before.path]);if(before.workspace)await call('selectWorkspace',[before.workspace]);
    assert.deepEqual(new Set(rows().map(row=>row.root_id)),initialIds);assert.equal(await js('window.ArchHubAPI.getSessionDocument().id'),before.id);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
+   }
   }
  });
  await step(steps[8],async()=>{

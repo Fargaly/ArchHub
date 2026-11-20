@@ -48,7 +48,7 @@
           await u.act(() => api.addNode(c.name));
           u.go('canvas');
         }
-      })), ...s.templates.map(t => ({
+      })), ...s.templates.filter(t => !t.path).map(t => ({
         label: t.title,
         commandId: 'palette.template',
         action: () => u.show('Skill', {
@@ -70,8 +70,8 @@
         label: g.name || g.title || g.id,
         commandId: 'palette.graph',
         action: async () => {
-          await u.act(() => api.selectGraph(g.id));
-          u.go('canvas');
+          const opened = await u.act(() => api.selectGraph(g.id));
+          if (opened && !opened.cancelled) await u.go('canvas', g.id);
         }
       })), ...(s.hosts || []).map(h => ({
         label: h.name + (h.state ? ' · ' + ({absent: 'Not installed', unavailable: 'Not available', 'prerequisites-ready': 'Ready to connect', 'needs-sign-in': 'Needs sign-in', installed: 'Installed', connected: 'Connected', listening: 'Connected'}[h.state] || h.state) : ''),

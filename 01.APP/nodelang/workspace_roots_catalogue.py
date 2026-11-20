@@ -18,7 +18,44 @@ def project_folder_layout(parent, governed_root=''):
     return 'Governed work folder' if root and (root / '00.GOVERNANCE').is_dir() and (root / '10.PRODUCT').is_dir() and base.is_relative_to(root) else 'Empty folder'
 
 
-def create_project_folder(parent, name, governed_root=''):
+def read_project_template(template_source, parent, name, governed_root=''):
+    directories = []
+    source = Path(template_source)
+    base = Path(parent)
+    target = base / str(name or '')
+    template = project_folder_layout(base, governed_root)
+    if template != 'Empty folder':
+        raise ValueError('Local templates apply outside the governed ArchHub workspace.')
+    if not source.is_absolute() or not source.is_dir():
+        raise ValueError('Choose an available local template folder.')
+    if any(part.is_symlink() or part.is_junction() for part in (source, *source.parents)):
+        raise ValueError('Choose the template at its real location without redirected folders.')
+    if target.resolve().is_relative_to(source.resolve()):
+        raise ValueError('The new project cannot be inside its template.')
+    pending, entries = [source], 0
+    try:
+        while pending:
+            with os.scandir(pending.pop()) as children:
+                for entry in children:
+                    entries += 1
+                    if entries > 4096:
+                        raise ValueError('Choose a template with at most 4096 entries.')
+                    item = Path(entry.path)
+                    if item.is_symlink() or item.is_junction():
+                        raise ValueError('Templates cannot contain redirected folders.')
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                    relative = item.relative_to(source)
+                    if len(directories) >= 1024 or len(relative.parts) > 12:
+                        raise ValueError('Choose a template with at most 1024 folders and 12 levels.')
+                    directories.append(relative)
+                    pending.append(item)
+    except OSError as error:
+        raise ValueError('The template could not be read. No project was created.') from error
+    return directories
+
+
+def create_project_folder(parent, name, governed_root='', template_directories=None):
     """Create one new work folder; registration stays with the workspace owner."""
     if (type(name) is not str or not name or len(name) > 100 or name != name.strip()
             or name.endswith('.') or name in ('.', '..')
@@ -34,11 +71,20 @@ def create_project_folder(parent, name, governed_root=''):
     template = project_folder_layout(base, governed_root)
     if template == 'Governed work folder' and base.resolve() == Path(governed_root).resolve():
         raise ValueError('Choose a work parent inside a numbered workspace area.')
+    if template_directories is not None and template != 'Empty folder':
+        raise ValueError('Local templates apply outside the governed ArchHub workspace.')
     target = base / name
     try:
         target.mkdir()  # Never merge with, truncate or replace an existing project.
     except FileExistsError:
         raise ValueError('That folder already exists. Add it as a workspace instead.') from None
+    if template_directories is not None:
+        try:
+            for relative in template_directories:
+                (target / relative).mkdir()
+        except OSError as error:
+            raise ValueError('Project creation was incomplete at %s. Existing files were preserved: %s' % (target, error)) from error
+        return target
     if template == 'Empty folder':
         return target
     try:

@@ -23,6 +23,7 @@ def owner(tmp_path, monkeypatch):
     server = SimpleNamespace(files={'workspaces': roots, 'settings': settings}, workspace_built_in=lambda: str(governed))
     def call(**body):
         return r_workspace_roots(server, SimpleNamespace(body=body))
+    call.server = server
     registered = call(action='register', path=str(parent))['root']
     return call, parent, registered, roots, settings
 
@@ -252,3 +253,162 @@ def test_preference_refresh_keeps_selected_workspace_and_separate_document_scope
     assert result['activeWorkspace'] == registered['root_id']
     assert result['settingsDestination']['workspace'] == document_root['root_id']
     assert document['properties']['project'] == document_root['root_id']
+
+
+def test_office_template_copies_only_folders_and_preserves_source(owner, tmp_path):
+    call, _, _, roots, _ = owner
+    parent = tmp_path / 'customer'
+    parent.mkdir()
+    registered = call(action='register', path=str(parent))['root']
+    source = tmp_path / 'template'
+    (source / 'Alpha' / 'Beta').mkdir(parents=True)
+    (source / 'Gamma').mkdir()
+    original = source / 'private.txt'
+    original.write_bytes(b'never copied')
+    call(action='register', path=str(source))
+    result = call(action='create', parent=registered['root_id'], name='Example', template='Office project tree', template_source=str(source))
+    target = parent / 'Example'
+    assert result['template'] == 'Office project tree'
+    assert any(row['root_id'] == result['root']['root_id'] and row['path'] == str(target) for row in roots.read()['roots'])
+    assert {p.relative_to(target).as_posix() for p in target.rglob('*')} == {'Alpha', 'Alpha/Beta', 'Gamma'}
+    assert all(p.is_dir() for p in target.rglob('*'))
+    assert original.read_bytes() == b'never copied'
+    assert {p.relative_to(source).as_posix() for p in source.rglob('*')} == {'Alpha', 'Alpha/Beta', 'Gamma', 'private.txt'}
+
+
+@pytest.mark.parametrize('fault', ['inside-source', 'junction-child', 'missing', 'governed', 'too-deep', 'too-many', 'unbound-iso', 'public-parent'])
+def test_template_refuses_before_create_or_registration(owner, tmp_path, fault):
+    import subprocess
+    call, governed_parent, governed_registered, roots, _ = owner
+    source = tmp_path / 'template'
+    source.mkdir()
+    parent = tmp_path / 'customer'
+    parent.mkdir()
+    kind = 'Office project tree'
+    if fault == 'inside-source':
+        parent = source / 'child'
+        parent.mkdir()
+    if fault == 'junction-child':
+        result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(source / 'redirect'), str(parent)], capture_output=True, stdin=subprocess.DEVNULL)
+        assert result.returncode == 0, result.stderr
+    if fault == 'missing':
+        source = tmp_path / 'absent'
+    if fault == 'too-deep':
+        source.joinpath(*['Deep'] * 13).mkdir(parents=True)
+    if fault == 'too-many':
+        for i in range(1025):
+            (source / str(i)).mkdir()
+    if fault == 'unbound-iso':
+        kind = 'ISO 19650 CDE tree'
+    registered = call(action='register', path=str(parent), privacy='public' if fault == 'public-parent' else 'private')['root']
+    if fault == 'governed':
+        parent, registered = governed_parent, governed_registered
+    if source.is_dir():
+        call(action='register', path=str(source))
+    before = roots.path.read_bytes()
+    with pytest.raises((Refused, ValueError)):
+        call(action='create', parent=registered['root_id'], name='Example', template=kind, template_source=str(source))
+    assert not (parent / 'Example').exists()
+    assert roots.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('change', ['none', 'remove', 'path', 'privacy', 'identity'])
+def test_template_scan_releases_owner_lock_and_rechecks_parent(owner, tmp_path, monkeypatch, change):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from nodelang import workspace_roots_catalogue as catalogue
+    call, _, _, roots, _ = owner
+    parent, source, unrelated = [tmp_path / name for name in ('Parent', 'Template', 'Unrelated')]
+    for directory in (parent, source, unrelated):
+        directory.mkdir()
+    (source / 'Alpha').mkdir()
+    registered = call(action='register', path=str(parent))['root']
+    call(action='register', path=str(source))
+    entered, release = threading.Event(), threading.Event()
+    original = catalogue.read_project_template
+    def delayed(*args):
+        entered.set()
+        assert release.wait(5)
+        return original(*args)
+    monkeypatch.setattr(catalogue, 'read_project_template', delayed)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(call, action='create', parent=registered['root_id'], name='Created', template='Office project tree', template_source=str(source))
+        try:
+            assert entered.wait(2)
+            listed = pool.submit(call, action='list').result(timeout=2)
+            assert listed['ok']
+            other = pool.submit(call, action='register', path=str(unrelated)).result(timeout=2)
+            if change == 'remove':
+                call(action='unregister', id=registered['root_id'])
+            elif change in ('path', 'privacy'):
+                with roots.lock:
+                    held = roots.read()
+                    row = next(row for row in held['roots'] if row['root_id'] == registered['root_id'])
+                    row['path' if change == 'path' else 'privacy'] = str(unrelated) if change == 'path' else 'public'
+                    roots.write(held)
+            elif change == 'identity':
+                parent.rename(tmp_path / 'OldParent')
+                parent.mkdir()
+            before = roots.path.read_bytes()
+        finally:
+            release.set()
+        if change == 'none':
+            assert pending.result(timeout=3)['ok']
+            assert (parent / 'Created' / 'Alpha').is_dir()
+            assert any(row['root_id'] == other['root']['root_id'] for row in roots.read()['roots'])
+        else:
+            with pytest.raises(Refused):
+                pending.result(timeout=3)
+            assert not (parent / 'Created').exists()
+            assert not (unrelated / 'Created').exists()
+            assert roots.path.read_bytes() == before
+
+
+def test_unregistered_template_requires_actual_picker_binding(owner, tmp_path):
+    call, _, _, roots, _ = owner
+    parent, source = tmp_path / 'Parent', tmp_path / 'Template'
+    parent.mkdir()
+    (source / 'Alpha').mkdir(parents=True)
+    registered = call(action='register', path=str(parent))['root']
+    before = roots.path.read_bytes()
+    with pytest.raises(Refused):
+        call(action='create', parent=registered['root_id'], name='Created', template='Office project tree', template_source=str(source), template_window='unpicked')
+    assert not (parent / 'Created').exists()
+    assert roots.path.read_bytes() == before
+
+
+def test_picker_binding_cannot_be_reused_by_another_window(owner, tmp_path):
+    call, _, _, roots, _ = owner
+    parent, source = tmp_path / 'Parent', tmp_path / 'Template'
+    parent.mkdir()
+    (source / 'Alpha').mkdir(parents=True)
+    registered = call(action='register', path=str(parent))['root']
+    call.server.native_folder_picker = lambda _title: str(source)
+    assert call(action='browse', template=True, template_window='first')['path'] == str(source)
+    before = roots.path.read_bytes()
+    with pytest.raises(Refused):
+        call(action='create', parent=registered['root_id'], name='WrongWindow', template='Office project tree', template_source=str(source), template_window='second')
+    assert not (parent / 'WrongWindow').exists()
+    assert roots.path.read_bytes() == before
+    assert call(action='create', parent=registered['root_id'], name='Selected', template='Office project tree', template_source=str(source), template_window='first')['ok']
+    assert (parent / 'Selected' / 'Alpha').is_dir()
+
+
+def test_template_unavailable_parent_identity_refuses_before_scan(owner, tmp_path, monkeypatch):
+    from nodelang import workspace_roots_catalogue as catalogue
+    call, _, _, roots, _ = owner
+    parent, source = tmp_path / 'Parent', tmp_path / 'Template'
+    parent.mkdir()
+    source.mkdir()
+    registered = call(action='register', path=str(parent))['root']
+    call(action='register', path=str(source))
+    before = roots.path.read_bytes()
+    monkeypatch.setattr(catalogue, 'folder_identity', lambda _path: None)
+    def no_scan(*_args):
+        raise AssertionError('An unidentified parent must refuse before source enumeration')
+    monkeypatch.setattr(catalogue, 'read_project_template', no_scan)
+    with pytest.raises(Refused, match='identity is unavailable'):
+        call(action='create', parent=registered['root_id'], name='Created', template='Office project tree', template_source=str(source))
+    assert roots.path.read_bytes() == before
+    assert list(parent.iterdir()) == []
+    assert list(source.iterdir()) == []

@@ -2173,12 +2173,48 @@ def r_settings_action(s, req):
 
 
 def r_workspace_roots(s, req):
-    from .workspace_roots_catalogue import create_project_folder, project_folder_layout
+    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity
     action, body = _action(req, 'list')
     if action == 'browse':
+        window = body.get('template_window')
+        if body.get('template') and (type(window) is not str or not 1 <= len(window) <= 80):
+            raise Refused('Choose the template from this window.')
         picker = s.native_folder_picker
-        return {'ok': True, 'path': str(picker('Choose a workspace folder') or '') if picker else ''}
+        path = str(picker('Choose a project folder template' if body.get('template') else 'Choose a workspace folder') or '') if picker else ''
+        if body.get('template'):
+            picks = getattr(s, '_project_template_picks', {})
+            if len(picks) >= 16:
+                picks.pop(next(iter(picks)))
+            picks[window] = path
+            s._project_template_picks = picks
+        return {'ok': True, 'path': path}
     store = s.files['workspaces']
+    directories, expected_parent, parent_identity = None, None, None
+    kind, source = body.get('template', ''), body.get('template_source', '')
+    window = body.get('template_window', '')
+    if action == 'create':
+        if type(kind) is not str or type(source) is not str or type(window) is not str or kind not in ('', 'Office project tree') or (kind and not source) or (not kind and source):
+            raise Refused('Choose the Office template folder; the ISO template has no approved source yet.')
+        if kind:
+            if not Path(source).is_absolute() or '..' in Path(source).parts:
+                raise Refused('Choose the template at its absolute registered or selected location.')
+            def source_admitted(roots):
+                picked = getattr(s, '_project_template_picks', {}).get(window)
+                return (bool(picked) and Path(picked) == Path(source)) or any(row.get('privacy', 'private') == 'private' and Path(source).is_relative_to(Path(row['path'])) for row in roots)
+            with store.lock:
+                roots = store.read()['roots']
+                expected_parent = next((dict(row) for row in roots if row['root_id'] == body.get('parent')), None)
+                if expected_parent is None or expected_parent.get('privacy', 'private') != 'private':
+                    raise Refused('Choose an available private registered parent workspace.')
+                if not source_admitted(roots):
+                    raise Refused('Choose the template in this window or use a private registered source.')
+                parent_identity = folder_identity(expected_parent['path'])
+                if parent_identity is None:
+                    raise Refused('The parent folder identity is unavailable. Choose a parent Windows can identify.')
+            try:
+                directories = read_project_template(source, expected_parent['path'], body.get('name'), s.workspace_built_in())
+            except ValueError as error:
+                raise Refused(str(error)) from error
     with store.lock:
         held = store.read()
         if not held['roots'] and not held.get('imported_legacy'):
@@ -2209,8 +2245,10 @@ def r_workspace_roots(s, req):
                 raise Refused('Choose a registered parent folder for the new project.')
             governed = s.workspace_built_in()
             template = project_folder_layout(parents[0]['path'], governed)
+            if expected_parent is not None and (parents[0] != expected_parent or folder_identity(parents[0]['path']) != parent_identity or not source_admitted(held['roots'])):
+                raise Refused('The parent or template authorization changed. Choose it again before creating the project.')
             try:
-                path = create_project_folder(parents[0]['path'], body.get('name'), governed)
+                path = create_project_folder(parents[0]['path'], body.get('name'), governed, directories)
             except ValueError as error:
                 raise Refused(str(error)) from error
             row = {'root_id': 'workspace:' + secrets.token_hex(6), 'label': path.name, 'path': str(path),
@@ -2220,7 +2258,7 @@ def r_workspace_roots(s, req):
                 store.write(held)
             except OSError as error:
                 raise Refused('Project files were created at %s, but registration failed. Add that existing folder as a workspace.' % path) from error
-            return {'ok': True, 'root': row, 'template': template}
+            return {'ok': True, 'root': row, 'template': kind or template}
         if action == 'register':
             path = Path(str(body.get('path') or ''))
             if not path.is_absolute() or not path.is_dir():

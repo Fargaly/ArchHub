@@ -405,6 +405,114 @@ def test_release_dispatches_keep_the_existing_build_and_publish_path():
         assert {name: [s for s in steps] for name, steps in ran.items()} == every, event
 
 
+@pytest.mark.parametrize("event,mode,office_required", [
+    ("workflow_dispatch", "build", False),
+    ("workflow_dispatch", "release", True),
+    ("repository_dispatch", None, True),
+])
+def test_installer_dispatch_installs_locked_studio_dependencies_and_gates_release_on_office(
+        event, mode, office_required):
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["build"]["steps"]
+    checkout = next(step for step in steps if step["name"] == "Check out selected runtime and installer")
+    install = next(step for step in steps if step.get("run") == "npm ci --no-audit --no-fund")
+    compile_step = "Compile Studio and installer from verified source snapshots"
+    ran = _ran(workflow, event, mode)["build"]
+    assert install["working-directory"] == checkout["with"]["path"] == "selected"
+    assert ran.index("Use the reviewed Studio build runtime") < ran.index(install["name"]) < ran.index(compile_step)
+    office = next(step for step in steps if step["name"] == "Prove Office round-trips in the built Goose")
+    assert (office["name"] in ran) == office_required
+    if office_required:
+        assert ran.index(compile_step) < ran.index(office["name"]) < ran.index("Retain exact installer and metadata for review")
+        assert "continue-on-error" not in office
+        assert "build" in workflow["jobs"]["publish"]["needs"]
+
+
+def test_release_goose_office_round_trips(tmp_path, monkeypatch):
+    """Run the existing Office round-trip on the release job's exact Goose artifact."""
+    artifact = os.environ.get("ARCHHUB_RELEASE_GOOSE_EXE")
+    if not artifact:
+        pytest.skip("the release job supplies ARCHHUB_RELEASE_GOOSE_EXE")
+    runtime = Path(artifact).resolve(strict=True)
+
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    from openpyxl import Workbook, load_workbook
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    system = {"SYSTEMROOT", "WINDIR", "COMSPEC", "OS", "PATH", "PATHEXT", "SYSTEMDRIVE",
+              "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS"}
+    for name in tuple(os.environ):
+        if name.upper() not in system:
+            monkeypatch.delenv(name)
+    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP",
+                 "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "GOOSE_PATH_ROOT"):
+        directory = tmp_path / name
+        directory.mkdir()
+        monkeypatch.setenv(name, str(directory))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(ROOT / "01.APP"))
+    from nodelang import custom_mcp
+
+    row = {"id": "native-office", "name": "Goose Office", "command": str(runtime),
+           "args": ["mcp", "computercontroller"], "transport": "stdio", "env": []}
+    store = object()
+    names = sorted(tool["name"] for tool in custom_mcp.rpc(row, "tools/list", {}, store=store)["tools"])
+    assert names == ["docx_tool", "pdf_tool", "xlsx_tool"]
+
+    def call(name, operation, file, **arguments):
+        result = custom_mcp.call_tool(row, name, {"operation": operation, "path": str(file), **arguments}, store=store)
+        return json.dumps(result, ensure_ascii=True)
+
+    docx = tmp_path / "note.docx"
+    note = "ArchHub native word check"
+    call("docx_tool", "update_doc", docx, content=note)
+    assert note in call("docx_tool", "extract_text", docx)
+    with zipfile.ZipFile(docx) as archive:
+        assert note in "".join(ET.fromstring(archive.read("word/document.xml")).itertext())
+
+    pdf = tmp_path / "page.pdf"
+    sentence = "ArchHub native PDF check"
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=300, height=160)
+    font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+                             NameObject("/BaseFont"): NameObject("/Helvetica")})
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})})
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf 15 75 Td ({sentence}) Tj ET".encode("ascii"))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    with pdf.open("wb") as output:
+        writer.write(output)
+    assert sentence in PdfReader(pdf).pages[0].extract_text()
+    assert sentence in call("pdf_tool", "extract_text", pdf)
+
+    xlsx = tmp_path / "book.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Works"
+    sheet["A1"], sheet["B2"] = "Before", "Keep"
+    workbook.save(xlsx)
+    workbook.close()
+    cell = {"worksheet": "Works", "row": 1, "col": 1}
+    assert "Works" in call("xlsx_tool", "list_worksheets", xlsx)
+    assert "Before" in call("xlsx_tool", "get_cell", xlsx, **cell)
+    call("xlsx_tool", "update_cell", xlsx, value="After", **cell)
+    assert "After" in call("xlsx_tool", "get_cell", xlsx, **cell)
+    saved = load_workbook(xlsx, read_only=True)
+    try:
+        assert (saved["Works"]["A1"].value, saved["Works"]["B2"].value) == ("After", "Keep")
+    finally:
+        saved.close()
+
+    with runtime.open("rb") as executable:
+        digest = hashlib.file_digest(executable, "sha256").hexdigest()
+    print(f"Office round-trips PASS on Goose SHA-256 {digest}: DOCX XML, PDF text, XLSX A1 Before to After and B2 Keep.")
+
+
 def test_the_check_job_is_bounded_by_the_pinned_120_minute_budget():
     """goose-check's upper bound is a named, typed parameter of the goose.source node (the measured release-run budget
     the governed build.ps1 uses), read by a read-only job and wired into timeout-minutes; never a bare literal."""

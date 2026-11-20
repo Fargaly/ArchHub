@@ -122,6 +122,10 @@ jobs:
         with:
           node-version: '24.13.0'
           package-manager-cache: false
+      - name: Install locked Studio build dependencies
+        working-directory: selected
+        shell: pwsh
+        run: npm ci --no-audit --no-fund
       - name: Use the Python that runs the release court and the update check
         uses: actions/setup-python@v6
         with:
@@ -387,6 +391,15 @@ jobs:
             -BuildId $env:BUILD_ID `
             -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
+      - name: Prove Office round-trips in the built Goose
+        if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
+        working-directory: selected
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:ARCHHUB_RELEASE_GOOSE_EXE = (Resolve-Path -LiteralPath (Join-Path $env:GOOSE_BUILD_PATH 'goose.exe')).ProviderPath
+          python -B -m pytest -q -s 02.TESTS/tests_replica/test_goose_source.py::test_release_goose_office_round_trips
+          if ($LASTEXITCODE -ne 0) { throw 'Office round-trips failed in the built Goose.' }
       - name: Prove installed users' updater accepts this build (dry run)
         if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
         shell: pwsh

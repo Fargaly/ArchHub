@@ -423,3 +423,53 @@ def test_ifc_report_serialization_failure_preserves_destination(tmp_path,bcf_xml
             raise RuntimeError('Serialization failed')
     with pytest.raises(RuntimeError,match='Serialization failed'):save_bcf_report(BrokenArchive(),target)
     assert target.read_bytes()==before and not list(tmp_path.glob('.bcf-*'))
+
+
+def test_two_real_processes_share_one_managed_bcf_runtime(tmp_path,bcf_xml_site):
+    import json,subprocess,sys,time
+    from concurrent.futures import ThreadPoolExecutor
+    from nodelang import daily_work_nodes as daily
+    module=Path(daily.__file__).resolve()
+    package=Path(__import__('nodelang').__file__).resolve().parent.parent
+    code = """import importlib.util,sys,json,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+import nodelang
+spec=importlib.util.spec_from_file_location('nodelang.daily_work_nodes',sys.argv[2]);daily=importlib.util.module_from_spec(spec);sys.modules[spec.name]=daily;nodelang.daily_work_nodes=daily;spec.loader.exec_module(daily)
+barrier=Path(sys.argv[3]);(barrier/(sys.argv[4]+'.ready')).write_text('ready')
+end=time.monotonic()+20
+while not (barrier/'go').exists():
+ if time.monotonic()>end:raise TimeoutError('Fixture barrier')
+ time.sleep(.01)
+home=daily.ensure_runtime('bcf',budget_s=20)
+print(json.dumps({'home':str(home),'ready':(home/'ready.json').read_text(),'files':len(list((home/'site').rglob('*.py')))}))
+"""
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        pending=[callers.submit(subprocess.run,[sys.executable,'-B','-c',code,str(package),str(module),str(tmp_path),str(i)],stdin=subprocess.DEVNULL,capture_output=True,text=True,encoding='utf-8',timeout=45,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)) for i in range(2)]
+        end=time.monotonic()+20
+        while len(list(tmp_path.glob('*.ready')))!=2:
+            assert time.monotonic()<end
+            time.sleep(.01)
+        (tmp_path/'go').write_text('go')
+        results=[]
+        for caller in pending:
+            completed=caller.result(timeout=50);assert completed.returncode==0,completed.stderr
+            results.append(json.loads(completed.stdout.strip().splitlines()[-1]))
+    assert results[0]==results[1] and results[0]['files']>0
+    home=Path(results[0]['home']);published=(home/'ready.json').read_bytes()
+    assert daily.ensure_runtime('bcf',budget_s=10)==home and (home/'ready.json').read_bytes()==published
+    assert not list(daily.runtimes_root().glob('bcf-*.building')) and not list(daily.runtimes_root().glob('ifc-*'))
+
+
+def test_oversized_compressed_input_refuses_before_card_or_runtime(tmp_path,bcf_xml_site):
+    import copy
+    from nodelang import session_files as files,daily_work_nodes as daily
+    from nodelang.hook_decision import ask_reviews
+    source=tmp_path/'input.bcfzip';make_bcf_archive(source,'3.0')
+    item=next(row for row in files.catalogue() if row['id']=='daily:ifc_check_bcf')
+    document=files.new_document('Bound BCF input');document['nodes']=[{'id':'bound','item':item['id'],'type':item['engine'],'params':{**copy.deepcopy(item['params']),'bcf':str(source),'bcf_path':str(tmp_path/'output.bcfzip'),'archive_bytes':source.stat().st_size-1},'position':{'x':0,'y':0}}]
+    path=tmp_path/'bounded.archhub';files.write_document(path,document)
+    result=files.SessionFiles(tmp_path/'sessions').dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    assert not result.get('approvalId') and not ask_reviews() and not daily.runtimes_root().exists()
+    assert 'compressed archive' in files.read_document(path)['nodes'][0]['result']['error']
+    assert not (tmp_path/'output.bcfzip').exists()

@@ -144,31 +144,36 @@ def ensure_runtime(name: str, *, budget_s: float = 900) -> Path:
     """The pinned runtime folder, fetched and verified on first use."""
     spec = RUNTIMES[name]
     home = runtimes_root() / ('%s-%s' % (name, _pin_digest(spec)))
-    if (home / 'ready.json').is_file():
-        return home
-    building = home.with_name(home.name + '.building')
-    shutil.rmtree(building, ignore_errors=True)
-    (building / 'site').mkdir(parents=True)
-    for row in spec['files']:
-        archive = fetch(row['url'], row['sha256'], row['bytes'], runtimes_root() / 'downloads' / Path(row['url']).name)
-        with zipfile.ZipFile(archive) as bundle:
-            bundle.extractall(building / row['unzip'])
-        archive.unlink()
-    if spec['lock']:
-        lock = building / 'lock.txt'
-        lock.write_text(spec['lock'], encoding='utf-8')
-        # pip's hash mode refuses any wheel whose SHA-256 is not the pinned one.
-        done = subprocess.run([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input',
-                               '--no-deps', '--require-hashes', '--only-binary=:all:', '--target', str(building / 'site'),
-                               '-r', str(lock)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=budget_s,
-                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if done.returncode:
+    from .canvas_documents import locked
+    with locked(home, timeout=budget_s):
+        if (home / 'ready.json').is_file():
+            return home
+        building = home.with_name(home.name + '.building')
+        shutil.rmtree(building, ignore_errors=True)
+        (building / 'site').mkdir(parents=True)
+        for row in spec['files']:
+            archive = fetch(row['url'], row['sha256'], row['bytes'], runtimes_root() / 'downloads' / Path(row['url']).name)
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(building / row['unzip'])
+            archive.unlink()
+        if spec['lock']:
+            lock = building / 'lock.txt'
+            lock.write_text(spec['lock'], encoding='utf-8')
+            # pip's hash mode refuses any wheel whose SHA-256 is not the pinned one.
+            done = subprocess.run([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input',
+                                   '--no-deps', '--require-hashes', '--only-binary=:all:', '--target', str(building / 'site'),
+                                   '-r', str(lock)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=budget_s,
+                                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if done.returncode:
+                shutil.rmtree(building, ignore_errors=True)
+                raise RuntimeError('the %s runtime did not install: %s' % (name, (done.stderr or done.stdout)[-400:]))
+        (building / 'ready.json').write_text(json.dumps({'pin': spec, 'at': time.time()}), encoding='utf-8')
+        if (home / 'ready.json').is_file():
             shutil.rmtree(building, ignore_errors=True)
-            raise RuntimeError('the %s runtime did not install: %s' % (name, (done.stderr or done.stdout)[-400:]))
-    (building / 'ready.json').write_text(json.dumps({'pin': spec, 'at': time.time()}), encoding='utf-8')
-    shutil.rmtree(home, ignore_errors=True)
-    os.replace(building, home)
-    return home
+            return home
+        shutil.rmtree(home, ignore_errors=True)
+        os.replace(building, home)
+        return home
 
 
 def ensure_whisper_model(name: str) -> Path:
@@ -442,6 +447,8 @@ def bcf_request(params, feeds, document=None):
     for key in ('archive_bytes', 'archive_entries'):
         if not 1 <= int(params.get(key, spec[key])) <= spec[key]:
             raise ValueError('BCF archive budgets must remain within their declared maximum.')
+    if is_archive and path.stat().st_size > int(params.get('archive_bytes', spec['archive_bytes'])):
+        raise ValueError('BCF input exceeds the compressed archive byte budget.')
     return {**params, 'bcf_version': resolve_bcf_version(params, feeds, document),
             'bcf': str(path) if is_archive else '', 'ifc': '' if is_archive else str(path), 'bcf_path': target}
 

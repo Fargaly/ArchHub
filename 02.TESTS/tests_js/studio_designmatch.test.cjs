@@ -197,3 +197,14 @@ test('Workshop own bubbles use sender keys even when an agent displays You or BA
   assert.equal(w.document.querySelectorAll('[data-avatar]').length,2);
  }finally{w.close();}
 });
+
+test('a cold boot lists the shipped starters once the Library has loaded, with no save or schedule edit',async()=>{
+ const blank={format:'archhub',version:1,id:'cold',title:'Cold',nodes:[],wires:[],groups:[],notes:[],properties:{}};
+ const {api,requests}=await adapter([],undefined,undefined,{
+  '/api/session-files':body=>body.action==='catalogue'?{ok:true,items:[],sessions:[],directory:'/fixture'}:{ok:true,document:body.document||blank,path:''},
+  '/api/universal/node-library?starters=1':()=>({templates:[{id:'starter:fixture',title:'Stored starter',run_count:0,children:[{title:'Value',engine:'data.constant',params:{value:'hello'}}]}]})});
+ for(let i=0;i<100&&!api.getSnapshot().templates.some(t=>t.library);i++)await new Promise(resolve=>setTimeout(resolve,10));
+ assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot().templates.filter(t=>t.library).map(t=>[t.id,t.runs,t.chain]))),[['starter:fixture',0,['Value']]]);
+ assert.equal(requests.some(row=>row.body?.op==='project_schedules'),false,'boot reads only the starter owner, not schedules');
+ assert.equal(requests.some(row=>row.url==='/api/universal/node-library?templates=1'),false,'boot never asks for the saved-skill rescan');
+});

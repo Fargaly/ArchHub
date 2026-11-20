@@ -1170,9 +1170,12 @@ def r_canvas_op(s, req):
 
 
 def r_node_library(s, req):
+    from .starters import listing
+    if req.query.get('starters') == ['1']:
+        # The shipped starters alone, from the live hosts snapshot: no saved file is read (the Studio's boot list).
+        return {'ok': True, 'templates': listing(s._hosts.get() or [])}
     if req.query.get('templates') == ['1']:
         # Starters (Book ch.12) plus every saved skill. A skill is {id:'skill:<id>', title, path}.
-        from .starters import listing
         from .session_files import skill_template_rows
         return {'ok': True, 'templates': [*listing(s._hosts.get() or []), *skill_template_rows()]}
     from .library_engines import engine_categories, library_catalogue

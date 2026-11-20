@@ -66,6 +66,25 @@ def test_the_real_catalogue_lists_every_engine_and_skill_with_typed_parameters(t
     assert flat["n_number"]["params"]["value"] == 0 and flat["n_number"]["params"]["min"] is None
 
 
+def test_the_studio_boot_reads_the_shipped_starters_without_opening_any_saved_file(tmp_path, monkeypatch):
+    from nodelang import session_files
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    for index in range(3):
+        write_document(str(sessions_directory() / f"saved-{index}.archhub"), new_document(f"Saved {index}"))
+    reads = []
+    real = session_files.read_document
+    monkeypatch.setattr(session_files, "read_document", lambda path: reads.append(path) or real(path))
+    server = SimpleNamespace(_hosts=SimpleNamespace(get=lambda: []))
+
+    starters = r_node_library(server, SimpleNamespace(query={"starters": ["1"]}))["templates"]
+    assert reads == [], "the starters-only read opens no saved file"
+    assert len(starters) == 9 and all(str(row["id"]).startswith("starter:") and row["children"] for row in starters)
+    assert "starter:submittal" in {row["id"] for row in starters}
+
+    # The combined reply keeps serving its consumers, and it is the one that reads every saved file.
+    combined = r_node_library(server, SimpleNamespace(query={"templates": ["1"]}))["templates"]
+    assert len(reads) == 3 and {row["id"] for row in starters} <= {row["id"] for row in combined}
+
 def test_the_shelf_tree_names_every_card_category_once_in_the_design_order(tmp_path, monkeypatch):
     """A card keeps the category its own declaration gives; the tree only names and orders those categories."""
     from nodelang.library_engines import LIBRARY_PRESENTATION, LIBRARY_TREE

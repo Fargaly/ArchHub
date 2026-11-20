@@ -1351,15 +1351,16 @@ async function changeSchedule(op,args,add=false){
  await refreshProjectData();
  return result;
 }
+const starterCards=library=>(Array.isArray(library?.templates)?library.templates:[]).filter(t=>String(t.id||'').startsWith('starter:')&&Array.isArray(t.children))
+ .map(t=>({...t,runs:t.run_count,chain:t.children.map(n=>n.title),library:true}));
 async function refreshProjectData() {
  const [schedules,skills,library]=await Promise.all([
   canvasOperation('project_schedules',[]),canvasOperation('list_skills',[]),request('/api/universal/node-library?templates=1').catch(error=>({error:error.message}))]);
  if(!Array.isArray(schedules)||!Array.isArray(skills))throw Error('The project owner returned an invalid schedule or template list. Refresh the graph and retry.');
  const rows=Array.isArray(library.templates)?library.templates:[];
- const starters=rows.filter(t=>String(t.id||'').startsWith('starter:')&&Array.isArray(t.children));
  const skillCards=rows.filter(t=>String(t.id||'').startsWith('skill:'));
- const valid=Array.isArray(library.templates)&&starters.every(t=>Array.isArray(t.children));
- const templates=[...starters.map(t=>({...t,runs:t.run_count,chain:t.children.map(n=>n.title),library:true})),...skillCards,...skills.filter(s=>!skillCards.some(c=>c.id===s.id))];
+ const valid=Array.isArray(library.templates);
+ const templates=[...starterCards(library),...skillCards,...skills.filter(s=>!skillCards.some(c=>c.id===s.id))];
  await refreshTasks();
  const feedback=state.tasks.filter(t=>t.title.startsWith('Feedback: ')).map(t=>({id:t.id,text:t.title.slice('Feedback: '.length),status:t.status,
   response:t.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n')}));
@@ -2120,10 +2121,16 @@ api.refreshLibraryPorts=async()=>{
  publish({sessionsFolder:data.directory,libraryPorts:data.items,catalogue:data.items.map(i=>({id:i.id,name:i.title,family:i.cat,description:i.sub,unavailable:!!i.noEngine,soon:i.available===false,reason:i.reason,descriptor:{engine:i.engine}})),graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title})),templates:[...state.templates.filter(row=>String(row.id).startsWith('starter:')),...data.sessions.map(row=>({...row,id:'skill:'+row.id}))]});
  projectFile();return data.items;
 };
+// Load built-in starters separately so opening the Library reads each saved file only once.
+async function loadStarters(){
+ try{const starters=starterCards(await request('/api/universal/node-library?starters=1'));
+  publish({templates:[...starters,...state.templates.filter(row=>!String(row.id).startsWith('starter:'))],templateError:''});}
+ catch(error){publish({templateError:error.message||'Templates could not be read. Retry All templates.'});}
+}
 // The Library's own loading state: waiting while the catalogue is read, then its rows, or the refusal with Retry.
 api.loadLibrary=async()=>{
  publish({libraryStatus:'waiting',libraryError:''});
- try{const items=await api.refreshLibraryPorts();publish({libraryStatus:'loaded'});return items;}
+ try{const items=await api.refreshLibraryPorts();publish({libraryStatus:'loaded'});void loadStarters();return items;}
  catch(error){notice(error.message);publish({libraryStatus:'error',libraryError:error.message||'The Library could not be read.'});return null;}
 };
 async function refreshGraphs(){return refreshSessionFiles();}

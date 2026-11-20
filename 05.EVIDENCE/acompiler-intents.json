@@ -12410,7 +12410,9 @@
         "01.APP/nodelang/workshop_mailbox.py",
         "01.APP/nodelang/workshop_tasks.py",
         "02.TESTS/tests_replica/test_quota_continuity.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/nograph_server.py",
+        "02.TESTS/tests_replica/test_workshop_auto_chase.py"
       ]
     }
   },

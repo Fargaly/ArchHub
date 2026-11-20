@@ -36,25 +36,34 @@ address and `/download.json` is a redirect to the newest release's own
 `release.json`, so both follow every release without a redeploy. Do not invent a
 hash or label one build's installer with another build id.
 
-From the repository root, using the release values in PowerShell variables:
+From a clean checkout of the reviewed website commit, put the exact Git revision
+in `$WebsiteSource` and the verified published release values in `$BuildId`,
+`$InstallerUrl` and `$InstallerSha256`. Use a new `$OutputFolder` outside the
+checkout for the deploy context:
 
 ```powershell
-python -B 03.TOOLS/packaging/links.py --readme README.md
-python -B 03.TOOLS/packaging/website/build_site.py --build-id $BuildId --installer-url $InstallerUrl --sha256 $InstallerSha256 --output $OutputFolder
+if ((git rev-parse HEAD).Trim() -cne $WebsiteSource) { throw 'Website source revision differs.' }
+if (git status --porcelain --untracked-files=all) { throw 'Website checkout must be clean.' }
+if (Test-Path -LiteralPath $OutputFolder) { throw 'Choose a new website output folder.' }
+$SiteTools = '03.TOOLS/packaging/website'
+python -B "$SiteTools/export_catalogue.py"
+if ($LASTEXITCODE -ne 0) { throw 'Public catalogue export failed.' }
+python -B "$SiteTools/build_site.py" --build-id $BuildId --installer-url $InstallerUrl --sha256 $InstallerSha256 --output $OutputFolder --deploy-context
+if ($LASTEXITCODE -ne 0) { throw 'Public site build or identity scan failed.' }
 ```
 
 Review all four pages in the output folder and confirm each footer and build id.
 The output also includes `404.html` and font assets. A preview is not deployment.
-The Docker image generates the same static output, then serves it with Caddy,
-which also forwards `/docs/`, `/download/` and `/baboom` and proxies BABOOM's
-chat and sign-in to baboom.archhub.io. Only the allowlisted
-public source files enter its build context; no application environment, secrets,
-user profile, host programs or private workspace data are used.
+The builder scans all generated HTML before writing the Fly context. The
+generated serving configuration lives alongside the public `site/` directory.
+The image serves that directory with Caddy, which sends
+`/download.json` to the latest release record, redirects `/baboom` to
+baboom.archhub.io, and proxies BABOOM chat and sign-in.
 
-The coordinator deploys from the repository root after reconciling the release:
+The coordinator deploys that output after review:
 
 ```powershell
-flyctl deploy . --config 03.TOOLS/packaging/website/fly.toml --build-arg "BUILD_ID=$BuildId" --build-arg "INSTALLER_URL=$InstallerUrl" --build-arg "INSTALLER_SHA256=$InstallerSha256"
+flyctl deploy $OutputFolder --config (Join-Path $OutputFolder 'fly.toml')
 ```
 
 After publication, read back Home, Docs, Community and Changelog on the public

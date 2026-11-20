@@ -4,13 +4,15 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "03.TOOLS/packaging/website"))
-from build_site import LATEST_INSTALLER, build_site, slug, soon_chip
+from build_site import LATEST_INSTALLER, build_site, prepare_deploy_context, slug, soon_chip
 from links import load_links, readme_table
 
 DATA = ROOT / "03.TOOLS/packaging/website/data"
@@ -47,6 +49,18 @@ class Links(HTMLParser):
 
 
 class StaticSiteTest(unittest.TestCase):
+    def test_deploy_context_rejects_public_identity_matches(self):
+        def render_identity(site, *release):
+            site.mkdir(parents=True)
+            (site / "index.html").write_text("<p>Founder of ArchHub</p>", encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            context = Path(temporary) / "deploy"
+            with patch("build_site.build_site", side_effect=render_identity):
+                with self.assertRaisesRegex(ValueError, "Public identity scan did not pass"):
+                    prepare_deploy_context(context, "test", "https://example.org/test/setup.exe", "a" * 64)
+            self.assertFalse((context / "Dockerfile").exists())
+
     def test_design_pages_data_pages_and_honest_states(self):
         rows = load_links()
         build = "test-build-123"
@@ -61,8 +75,21 @@ class StaticSiteTest(unittest.TestCase):
                 raise
         catalogue = json.loads(catalogue_path.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory(prefix="sitelinks-test-") as temporary:
-            output = Path(temporary) / "site"
-            build_site(output, build, installer, "a" * 64)
+            context = Path(temporary) / "deploy"
+            prepare_deploy_context(context, build, installer, "a" * 64)
+            output = context / "site"
+            config = tomllib.loads((context / "fly.toml").read_text(encoding="utf-8"))
+            service = config["http_service"]
+            self.assertEqual(config["app"], "archhub-web")
+            self.assertEqual(service["internal_port"], 3000)
+            self.assertTrue(service["force_https"])
+            self.assertEqual([(check["method"], check["path"]) for check in service["checks"]], [("GET", "/")])
+            self.assertEqual(config["build"], {"dockerfile": "Dockerfile", "ignorefile": ".dockerignore"})
+            self.assertEqual((context / ".dockerignore").read_text(encoding="utf-8").splitlines(),
+                             ["*", "!Dockerfile", "!Caddyfile", "!site/", "!site/**"])
+            docker = (context / "Dockerfile").read_text(encoding="utf-8").splitlines()
+            self.assertRegex(docker[0], r"^FROM caddy:2\.8\.4-alpine@sha256:[a-f0-9]{64}$")
+            self.assertEqual(docker[1:], ["COPY Caddyfile /etc/caddy/Caddyfile", "COPY site/ /srv/"])
             pages = {path.relative_to(output).as_posix() for path in output.rglob("*.html")}
             for required in ("index.html", "download/index.html", "docs/index.html", "docs/getting-started/index.html",
                              "features/index.html", "security/index.html", "signin/index.html", "community/index.html",

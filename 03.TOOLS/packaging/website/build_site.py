@@ -402,14 +402,94 @@ def build_site(output, build_id, installer_url, sha256):
     print(f"Static site: {output.resolve()} (build {build_id})")
 
 
+def prepare_deploy_context(output, build_id, installer_url, sha256):
+    """Build the public files and the serving configuration for the existing Fly app."""
+    output = Path(output)
+    if output.exists():
+        raise ValueError("Choose a new website output folder")
+    site = output / "site"
+    build_site(site, build_id, installer_url, sha256)
+    identity = re.compile(r"fargool|ahmed|api\.archhub\.io/founder|founder of archhub", re.I)
+    pages = list(site.rglob("*.html"))
+    if not pages or any(identity.search(page.read_text(encoding="utf-8")) for page in pages):
+        raise ValueError("Public identity scan did not pass")
+
+    # These files are generated for the host, outside the public site's root.
+    (output / "Dockerfile").write_text(
+        'FROM caddy:2.8.4-alpine@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17\n'
+        'COPY Caddyfile /etc/caddy/Caddyfile\n'
+        'COPY site/ /srv/\n', encoding="utf-8")
+    (output / ".dockerignore").write_text(
+        '*\n!Dockerfile\n!Caddyfile\n!site/\n!site/**\n', encoding="utf-8")
+    (output / "Caddyfile").write_text(''':3000 {
+	header Cache-Control "no-cache"
+	@baboom path /api/chat /api/auth/* /signin
+	handle @baboom {
+		reverse_proxy https://baboom.archhub.io {
+			header_up Host baboom.archhub.io
+			header_up X-BBM-Site archhub.io
+		}
+	}
+	redir /baboom* https://baboom.archhub.io/ 302
+	redir /download.json https://github.com/Fargaly/ArchHub/releases/latest/download/release.json 302
+	handle {
+		root * /srv
+		file_server
+	}
+	handle_errors {
+		@missing expression {err.status_code} == 404
+		handle @missing {
+			root * /srv
+			rewrite * /404.html
+			file_server
+		}
+	}
+}
+''', encoding="utf-8")
+    (output / "fly.toml").write_text('''app = "archhub-web"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+  ignorefile = ".dockerignore"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+''', encoding="utf-8")
+    print(f"Fly context: {output.resolve()} ({len(pages)} HTML pages passed identity scan)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-id", required=True)
     parser.add_argument("--installer-url", required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--deploy-context", action="store_true", help="prepare the static Fly deployment context")
     args = parser.parse_args()
-    build_site(args.output, args.build_id, args.installer_url, args.sha256)
+    prepare = prepare_deploy_context if args.deploy_context else build_site
+    prepare(args.output, args.build_id, args.installer_url, args.sha256)
 
 
 if __name__ == "__main__":

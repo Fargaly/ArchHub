@@ -20,12 +20,23 @@ class KeyboardSettingsTests(unittest.TestCase):
                 from nodelang.settings_owner import keyboard_settings
                 store = JsonFile(self.profile / 'settings.json', {'unrelated': 42})
                 owner = SimpleNamespace(files={'settings': store, 'companion': None})
+                view = {}
                 def call(function, args=()):
-                    return r_settings_action(owner, SimpleNamespace(body={'function': function, 'args': list(args)}))['result']
+                    result = r_settings_action(owner, SimpleNamespace(body={
+                        'function': function, 'args': list(args),
+                        'context': {'settingsDestination': view.get('settingsDestination')}}))['result']
+                    if 'settingsDestination' in result:
+                        view.update(result)
+                    return result
 
                 first = call('readKeybindings')
                 assert any(row['id'] == 'menu.copy' and row['value'] == 'Ctrl C' for row in first['keyboardCommands'])
                 assert not store.path.exists(), 'reading defaults must not create state'
+                with self.assertRaises(Refused) as missing:
+                    call('setKeybinding', ['menu.copy', 'Ctrl Shift C'])
+                assert missing.exception.code == 'settings_destination_changed'
+                assert not store.path.exists(), 'a missing destination must refuse without writes'
+                call('readPreferences')  # the UI owner returns the scope and destination to bind
                 changed = call('setKeybinding', ['menu.copy', 'Ctrl Shift C'])
                 assert changed['keybindings'] == {'menu.copy': 'Ctrl Shift C'}
                 assert store.read()['unrelated'] == 42

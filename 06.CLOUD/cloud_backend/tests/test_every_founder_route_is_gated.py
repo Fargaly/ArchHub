@@ -42,10 +42,11 @@ def client():
 
 
 def _founder_routes():
-    import main
+    from tests.test_one_signin_one_cloud_address import registered_routes
+
     routes = []
-    for route in main.app.routes:
-        path = getattr(route, "path", "")
+    for route in registered_routes():
+        path = getattr(route, "path", "") or ""
         if not (path == "/founder" or path.startswith("/founder/")) or path in OPEN:
             continue
         for method in sorted(getattr(route, "methods", None) or ()):

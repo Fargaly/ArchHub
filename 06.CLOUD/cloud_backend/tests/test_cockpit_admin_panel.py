@@ -112,8 +112,9 @@ def test_the_system_map_says_the_app_no_longer_sends_it_and_asks_for_nothing(cli
     assert kept.status_code == 200 and "compiled/atlas-cockpit.js" in kept.text
     assert "map-assets/map.html" not in panel and "map-assets/map.html" not in served        # linked from nowhere
     assert client.get("/founder/map-assets/compiled/atlas-cockpit.js", headers=founder).status_code == 200
-    import main
-    assert "/founder/map-state" in {route.path for route in main.app.routes}
+    from tests.test_one_signin_one_cloud_address import registered_routes
+
+    assert "/founder/map-state" in {route.path for route in registered_routes()}
 
 
 def test_a_stranger_reaches_none_of_the_new_routes(client):

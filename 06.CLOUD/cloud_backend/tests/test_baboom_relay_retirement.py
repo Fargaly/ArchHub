@@ -6,11 +6,9 @@ from fastapi.testclient import TestClient
 
 def test_cloud_backend_does_not_serve_retired_baboom_relay_routes():
     import main
+    from tests.test_one_signin_one_cloud_address import registered_routes
 
-    route_paths = {
-        getattr(route, "path", "")
-        for route in main.app.routes
-    }
+    route_paths = {getattr(route, "path", "") or "" for route in registered_routes()}
 
     assert not any(path.startswith("/v1/baboom") for path in route_paths)
 

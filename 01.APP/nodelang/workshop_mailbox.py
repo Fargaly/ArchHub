@@ -1070,8 +1070,7 @@ class WorkshopInjection:
         return [row for row in current if row.get("native_session_id") == self._coordinator_native_id]
 
     def _watch(self, history, now, declarations):
-        """Stalled delivery: an attempted push with no reply (or no read, when none was asked) is
-        re-pushed at each retry step and escalated to the coordinator at the last; never the founder."""
+        """Recover refused or uncertain delivery; a confirmed push waits quietly for its reply."""
         params = WATCH_NODE["params"]
         if now - self._watched_at < params["check_seconds"]:
             return False
@@ -1131,16 +1130,18 @@ class WorkshopInjection:
             claim = claims["initial"]
             initial = claim_state(claim, now) if claim is not None else legacy_state(events, "initial")
             latest, latest_state = "initial", initial
+            confirmed = initial == "delivered"
             for name in order[1:]:
                 found = claims[name]
                 state = (claim_state(found, now) if found is not None else delivery_outcome(
                     events[name].get("status"), events[name].get("dispatch_attempted")) if name in events else None)
                 if state is not None:
+                    confirmed = confirmed or state == "delivered"
                     latest, latest_state = name, state
             if latest_state in ("in-flight", "queued"):
                 continue   # not answered yet, or held by the recipient's own door for its next turn: nothing to do
-            # A sender push that landed is done: no follow-up, no escalation (nothing may interrupt a busy session).
-            if initial == "delivered" and (not asks or claim is not None and claim["holder"] == "sender"):
+            # Keep any earlier delivery proof when legacy retries later failed.
+            if confirmed:
                 continue
             # Only a delivered or a verified-refused latest step is followed up by a push. A caller-owned call and an
             # uncertain step (the door may have it, or its sender died) are held: escalated once, never re-pushed.

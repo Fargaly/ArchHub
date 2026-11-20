@@ -26,6 +26,14 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
 
+def _join(company: dict, user: dict) -> dict:
+    """A member operating under the company: the shared bucket is only for real members (WIRE-settings)."""
+    import db
+    db.add_company_member(company_id=company["id"], user_id=user["id"])
+    db.set_current_company(user["id"], company["id"])
+    return db.get_user(user["id"])
+
+
 def _make_company(name: str = "Acme") -> dict:
     """Create a company row directly via db helpers. Returns the row."""
     import db
@@ -52,10 +60,8 @@ class TestActorResolution:
     def test_remaining_uses_company_quota_when_company_id_set(self):
         import db
         c = _make_company("CompanyA")
-        u = db.get_or_create_user("member-a@example.com")
-        # Switch the user into the company.
-        db.set_current_company(u["id"], c["id"])
-        u = db.get_user_by_email("member-a@example.com")
+        # Join the company and switch the user into it.
+        u = _join(c, db.get_or_create_user("member-a@example.com"))
         # Burn some company quota.
         db.increment_usage_for_actor(u, 7)
         remaining = db.quota_remaining_for_actor(u)
@@ -81,9 +87,7 @@ class TestIncrementUsage:
     def test_increment_company_does_not_touch_user_row(self):
         import db
         c = _make_company("CompanyB")
-        u = db.get_or_create_user("member-b@example.com")
-        db.set_current_company(u["id"], c["id"])
-        u = db.get_user_by_email("member-b@example.com")
+        u = _join(c, db.get_or_create_user("member-b@example.com"))
         # Bump 10 via actor — should hit company, not user.
         db.increment_usage_for_actor(u, 10)
         u_after = db.get_user_by_email("member-b@example.com")
@@ -208,9 +212,7 @@ class TestProxyActorReporting:
                 "UPDATE companies SET msg_limit = 1, msg_used = 1 WHERE id = ?",
                 (c["id"],),
             )
-        u = db.get_or_create_user("member-e@example.com")
-        db.set_current_company(u["id"], c["id"])
-        u = db.get_user_by_email("member-e@example.com")
+        u = _join(c, db.get_or_create_user("member-e@example.com"))
 
         # Build a tiny async harness — proxy.chat_completions is async.
         import asyncio

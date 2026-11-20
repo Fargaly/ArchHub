@@ -13,15 +13,12 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
-
 MODULES = ("tokens", "param-types", "cockpit-core", "hub-kit", "atlas-engine", "atlas-runtime",
            "atlas-panels", "atlas-side", "atlas-cockpit")
 BACKEND = Path(__file__).resolve().parents[1]
 ASSETS = BACKEND / "cockpit_assets"
 COMPILED = ASSETS / "compiled"
 BUILD = BACKEND / "tools" / "build_cockpit_assets.js"
-STUDIO = Path(__file__).resolve().parents[3] / "01.APP/nodelang" / "studio"
 
 
 def _sha(path: Path) -> str:
@@ -44,21 +41,13 @@ def test_the_build_compiles_from_the_studio_tree():
         assert "'%s'" % module in script, module
 
 
-def test_every_module_is_built_and_the_manifest_names_its_source():
+def test_every_module_is_built_and_the_manifest_records_it():
+    # The atlas map these modules drew is retired (D-014 NOGRAPH: /founder/map serves map-retired.html, and
+    # map.html is kept only as a file linked from nowhere); their .jsx sources were deleted on 2026-10-20
+    # (ec562ea1). So the bundle no longer has a source to match; it must still be exactly what its manifest records.
     manifest = json.loads((COMPILED / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["source_root"] == "11.ARCHHUB-APP/nodelang/studio"
     entries = {entry["module"]: entry for entry in manifest["files"]}
     assert set(MODULES) <= set(entries), sorted(set(MODULES) - set(entries))
     for module in MODULES:
         assert _sha(COMPILED / (module + ".js")) == entries[module]["output_sha256"], (
             "%s.js is not the output the manifest records" % module)
-
-
-def test_the_bundle_is_the_build_of_the_current_source():
-    if not STUDIO.is_dir():
-        pytest.skip("the cockpit source tree is not beside this checkout")
-    manifest = json.loads((COMPILED / "manifest.json").read_text(encoding="utf-8"))
-    built = {entry["module"]: entry["source_sha256"] for entry in manifest["files"]}
-    stale = [module for module in MODULES if built.get(module) != _sha(STUDIO / (module + ".jsx"))]
-    assert not stale, ("compiled bundle is behind its source for %s; run "
-                       "node cloud_backend/tools/build_cockpit_assets.js" % ", ".join(stale))

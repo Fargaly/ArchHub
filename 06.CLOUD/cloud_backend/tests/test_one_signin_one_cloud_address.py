@@ -33,14 +33,17 @@ def client():
                       raise_server_exceptions=False)
 
 
-def _routes():
+def registered_routes():
     import main
-    return {(method, route.path) for route in main.app.routes
-            for method in (getattr(route, "methods", None) or ())}
+    from fastapi import routing
+
+    # Older FastAPI flattens routers on inclusion; newer versions expand them here, including hidden routes.
+    return getattr(routing, "iter_route_contexts", iter)(main.app.routes)
 
 
 def test_a_the_cockpit_has_no_sign_in_route_of_its_own():
-    routes = _routes()
+    routes = {(method, route.path) for route in registered_routes()
+              for method in (getattr(route, "methods", None) or ())}
     for gone in (("POST", "/founder/login"), ("POST", "/founder/login/email"),
                  ("GET", "/founder/login/google")):
         assert gone not in routes, gone
@@ -99,10 +102,45 @@ def test_a_the_cloud_tells_the_app_who_owns_the_cockpit(client):
         assert me.status_code == 200 and me.json()["founder"] is owns, address
 
 
-def test_c_deploy_refuses_until_the_one_address_answers_over_tls():
-    script = (BACKEND / "deploy.ps1").read_text(encoding="utf-8")
-    gate = script.index('$publicHealth = "https://api.archhub.io/healthz"')
-    assert gate < script.index("flyctl deploy") and gate < script.index("flyctl secrets")
-    check = script[gate:script.index("# ----- 1. Ensure flyctl")]
-    assert "exit 1" in check and "-ne 200" in check
-    assert "SkipCertificateCheck" not in script, "a live certificate is the point of the check"
+def _deploy_court():
+    """The inert flyctl transport the cloud-deploy court already uses (498f04c1), shared rather than copied."""
+    import importlib.util
+    path = BACKEND.parents[1] / "02.TESTS" / "tests_replica" / "test_cloud_deploys_from_this_repository.py"
+    spec = importlib.util.spec_from_file_location("cloud_deploy_court", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("checkout", ["", "o'brien checkout"])
+def test_c_deploy_refuses_until_the_one_address_answers_over_tls(tmp_path, checkout):
+    """Run the real deploy script with an inert flyctl in a minimal environment (no inherited credentials): while the
+    one address does not answer over TLS it stops with exit 1 before flyctl is ever called; by default that address
+    is api.archhub.io. A checkout path holding an apostrophe runs the same."""
+    import shutil
+    import subprocess
+    script = BACKEND / "deploy.ps1"
+    if checkout:
+        copy = tmp_path / checkout / "06.CLOUD" / "cloud_backend" / "deploy.ps1"
+        copy.parent.mkdir(parents=True)
+        shutil.copyfile(script, copy)
+        script = copy
+    log = tmp_path / "flyctl-calls.jsonl"
+    (tmp_path / "env").mkdir()
+    pwsh, shim, env = _deploy_court()._inert_environment(tmp_path / "env", log)
+    quiet = dict(cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    resolved = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command",
+                               "(Get-Command flyctl -All -ErrorAction Stop).Source"], **quiet)
+    assert resolved.returncode == 0 and [Path(line.strip()) for line in resolved.stdout.splitlines() if line.strip()] == [shim], \
+        resolved.stdout + resolved.stderr
+    run = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-File", str(script), "-NonInteractive",
+                          "-PublicHealthUrl", "https://127.0.0.1:9/healthz"], **quiet)  # nothing answers TLS here
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "REFUSED" in run.stdout and "did not answer over TLS" in run.stdout, run.stdout
+    assert not log.exists(), "flyctl ran before the address answered"
+    default = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command",
+                              "$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:ARCHHUB_DEPLOY_SCRIPT,[ref]$null,[ref]$null); "
+                              "($ast.ParamBlock.Parameters | ? { $_.Name.VariablePath.UserPath -eq 'PublicHealthUrl' }).DefaultValue.Value"],
+                             **{**quiet, "env": {**env, "ARCHHUB_DEPLOY_SCRIPT": str(script)}})
+    assert default.stdout.strip() == "https://api.archhub.io/healthz", default.stdout + default.stderr

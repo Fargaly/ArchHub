@@ -423,9 +423,10 @@ class TestAiMode:
 
 
 def _member_in(company):
-    """A user operating under `company` (current_company_id set)."""
+    """A member operating under `company` (current_company_id set); the company bucket is only for real members."""
     import db
     u = _user()
+    db.add_company_member(company_id=company["id"], user_id=u["id"])
     db.set_current_company(u["id"], company["id"])
     return db.get_user(u["id"])
 

@@ -331,7 +331,8 @@ class TestFreeDefaultNvidia:
         assert config.FREE_PROVIDER == "nvidia"
         from urllib.parse import urlparse
         assert urlparse(config.FREE_PROVIDER_BASE_URL).hostname == "integrate.api.nvidia.com"
-        assert "llama-3.3-70b" in config.ARCHHUB_FREE_MODEL
+        # The free tier serves the NVIDIA model the cloud is configured for (Nemotron since the NVIDIA switch).
+        assert config.ARCHHUB_FREE_MODEL == config.NVIDIA_MODEL
 
     def test_free_key_falls_back_to_nvidia_key(self, monkeypatch):
         import importlib, config

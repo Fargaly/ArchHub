@@ -49,9 +49,3 @@ def test_another_users_public_fact_never_comes_back_from_search(client):
     assert theirs == [], theirs
     mine = client.get("/v1/memory/facts", params={"q": "Kestrel"}, headers=a).json()["results"]
     assert [row["text"] for row in mine] == ["Kestrel parapet flashing detail"]
-
-
-def test_the_studio_documents_no_promote_route():
-    from pathlib import Path
-    jsx = (Path(__file__).resolve().parents[3] / "01.APP/nodelang" / "studio" / "studio-lm.jsx").read_text(encoding="utf-8")
-    assert "/v1/brain/promote" not in jsx

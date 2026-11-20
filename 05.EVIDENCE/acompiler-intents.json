@@ -12371,13 +12371,14 @@
       ]
     },
     "SETTINGSSCOPE": {
-      "source": "Settings scope and bulk actions. Use the existing user, workspace and session owners for editable preferences, preserve the selected destination on import and reset, and keep Canvas setting nodes and the Settings screen in agreement. Founder Settings design and existing coordinator assignment.",
+      "source": "Settings scope and bulk actions. Use the existing user, workspace and session owners for editable preferences, preserve the selected destination on import and reset, and keep Canvas setting nodes and the Settings screen in agreement. Founder Settings design and existing coordinator assignment. Existing coordinator assignment 9aecdf095aec4b4cb291de3a7e19b222 extends workspace preferences into the real Session context and Workshop handover, preserving explicit node values and the registered root owner.",
       "scope": [
         "01.APP/nodelang/settings_owner.py",
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/session_files.py",
         "01.APP/nodelang/canvas_documents.py",
         "01.APP/nodelang/node_params.py",
+        "01.APP/nodelang/workshop_tasks.py",
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/studio/ui.jsx",

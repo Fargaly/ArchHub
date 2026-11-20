@@ -241,6 +241,10 @@ Replaces: the signed coordination identity and request envelope, caller-key boot
 Fitness: a graph with no signed owner round-trips a Workshop message and an actual broker HTTP call that persists on reopen (red on the previous main with the exact ValueError); another OS user is refused by socket ownership; shutdown drains admitted requests before the graph closes; Workspaces forwarding, wire, graph-current, machine permit and private-grant courts pass on the keyless route (111 green at review). Timings are typed keyword defaults. No key, expiry window or idle gate remains on any path that can stop a connection (memory feedback_no-keys-no-blocking-gates).
 
 
+### D-009 update — online desktop sign-in (2026-11-21)
+
+The founder requires an archhub.io account to use the official desktop app, including when it opens a workflow file directly. The existing Google sign-in flow returns to the app through PKCE. The desktop verifies the protected session at the existing pinned `/v1/me` endpoint. The sign-in screen can open offline. Work requires a live account response. Sign-out or connection loss preserves drafts and stops new work. Reconnecting the same account resumes its workspace. A different account must not inherit the previous account's unsaved work. The website and repository remain public.
+
 ### D-009 implementation completion: WSOWNER
 
 Founder request WSOWNER / F98: "the ArchHub account runs everything, every setting"; F97: "every visible button works". The installed NOKEY desktop owned coordination but Workspaces still called methods and signed-authority fields held only by the retired clean HTTP consumer.

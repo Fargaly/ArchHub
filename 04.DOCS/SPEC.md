@@ -94,7 +94,8 @@ Rules:
    secrets. Recent paths and recovery files are local metadata.
 3. Opening a document never executes it.
 4. Boot opens no graph journal, enrols no agent and checks no signed authority.
-   The app is usable as soon as its window and its files are readable.
+   The window can show sign-in as soon as it opens. Desktop work requires a
+   live ArchHub account verified by the ArchHub account service (§9.5).
 5. A search index, cache or thumbnail MAY exist only as disposable acceleration;
    deleting it MUST NOT change meaning.
 6. The retired universal graph journal is not opened, read or written by the
@@ -261,8 +262,14 @@ and document bytes stay in their own files; a node references them.
 4. Brokers are versioned, allowlisted, least-privilege and revocable. Unknown
    actions fail closed. Raw "run any code" exists only as an escape hatch behind
    the Approve card.
-5. The account is the identity, never the machine (D-009). No signed-owner key
-   layer may block the app.
+5. The existing ArchHub account is the desktop identity (D-009). At startup
+   and during use, the official app must verify its session with the account
+   service before admitting work. On sign-out, refusal or loss of contact,
+   lock the workspace and refuse new work, including effects initiated by
+   agents and automations. Preserve unsaved work for its owner. Let the same
+   account reconnect in place without replaying writes or sends. Existing
+   host approvals still apply after sign-in. No signed-owner key layer may
+   block the app.
 6. A registered workspace is open to the user's own agents without prompts. The
    permission system stays at the real edges: other people, client data, the
    public, writes to host models, and real harm.

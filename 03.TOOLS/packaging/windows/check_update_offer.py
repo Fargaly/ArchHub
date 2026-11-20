@@ -35,10 +35,15 @@ for candidate in (ROOT, Path(__file__).resolve().parents[3] / "01.APP"):
         sys.path.insert(0, str(candidate))
 
 from nodelang import quiet_update as qu  # noqa: E402
+from nodelang.host_addin_retarget import manifest_rows  # noqa: E402
 
 REPOSITORY = "Fargaly/ArchHub"
+INSTALLED_MANIFEST = "installed-source-manifest.tsv"
 FILES = ("ArchHub-Setup-0.exe", "release.json", "release-notes.md",
-         "source-manifest.tsv", "studio-build.json", "BUILD_METADATA.json")
+         "source-manifest.tsv", "studio-build.json", "BUILD_METADATA.json", INSTALLED_MANIFEST)
+# Native support carried by the last complete baseline, 20261119-0904-665c785.
+# A stable release must keep these years even if the build runner lacks their SDKs.
+STABLE_HOST_YEARS = {"revit": (2020, 2023, 2024, 2025, 2027), "autocad": (2026,)}
 # Count the same source inventory the build compiler consumes, not an old
 # hand-maintained count that rejects every newly compiled installer.
 _compiler = (ROOT / "packaging/compile_studio.cjs").read_text(encoding="utf-8")
@@ -83,6 +88,24 @@ def _valid_build_notes(notes: str, build_id: str, built_at: str, asset_sha: str)
             and ("SHA256 %s: %s\n" % (qu.ASSET_NAME, asset_sha)) in tail)
 
 
+def check_host_payloads(manifest: Path, build_id: str) -> None:
+    """Apply the stable coverage floor to the same file inventory Setup prunes against."""
+    # The install manifest inventories program files. The broker review checks host JSON.
+    paths = manifest_rows(manifest.read_bytes())
+    missing = []
+    for host, years in STABLE_HOST_YEARS.items():
+        for year in years:
+            folder = f"bridges/{host}/{year}/{build_id.casefold()}"
+            if host == "revit":
+                required = (f"{folder}/revitmcp.dll", f"{folder}/revitmcpcore.dll")
+            else:
+                required = (f"{folder}/acadmcp.dll",)
+            if any(path not in paths for path in required):
+                missing.append(f"{host} {year}")
+    if missing:
+        raise Refused("stable release would drop supported native host payloads: " + ", ".join(missing))
+
+
 def reconcile(release_dir: Path, expected_revision: str = "", repository: str = REPOSITORY) -> dict:
     """Return the release offer; raise Refused when any claimed byte differs."""
     release_dir = Path(release_dir)
@@ -104,6 +127,7 @@ def reconcile(release_dir: Path, expected_revision: str = "", repository: str = 
         "asset_bytes": manifest.get("asset_bytes") == asset_bytes and 0 < asset_bytes <= qu._INSTALLER_BYTES,
         "payload_manifest": manifest.get("payload_manifest") == "source-manifest.tsv"
         and manifest.get("payload_manifest_sha256") == _sha(release_dir / "source-manifest.tsv"),
+        "installed_manifest": manifest.get("installed_source_manifest_sha256") == _sha(release_dir / INSTALLED_MANIFEST),
         "studio_manifest": manifest.get("studio_manifest") == "studio-build.json"
         and manifest.get("studio_manifest_sha256") == _sha(release_dir / "studio-build.json"),
         "studio_files": type(manifest.get("studio_files")) is int and manifest["studio_files"] == STUDIO_FILES,
@@ -117,6 +141,7 @@ def reconcile(release_dir: Path, expected_revision: str = "", repository: str = 
     failed = sorted(name for name, ok in checks.items() if not ok)
     if failed:
         raise Refused("release output does not reconcile: " + ", ".join(failed))
+    check_host_payloads(release_dir / INSTALLED_MANIFEST, build_id)
     tag = "build-" + build_id
     return {
         "tag": tag,

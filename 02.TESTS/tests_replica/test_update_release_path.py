@@ -21,6 +21,7 @@ import sqlite3
 import shutil
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from textwrap import dedent
 import time
 from types import SimpleNamespace
@@ -539,8 +540,35 @@ def _installer_bytes(build_id: str, built_at: str) -> bytes:
                        "nodelang/__release_marker__.py": "BUILD = %r\n" % build_id}).encode("utf-8")
 
 
+def _write_installed_inventory(destination: Path, build_id: str, *, omit: tuple[str, ...] = ()) -> bytes:
+    from nodelang.host_addin_retarget import LEGACY_IDENTITY_FILE, write_manifest
+
+    source_files = (LEGACY_IDENTITY_FILE, "nodelang/data/baboom/persona.json", "app/__init__.py",
+                    "app/credential_lock.py", "app/secrets_store.py", "bridges/rhino/archhub_mcp.py",
+                    "bridges/blender/archhub_mcp/__init__.py", "bridges/sources/max_mcp/max_mcp_startup.py")
+    host_files = [f"bridges/autocad/2026/{build_id}/AcadMCP.dll"]
+    for year in (2020, 2023, 2024, 2025, 2027):
+        base = f"bridges/revit/{year}"
+        host_files.extend([f"{base}/host-artifacts.json", f"{base}/{build_id}/RevitMCP.dll",
+                           f"{base}/{build_id}/RevitMCPCore.dll"])
+    with TemporaryDirectory(dir=destination.parent) as fixture:
+        source, hosts = Path(fixture) / "source", Path(fixture) / "hosts"
+        for name in source_files:
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture source")
+        for name in host_files:
+            if name.startswith(omit):
+                continue
+            path = hosts / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture host file")
+        write_manifest(source, hosts, destination)
+    return destination.read_bytes()
+
+
 def _build_output(folder: Path, build_id: str, built_at: str) -> Path:
-    """The six files build_release.ps1 writes for a release-mode build."""
+    """The files the stable publisher checks, with stand-in payload bytes."""
     folder.mkdir(parents=True)
     asset = _installer_bytes(build_id, built_at)
     (folder / qu.ASSET_NAME).write_bytes(asset)
@@ -549,12 +577,14 @@ def _build_output(folder: Path, build_id: str, built_at: str) -> Path:
     (folder / "BUILD_METADATA.json").write_bytes(metadata.encode("utf-8"))
     (folder / "source-manifest.tsv").write_bytes(b"ARCHHUB_RELEASE_SOURCE_MANIFEST_V2\n")
     (folder / "studio-build.json").write_bytes(b'{"format":1}\n')
+    installed = _write_installed_inventory(folder / "installed-source-manifest.tsv", build_id)
     manifest = {
         "format": 1, "build_id": build_id, "built_at": built_at,
         "build_metadata_sha256": _sha(metadata.encode("utf-8")),
         "source_revision": REVISION,
         "payload_manifest": "source-manifest.tsv",
         "payload_manifest_sha256": _sha((folder / "source-manifest.tsv").read_bytes()),
+        "installed_source_manifest_sha256": _sha(installed),
         "studio_manifest": "studio-build.json",
         "studio_manifest_sha256": _sha((folder / "studio-build.json").read_bytes()),
         "studio_files": offer_check.STUDIO_FILES,
@@ -565,6 +595,52 @@ def _build_output(folder: Path, build_id: str, built_at: str) -> Path:
         build_id, built_at, qu.ASSET_NAME, _sha(asset), REVISION)
     (folder / "release-notes.md").write_bytes(notes.encode("utf-8"))
     return folder
+
+
+def test_stable_publish_refuses_inventory_that_would_retire_working_hosts(tmp_path):
+    import colleague_setup
+    from nodelang.host_broker_installation import _registration
+
+    released = _build_output(tmp_path / "release", "next", "2026-11-21T10:00:00Z")
+    assert offer_check.reconcile(released)["build_id"] == "next"
+    proposed = released / "installed-source-manifest.tsv"
+    assert b"host-artifacts.json" not in proposed.read_bytes()
+    empty = _write_installed_inventory(proposed, "next", omit=("bridges/revit/", "bridges/autocad/"))
+    release_json = released / "release.json"
+    metadata = json.loads(release_json.read_bytes())
+    metadata["installed_source_manifest_sha256"] = _sha(empty)
+    release_json.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(offer_check.Refused, match="drop supported native host payloads: revit 2020.*autocad 2026"):
+        offer_check.reconcile(released)
+
+    root = tmp_path / "ArchHub"
+    root.mkdir()
+    (root / "HOST_ARTIFACTS.json").write_text('{"revit":{},"autocad":{}}', encoding="utf-8")
+    env = {key: str(tmp_path / key) for key in ("APPDATA", "ProgramData")}
+    year = "2025"
+    assembly = root / f"bridges/revit/{year}/previous/RevitMCP.dll"
+    assembly.parent.mkdir(parents=True)
+    assembly.write_bytes(b"previous broker")
+    registration = Path(env["APPDATA"]) / f"Autodesk/Revit/Addins/{year}/RevitMCP.addin"
+    registration.parent.mkdir(parents=True)
+    original = _registration(assembly)
+    registration.write_bytes(original)
+    outcome = colleague_setup.register_revit_add_ins(root, environment=env, detected_years=[year])
+    assert outcome[0]["status"] == "retired_pending_host_restart"
+    assert registration.with_suffix(".addin.retired").read_bytes() == original
+    assert not registration.exists()
+
+
+@pytest.mark.parametrize(("omit", "missing"), [
+    ("bridges/revit/2024/next/RevitMCPCore.dll", "revit 2024"),
+    ("bridges/autocad/2026/", "autocad 2026"),
+])
+def test_stable_coverage_refuses_one_missing_dll_or_year(tmp_path, omit, missing):
+    manifest = tmp_path / "installed-source-manifest.tsv"
+    _write_installed_inventory(manifest, "next", omit=(omit,))
+    with pytest.raises(offer_check.Refused) as error:
+        offer_check.check_host_payloads(manifest, "next")
+    assert str(error.value) == f"stable release would drop supported native host payloads: {missing}"
 
 
 class _Body(io.BytesIO):

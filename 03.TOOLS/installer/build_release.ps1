@@ -874,6 +874,12 @@ $installedManifest = Join-Path $output 'installed-source-manifest.tsv'
 & $PythonPath -B (Join-Path $selectedRoot 'nodelang/host_addin_retarget.py') --manifest $selectedRoot $hostPayload $installedManifest
 if ($LASTEXITCODE -ne 0) { throw 'Installed source manifest generation failed.' }
 $installedManifestSha = (Get-FileHash -LiteralPath $installedManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+if (-not $candidate) {
+    $hostChecker = Join-Path $selectedRoot 'packaging/windows/check_update_offer.py'
+    $checkHostCoverage = 'import runpy,sys; from pathlib import Path; runpy.run_path(sys.argv[1])["check_host_payloads"](Path(sys.argv[2]),sys.argv[3])'
+    & $PythonPath -E -s -B -c $checkHostCoverage $hostChecker $installedManifest $BuildId
+    if ($LASTEXITCODE -ne 0) { throw 'Stable release native host coverage failed; no installer was compiled.' }
+}
 & $compiler "/DInstalledManifestPath=$installedManifest" "/DInstalledManifestSha256=$installedManifestSha" "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/DPreflightFilesPath=$(Join-Path $preflightOutput 'preflight-files.iss')" "/DPreflightCodePath=$(Join-Path $preflightOutput 'preflight-code.iss')" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
@@ -965,6 +971,7 @@ $metadata = [ordered]@{
     asset_name = $assetName
     asset_sha256 = $assetSha
     asset_bytes = (Get-Item -LiteralPath $assetPath).Length
+    installed_source_manifest_sha256 = $installedManifestSha
     broker_review_sha256 = (Get-FileHash -LiteralPath $BrokerReviewPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 [IO.File]::WriteAllText((Join-Path $output 'release.json'), ($metadata | ConvertTo-Json) + "`n", $utf8)

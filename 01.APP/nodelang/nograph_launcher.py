@@ -406,19 +406,20 @@ def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, de
 
     First the NoGraph server's own live work (chat turns, canvas runs, automations). Then whether the
     install would be refused before Setup: then the Studio is never closed, and the refusal is recorded
-    so automatic installs leave this build alone until a newer one or the user's own Retry.
+    so persistent failures wait for a newer build or Retry. Connector deferrals clear on a later pulse.
     """
     busy = server.busy_reason()
     if busy or state_dir is None:
         return busy
-    from .quiet_update import hold_auto_install, preflight_refusal
+    from .quiet_update import connector_install_deferred, hold_auto_install, preflight_refusal
     if desktop_pids is None:
         import psutil
         me = psutil.Process()
         desktop_pids = {me.pid, *(p.pid for p in me.parents()), *(p.pid for p in me.children(recursive=True))}
     refusal = (preflight or preflight_refusal)(Path(app_root), desktop_pids=desktop_pids)
     if refusal:
-        hold_auto_install(Path(state_dir), refusal)
+        if not connector_install_deferred(refusal):
+            hold_auto_install(Path(state_dir), refusal)
         return "The update would be refused (%s); ArchHub stays open." % refusal
     return None
 

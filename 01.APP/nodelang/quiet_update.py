@@ -894,7 +894,8 @@ def _session_zero(pid):
     return session.value == 0
 
 
-_UNSUPERVISED_TRANSPORT = ("deferred: an agent's ArchHub connector runs without its supervisor; "
+_CONNECTOR_DEFERRED = "deferred: "
+_UNSUPERVISED_TRANSPORT = (_CONNECTOR_DEFERRED + "an agent's ArchHub connector runs without its supervisor; "
                            "Setup would cut that agent's connection, so the update waits for it to end")
 # Programs that host agent connectors. A process below one of them is that agent's work, never ArchHub's to stop.
 _AGENT_HOSTS = frozenset(("cursor.exe", "claude.exe", "codex.exe", "opencode.exe", "node.exe", "code.exe",
@@ -959,17 +960,32 @@ def _can_terminate(pid) -> bool:
     return True
 
 
-def preflight_refusal(app_dir: Path, *, desktop_pids, process_iter=None, can_terminate=None) -> str:
+def preflight_refusal(app_dir: Path, *, desktop_pids, process_iter=None, can_terminate=None, chain_of=None) -> str:
     """Why an install started now would be refused before Setup; "" when nothing is known to refuse it.
 
     Asked by the desktop before it closes for an automatic install, so a refusal keeps the Studio open.
     The desktop's own processes are left out: they end when it closes. Nothing is stopped or signalled.
     """
+    root = Path(app_dir).resolve()
     can_terminate = can_terminate or _can_terminate
-    for _process, pid, _executable in _install_processes(Path(app_dir).resolve(), process_iter):
-        if pid not in desktop_pids and not can_terminate(pid):
+    chain_of = chain_of or _process_chain
+    reasons = connector_acknowledgements(root, None, process_iter=process_iter)
+    if reasons:
+        return _CONNECTOR_DEFERRED + "; ".join(reasons)[:400]
+    for process, pid, _executable in _install_processes(root, process_iter):
+        if pid in desktop_pids:
+            continue
+        transport = _agent_transport(chain_of(process), root)
+        if transport == "unsupervised":
+            return _UNSUPERVISED_TRANSPORT
+        if transport is None and not can_terminate(pid):
             return "runtime process %d refused termination" % pid
     return ""
+
+
+def connector_install_deferred(reason: str) -> bool:
+    """These refusals clear with the connector, so keep the build eligible for a retry."""
+    return reason.startswith(_CONNECTOR_DEFERRED)
 
 
 def hold_auto_install(state_dir: Path, reason: str) -> bool:
@@ -1045,7 +1061,7 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
     return [process.pid for process in stopped]
 
 
-_CONNECTORS_HELD = ("deferred: %d agent connector(s) did not confirm this install attempt idle within %ds "
+_CONNECTORS_HELD = (_CONNECTOR_DEFERRED + "%d agent connector(s) did not confirm this install attempt idle within %ds "
                     "(%s); admission reopened, nothing stopped")
 DRAIN_REQUEST = "drain-request.json"  # ArchHub-Runtime\\connectors: while it names an attempt, no new call starts
 
@@ -1054,12 +1070,13 @@ def _runtime_connectors(app_dir) -> Path:
     return Path(app_dir).parent / "ArchHub-Runtime" / "connectors"
 
 
-def connector_acknowledgements(app_dir: Path, attempt: str, *, process_iter=None) -> list:
+def connector_acknowledgements(app_dir: Path, attempt: str | None, *, process_iter=None) -> list:
     """For each live supervisor of this install, why it has NOT confirmed `attempt` idle ([] = all confirmed).
 
     Confirmed means its connectors\\<pid>.json is valid JSON naming this attempt, with admission closed and
     exactly zero pending calls. Anything else holds: no report (an older supervisor), unreadable or invalid
     JSON, a missing or non-integer count, admission still open, another attempt, or a call in flight.
+    With no attempt, preflight predicts readiness from open, idle reports without closing admission.
     """
     import psutil
     script = str(Path(app_dir).parent / "ArchHub-Runtime" / "mcp_supervisor.py").casefold()
@@ -1086,7 +1103,9 @@ def connector_acknowledgements(app_dir: Path, attempt: str, *, process_iter=None
             reasons.append("pid %d: report has no call count" % pid)
         elif report.get("attempt") != attempt:
             reasons.append("pid %d: has not acknowledged this attempt" % pid)
-        elif report.get("admission") != "closed":
+        elif attempt is None and report.get("admission") != "open":
+            reasons.append("pid %d: admission is not open" % pid)
+        elif attempt is not None and report.get("admission") != "closed":
             reasons.append("pid %d: admission still open" % pid)
         elif pending != 0:
             reasons.append("pid %d: %d call(s) in flight" % (pid, pending))
@@ -1177,7 +1196,7 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                 except (OSError, ValueError) as exc:
                     if drain is not None:
                         reopen_connectors(Path(app_dir), attempt)  # refused: agents' calls flow again
-                    if str(exc) != _LAUNCHER_HOLDS_INSTALL:  # that one clears by itself within seconds
+                    if str(exc) != _LAUNCHER_HOLDS_INSTALL and not connector_install_deferred(str(exc)):
                         # Refused before Setup: this candidate is not installed automatically again.
                         # A new build or the user's own Retry re-arms it (hold_auto_install).
                         _marker(updates, {**data, "phase": "staged", "auto_held": str(exc)[:512]})

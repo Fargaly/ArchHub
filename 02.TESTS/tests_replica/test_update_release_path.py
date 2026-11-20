@@ -241,6 +241,7 @@ def test_an_unsupervised_agent_connector_defers_the_update_before_anything_stops
     leftover.terminate.assert_not_called()
     transport.terminate.assert_not_called()
     assert qu.staged_update(state, app)["status"] == "staged"  # retried at the next check, nothing recorded as failed
+    assert qu.auto_install_held(state) == ""
 
 
 def _supervisor_fixture(tmp_path, reports):
@@ -1218,6 +1219,7 @@ def _ticking_desktop(state, app, preflight, restarts):
     update.state_dir, update.app_dir = state, app
     update._closed, update._state, update._worker, update._lock = False, "ready", None, threading.RLock()
     update._prerelease, update._available, update._restart_reason = False, "20261120-0100-aaaaaaa", ""
+    update._updated = None
     update._policy = lambda: {"auto_apply_on_quit": True, "idle_minutes": 15}
     update._request_restart = lambda: restarts.append("closed the Studio")
     update._restart_refusal = lambda: _update_refusal(server, state, app, preflight=preflight, desktop_pids=set())
@@ -1246,6 +1248,43 @@ def test_the_minute_by_minute_close_reopen_loop_cannot_happen(tmp_path):
     assert len(scans) == 1                              # refused once, then left alone without rescanning
     assert qu.auto_install_held(state) == "runtime process 420 refused termination"
     assert qu.staged_update(state, app)["status"] == "staged"   # the verified package is kept for Retry
+
+
+@pytest.mark.parametrize("report, expected", [
+    (None, "no report (older supervisor)"),
+    ('{"pending": 1, "admission": "open", "attempt": null}', "1 call(s) in flight"),
+    ('{"admission": "open", "attempt": null}', "no call count"),
+    ("unsupervised", "runs without its supervisor"),
+])
+def test_connector_preflight_keeps_studio_open_and_retries_after_exit(tmp_path, report, expected):
+    app, state = _held_fixture(tmp_path)
+    folder = qu._runtime_connectors(app)
+    folder.mkdir(parents=True)
+    pid = 2000000311
+    script = str(folder.parent / "mcp_supervisor.py")
+    transport = _fake_process(pid, str(app / ".venv" / "Scripts" / "python.exe"))
+    supervisor = SimpleNamespace(info={"pid": pid, "cmdline": ["python.exe", script, str(app)]})
+    processes = [transport if report == "unsupervised" else supervisor]
+    if report is not None and report != "unsupervised":
+        (folder / ("%d.json" % pid)).write_text(report, encoding="utf-8")
+    restarts = []
+
+    def preflight(directory, *, desktop_pids):
+        return qu.preflight_refusal(directory, desktop_pids=desktop_pids, process_iter=lambda _a: processes,
+                                    can_terminate=lambda _pid: pytest.fail("queried termination rights"),
+                                    chain_of=lambda _p: _transport_chain(app, "codex", supervised=False))
+
+    assert expected in preflight(app, desktop_pids=set())
+    tick = _ticking_desktop(state, app, preflight, restarts)
+    tick()
+    tick()
+    assert restarts == []
+    assert qu.auto_install_held(state) == ""
+    assert not (folder / qu.DRAIN_REQUEST).exists()
+    transport.terminate.assert_not_called()
+    processes.clear()
+    tick()
+    assert restarts == ["closed the Studio"]
 
 
 def test_a_refusal_inside_the_installer_step_also_holds_the_build(tmp_path):

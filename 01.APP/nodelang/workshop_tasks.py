@@ -620,6 +620,12 @@ def handover(history, task):
     # The Session card's Context and Reply in (the session node's own values): every agent that joins gets them.
     held = next((entry["params"] for entry in context.get("parameters") or [] if entry.get("id") == "start"), {})
     values = {**session_param_values(), **held}
+    from .session_files import read_document, resolve_project_folder
+    try:
+        document = read_document(row['session_path']) if row and row.get('session_path') else None
+    except (OSError, ValueError):
+        document = None
+    values['project_folder'] = resolve_project_folder(document, values['project_folder'])
     return {"task": task, "title": short_title(row["title"]) if row else "", "path": (row or {}).get("session_path") or "",
             "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {}),
             "context": {"brief": values["brief"], "project_folder": values["project_folder"], "standard": values["standard"],

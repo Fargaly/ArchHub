@@ -103,7 +103,7 @@ test('session switching rejects stale preference reads and flushes edits before 
  const doc=id=>({format:'archhub',version:1,id,title:id,nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:0,project:'tower'}});
  let held=doc('first');
  const response=data=>({ok:true,status:200,headers:{get:()=>null},json:async()=>data});
- const preferences=(id,scope='User')=>({appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:id==='first'?'Light':'Dark',default:'Dark'}],keybindings:{'menu.copy':id==='first'?'Ctrl Shift C':'Ctrl Alt C'},keyboardCommands:[],keyboardError:'',settingsScope:scope,settingsScopes:{Workspace:true,Session:true},settingsDestination:{scope,workspace:'tower',session:id,workspaceIdentity:'fixture-root'}});
+ const preferences=(id,scope='User')=>({appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:id==='first'?'Light':'Dark',default:'Dark'},{id:'Projects.Working subfolder',page:'Projects',label:'Working subfolder (relative)',value:'',default:''}],keybindings:{'menu.copy':id==='first'?'Ctrl Shift C':'Ctrl Alt C'},keyboardCommands:[],keyboardError:'',settingsScope:scope,settingsScopes:{Workspace:true,Session:true},settingsDestination:{scope,workspace:'tower',session:id,workspaceIdentity:'fixture-root'}});
  const window={ARCHHUB_BOOT:{token:'test',csrf:'test',nograph:true},crypto:require('node:crypto').webcrypto,structuredClone,
   localStorage:storage(),sessionStorage:storage(),addEventListener(){},dispatchEvent(){},ArchHubStudioAuthority:{create:()=>({getSnapshot:()=>({canvas:null})})}};
  const context={window,document:{hidden:false,addEventListener(){}},localStorage:window.localStorage,sessionStorage:window.sessionStorage,setTimeout,clearTimeout,URLSearchParams,TextEncoder,AbortSignal,AbortController,Uint8Array,CustomEvent:class {},console:{...console,warn:(...args)=>warnings.push(args.join(' '))},
@@ -115,12 +115,14 @@ test('session switching rejects stale preference reads and flushes edits before 
    if(body?.function==='readLibraryCollapsed')return response({ok:true,result:{libraryCollapsed:[]}});
    if(body?.function==='readPreferences')return new Promise(resolve=>{window.releasePreferenceRead=()=>resolve(response({ok:true,result:preferences('second','User')}));});
    if(body?.function==='readEffectivePreferences')return new Promise(resolve=>pending.set(body.context.session,()=>resolve(response({ok:true,result:preferences(body.context.session)}))));
+   if(body?.function==='resetAppearance')return response({ok:true,result:preferences('second',body.context.settingsDestination.scope)});
    if(body?.function==='readOperations')return new Promise(resolve=>{window.releaseOperationsRead=()=>resolve(response({ok:true,result:{settingsScope:'User',activeWorkspace:'old-workspace',workspacePolicies:{tower2:{rules:'Retain the actual policy'}},devices:[{id:'read-device'}],backups:[{id:'read-backup'}]}}));});
    if(body?.function==='readControls')return new Promise(resolve=>{window.releaseControlRead=()=>resolve(response({ok:true,result:{...preferences('second','User'),companion:{readDuringScopeWrite:true}}}));});
    if(body?.function==='setSettingsScope'){if(window.deferScope)return new Promise(resolve=>{window.releaseScopeWrite=()=>resolve(response({ok:true,result:preferences('second',body.args[0])}));});return response({ok:true,result:preferences('second',body.args[0])});}
    if(body?.function==='setAppearance'){
     held={...held,properties:{...held.properties,revision:held.properties.revision+1,settings:{[body.args[0]]:body.args[1]}}};
-    const result={...preferences('second','Session'),appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:body.args[1],default:'Dark'}]};
+    const result=preferences('second',body.context.settingsDestination?.scope||'Session');
+    result.appearanceSettings=result.appearanceSettings.map(row=>row.id===body.args[0]?{...row,value:body.args[1]}:row);
     if(window.deferAppearance)return new Promise(resolve=>{window.releaseAppearance=()=>resolve(response({ok:true,result:{appearanceSettings:result.appearanceSettings}}));});
     return response({ok:true,result});
    }
@@ -216,5 +218,12 @@ test('session switching rejects stale preference reads and flushes edits before 
  assert.equal(window.ArchHubAPI.getSnapshot().settingsScope,'Workspace','readControls begun during a scope write cannot undo its accepted destination');
  assert.equal(window.ArchHubAPI.getSnapshot().settingsDestination.scope,'Workspace');
  assert.equal(window.ArchHubAPI.getSnapshot().companion.readDuringScopeWrite,true,'the unrelated owner still loads');
+ window.deferScope=false;
+ const projectBegin=requests.length;
+ await window.ArchHubAPI.setSetting('Projects.Working subfolder','Models');
+ assert.equal(window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Projects.Working subfolder').value,'Models');
+ assert.equal(requests.slice(projectBegin).find(row=>row.body?.function==='setAppearance').body.context.settingsDestination.scope,'Workspace');
+ await window.ArchHubAPI.resetSetting('Projects.Working subfolder');
+ assert.equal(window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Projects.Working subfolder').value,'');
  assert.deepEqual(warnings,[]);
 });

@@ -47,15 +47,19 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
  const browser=await chromium.launch({headless:true,executablePath:executable()});
  try{
   const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.setDefaultTimeout(3000);page.on('pageerror',error=>errors.push(error.message));
-  await mount(page,{name:'Scope reviewer',email:'scope@example.test',signedIn:false,checking:false},{settingsScopes:{Workspace:true,Session:true},keyboardCommands:[],settings:[]});
+  await mount(page,{name:'Scope reviewer',email:'scope@example.test',signedIn:false,checking:false},{settingsScopes:{Workspace:true,Session:true},keyboardCommands:[],settings:[{id:'Projects.Working subfolder',page:'Projects',group:'Working folder',label:'Working subfolder (relative)',type:'text',value:'',default:''}]});
   const selector=page.getByLabel('Settings scope',{exact:true});
   await selector.waitFor();
   assert.equal(await selector.isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Import into Everywhere',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Reset Everywhere',exact:true}).isDisabled(),true);
+  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Projects',exact:true}).click();
+  assert.equal(await page.getByLabel('Working subfolder (relative)',{exact:true}).isDisabled(),true,'project edits wait for the destination read');
   await page.evaluate(()=>window.finishInitialSettingsRead());
   await selector.selectOption('Workspace');
   assert.deepEqual(await page.evaluate(()=>window.writes[0]),{scope:'Workspace',destination:{scope:'User',workspace:'example',session:'fixture'}});
+  await page.getByLabel('Working subfolder (relative)',{exact:true}).fill('Models');
+  assert.deepEqual(await page.evaluate(()=>window.settingCalls.at(-1)),{id:'Projects.Working subfolder',value:'Models',destination:{scope:'Workspace',workspace:'example',session:'fixture'}});
   await page.getByRole('button',{name:'Import into Current workspace',exact:true}).waitFor();
   await page.getByRole('button',{name:'Export Current workspace',exact:true}).click();await page.getByRole('button',{name:'Export all scopes',exact:true}).click();
   assert.deepEqual(await page.evaluate(()=>window.writes.slice(-2)),[{export:'Settings',scope:'Workspace'},{export:'Settings',scope:'All'}]);
@@ -83,6 +87,16 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   assert.equal(staleScope,'Settings destination changed');
   assert.deepEqual(await page.evaluate(()=>window.scopeCalls.at(-1)),{scope:'Workspace',destination:{scope:'User',workspace:'example',session:'fixture'}});
   assert.equal(await page.evaluate(()=>window.fixture.settingsScope),'Session');
+  await page.evaluate(()=>{window.queueSettingAct=false;window.update({settings:[{id:'Projects.Folder',page:'Projects',group:'Project register',label:'Project folder',type:'text',value:'Example',default:''}]});});
+  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Projects',exact:true}).click();
+  for(const family of ['Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'])await page.getByRole('group',{name:family+'. Coming soon: not built yet',exact:true}).waitFor();
+  assert.equal(await page.getByRole('group',{name:'Project register. Coming soon: not built yet',exact:true}).count(),0,'only the backed family leaves Coming soon');
+  assert.equal(await page.locator('[data-setting="Projects.Folder"]').count(),1,'the backed setting keeps one editor');
+  await page.evaluate(()=>window.update({settings:['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].map((group,i)=>({id:'Projects.Test'+i,page:'Projects',group,label:'Project preference '+i,type:'text',value:'',default:''}))}));
+  await page.locator('[data-setting="Projects.Test10"]').waitFor();
+  assert.equal(await page.getByRole('heading',{name:'Project preferences',exact:true}).count(),0,'all-backed Projects has no empty placeholder section');
+  assert.equal(await page.getByRole('navigation',{name:'On this page'}).getByRole('button',{name:'Project preferences',exact:true}).count(),0,'the empty placeholder has no outline target');
+  assert.equal(await page.locator('[data-setting^="Projects.Test"]').count(),11,'every backed editor remains single');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({result:'PASS',actual:'Settings sheet, controls and action registry',workspaceSelector:true,sessionSelector:true,exportSelectedAndAll:true,upload:'fixture JSON bytes',refusalAndRetry:true,resetDestination:'Workspace',pageErrors:errors,boundary:'fixture owner; real owner tested separately; not installed'}));
  }finally{await browser.close();}

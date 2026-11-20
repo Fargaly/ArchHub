@@ -259,8 +259,10 @@ def session_param_values():
     return {row['id']: copy.deepcopy(row['value']) for row in SESSION_PARAMS}
 
 
-def _run_session(params, feeds):
+def _run_session(params, feeds, document=None):
+    from .session_files import resolve_project_folder
     held = {**session_param_values(), **params}
+    held['project_folder'] = resolve_project_folder(document, held['project_folder'])
     return {'value': feeds.get('value', params.get('value', '')), 'agent': feeds.get('agent', ''),
             'profile': feeds.get('profile'), 'rules': feeds.get('rules', []),
             'parameters': {'run_budget': held['run_budget'], 'prefer_no_agent': held['prefer_no_agent'],
@@ -278,12 +280,12 @@ def _run_you(params, feeds):
 
 def _run_setting(params, feeds, document=None):
     if params.get('setting'):
-        from .settings_owner import appearance_setting
+        from .settings_owner import preference_setting
         if document is not None:
             from .session_files import resolve_setting
             value = resolve_setting(document, params['setting'])['value']
         else:
-            value = appearance_setting(params['setting'])['value']
+            value = preference_setting(params['setting'])['value']
     else:
         value = feeds.get('value', params.get('value'))
     return {'value': value}, str(value)
@@ -384,9 +386,9 @@ def thing_items():
         temperature = None
     items.append(card('thing:setting:temperature', 'settings', 'Temperature', 'Number parameter · router generation',
                       'thing.setting', {'value': temperature}, kind='number'))
-    from .settings_owner import appearance_settings
+    from .settings_owner import preference_settings
     from .node_params import socket_type
-    for row in appearance_settings()['appearanceSettings']:
+    for row in preference_settings()['appearanceSettings']:
         kind = {'boolean': 'bool'}.get(row['type'], row['type'])
         item = card('thing:setting:' + row['id'], 'settings', row['label'], 'From Settings · ' + row['page'],
                     'thing.setting', {'setting': row['id']}, kind=socket_type(kind))
@@ -400,15 +402,17 @@ def thing_items():
 def run_thing(engine, params, feeds, document=None):
     if engine == 'thing.setting':
         return _run_setting(params, feeds, document)
+    if engine == 'thing.session':
+        return _run_session(params, feeds, document)
     return THING_ENGINES[engine]['run'](params, feeds)
 
 
 def write_through(node, key, value, document=None):
     """A parameter of an app-thing node is the owner's setting; write it there."""
     if node.get('type') == 'thing.setting' and node.get('params', {}).get('setting') and key == 'value':
-        from .settings_owner import appearance_setting, write_preference
+        from .settings_owner import preference_setting, write_preference
         from .node_params import coerce
-        row = appearance_setting(node['params']['setting'])
+        row = preference_setting(node['params']['setting'])
         kind = 'bool' if type(row['default']) is bool else 'integer' if type(row['default']) is int else row['type']
         write_preference(document, row['id'], coerce(kind, value, row))
         return True

@@ -164,3 +164,124 @@ def test_scoped_preferences_round_trip_node_binding_and_atomic_import(tmp_path, 
     print(json.dumps({'result':'PASS','workspace_edit_global_bytes_unchanged':True,'readback':'real r_settings_action readControls',
                       'precedence':'session then workspace then global','reset':'inherits','keyboard':'export/import/session/reset','nodes':'Settings-to-node and node-to-Settings agree in workspace and session scopes',
                       'invalid_imports_zero_writes':len(bad),'import_destination':'only selected owner','stale_session':'refused without writes','destination_refusals':'removed workspace, same document changed project, other window User, same-id root path switch; all three files unchanged','unavailable_read':'usable, explicit notice, scope selection recovers','malformed_keyboard':'preserved by appearance edit; explicit reset recovers','owners':'existing JSON + .archhub files','boundary':'temporary owner/route, not browser or installed'}))
+
+
+def test_project_working_subfolder_reaches_session_and_handover(tmp_path, monkeypatch):
+    import pytest
+    from pathlib import Path
+    for name in ('USERPROFILE', 'HOME', 'LOCALAPPDATA', 'APPDATA', 'ARCHHUB_TEST_STATE_DIR', 'WORKSHOP_STATE_DIR'):
+        directory = tmp_path / name
+        directory.mkdir()
+        monkeypatch.setenv(name, str(directory))
+    from nodelang import session_files as files
+    from nodelang.canvas_documents import run_thing
+    from nodelang.nograph_server import JsonFile
+    from nodelang.settings_owner import PreferenceScope
+    from nodelang.user_paths import state_directory
+    key = 'Projects.Working subfolder'
+    prefs = JsonFile(state_directory() / 'settings/settings.json', {})
+    roots = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    work = tmp_path / 'project'
+    work.mkdir()
+    roots.write({'roots': [{'root_id': 'tower', 'label': 'Tower', 'path': str(work), 'settings': {}}]})
+    document = files.new_document('Working folder consumer')
+    document['properties']['project'] = 'tower'
+    path = files.document_path(files.sessions_directory(), document)
+    files.write_document(path, document)
+    files.SessionFiles().dispatch({'action': 'open', 'path': str(path)})
+    def owner():
+        return PreferenceScope(prefs, roots, str(path))
+    def folder(explicit=''):
+        held = files.read_document(path)
+        result, _ = run_thing('thing.session', {'project_folder': explicit}, {}, document=held)
+        assert result['project folder'] == result['context']['project_folder']
+        return result['context']['project_folder']
+    assert folder() == str(work)
+    from nodelang.nograph_server import r_settings_action
+    server = SimpleNamespace(files={'settings': prefs, 'workspaces': roots, 'companion': JsonFile(tmp_path / 'companion.json', {})})
+    read = r_settings_action(server, SimpleNamespace(body={'function': 'readPreferences', 'args': []}))['result']
+    changed = r_settings_action(server, SimpleNamespace(body={'function': 'setAppearance', 'args': [key, 'route'], 'context': {'settingsDestination': read['settingsDestination']}}))['result']
+    assert next(row for row in changed['appearanceSettings'] if row['id'] == key)['value'] == 'route'
+    assert folder() == str(work / 'route')
+    from nodelang.settings_owner import SettingsOwner
+    bindings = SettingsOwner.exposeSettingsPage('Projects')['nodes']
+    binding = next(node for node in bindings if node['params']['setting'] == key)
+    assert binding['params'] == {'setting': key}
+    from nodelang.node_params import socket_type
+    from nodelang.canvas_documents import SESSION_PARAMS, thing_items
+    parameter = next(row for row in SESSION_PARAMS if row['id'] == 'project_folder')
+    card = next(row for row in thing_items() if row.get('params', {}).get('setting') == key)
+    assert card['ports']['source'][0]['type'] == socket_type(parameter['type'])
+    assert run_thing('thing.setting', binding['params'], {}, document=files.read_document(path))[0]['value'] == 'route'
+    for scope, value in [('User', 'global'), ('Workspace', 'workspace'), ('Session', 'session')]:
+        owner().select(scope, 'tower', document['id'])
+        owner().change({key: value})
+        assert folder() == str(work / value), 'the real Session engine must consume the selected scoped value'
+        assert folder('explicit-node') == str(work / 'explicit-node')
+        assert folder(str(work / 'explicit-absolute')) == str(work / 'explicit-absolute')
+        assert files.resolve_project_folder(files.new_document(), '') == '', 'a default never selects a project implicitly'
+    assert files.read_document(path)['properties']['settings'][key] == 'session'
+    exported = owner().export('All')['scopes']
+    assert [exported[scope][key] for scope in ('User', 'Workspace', 'Session')] == ['global', 'workspace', 'session']
+    owner().change({key: None})
+    assert folder() == str(work / 'workspace')
+    owner().select('Workspace', 'tower', document['id'])
+    owner().change({key: None})
+    assert folder() == str(work / 'global')
+    owner().select('User', 'tower', document['id'])
+    owner().change({key: None})
+    assert folder() == str(work)
+    assert files.resolve_project_folder(files.new_document(), '') == '', 'no project never grants a folder'
+    snapshots = {file: file.read_bytes() for file in (prefs.path, roots.path, path)}
+    for bad in ('../outside', 'a/../outside', 'a\\..\\outside', '/absolute', 'C:/absolute', 'C:relative',
+                '\\\\server\\share', 'a/.. /outside', 'a/../', 'bad.', 'NUL', 'https://outside'):
+        with pytest.raises(ValueError):
+            owner().change({key: bad})
+        assert all(file.read_bytes() == before for file, before in snapshots.items())
+    with pytest.raises(ValueError):
+        owner().import_values({'format': 'archhub.settings', 'version': 1, 'scopes': {'User': {key: 'valid'}, 'Workspace': {key: '../outside'}}})
+    assert all(file.read_bytes() == before for file, before in snapshots.items())
+    from nodelang.workshop_mailbox import application_history
+    from nodelang.workshop_tasks import create, handover, open_session
+    with application_history() as history:
+        task = create(history, 'Working folder handover', 'founder')['id']
+        task_path = Path(open_session(history, task)['path'])
+    files.set_session_fields(task_path, {'project': 'tower', 'settings': {key: 'joined'}})
+    with application_history() as history:
+        assert handover(history, task)['context']['project_folder'] == str(work / 'joined')
+    files.set_session_fields(task_path, {'settings': {key: None}})
+    files.SessionFiles().dispatch({'action': 'open', 'path': str(task_path)})
+    def joined_owner():
+        return PreferenceScope(prefs, roots, str(task_path))
+    task_id = files.read_document(task_path)['id']
+    joined_owner().select('User', 'tower', task_id)
+    joined_owner().change({key: 'global-joined'})
+    with application_history() as history:
+        assert handover(history, task)['context']['project_folder'] == str(work / 'global-joined')
+    joined_owner().select('Workspace', 'tower', task_id)
+    unchanged_document = task_path.read_bytes()
+    for value in ('workspace-joined', 'workspace-updated'):
+        joined_owner().change({key: value})
+        with application_history() as history:
+            assert handover(history, task)['context']['project_folder'] == str(work / value)
+        assert task_path.read_bytes() == unchanged_document, 'resolved defaults must not be copied into the task file'
+    held = files.read_document(task_path)
+    next(node for node in held['nodes'] if node['id'] == 'start')['params']['project_folder'] = 'explicit-session-node'
+    files.write_document(task_path, held)
+    with application_history() as history:
+        assert handover(history, task)['context']['project_folder'] == str(work / 'explicit-session-node')
+    assert key not in held['properties'].get('settings', {}), 'inherited values are not copied into the document'
+
+
+def test_working_subfolder_uses_the_session_typed_parameter_source(monkeypatch):
+    from nodelang import canvas_documents as canvas
+    from nodelang.settings_owner import preference_settings, _PreferenceValues
+    parameters = tuple({**row, 'value': 'parameter-default'} if row['id'] == 'project_folder' else dict(row)
+                       for row in canvas.SESSION_PARAMS)
+    monkeypatch.setattr(canvas, 'SESSION_PARAMS', parameters)
+    parameter = next(row for row in parameters if row['id'] == 'project_folder')
+    control = next(row for row in preference_settings(settings=_PreferenceValues({}))['appearanceSettings']
+                   if row['id'] == 'Projects.Working subfolder')
+    output, _ = canvas.run_thing('thing.session', {}, {})
+    assert control['type'] == parameter['type']
+    assert control['default'] == control['value'] == output['context']['project_folder'] == parameter['value']

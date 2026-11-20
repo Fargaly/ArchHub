@@ -458,7 +458,7 @@
     raw = false
   }) {
     const u = useApp(), destination = useData().settingsDestination;
-    const disabled = row.id.startsWith('Appearance.') && !destination;
+    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')) && !destination;
     const changed = row.default !== undefined && JSON.stringify(row.value) !== JSON.stringify(row.default);
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',

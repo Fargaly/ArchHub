@@ -830,6 +830,50 @@ def appearance_settings(function='readControls', args=(), settings=None):
     return {'appearanceSettings': rows, 'homeLayout': preferences.get('homeLayout', {})}
 
 
+def project_subfolder(value):
+    """A portable project preference names only a subfolder; the workspace owns its root."""
+    from pathlib import PurePosixPath, PureWindowsPath
+    if type(value) is not str or len(value) > 4096 or any(c in value for c in ('\x00', '\r', '\n', ':')):
+        raise ValueError('Use a relative project subfolder, or leave it empty for the project root.')
+    relative = PurePosixPath(value.replace('\\', '/'))
+    if any(part.endswith((' ', '.')) or any(ord(c) < 32 or c in '<>\"|?*' for c in part) or re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in relative.parts):
+        raise ValueError('Use ordinary project subfolder names without reserved characters or trailing dots/spaces.')
+    if PureWindowsPath(value).drive or relative.is_absolute() or '..' in relative.parts:
+        raise ValueError('Use a relative project subfolder without parent traversal or an absolute path.')
+    return value
+
+
+def preference_settings(function='readControls', args=(), settings=None):
+    from .canvas_documents import SESSION_PARAMS
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    identity, key = 'Projects.Working subfolder', 'projectWorkingSubfolder'
+    if function != 'readControls' and args and args[0] == identity:
+        if function == 'setAppearance':
+            settings.update({key: project_subfolder(args[1])})
+        elif function == 'resetAppearance':
+            settings.update({}, remove=[key])
+        else:
+            raise ValueError('Use the declared preference action.')
+        result = appearance_settings(settings=settings)
+    else:
+        result = appearance_settings(function, args, settings)
+    parameter = next(row for row in SESSION_PARAMS if row['id'] == 'project_folder')
+    row = {'id': identity, 'storageKey': key, 'page': 'Projects', 'group': 'Working folder',
+           'label': 'Working subfolder (relative)', 'type': parameter['type'], 'default': parameter['value'],
+           'value': settings.read().get(key, parameter['value']),
+           'description': 'Relative to the registered project workspace folder. Empty uses its root; an explicit Session node folder wins.'}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row]}
+
+
+def preference_setting(identity):
+    row = next((row for row in preference_settings()['appearanceSettings'] if row['id'] == identity), None)
+    if row is None:
+        raise ValueError('This Settings row no longer exists: %s' % identity)
+    return row
+
+
 def appearance_setting(identity):
     row = next((row for row in appearance_settings()['appearanceSettings'] if row['id'] == identity), None)
     if row is None:
@@ -1029,7 +1073,7 @@ class PreferenceScope:
 
     def __init__(self, settings, workspaces, path='', workspace='', document=None):
         self.settings, self.workspaces, self.path = settings, workspaces, path
-        rows = appearance_settings(settings=settings)['appearanceSettings']
+        rows = preference_settings(settings=settings)['appearanceSettings']
         self.keys = {row['id']: row['storageKey'] for row in rows}
         self.keyboard = {'Keyboard.' + row['id'] for row in keyboard_settings(settings=_PreferenceValues({}))['keyboardCommands']}
         from .session_files import read_document
@@ -1137,7 +1181,7 @@ class PreferenceScope:
         self.binding = self.destination()
         shown = self.binding['scope']
         notice = '' if self.selected() == shown else 'This scope is unavailable. Showing Everywhere values; choose an available scope before editing.'
-        return {**appearance_settings(settings=values), **keyboard,
+        return {**preference_settings(settings=values), **keyboard,
                 'settingsScope': shown, 'settingsDestination': dict(self.binding), 'settingsScopeNotice': notice, 'activeWorkspace': self.workspace,
                 'settingsScopes': {'Workspace': bool(self.workspace), 'Session': bool(self.document)}}
 
@@ -1150,7 +1194,7 @@ class PreferenceScope:
         projected = self._project(self.effective(scope, maps))
         for id, value in values.items():
             if id in self.keys:
-                appearance_settings('setAppearance', [id, value], projected)
+                preference_settings('setAppearance', [id, value], projected)
         keyboard = keyboard_settings(settings=projected)
         if keyboard['keyboardError']:
             raise ValueError(keyboard['keyboardError'])

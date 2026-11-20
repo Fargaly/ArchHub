@@ -533,7 +533,7 @@ Object.assign(api,{
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId,false);},
  async setSetting(id,value,destination=state.settingsDestination){
-  if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
+  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.'))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -541,7 +541,7 @@ Object.assign(api,{
   }
   return nodeProperty(row.owner,row.key,value);
  },
- async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.'))return settingsAction('resetAppearance',[id],destination);const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
+ async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
  async resetPage(page){for(const row of state.settings.filter(r=>r.page===page&&(r.id!=='Appearance.Zoom percentage'||r.default!==undefined))) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
  setNodeParam:nodeProperty,
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
@@ -1246,13 +1246,14 @@ api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value,destination=state.settingsDestination){
  const identity=state.profile.id;
- const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this appearance edit.');return settingsAction('setAppearance',[id,value],destination);});
+ const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this preference edit.');return settingsAction('setAppearance',[id,value],destination);});
  appearanceWrites=write.catch(()=>{});
- return write.then(result=>{
-  const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id).map(n=>n.id);
-  if(changed.length)scheduleSolve(changed,null);
-  return result;
- });
+ return write.then(result=>preferenceChanged(id,result));
+}
+function preferenceChanged(id,result){
+ const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id||id==='Projects.Working subfolder'&&n.type==='thing.session'&&!n.params?.project_folder).map(n=>n.id);
+ if(changed.length)scheduleSolve(changed,null);
+ return result;
 }
 api.setInspectorWidth=value=>setAppearance('Appearance.Inspector width',value);
 api.readCanvasTabs=()=>settingsAction('readCanvasTabs');

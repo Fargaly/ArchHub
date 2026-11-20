@@ -2269,13 +2269,13 @@ def session_fields(document, path=None, *, roots=None, task_row=None):
 
 def _setting_value(identity, value):
     """A session override must be a value the global Settings row accepts (that row stays its owner)."""
-    from .settings_owner import appearance_setting, keyboard_settings, _PreferenceValues
+    from .settings_owner import preference_setting, keyboard_settings, _PreferenceValues
     if identity.startswith('Keyboard.'):
         commands = keyboard_settings(settings=_PreferenceValues({}))['keyboardCommands']
         if identity.removeprefix('Keyboard.') not in {row['id'] for row in commands} or type(value) is not str or len(value) > 64:
             raise ValueError('Choose a registered keyboard action and a text shortcut.')
         return value
-    row = appearance_setting(identity)
+    row = preference_setting(identity)
     default = row['default']
     kind = bool if type(default) is bool else int if type(default) is int else str
     if type(value) is not kind or (row.get('options') and value not in row['options']) or (
@@ -2286,7 +2286,7 @@ def _setting_value(identity, value):
 
 def resolve_setting(document, identity):
     """The session value when this session sets one, otherwise the global value from its owner."""
-    from .settings_owner import appearance_setting, keyboard_settings
+    from .settings_owner import preference_setting, keyboard_settings
     props = document.get('properties') or {}
     held = props.get('settings') or {}
     if identity in held:
@@ -2300,7 +2300,26 @@ def resolve_setting(document, identity):
         if row is None:
             raise ValueError('Choose a registered keyboard action.')
         return {'value': row['value'], 'scope': 'global'}
-    return {'value': appearance_setting(identity)['value'], 'scope': 'global'}
+    return {'value': preference_setting(identity)['value'], 'scope': 'global'}
+
+
+def resolve_project_folder(document, explicit=''):
+    """Resolve at use; never copy a machine folder into the portable preference or node parameter."""
+    if type(explicit) is not str:
+        raise ValueError('Choose a folder for the Session node.')
+    if document is None:
+        return explicit
+    from pathlib import PureWindowsPath
+    if explicit and (Path(explicit).is_absolute() or PureWindowsPath(explicit).is_absolute()):
+        return explicit
+    from .settings_owner import project_subfolder
+    relative = project_subfolder(explicit or resolve_setting(document, 'Projects.Working subfolder')['value'])
+    roots = _registered_roots()
+    project = _project_of(document.get('properties') or {}, roots)['id']
+    row = roots.get(project)
+    if not row or not row.get('path'):
+        return explicit
+    return str(Path(row['path']).joinpath(*relative.replace('\\', '/').split('/')))
 
 
 def _link_root(document, path):

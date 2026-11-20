@@ -12339,6 +12339,18 @@
         "01.APP/nodelang/studio/ui.jsx",
         "03.TOOLS/tools/real_app_check/scenarios/home_drafts.mjs"
       ]
+    },
+    "QUOTACONTINUITY": {
+      "source": "Founder 2026-11-20 09:26: work must never stop when any agent/model hits quota; auto-release stalled/quota-hit tasks with handover across all tasks, seat-coordinator lease failover, and mixed fallback_models with Retry-After cooldown.",
+      "scope": [
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "02.TESTS/tests_replica/test_quota_continuity.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

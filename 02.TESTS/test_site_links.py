@@ -7,6 +7,7 @@ import tempfile
 import tomllib
 import unittest
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "03.TOOLS/packaging/website"))
 from build_site import LATEST_INSTALLER, build_site, prepare_deploy_context, slug, soon_chip
 from links import load_links, readme_table
+import sync_changelog
 
 DATA = ROOT / "03.TOOLS/packaging/website/data"
 # Served by Caddy, not files: BABOOM's chat and sign-in proxy, the release record and BABOOM's own site.
@@ -49,6 +51,48 @@ class Links(HTMLParser):
 
 
 class StaticSiteTest(unittest.TestCase):
+    def test_changelog_sync_keeps_published_builds_and_local_history(self):
+        current = "20261120-143339-44754205914-1-7c364326cfec80539087ac8153d5616322a78955"
+        legacy = "20261119-1847-9d8e490"
+        local_only = ["20261118-0950-a1b2c3d", "20261117-123456-12345-2-" + "a" * 40]
+
+        def release(identity, **overrides):
+            return {"tag_name": "build-" + identity, "draft": False, "prerelease": False,
+                    "published_at": "2026-11-20T15:22:40Z",
+                    "body": "## What changed\n- Reviewed release note\n", **overrides}
+
+        first = [
+            release(current), release("20261120-1500-1111111", draft=True),
+            release("20261120-1501-2222222", prerelease=True),
+            {**release("20261120-1502-3333333"), "published_at": None},
+        ]
+        first.extend(release("unrelated-tag") for _ in range(96))
+        second = [release(current), release(legacy)]
+        calls = []
+
+        def response(request, timeout):
+            self.assertNotIn("Authorization", dict(request.header_items()))
+            page = int(request.full_url.rsplit("=", 1)[1])
+            calls.append(page)
+            return BytesIO(json.dumps(first if page == 1 else second).encode("utf-8"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "CHANGELOG.md"
+            history = "\n".join(f"## {identity}\n\n- Kept manual entry {i}.\n"
+                                for i, identity in enumerate(local_only))
+            path.write_text("# Changelog\n\n## Next build\n\n" + history, encoding="utf-8")
+            with patch.object(sync_changelog, "CHANGELOG", path), patch.object(
+                    sync_changelog.urllib.request, "urlopen", side_effect=response):
+                result = sync_changelog.sync()
+                stamp = path.stat().st_mtime_ns
+                self.assertEqual(sync_changelog.sync(), result)
+                self.assertEqual(path.stat().st_mtime_ns, stamp)
+            self.assertEqual(calls, [1, 2, 1, 2])
+            self.assertEqual(re.findall(r"(?m)^## (.+)$", result), ["Next build", current, legacy, *local_only])
+            self.assertTrue(result.endswith(history))
+            self.assertEqual(path.read_text(encoding="utf-8"), result)
+
+
     def test_deploy_context_rejects_public_identity_matches(self):
         def render_identity(site, *release):
             site.mkdir(parents=True)

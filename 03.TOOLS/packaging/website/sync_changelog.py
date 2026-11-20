@@ -4,7 +4,7 @@ Run from the repository root (stdlib only):
 
     python 03.TOOLS/packaging/website/sync_changelog.py
 
-Keeps the empty ``## Next build`` slot, writes every non-draft release as a
+Keeps the empty ``## Next build`` slot, writes every published stable build as a
 heading (newest first), and preserves older hand-written entries that are not
 on GitHub. Release bodies that only carry the Build block become honest
 published-build rows; ``## What changed`` / ``## Known gaps`` are copied when
@@ -23,13 +23,11 @@ ROOT = Path(__file__).resolve().parents[3]
 CHANGELOG = ROOT / "CHANGELOG.md"
 API = "https://api.github.com/repos/Fargaly/ArchHub/releases"
 SYNC_CHANGELOG_NODE = {'id': 'website.sync_changelog', 'params': {'request_seconds': 60}}
-BUILD_HEADING = re.compile(r"^## (20\d{6}-\d{4}-[0-9a-f]+)\s*$", re.M)
+BUILD_HEADING = re.compile(r"^## (20\d{6}-(?:\d{4}-[0-9a-f]+|\d{6}-[1-9]\d*-[1-9]\d*-[0-9a-f]{40}))\s*$", re.M)
 
 
-def fetch_releases(token: str | None = None) -> list[dict]:
+def fetch_releases() -> list[dict]:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "archhub-changelog-sync"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     rows: list[dict] = []
     page = 1
     while True:
@@ -38,7 +36,8 @@ def fetch_releases(token: str | None = None) -> list[dict]:
             batch = json.load(response)
         if not batch:
             break
-        rows.extend(item for item in batch if not item.get("draft") and not item.get("prerelease"))
+        rows.extend(item for item in batch
+                    if item.get("published_at") and not item.get("draft") and not item.get("prerelease"))
         if len(batch) < 100:
             break
         page += 1
@@ -100,8 +99,8 @@ def existing_entries(text: str) -> dict[str, str]:
     return found
 
 
-def sync(token: str | None = None) -> str:
-    releases = fetch_releases(token)
+def sync() -> str:
+    releases = fetch_releases()
     if not releases:
         raise SystemExit("GitHub returned no releases")
     current = CHANGELOG.read_text(encoding="utf-8") if CHANGELOG.exists() else "# Changelog\n\n## Next build\n"
@@ -110,7 +109,7 @@ def sync(token: str | None = None) -> str:
     seen: set[str] = set()
     for release in releases:
         identity = build_id(release["tag_name"])
-        if not BUILD_HEADING.fullmatch(f"## {identity}"):
+        if identity in seen or not BUILD_HEADING.fullmatch(f"## {identity}"):
             continue
         seen.add(identity)
         # Prefer the GitHub release body for builds GitHub still lists.
@@ -121,15 +120,15 @@ def sync(token: str | None = None) -> str:
     updated = "# Changelog\n\n## Next build\n\n" + "\n".join(written)
     if not updated.endswith("\n"):
         updated += "\n"
-    CHANGELOG.write_text(updated, encoding="utf-8")
+    if updated != current:
+        CHANGELOG.write_text(updated, encoding="utf-8")
     return updated
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--token", default=None, help="Optional GitHub token for a higher API quota")
-    args = parser.parse_args()
-    text = sync(args.token)
+    parser.parse_args()
+    text = sync()
     heads = BUILD_HEADING.findall(text)
     print(f"CHANGELOG.md: {len(heads)} release entries; newest {heads[0] if heads else 'none'}")
 

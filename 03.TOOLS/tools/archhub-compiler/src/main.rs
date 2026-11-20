@@ -101,10 +101,15 @@ fn run() -> Result<bool, String> {
             &fs::read(payload.ok_or("--payload is required")?).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-        let context: serde_json::Value = serde_json::from_slice(
+        let mut context: serde_json::Value = serde_json::from_slice(
             &fs::read(context.ok_or("--context is required")?).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
+        if !context.is_object() { return Err("artifact context must be an object".into()); }
+        context["artifact_kind"] = payload["kind"].clone();
+        if payload["kind"] == "ifc-export" {
+            context["files"] = serde_json::json!([payload["target"]]);
+        }
         let mut report = analyze_artifact(&payload, &context);
         let authority = match authority_root {
             Some(root) => intent::repository_authority(&root, &authority_revision)?,
@@ -406,7 +411,7 @@ mod external_tests {
     use super::*;
     #[test]
     fn changed_missing_and_duplicate_external_sources_refuse() {
-        let source = env::current_dir().unwrap().join("../../nodelang/model_session_bridge.py").canonicalize().unwrap();
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         let mut entry = serde_json::json!({"name":"PLUGIN", "source":source, "blob_oid":"wrong"});
         let authority = |entries| serde_json::json!({"intents":{"PLUGIN":{"external_entrypoints":entries}}});
         assert_eq!(external_entrypoints(&authority(serde_json::json!([entry]))).unwrap_err(), "external entrypoint source hash mismatch");

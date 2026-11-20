@@ -2861,6 +2861,39 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
             emit("E0010", "a host target cannot be disguised as another artifact kind");
         }
         match pending["kind"].as_str() {
+            Some("ifc-export") => {
+                if rules["ifc-export"]["operation"] != "revit.export_ifc" {
+                    emit("E0010", "IFC export requires its selected typed export rule");
+                }
+                let fields = ["project_id", "session", "document", "path", "version", "setup", "views"];
+                if !content.as_object().is_some_and(|c| c.len() == fields.len() && fields.iter().all(|k| c.contains_key(*k)))
+                    || pending["operation"] != "revit.export_ifc" {
+                    emit("E0009", "IFC export requires the exact operation and seven request fields");
+                }
+                let local_path = |value: &Value, suffix: &str| {
+                    value.as_str().is_some_and(|s| {
+                        let b = s.as_bytes();
+                        b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\'
+                            && !s[2..].contains([':', '/', '\0'])
+                            && s[3..].split('\\').all(|p| !p.is_empty() && p != "." && p != ".." && !p.ends_with([' ', '.']))
+                            && s.to_ascii_lowercase().ends_with(suffix)
+                    })
+                };
+                let project = content["project_id"].as_str().unwrap_or("");
+                let relative = target.strip_prefix(&format!("workspace-roots/{project}/")).unwrap_or("");
+                let path = content["path"].as_str().unwrap_or("");
+                let logical = intent::valid_ifc_target(target) && !relative.is_empty()
+                    && path.ends_with(&format!("\\{}", relative.replace('/', "\\")));
+                if !local_path(&content["document"], ".rvt") || !local_path(&content["path"], ".ifc") || !logical {
+                    emit("E0009", "IFC export requires canonical local RVT/IFC paths and the matching registered logical destination");
+                }
+                if !content["session"].as_str().is_some_and(|s| s.parse::<u16>().is_ok_and(|p| (48884..=48899).contains(&p) && s == p.to_string()))
+                    || !content["setup"].is_string()
+                    || !rules["ifc-export"]["versions"].as_array().is_some_and(|a| a.contains(&content["version"]) && content["version"].is_string())
+                    || !content["views"].as_array().is_some_and(|a| a.len() <= 1 && a.iter().all(|v| v.as_i64().is_some_and(|n| n > 0))) {
+                    emit("E0009", "IFC export requires the exact Revit session, supported native version, setup text and at most one positive view id");
+                }
+            }
             Some("model") if pending["format"] == "archhub-graph-v1" => {
                 let action = content["action"].as_str().unwrap_or("");
                 if !["attach_subgraph", "restore_baseline"].contains(&action)

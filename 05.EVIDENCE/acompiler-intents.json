@@ -12357,6 +12357,22 @@
         "02.TESTS/tests_js/settings_design_areas.test.cjs"
       ]
     },
+    "SETTINGSSCOPE": {
+      "source": "Settings scope and bulk actions. Use the existing user, workspace and session owners for editable preferences, preserve the selected destination on import and reset, and keep Canvas setting nodes and the Settings screen in agreement. Founder Settings design and existing coordinator assignment.",
+      "scope": [
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/node_params.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_js/keyboard_shortcuts.test.cjs",
+        "02.TESTS/tests_js/settings_scope.test.cjs",
+        "02.TESTS/tests_replica/test_scoped_preferences.py"
+      ]
+    },
     "SETTINGSKEYS": {
       "source": "Build 19 Settings design, Keyboard group. Edit and reset shortcuts through the existing settings owner and command registry. Apply the same binding to menus and real Home and Canvas key events. Preserve first-file startup, text entry and reserved controls. Existing coordinator assignment to the Settings builder.",
       "scope": [

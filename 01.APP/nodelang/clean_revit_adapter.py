@@ -1428,27 +1428,71 @@ def _ifc_scoped_paths(arguments):
 
 
 _IFC_EXPORT_SETUP = r"""
-var map = new Revit.IFC.Export.Utility.IFCExportConfigurationsMap(Doc);
 map.AddBuiltInConfigurations();
-map.AddSavedConfigurations(null);
+%s
 if (!map.HasName(setup))
     throw new Exception("unknown IFC export setup: " + setup);
 var configuration = map[setup];
 if (configuration.IFCVersion != version)
     throw new Exception("IFC setup version differs from the approved version");
-if (configuration.IFCFileType.ToString() != "Ifc" ||
-    configuration.ExportLinkedFiles != Revit.IFC.Export.Utility.LinkedFileExportAs.DontExport ||
+if (configuration.IFCFileType.ToString() != "Ifc" || %s ||
     configuration.ExportUserDefinedPsets || configuration.ExportUserDefinedParameterMapping)
     throw new Exception("IFC setup requires linked files, external mapping or a different output format");
 if (configuration.VisibleElementsOfCurrentView != (viewId != ElementId.InvalidElementId) ||
     (configuration.UseActiveViewGeometry && viewId == ElementId.InvalidElementId))
     throw new Exception("IFC setup and approved view scope differ");
-configuration.ActiveViewId = configuration.UseActiveViewGeometry ? viewId : ElementId.InvalidElementId;
-configuration.UpdateOptions(Doc, options, viewId, !Revit.IFC.Common.Utility.OptionsUtil.UseLegacyParameterMapping());
+var geometryView = configuration.UseActiveViewGeometry ? viewId : ElementId.InvalidElementId;
+configuration.ActiveViewId = %s;
+%s
 """
 
 
-def _ifc_script(source, staged, version, setup, view):
+def _ifc_named_setup(revit_year):
+    if revit_year == "2027":
+        return "var map = new Revit.IFC.Export.Utility.IFCExportConfigurationsMap(Doc);\n" + (
+            _IFC_EXPORT_SETUP % (
+                "map.AddSavedConfigurations(null);",
+                "configuration.ExportLinkedFiles != Revit.IFC.Export.Utility.LinkedFileExportAs.DontExport",
+                "geometryView",
+                "configuration.UpdateOptions(Doc, options, viewId, "
+                "!Revit.IFC.Common.Utility.OptionsUtil.UseLegacyParameterMapping());",
+            )
+        )
+    if revit_year not in {"2020", "2023", "2024", "2025"}:
+        raise RevitUnreachable(f"Named IFC setups have no reviewed adapter on Revit {revit_year}")
+
+    owner = "BIM.IFC.Export.UI.IFCCommandOverrideApplication.TheDocument"
+    saved = "map.AddSavedConfigurations();"
+    if revit_year != "2020":
+        # These Autodesk versions merge a session cache without a document key.
+        saved = """
+if (BIM.IFC.Export.UI.IFCExport.LastSelectedConfig.ContainsKey(setup))
+    throw new Exception("Named IFC setup is shadowed by Revit's session cache: " + setup);
+map.AddSavedConfigurations();
+"""
+    legacy = "var map = new BIM.IFC.Export.UI.IFCExportConfigurationsMap();\n" + (
+        _IFC_EXPORT_SETUP % (
+            saved,
+            "configuration.ExportLinkedFiles" if revit_year in {"2020", "2023"}
+            else 'configuration.ExportLinkedFiles.ToString() != "DontExport"',
+            "geometryView.IntegerValue" if revit_year in {"2020", "2023"} else "geometryView",
+            "configuration.UpdateOptions(options, viewId);",
+        )
+    )
+    if revit_year == "2025":
+        return (
+            f"var previousSetupDocument = {owner};\ntry {{\n    {owner} = Doc;\n{legacy}}}\n"
+            f"finally {{ {owner} = previousSetupDocument; }}\n"
+        )
+    # Older exporters expose a protected setter. Read only from an exact existing binding.
+    return f"""
+if (!Object.Equals({owner}, Doc))
+    throw new Exception("Named IFC setup unavailable on Revit {revit_year}: the exporter has not bound the approved document");
+{legacy}
+"""
+
+
+def _ifc_script(source, staged, version, setup, view, *, revit_year):
     return r"""
 string source = %s, folder = %s, name = %s, requestedVersion = %s, setup = %s;
 if (Doc == null || Doc.IsFamilyDocument || Doc.IsLinked || String.IsNullOrEmpty(Doc.PathName) ||
@@ -1485,7 +1529,7 @@ using (var options = new IFCExportOptions()) {
 }
 result = requestedVersion;
 """ % (_cs_string(str(source)), _cs_string(str(staged.parent)), _cs_string(staged.name),
-       _cs_string(version), _cs_string(setup), view, view, _IFC_EXPORT_SETUP if setup else "")
+       _cs_string(version), _cs_string(setup), view, view, _ifc_named_setup(revit_year) if setup else "")
 
 
 _IFC_STEP_TOKEN = re.compile(rb"/\*|\*/|'|[();]")
@@ -1580,7 +1624,8 @@ def _ifc_export(arguments):
     session = _session_for(port, live_sessions())
     with tempfile.TemporaryDirectory(prefix=".archhub-ifc-", dir=destination.parent) as folder:
         staged = Path(folder) / destination.name
-        script = _ifc_script(source, staged, version, setup, views[0] if views else 0)
+        script = _ifc_script(source, staged, version, setup, views[0] if views else 0,
+                             revit_year=str(session["revit_version"]))
         answer = _execute(session, script, "ArchHub IFC export", timeout=EXEC_WAIT_LIMIT, transaction_mode=False)
         if answer.get("status") != "ok":
             raise RevitUnreachable("Revit refused IFC export: %s" % answer.get("error"))

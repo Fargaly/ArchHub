@@ -1,6 +1,8 @@
 """The adapter owns execution; graph engines only shape their inputs/outputs."""
 import hashlib
 import json
+import os
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -8,7 +10,7 @@ import pytest
 from nodelang import clean_revit_adapter as adapter
 from nodelang import library_engines as library
 from nodelang import pipeline_engines as pipeline
-from test_host_verbs_folded import _build_core, _compile, _csc, _net8_revit_years
+from test_host_verbs_folded import _compile, _csc
 
 
 @pytest.mark.parametrize("surface", ["read", "walls", "tags", "pdf"])
@@ -282,19 +284,47 @@ def test_ifc_step_framing_handles_compact_records_across_buffers(tmp_path, monke
     assert adapter._ifc_step_digest(path, b"IFC4") == hashlib.sha256(payload).hexdigest()
 
 
-def test_ifc_payload_compiles_against_installed_revit_2027_exporter(tmp_path):
-    folder = next((path for path in _net8_revit_years() if path.name == "Revit 2027"), None)
-    if folder is None:
-        pytest.skip("Revit 2027 SDK files are not installed")
-    filenames = ("RevitAPI.dll", "RevitAPIUI.dll", "RevitAPIIFC.dll",
-                 "Revit.IFC.Export.dll", "Revit.IFC.Common.dll")
-    api = [folder / name for name in filenames]
-    api.append(_build_core(tmp_path, folder))
+def test_ifc_named_setup_refuses_unreviewed_revit_year(monkeypatch, ifc_request):
+    from nodelang import nodeslib_v2_engines as nodeslib
+
+    request, destination = ifc_request
+    request["setup"] = request["pending_write"]["content"]["setup"] = "Reviewed Setup"
+    request["grant"]["input_digest"] = nodeslib._digest_payload(adapter._effect_arguments(request))
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [{"port": 48884, "pid": 7, "revit_version": "2026"}])
+    monkeypatch.setattr(adapter, "_execute", lambda *_args, **_kwargs: pytest.fail("unreviewed IFC export"))
+    with pytest.raises(adapter.RevitUnreachable, match="Named IFC setups have no reviewed adapter on Revit 2026"):
+        adapter.invoke("revit.export_ifc", request)
+    assert not destination.exists()
+    assert not list(destination.parent.glob(".archhub-ifc-*"))
+
+
+@pytest.mark.parametrize("year", ["2020", "2023", "2024", "2025", "2027"])
+def test_ifc_payload_compiles_against_installed_revit_exporter(tmp_path, year):
+    folder = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / f"Autodesk/Revit {year}"
+    api = [folder / name for name in ("RevitAPI.dll", "RevitAPIUI.dll", "RevitAPIIFC.dll")]
+    if not api[0].is_file():
+        pytest.skip(f"Revit {year} SDK files are not installed")
+    api.extend(folder / name for name in ("Revit.IFC.Export.dll", "Revit.IFC.Common.dll")
+               if (folder / name).is_file())
+    if year != "2027":
+        name = "IFCExportUI.dll" if year == "2020" else "Autodesk.IFC.Export.UI.dll"
+        api.append(folder / "AddIns/IFCExporterUI" / name)
+    # Bind the actual Revit API references in the broker's C# 7.3 wrapper.
+    numeric_id = "value" if year >= "2024" else "checked((int)value)"
+    context = """
+namespace RevitMCPCore {
+    using Autodesk.Revit.DB;
+    using Autodesk.Revit.UI;
+    public class ScriptContext { public UIApplication UIApp; public UIDocument UIDoc;
+                                 public Document Doc; public object result; }
+    public static class RevitIds { public static ElementId Id(long value) => new ElementId(%s); }
+}
+""" % numeric_id
     source, output = tmp_path / "Model.rvt", tmp_path / "Reviewed.ifc"
-    scripts = [("IFC 4 default", adapter._ifc_script(source, output, "IFC4RV", "", 0)),
-               ("IFC 4.3 named", adapter._ifc_script(source, output, "IFC4x3RV", "Reviewed Setup", 42))]
-    _compile(tmp_path, "", ["System", "System.Collections.Generic", "System.Linq", "Autodesk.Revit.DB",
-                            "Autodesk.Revit.UI"], scripts, api, "global::RevitMCPCore.ScriptContext")
+    scripts = [("IFC default", adapter._ifc_script(source, output, "IFC2x3CV2", "", 0, revit_year=year)),
+               ("IFC named", adapter._ifc_script(source, output, "IFC2x3CV2", "Reviewed Setup", 42, revit_year=year))]
+    _compile(tmp_path, context, ["System", "System.Collections.Generic", "System.Linq", "Autodesk.Revit.DB",
+                                 "Autodesk.Revit.UI"], scripts, api, "global::RevitMCPCore.ScriptContext")
 
 
 def test_dead_catalogue_params_are_removed_without_hiding_live_controls():

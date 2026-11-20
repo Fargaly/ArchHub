@@ -20,9 +20,10 @@ export default async function({step,js,until,clickText,cdp,out}){
  const snapshot=()=>js("(()=>{const s=window.ArchHubAPI.getSnapshot();return {scope:s.settingsScope,destination:s.settingsDestination,theme:s.settings.find(r=>r.id==='Appearance.Theme')?.value,keys:s.keybindings};})()");
  const key=async(key,code,virtual,modifiers=0)=>{for(const type of ['rawKeyDown','keyUp'])await cdp('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:virtual,modifiers});};
  // A single change event exercises the installed React selector without intermediate scope writes.
- const select=async(label,value)=>{assert.equal(await until(()=>js(`(()=>{const e=[...document.querySelectorAll('select')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});return Boolean(e&&!e.disabled&&[...e.options].some(o=>o.value===${JSON.stringify(value)}&&!o.disabled));})()`),Boolean),true);await js(`(()=>{const e=document.querySelector('select[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!e||e.disabled)throw Error('Selector is unavailable');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
- const scope=async value=>{await select('Settings scope',value);const got=await until(snapshot,s=>s?.scope===value&&s.destination?.scope===value);assert.equal(got.scope,value);assert.equal(got.destination.scope,value);const label={User:'Everywhere',Workspace:'Current workspace',Session:'Current session'}[value];assert.equal(await until(()=>js(`Boolean([...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify('Import into '+label)}))`),Boolean),true);return got;};
- const theme=async value=>{await select('Theme',value);const got=await until(snapshot,s=>s?.theme===value);assert.equal(got.theme,value);return got;};
+ const select=async(label,value)=>{assert.equal(await until(()=>js(`(()=>{const e=[...document.querySelectorAll('select')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});return Boolean(e&&!e.disabled&&[...e.options].some(o=>o.value===${JSON.stringify(value)}&&!o.disabled));})()`),Boolean),true);await js(`(()=>{const e=document.querySelector('select[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!e||e.disabled)throw Error('Selector is unavailable');if(e.value===${JSON.stringify(value)})return;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
+ let controlsReady;
+ const scope=async value=>{controlsReady??=js('window.ArchHubAPI.getSettings()');await controlsReady;await js('window.ArchHubAPI.refreshPreferences()');await select('Settings scope',value);const got=await until(snapshot,s=>s?.scope===value&&s.destination?.scope===value);assert.equal(got.scope,value);assert.equal(got.destination.scope,value);const label={User:'Everywhere',Workspace:'Current workspace',Session:'Current session'}[value];assert.equal(await until(()=>js(`Boolean([...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify('Import into '+label)}))`),Boolean),true);return got;};
+ const theme=async value=>{if((await snapshot()).theme===value){const other=value==='Dark'?'Light':'Dark';await select('Theme',other);assert.equal((await until(snapshot,s=>s?.theme===other)).theme,other);}await select('Theme',value);const got=await until(snapshot,s=>s?.theme===value);assert.equal(got.theme,value);return got;};
  let workspaceId;
  await step(steps[0],async()=>{
   assert.equal(await until(()=>js("Boolean(window.ArchHubAPI && document.querySelector('[data-home-page]'))"),Boolean),true);
@@ -126,7 +127,7 @@ export default async function({step,js,until,clickText,cdp,out}){
   }
  });
  await step(steps[7],async()=>{
-  await js('window.ArchHubAPI.ready.then(()=>true)');
+  await js('window.ArchHubAPI.ready.then(()=>true)');await js('window.ArchHubAPI.listWorkspaces()');
   const before=await js('(()=>{const a=window.ArchHubAPI;return {path:a.getSessionPath(),id:a.getSessionDocument().id,workspace:a.getSnapshot().activeWorkspace};})()');
   const beforeBytes=fs.readFileSync(before.path),baseline=path.join(folder,'projects-canvas.archhub');
   const initialIds=new Set(json(workspaceFile).roots.map(row=>row.root_id));
@@ -134,10 +135,22 @@ export default async function({step,js,until,clickText,cdp,out}){
   const call=(method,args)=>js('(async()=>window.ArchHubAPI['+JSON.stringify(method)+'](...'+JSON.stringify(args)+'))()');
   const fill=async(label,value)=>js(`(()=>{const e=[...document.querySelectorAll('input')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});if(!e)throw Error('Input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const current=()=>js('(()=>{const a=window.ArchHubAPI,d=a.getSessionDocument();return {id:d.id,title:d.title,nodes:d.nodes,project:d.properties?.project};})()');
+  const dirty=()=>js('window.ArchHubAPI.getSnapshot().sessionDirty');
   try{
    await call('newSession',['Projects edited Canvas']);await call('saveSession',[baseline]);
-   await call('addNote',['Keep this Canvas edit while changing workspace',{x:120,y:120}]);await call('saveSession',[]);
-   const edited=await current(),baselineBytes=fs.readFileSync(baseline);assert(edited.nodes.some(node=>Object.values(node.params||{}).includes('Keep this Canvas edit while changing workspace')));
+   const baselineBytes=fs.readFileSync(baseline),note='UNSAVED Projects witness '+Date.now();
+   function holdAutosave(){
+    const browser=globalThis,original=browser.fetch,pending=[];
+    const probe=browser.__archhubProjectsWitness={held:0,restore(){browser.fetch=original;for(const release of pending.splice(0))release();}};
+    browser.fetch=function(...args){let body;try{body=JSON.parse(args[1]?.body||'{}');}catch{return Reflect.apply(original,this,args);}
+     const url=new browser.URL(typeof args[0]==='string'?args[0]:args[0].url,browser.location.href);
+     if(url.pathname!=='/api/session-files'||body.action!=='autosave')return Reflect.apply(original,this,args);
+     probe.held++;return new Promise((resolve,reject)=>pending.push(()=>Reflect.apply(original,this,args).then(resolve,reject)));
+    };
+   }
+   await js('('+holdAutosave.toString()+')()');await call('addNote',[note,{x:120,y:120}]);
+   const edited=await current();assert(edited.nodes.some(node=>Object.values(node.params||{}).includes(note)));assert.equal(await dirty(),true);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
+
    assert.equal(await js("(()=>{const e=[...document.querySelectorAll('nav button')].find(e=>e.getAttribute('aria-label')==='Settings'||e.textContent.trim()==='Settings');if(!e)throw Error('Settings rail unavailable');e.click();return true;})()"),true);assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);assert.equal(await clickText('Projects'),true);
    assert.equal(await until(()=>js("Boolean(document.querySelector('[data-screen=\"settings/Projects\"]')&&[...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='New project'&&e.getClientRects().length))"),Boolean),true);
    assert.equal(await clickText('New project'),true);assert.equal(await until(()=>js("Boolean(document.querySelector('input[aria-label=\"Project name\"]'))"),Boolean),true);await fill('Project name','Installed project');await select('Parent workspace',workspaceId);assert.equal(await clickText('Create project'),true);
@@ -146,12 +159,15 @@ export default async function({step,js,until,clickText,cdp,out}){
    const retry=await call('addWorkspace',[{folder}]);assert.equal(retry.root.root_id,workspaceId,'Re-adding the parent replaced its identity');
    assert.equal(await js('(()=>{const heading=[...document.querySelectorAll("h3")].find(e=>e.textContent==='+JSON.stringify(path.basename(folder))+');const row=heading?.closest(".spread.row");const open=[...(row?.querySelectorAll("button")||[])].find(e=>e.textContent.trim()==="Open"||e.getAttribute("aria-label")==="Open");if(!open)throw Error("Workspace Open is unavailable");open.click();return true;})()'),true);
    assert.equal(await until(()=>js('Boolean(document.querySelector("[data-home-page]"))&&window.ArchHubAPI.getSnapshot().activeWorkspace==='+JSON.stringify(workspaceId)),Boolean),true);
-   assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
+   assert.deepEqual(await current(),edited);assert.equal(await dirty(),true);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
    assert.equal(await js("document.querySelector('button[aria-label=\"Workspace\"]')?.textContent.trim()"),path.basename(folder));
    await call('refreshPreferences',[]);assert.equal(await js('window.ArchHubAPI.getSnapshot().activeWorkspace'),workspaceId);
    await key('n','KeyN',78,2);assert.equal(await until(()=>js('Boolean(document.querySelector(\'[role="dialog"][aria-label="New task"]\'))'),Boolean),true);
    assert.equal(await js('document.querySelector(\'[role="dialog"][aria-label="New task"] select[aria-label="Workspace"]\')?.value'),workspaceId);assert.equal(await clickText('Cancel'),true);
-   await call('newSession',['Different disposable Canvas']);await call('openSession',[baseline]);assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
+   assert.deepEqual(await current(),edited);assert.equal(await dirty(),true);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
+   const held=await js('globalThis.__archhubProjectsWitness.held');
+   await js('globalThis.__archhubProjectsWitness.restore();window.ArchHubAPI.saveSession()');const savedBytes=fs.readFileSync(baseline);assert.notDeepEqual(savedBytes,baselineBytes);assert.equal(await dirty(),false);
+   await call('newSession',['Different disposable Canvas']);await call('openSession',[baseline]);assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),savedBytes);
    const adds=Array.from({length:10},(_,i)=>path.join(folder,'parallel-add-'+i));for(const directory of adds)fs.mkdirSync(directory);
    await js('Promise.all('+JSON.stringify(adds)+'.map(folder=>window.ArchHubAPI.addWorkspace({folder})))');
    for(const directory of adds)assert.equal(rows().filter(row=>path.normalize(row.path)===path.normalize(directory)).length,1);
@@ -168,9 +184,10 @@ export default async function({step,js,until,clickText,cdp,out}){
     assert(!rows().some(row=>row.root_id===victim.root_id));assert(rows().some(row=>path.normalize(row.path)===path.normalize(path.join(folder,name))));assert(fs.existsSync(adds[i]));removed.push(name);
    }
    assert.equal(rows().find(row=>path.normalize(row.path)===path.normalize(folder)).root_id,workspaceId);
-   assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
-   return {pass:true,got:{workspace:workspaceId,created:projectPath,layout:'Empty folder',canvasEditRetained:true,savedCanvasBytesUnchanged:true,newTaskDefault:workspaceId,originalIdRetained:true,normalFileReopened:true,parallelRegisters:adds.length,mixedCreateRegister:mixed.length,mixedCreateUnregister:removed.length}};
+   assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),savedBytes);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);
+   return {pass:true,got:{workspace:workspaceId,created:projectPath,layout:'Empty folder',unsavedNote:note,sessionDirtyRetained:true,baselineBytesUnchangedUntilExplicitSave:true,realAutosavesHeld:held,explicitSaveAndReopen:true,canvasEditRetained:true,savedCanvasBytesUnchanged:true,newTaskDefault:workspaceId,originalIdRetained:true,normalFileReopened:true,parallelRegisters:adds.length,mixedCreateRegister:mixed.length,mixedCreateUnregister:removed.length}};
   }finally{
+   await js('globalThis.__archhubProjectsWitness?.restore();true').catch(()=>{});
    for(const row of rows().filter(row=>!initialIds.has(row.root_id)))await call('removeWorkspace',[row.root_id]);
    await call('openSession',[before.path]);if(before.workspace)await call('selectWorkspace',[before.workspace]);
    assert.deepEqual(new Set(rows().map(row=>row.root_id)),initialIds);assert.equal(await js('window.ArchHubAPI.getSessionDocument().id'),before.id);assert.deepEqual(fs.readFileSync(before.path),beforeBytes);

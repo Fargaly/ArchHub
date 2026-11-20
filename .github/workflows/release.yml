@@ -607,7 +607,7 @@ jobs:
           $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
           if ($state.first_run_exit -ne 0) { throw 'The installed first-run setup did not finish.' }
           $env:PATH = (Join-Path $app 'runtime') + [IO.Path]::PathSeparator + $env:PATH
-          & $python -B selected/03.TOOLS/tools/real_app_check/real_app_check.py --app $app --scenario selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
+          & (Join-Path $app '.venv/Scripts/python.exe') -B selected/03.TOOLS/tools/real_app_check/real_app_check.py --app $app --scenario selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
           $state.ui_exit = $LASTEXITCODE
           $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
           if ($state.ui_exit -ne 0) { throw 'Installed Settings actual-window acceptance failed; inspect the retained report.' }

@@ -203,6 +203,13 @@
         "05.EVIDENCE/guardownscratch/"
       ]
     },
+    "REVITWALLLEVEL": {
+      "source": "2026-11-20 F405: require an explicit available Revit level before creating walls, keep valid pipeline behavior and verify the selection and transaction path with no live model changes.",
+      "scope": [
+        "01.APP/nodelang/clean_revit_adapter.py",
+        "02.TESTS/tests_replica/test_recomp_revit_adapter.py"
+      ]
+    },
     "BABOOMPUBLICGUIDES": {
       "source": "2026-11-20 BABOOM standards-site assignment: extend the existing chat with Arabic and English answers grounded in the public ArchHub guides and the existing BIM standard. Cite the source, refuse unsupported questions, and review the patch before deployment.",
       "scope": [

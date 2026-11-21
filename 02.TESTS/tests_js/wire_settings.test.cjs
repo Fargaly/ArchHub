@@ -71,11 +71,13 @@ async function apiHarness(answer, account={signed_in:true,user_id:'fixture-accou
   if(url==='/api/session-files'){
    if(body.action==='param-op'&&body.op==='set'){
     const [id,key,value]=body.args;
-    file.nodes.find(node=>node.id===id).params[key]=value;
-    data={document:file,changed:[id]};
+    const document=globalThis.structuredClone(body.document);
+    document.nodes.find(node=>node.id===id).params[key]=value;
+    await extra.paramResponse?.();
+    data={document,changed:[id]};
    }else data=body.action==='catalogue'?{items:[],sessions:[]}:{document:file,path:filePath};
   }
-  if(url==='/api/universal/workspace-roots')data=body?.action==='browse'?{ok:true,path:extra.path||''}:{ok:true,roots:[]};
+  if(url==='/api/universal/workspace-roots')data=body?.action==='browse'?{ok:true,path:(await extra.path)||''}:{ok:true,roots:[]};
   if(url==='/api/universal/cloud-session')data=account;
   if(url==='/api/universal/settings-action')data={ok:true,result:await answer(body)};
   return {ok:true,status:200,json:async()=>data};
@@ -116,6 +118,37 @@ test('account refresh preserves saved display fields and clears them on account 
  saved={name:'Second display',firm:'Second firm',plan:'Personal'};Object.assign(account,{email:'second@example.test',user_id:'second'});await h.api.refreshDesktopAccess(true);await h.api.syncAccount();
  assert.equal(h.api.getSnapshot().profile.id,'second');assert.equal(h.api.getSnapshot().profile.name,'Second display');assert.equal(h.api.getSnapshot().profile.firm,'Second firm');
  Object.assign(account,{signed_in:false,email:''});await h.api.refreshDesktopAccess(true);assert.equal(h.api.getSnapshot().desktopAccess.admitted,false);assert.equal(h.api.getSnapshot().profile.firm,'');assert.equal(h.api.getSnapshot().profile.id,'');
+});
+
+test('Canvas discards a native folder choice when another document opens with the same node ID',async()=>{
+ const file={format:'archhub',version:1,id:'first',title:'First',properties:{},nodes:[{id:'session',type:'thing.session',position:{x:0,y:0},params:{project_folder:''}}],wires:[],groups:[],notes:[]};
+ let choose;
+ const path=new Promise(resolve=>{choose=resolve;});
+ const h=await apiHarness(()=>({}),undefined,{file,path});
+ const pending=h.api.pickNodeParameter('session','project_folder','folder');
+ await h.api.openSession('C:/fixture/other.archhub');
+ choose('C:/Chosen');
+ await assert.rejects(pending,/selected node changed/);
+ assert.equal(file.nodes[0].params.project_folder,'');
+ assert.equal(h.calls.some(([,body])=>body?.action==='param-op'),false);
+});
+
+for(const change of ['open','rename'])test('Canvas protects newer work after Browse returns: '+change,async()=>{
+ const node={id:'shared',type:'thing.session',position:{x:0,y:0},params:{project_folder:'original'},paramDefs:[{id:'project_folder',name:'Project folder',type:'folder'}]};
+ const file={format:'archhub',version:1,id:'first',title:'First',properties:{},nodes:[node],wires:[],groups:[],notes:[]};
+ let release,started;
+ const received=new Promise(resolve=>{started=resolve;});
+ const paramResponse=()=>new Promise(resolve=>{release=resolve;started();});
+ const h=await apiHarness(()=>({}),undefined,{file,path:'C:/Chosen',paramResponse});
+ const pending=h.api.pickNodeParameter('shared','project_folder','folder');
+ await received;
+ if(change==='open'){file.id='second';await h.api.openSession('C:/fixture/second.archhub');}
+ else await h.api.renameNode('shared','Newer name');
+ release();
+ await assert.rejects(pending,/document changed|canvas changed/);
+ if(change==='open')assert.equal(h.api.getSessionDocument().id,'second');
+ else assert.equal(h.api.getSessionDocument().nodes[0].title,'Newer name');
+ assert.equal(h.api.getSessionDocument().nodes[0].params.project_folder,'original');
 });
 
 test('capability folder selection uses the full native path and the real property owner',async()=>{

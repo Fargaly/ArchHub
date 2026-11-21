@@ -2203,7 +2203,12 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
 };
 api.saveSessionAs=()=>api.saveSession('',true);
 api.getSessionDocument=()=>desktopAdmitted()?copy(portableDocument()):null;
-api.pickNodeParameter=async(id,key,type)=>{const picked=await request(type==='folder'?'/api/universal/workspace-roots':'/api/universal/pick-file',type==='folder'?{action:'browse'}:{title:'Choose '+key});if(!picked.path){if(picked.note)throw Error(picked.note);return {cancelled:true};}return api.setNodeParam(id,key,picked.path);};
+api.pickNodeParameter=async(id,key,type)=>{
+ const navigation=fileNavigation,fromDocument=sessionDocument?.nodes.some(node=>node.id===id);
+ const picked=await request(type==='folder'?'/api/universal/workspace-roots':'/api/universal/pick-file',type==='folder'?{action:'browse'}:{title:'Choose '+key});if(!picked.path){if(picked.note)throw Error(picked.note);return {cancelled:true};}
+ if(navigation!==fileNavigation||(fromDocument&&!sessionDocument?.nodes.some(node=>node.id===id)))throw Error('The selected node changed. Reopen its picker and retry.');
+ return api.setNodeParam(id,key,picked.path);
+};
 api.hasSessionEdits=()=>fileHistory.length>0;
 api.readSystemGraph=async()=>{
  const data=await request('/api/universal/canvas'),previous=canvas;
@@ -2283,7 +2288,11 @@ api.setNodeParam=async(id,key,value)=>{
  if(held&&(held.type==='param.value'||(held.paramDefs||[]).some(d=>d.id===key))){await paramOp('set',[id,key,value]);return state.graph.nodes.find(n=>n.id===id);}
  fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(!n||!Object.hasOwn(n.params,key))throw Error('Parameter is absent');n.params[key]=value;},[id],{node:id,key,value});return state.graph.nodes.find(n=>n.id===id);};
 async function paramOp(op,args){
- const result=await sessionRequest('param-op',{document:portableDocument(),op,args});
+ const navigation=fileNavigation;
+ const document=portableDocument();
+ const result=await sessionRequest('param-op',{document,op,args});
+ if(navigation!==fileNavigation)throw Error('The open document changed before the parameter edit finished.');
+ if(JSON.stringify(document.nodes)!==JSON.stringify(sessionDocument.nodes)||JSON.stringify(document.wires)!==JSON.stringify(sessionDocument.wires))throw Error('The canvas changed during the parameter edit. Retry the edit.');
  fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;},result.changed);
  return result;
 }

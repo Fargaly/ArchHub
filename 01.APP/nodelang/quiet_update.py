@@ -296,12 +296,19 @@ def finish_app_folder(state_dir, *, healthy):
     return {'removed': removed, 'pending': bool(pending)}
 
 
+# One recorded pre-installer Studio build, accepted only as the local origin.
+_LIGHT_ORIGIN = "20261119-0904-665c785+light-f10-b598855b"
+_LIGHT_METADATA_SHA256 = "cb5e86dcea424ecf57d57785749f7933f50a76542c55cac5154839c69c0adac8"
+
+
 def installed_build_id(app_dir: Path) -> str:
     try:
         with (Path(app_dir) / "BUILD_ID").open(encoding="utf-8") as stream:
             value = stream.read(258).strip()
+        if value == _LIGHT_ORIGIN:
+            return value if _installed_build_time(app_dir, value) is not None else ""
         return value if re.fullmatch(r"[A-Za-z0-9._-]{1,256}", value) else ""
-    except (OSError, UnicodeError):
+    except (OSError, ValueError):
         return ""
 
 
@@ -343,6 +350,10 @@ def _installed_build_time(app_dir, build_id):
         raw = stream.read(4097)
     if len(raw) > 4096:
         raise ValueError("installed build metadata exceeds size budget")
+    if build_id == _LIGHT_ORIGIN:
+        if hashlib.sha256(raw).hexdigest() != _LIGHT_METADATA_SHA256:
+            raise ValueError("Unrecognized local light build metadata")
+        return _utc_build_time(json.loads(raw)["built_at"])
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object)
     except (ValueError, UnicodeError):

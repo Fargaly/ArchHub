@@ -697,6 +697,42 @@ def _installed_app(folder: Path, build_id: str, built_at: str) -> Path:
     return folder
 
 
+def test_recorded_local_light_origin_recovers_only_to_newer_verified_setup(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    origin = "20261119-0904-665c785+light-f10-b598855b"
+    record = (b'{"format":1,"build_id":"20261119-0904-665c785+light-f10-b598855b",'
+              b'"base_build":"20261119-0904-665c785","built_at":"2026-11-20T12:32:32Z",'
+              b'"source_revision":"b598855b","stage":"light-f10-studio",'
+              b'"note":"tip context-menus.jsx+api.js + compile_studio; not a new MSIX/Setup; '
+              b'Goose receipt still required for full release"}\r\n')
+    (app / "BUILD_ID").write_text(origin, encoding="utf-8")
+    metadata = app / "BUILD_METADATA.json"
+    metadata.write_bytes(record)
+    assert qu.installed_build_id(app) == origin
+    assert qu._ordering_refusal(app, {"build_id":"old","built_at":"2026-11-20T12:32:32Z"}, origin)
+    assert not qu._BUILD_RE.fullmatch("BUILD_ID: " + origin)
+    metadata.write_bytes(record.replace(b"12:32:32Z", b"12:32:31Z"))
+    assert qu.installed_build_id(app) == ""
+    metadata.write_bytes(record)
+    (app / "BUILD_ID").write_text(origin + "x", encoding="utf-8")
+    assert qu.installed_build_id(app) == ""
+    (app / "BUILD_ID").write_text(origin, encoding="utf-8")
+
+    target = "20261121-062548-44875457384-1-f662a21c576a"
+    state = _fixture_state(tmp_path / "updater-state")
+    before = _state_fingerprint(state)
+    release = _build_output(tmp_path / "release", target, "2026-11-21T06:25:48Z")
+    staged = qu.stage_if_newer(state, app, opener=_local_github(release))
+    assert staged["staged"] and staged["bytes_verified"]
+    calls = []
+    applied = qu.apply_staged(state, app, runner=_fake_installer(calls), expect=(target, staged["sha256"]))
+    assert applied["applied"] and len(calls) == 1
+    assert qu.confirm_applied(state, app)["confirmed"]
+    assert qu.installed_build_id(app) == target
+    assert _state_fingerprint(state) == before
+
+
 def _fixture_state(folder: Path) -> Path:
     """A throwaway graph (the persisted Cell shape, in WAL) plus user config."""
     folder.mkdir(parents=True)

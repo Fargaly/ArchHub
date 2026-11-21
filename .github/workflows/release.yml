@@ -500,6 +500,12 @@ jobs:
             release-output/receipt.json
             release-output/receipt.json.sha256
             release-output/goose-LICENSE.txt
+            release-output/release.json
+            release-output/release-notes.md
+            release-output/source-manifest.tsv
+            release-output/installed-source-manifest.tsv
+            release-output/studio-build.json
+            release-output/BUILD_METADATA.json
           if-no-files-found: error
           compression-level: 0
       - name: Retain failed snapshot and partial build for inspection

@@ -865,6 +865,111 @@ def test_staged_installer_altered_on_disk_is_never_run(tmp_path):
     assert calls == [] and qu.installed_build_id(app) == "20260923-1945-72bcaae"
 
 
+@pytest.mark.skipif(not PWSH, reason="Windows publisher requires PowerShell")
+def test_preview_prose_edit_keeps_machine_block_assets_and_stable(tmp_path):
+    from copy import deepcopy
+    setup_sha = hashlib.sha256(b"setup").hexdigest()
+    manifest = {"build_id": "20261122-preview", "built_at": "2026-11-22T01:00:00Z",
+                "asset_sha256": setup_sha, "asset_bytes": 5, "source_revision": REVISION,
+                "requirements_sha256": "a" * 64}
+    path = tmp_path / "release.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    block = ("## Build\nBUILD_ID: 20261122-preview\nBUILT_AT: 2026-11-22T01:00:00Z\n"
+             f"SHA256 {qu.ASSET_NAME}: {setup_sha}\nSOURCE_REVISION: {REVISION}\nREQUIREMENTS_SHA256: " + "a" * 64 + "\n")
+    (tmp_path / "release-notes.md").write_text(block, encoding="utf-8")
+    prose = tmp_path / "human.md"
+    prose.write_text("Updated preview instructions.", encoding="utf-8")
+    tag = "build-" + manifest["build_id"]
+    url = f"https://github.com/Fargaly/ArchHub/releases/download/{tag}/"
+    assets = [{"id": i, "name": name, "size": size, "digest": "sha256:" + digest,
+               "browser_download_url": url + name} for i, (name, size, digest) in enumerate([
+                   (qu.ASSET_NAME, 5, setup_sha), ("release.json", path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())], 1)]
+    preview = {"id": 42, "tag_name": tag, "draft": False, "prerelease": True, "assets": assets, "body": "Old notes\n\n" + block}
+    stable = {**deepcopy(preview), "id": 10, "prerelease": False, "tag_name": "stable"}
+    original = deepcopy(stable), deepcopy(assets)
+    def snap(name, value):
+        (tmp_path / (name + '.json')).write_text(json.dumps(value), encoding='utf-8')
+    snap('stable', stable)
+    snap('preview', preview)
+    harness = tmp_path / 'outer.ps1'
+    harness.write_text(r"""param($publisher,$root,$tag,$whichPython,$faultPhase,$faultJson,[switch]$PlanOnly)
+$ErrorActionPreference='Stop'
+function gh {
+    $global:LASTEXITCODE=0
+    if ($args[0] -ne 'api') { throw 'unexpected GitHub action' }
+    if ($args[1] -ceq 'repos/Fargaly/ArchHub/releases/latest') { Get-Content -Raw -Encoding UTF8 "$root/stable.json"; return }
+    if ($args[1] -ceq "repos/Fargaly/ArchHub/releases/tags/$tag") { Get-Content -Raw -Encoding UTF8 "$root/preview.json"; return }
+    Add-Content "$root/attempts" ($args[1])
+    if (($args -join ' ') -notmatch '^api repos/Fargaly/ArchHub/releases/42 --method PATCH --field body=@.+ --silent$') { throw 'unexpected write' }
+    $release = Get-Content -Raw -Encoding UTF8 "$root/preview.json" | ConvertFrom-Json
+    $release.body = [IO.File]::ReadAllText($args[5].Substring(6))
+    [IO.File]::WriteAllText("$root/preview.json", ($release | ConvertTo-Json -Depth 10))
+    Add-Content "$root/writes" 'body'
+}
+function FixtureChecker {
+    if ($args[-1] -eq $faultPhase) { $global:LASTEXITCODE=0; Get-Content -LiteralPath $faultJson -Raw -Encoding UTF8; return }
+    & $whichPython @args
+}
+$checker = if ($faultPhase) { 'FixtureChecker' } else { $whichPython }
+& $publisher -ReleaseDirectory $root -PreviewTag $tag -PreviewNotesFile "$root/human.md" -PythonPath $checker -DryRun:$PlanOnly
+""", encoding='utf-8')
+    def run(selected_tag=tag, *extra):
+        return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(harness),
+                               str(ROOT / '03.TOOLS/packaging/windows/publish_release.ps1'), str(tmp_path),
+                               selected_tag, sys.executable, *extra], capture_output=True, timeout=90)
+    good = {"ok":True, "changed":False, "id":42, "stable_tag":"stable"}
+    for verdict in ({**good, "ok":False}, {**good, "ok":"true"}, {**good, "changed":"false"},
+                    {**good, "id":10, "changed":True}, {"ok":True}, [good]):
+        snap('fault', verdict)
+        for switches in ((), ('-PlanOnly',)):
+            bad = run(tag, 'before', str(tmp_path / 'fault.json'), *switches)
+            assert bad.returncode != 0 and b'verified' not in bad.stdout.lower(), bad.stdout
+            assert b'verdict' in bad.stderr.lower(), bad.stderr
+            assert not (tmp_path / 'attempts').exists()
+    for changes in ({"ok":False}, {"changed":True}, {"id":10}):
+        snap('preview', dict(preview, body='Updated preview instructions.\n\n' + block))
+        snap('fault', {**good, **changes})
+        bad = run(tag, 'after', str(tmp_path / 'fault.json'))
+        assert bad.returncode != 0 and b'verified published' not in bad.stdout.lower()
+        assert b'verdict' in bad.stderr.lower(), bad.stderr
+        assert not (tmp_path / 'attempts').exists()
+    snap('preview', preview)
+    result = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    edited = json.loads((tmp_path / 'preview.json').read_text(encoding='utf-8'))
+    assert edited['body'] == 'Updated preview instructions.\n\n' + block
+    assert (json.loads((tmp_path / 'stable.json').read_text()), edited['assets']) == original
+    assert offer_check.updater_reads(edited, channel='preview')['tag'] == tag
+    assert offer_check.updater_reads(edited) is None
+    edited['body'] = edited['body'].replace('\n', '\r\n')
+    snap('preview', edited)
+    assert run().returncode == 0
+    alias = dict(edited, tag_name='build-wrong')
+    snap('preview', alias)
+    assert run('build-wrong').returncode != 0
+    for conflict in (block + 'BUILT_AT: bad\n', block.replace(REVISION, 'b' * 40)):
+        snap('preview', dict(edited, body=conflict))
+        assert run().returncode != 0
+    snap('preview', edited)
+    prose.write_text('BUILD_ID: another-build', encoding='utf-8')
+    assert run().returncode != 0
+    assert (tmp_path / 'writes').read_text().splitlines() == ['body']
+    prose.write_text('Updated preview instructions.', encoding='utf-8')
+    for label, release in (('stable', stable), ('preview', edited)):
+        snap('before-' + label, release)
+        snap('after-' + label, release)
+    for label, release in (('stable', stable), ('preview', edited)):
+        different = deepcopy(release)
+        if label == 'stable':
+            different['id'] += 1
+        else:
+            different['assets'][0]['id'] += 1
+        snap('after-' + label, different)
+        with pytest.raises(offer_check.Refused, match='readback'):
+            offer_check.preview_notes(tmp_path, tag, prose, REVISION, tmp_path, 'after')
+        snap('after-' + label, release)
+
+
 def test_publish_check_refuses_build_output_whose_bytes_do_not_reconcile(tmp_path):
     release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
     with (release / qu.ASSET_NAME).open("ab") as stream:

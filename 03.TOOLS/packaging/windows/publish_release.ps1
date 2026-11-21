@@ -8,6 +8,9 @@ param(
     [string]$ExpectedSourceRevision = '',
     [string]$Repository = 'Fargaly/ArchHub',
     [string]$PythonPath,
+    # Edit prose on an existing opt-in release without publishing binaries or changing latest.
+    [string]$PreviewTag,
+    [string]$PreviewNotesFile,
     # Reconcile and print the exact publish plan; upload nothing.
     [switch]$DryRun
 )
@@ -32,6 +35,87 @@ $appRoot = @($toolsRoot, (Join-Path (Split-Path -Parent $toolsRoot) '01.APP')) |
     Where-Object { Test-Path -LiteralPath (Join-Path $_ 'nodelang/quiet_update.py') -PathType Leaf } | Select-Object -First 1
 if (-not $appRoot) { throw 'The installed updater parser (nodelang/quiet_update.py) is not beside this script; nothing was published.' }
 $checkProfile = Join-Path $release 'CHECK-PROFILE'
+if ($PSBoundParameters.ContainsKey('PreviewTag') -or $PSBoundParameters.ContainsKey('PreviewNotesFile')) {
+    if ($PreviewTag -cnotmatch '^build-[A-Za-z0-9._-]{1,128}$' -or -not $PreviewNotesFile -or
+        $Repository -cnotmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$') { throw 'Specify a build tag, repository and prose file.' }
+    $scratch = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N')))
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    $encoding = [Console]::OutputEncoding
+    $base = "repos/$Repository/releases"
+    function Read-PreviewSnapshot($phase) {
+        foreach ($pair in @(@('stable','latest'), @('preview',"tags/$PreviewTag"))) {
+            $json = (& gh api "$base/$($pair[1])") -join "`n"
+            if ($global:LASTEXITCODE -ne 0) { throw "Could not read $($pair[0]) release." }
+            [IO.File]::WriteAllText((Join-Path $scratch "$phase-$($pair[0]).json"), $json, $utf8)
+        }
+    }
+    function Get-PreviewBinding($phase) {
+        $preview = Get-Content -LiteralPath (Join-Path $scratch "$phase-preview.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $stable = Get-Content -LiteralPath (Join-Path $scratch "$phase-stable.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($releaseRecord in $preview, $stable) {
+            if ($releaseRecord -isnot [pscustomobject] -or
+                ($releaseRecord.id -isnot [long] -and $releaseRecord.id -isnot [int]) -or $releaseRecord.id -le 0 -or
+                $releaseRecord.draft -isnot [bool] -or $releaseRecord.draft -or $releaseRecord.prerelease -isnot [bool] -or
+                $releaseRecord.tag_name -isnot [string] -or -not $releaseRecord.tag_name) {
+                throw 'Invalid published release identity.'
+            }
+        }
+        if ($preview.tag_name -cne $PreviewTag -or -not $preview.prerelease -or $stable.prerelease -or
+            $preview.id -eq $stable.id -or $stable.tag_name -ceq $PreviewTag) {
+            throw 'Selected tag is not a distinct published preview.'
+        }
+        return @{previewId=$preview.id; stableId=$stable.id; stableTag=$stable.tag_name}
+    }
+    function Test-PreviewSnapshot($phase, $binding) {
+        $check = @($checker, $release, '--preview-tag', $PreviewTag, '--preview-notes', $prose, '--snapshot', $scratch.FullName, '--phase', $phase)
+        if ($ExpectedSourceRevision) { $check += @('--expected-revision', $ExpectedSourceRevision) }
+        # GitHub authentication stays with the outer gh process.
+        $saved = @{}
+        try {
+            foreach ($name in 'GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN','GH_CONFIG_DIR') {
+                $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+                [Environment]::SetEnvironmentVariable($name, $null)
+            }
+            $result = (& $PythonPath $profileGuard --profile (Join-Path $scratch 'profile') @check) -join "`n"
+            if ($global:LASTEXITCODE -ne 0) { throw "Preview notes $phase refused: $result" }
+            if ($result -notmatch '^\s*\{') { throw "Invalid preview $phase verdict." }
+            $verdict = $result | ConvertFrom-Json
+            if ($verdict.ok -isnot [bool] -or -not $verdict.ok -or $verdict.changed -isnot [bool] -or
+                ($verdict.id -isnot [int] -and $verdict.id -isnot [long]) -or $verdict.id -ne $binding.previewId -or
+                $verdict.stable_tag -isnot [string] -or $verdict.stable_tag -cne $binding.stableTag -or
+                ($phase -eq 'after' -and $verdict.changed)) {
+                throw "Preview $phase verdict refused or mismatched."
+            }
+            return $verdict
+        } finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
+    }
+    try {
+        [Console]::OutputEncoding = $utf8
+        $prose = (Resolve-Path -LiteralPath $PreviewNotesFile).Path
+        Read-PreviewSnapshot 'before'
+        $binding = Get-PreviewBinding 'before'
+        $plan = Test-PreviewSnapshot 'before' $binding
+        if ($DryRun) { Write-Output "DRY RUN: $PreviewTag verified; changed=$($plan.changed)"; return }
+        if ($plan.changed) {
+            $bodyFile = Join-Path $scratch 'body.md'
+            & gh api "$base/$($binding.previewId)" --method PATCH --field "body=@$bodyFile" --silent
+            if ($global:LASTEXITCODE -ne 0) { throw 'Preview edit failed; inspect the published tag before retrying.' }
+        }
+        Read-PreviewSnapshot 'after'
+        $observed = Get-PreviewBinding 'after'
+        if ($observed.previewId -ne $binding.previewId -or $observed.stableId -ne $binding.stableId -or
+            $observed.stableTag -cne $binding.stableTag) { throw 'Published release identity changed during edit.' }
+        $null = Test-PreviewSnapshot 'after' $observed
+        Write-Output "Verified published preview $PreviewTag; stable remains $($plan.stable_tag)."
+    } finally {
+        [Console]::OutputEncoding = $encoding
+        if ($scratch.Parent.FullName -ne ([IO.Path]::GetTempPath()).TrimEnd('\','/')) { throw 'Unexpected preview scratch path.' }
+        Remove-Item -LiteralPath $scratch.FullName -Recurse -Force
+    }
+    return
+}
 $arguments = @($checker, $release, '--live', '--repository', $Repository)
 if ($ExpectedSourceRevision) { $arguments += @('--expected-revision', $ExpectedSourceRevision) }
 $report = (& $PythonPath $profileGuard --profile $checkProfile @arguments) -join "`n"

@@ -170,13 +170,13 @@ class _Body(io.BytesIO):
         return False
 
 
-def updater_reads(github_release: dict) -> dict | None:
+def updater_reads(github_release: dict, *, channel="stable") -> dict | None:
     """Run the installed updater's own parser over the release it would see."""
     def opener(request, timeout=0):
-        if getattr(request, "full_url", request) != qu.RELEASE_API:
+        if getattr(request, "full_url", request) != (qu.RELEASE_API if channel == "stable" else qu.RELEASE_API.rsplit("/", 1)[0] + "?per_page=20"):
             raise OSError("offline check reads only the release API")
-        return _Body(json.dumps(github_release).encode("utf-8"))
-    return qu.read_latest_release(opener)
+        return _Body(json.dumps(github_release if channel == "stable" else [github_release]).encode("utf-8"))
+    return qu.read_latest_release(opener, channel=channel)
 
 
 def _headers() -> dict:
@@ -266,6 +266,57 @@ def check(release_dir: Path, *, expected_revision: str = "", live: bool = False,
     return result
 
 
+def preview_notes(directory, tag, prose_path, expected_revision, snapshot, phase):
+    """Validate public snapshots from the publisher; only the outer publisher can edit a release."""
+    manifest = _json(directory / "release.json")
+    if tag != "build-" + manifest["build_id"]:
+        raise Refused("preview tag does not match the verified build ID")
+    fields = {"BUILD_ID": manifest["build_id"], "BUILT_AT": manifest["built_at"],
+              "SHA256 " + qu.ASSET_NAME: manifest["asset_sha256"], "SOURCE_REVISION": manifest["source_revision"],
+              "REQUIREMENTS_SHA256": manifest["requirements_sha256"]}
+    if expected_revision and expected_revision != fields["SOURCE_REVISION"]:
+        raise Refused("unexpected preview source revision")
+    block = "## Build\n" + "".join(f"{key}: {value}\n" for key, value in fields.items())
+    reserved = re.compile(r"^\s*(?:##\s+Build\s*$|(?:" + "|".join(map(re.escape, fields)) + r")\b)", re.I)
+    def machine_lines(text):
+        return [line for line in text.splitlines() if reserved.match(line)]
+    if machine_lines((directory / "release-notes.md").read_text(encoding="utf-8-sig")) != block.splitlines():
+        raise Refused("generated Build metadata differs from release.json")
+    prose = prose_path.read_text(encoding="utf-8-sig").strip()
+    if machine_lines(prose):
+        raise Refused("human notes must not contain Build metadata")
+    body = (prose + "\n\n" if prose else "") + block
+    def identity(release):
+        return (release["id"], release["tag_name"], release["draft"], release["prerelease"],
+                sorted((a["id"], a["name"], a["size"], a["digest"]) for a in release["assets"]))
+    stable = identity(_json(snapshot / "before-stable.json"))
+    preview = _json(snapshot / "before-preview.json")
+    before = identity(preview)
+    if preview["tag_name"] != tag or preview["draft"] or not preview["prerelease"] or stable[0] == preview["id"]:
+        raise Refused("target is not a separate published preview")
+    prior = machine_lines(preview["body"] or "")
+    if prior and prior != block.splitlines():
+        raise Refused("published Build metadata conflicts with generated metadata")
+    assets = {a["name"]: a for a in preview["assets"]}
+    if (assets.get("release.json", {}).get("digest") != "sha256:" + _sha(directory / "release.json")
+            or assets.get(qu.ASSET_NAME, {}).get("digest") != "sha256:" + manifest["asset_sha256"]
+            or assets[qu.ASSET_NAME]["size"] != manifest["asset_bytes"]):
+        raise Refused("preview assets differ from generated release")
+    expected = {"build_id": manifest["build_id"], "built_at": manifest["built_at"], "tag": tag,
+                "url": assets[qu.ASSET_NAME]["browser_download_url"], "sha256": manifest["asset_sha256"]}
+    if updater_reads({**preview, "body": body}, channel="preview") != expected:
+        raise Refused("updater refused proposed preview")
+    changed = (preview["body"] or "").replace("\r\n", "\n") != body
+    if phase == "before":
+        (snapshot / "body.md").write_bytes(body.encode("utf-8"))
+    else:
+        published = _json(snapshot / "after-preview.json")
+        if (identity(published) != before or identity(_json(snapshot / "after-stable.json")) != stable
+                or published["body"].replace("\r\n", "\n") != body or updater_reads(published, channel="preview") != expected):
+            raise Refused("preview readback or stable release identity changed; inspect before retrying")
+    return {"ok": True, "id": preview["id"], "changed": phase == "before" and changed, "stable_tag": stable[1]}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("release_dir", type=Path)
@@ -273,8 +324,18 @@ def main(argv=None) -> int:
     parser.add_argument("--repository", default=REPOSITORY)
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--installed-app-dir", type=Path)
+    parser.add_argument("--preview-tag")
+    parser.add_argument("--preview-notes", type=Path)
+    parser.add_argument("--snapshot", type=Path)
+    parser.add_argument("--phase", choices=("before", "after"))
     args = parser.parse_args(argv)
     try:
+        if any((args.preview_tag, args.preview_notes, args.snapshot, args.phase)):
+            if not all((args.preview_tag, args.preview_notes, args.snapshot, args.phase)) or args.live or args.installed_app_dir:
+                parser.error("preview edit requires the tag, prose, snapshot directory and phase")
+            print(json.dumps(preview_notes(args.release_dir, args.preview_tag, args.preview_notes,
+                                           args.expected_revision, args.snapshot, args.phase)))
+            return 0
         result = check(args.release_dir, expected_revision=args.expected_revision,
                        live=args.live, installed_app_dir=args.installed_app_dir,
                        repository=args.repository)

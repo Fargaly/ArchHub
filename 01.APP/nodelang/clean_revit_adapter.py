@@ -1676,6 +1676,38 @@ def _dwg_files(folder):
             yield path
 
 
+def _dwg_references(raw, drawing):
+    source = str(drawing)
+    handles = {"IMAGE": set(), "BLOCK_HEADER": set()}
+    for handle, _, _, _, kind, _ in raw.list_object_headers_with_type(source):
+        if kind in handles:
+            handles[kind].add(handle)
+    blocks = raw.decode_write_blocks(source)
+    images = raw.decode_image_entities(source)
+    if ({block["handle"] for block in blocks} != handles["BLOCK_HEADER"]
+            or {image[0] for image in images} != handles["IMAGE"]):
+        raise RevitUnreachable("Could not verify all block or raster references in " + drawing.name)
+    paths = [block["xref_path"] for block in blocks if block["xref"] or block["overlay"]]
+    if images:
+        definitions = {row[0]: row[1] for row in raw.decode_image_defs(source)}
+        for image in images:
+            if image[-2] not in definitions:
+                raise RevitUnreachable("Missing raster definition in " + drawing.name)
+            paths.append(definitions[image[-2]])
+    return paths
+
+
+def _check_dwg_reference(sheet, reference, members):
+    target = Path(reference)
+    if not reference or target.anchor or ":" in reference:
+        raise RevitUnreachable(f"{sheet}: choose a relative DWG or raster reference inside the export folder.")
+    member = Path(os.path.normpath(sheet.parent / target))
+    if member.parts[:1] == ("..",):
+        raise RevitUnreachable(f"{sheet}: referenced file {reference} is outside the export folder.")
+    if member not in members:
+        raise RevitUnreachable(f"{sheet}: referenced file {reference} is missing from the export folder.")
+
+
 def _dwg_manifest(folder, reported, version, *, decode=True):
     if not isinstance(reported, list) or not reported or any(not isinstance(name, str) for name in reported):
         raise RevitUnreachable("The DWG exporter returned no file manifest.")
@@ -1683,6 +1715,7 @@ def _dwg_manifest(folder, reported, version, *, decode=True):
         raise RevitUnreachable("The export folder changed.")
     files = {}
     drawings = 0
+    members = {Path(name) for name in reported}
     for path in _dwg_files(folder):
         if not path.is_file() or path.stat().st_nlink != 1:
             raise RevitUnreachable("The export contains an unexpected file.")
@@ -1701,8 +1734,13 @@ def _dwg_manifest(folder, reported, version, *, decode=True):
                         drawing.header_variables()
                         if not drawing.layouts():
                             raise ValueError("No readable DWG layout table.")
+                        references = _dwg_references(ezdwg.raw, path)
+                    except RevitUnreachable:
+                        raise
                     except Exception as exc:
                         raise RevitUnreachable("Could not decode exported DWG: " + path.name) from exc
+                    for reference in references:
+                        _check_dwg_reference(path.relative_to(folder), reference, members)
                 drawings += 1
                 stream.seek(0)
             files[path.relative_to(folder).as_posix()] = hashlib.file_digest(stream, "sha256").hexdigest()

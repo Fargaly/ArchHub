@@ -642,3 +642,124 @@ def test_registered_dwg_export_review_and_file_set(project, monkeypatch, mode):
         assert result['receipt']['dwg_manifest'] == expected
         assert result['files'] == [str(destination / name) for name in sorted(expected)]
     assert not list(root.glob('.archhub-dwg-*'))
+
+@pytest.mark.parametrize('reference,reason', [
+    ('../assets/panel.png', None), ('../assets/absent.png', 'missing'),
+    ('../../external.png', 'outside'), ('C:/staging/panel.png', 'relative'),
+    ('/staging/panel.png', 'relative'), ('', 'relative'),
+])
+def test_dwg_package_reference(reference, reason):
+    from pathlib import Path
+    from nodelang.clean_revit_adapter import _check_dwg_reference, RevitUnreachable
+    args = (Path('sheets/drawing.dwg'), reference, {Path('assets/panel.png')})
+    if reason:
+        with pytest.raises(RevitUnreachable, match=reason):
+            _check_dwg_reference(*args)
+    else:
+        _check_dwg_reference(*args)
+
+
+@pytest.mark.parametrize('kind', ['IMAGE', 'BLOCK_HEADER'])
+def test_dwg_unread_reference_inventory_is_refused(tmp_path, kind):
+    from types import SimpleNamespace
+    from nodelang.clean_revit_adapter import _dwg_references, RevitUnreachable
+    reader = SimpleNamespace(list_object_headers_with_type=lambda _: [(41, 0, 0, 0, kind, '')],
+                             decode_image_entities=lambda _: [], decode_write_blocks=lambda _: [])
+    with pytest.raises(RevitUnreachable, match='Could not verify'):
+        _dwg_references(reader, tmp_path/'drawing.dwg')
+
+
+# ACadSharp 3.8.35 (MIT), lib/net8.0/ACadSharp.dll; QA writer independent of the product reader.
+_DWG_LINK_FIXTURE = r'''
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $env:ARCHHUB_QA_ACADSHARP_DLL
+$version = [ACadSharp.ACadVersion]$env:QA_DWG_VERSION
+$drawing = [ACadSharp.CadDocument]::new($version)
+$config = [ACadSharp.IO.DwgWriterConfiguration]::new()
+if ($env:QA_DWG_KIND -eq 'block') {
+    $block = [ACadSharp.Tables.BlockRecord]::new('Linked detail')
+    $drawing.BlockRecords.Add($block)
+    $block.BlockEntity.Flags = 'XRef, XRefResolved'
+    $block.BlockEntity.XRefPath = $env:QA_DWG_REFERENCE
+    $drawing.ModelSpace.Entities.Add([ACadSharp.Entities.Insert]::new($block))
+    [ACadSharp.IO.DwgWriter]::Write($env:QA_DWG_TARGET, [ACadSharp.CadDocument]::new($version), $config, $null)
+} else {
+    $sample = Join-Path $env:ARCHHUB_QA_DWG_SAMPLES ('sample_' + $env:QA_DWG_VERSION + '.dwg')
+    $drawing = [ACadSharp.IO.DwgReader]::Read([string]$sample, [ACadSharp.IO.DwgReaderConfiguration]::new(),
+                                             [ACadSharp.IO.NotificationEventHandler]$null)
+    $defs = @($drawing.ImageDefinitions)
+    if ($defs.Count -ne 1) { throw 'Expected one bound raster definition' }
+    $defs[0].FileName = $env:QA_DWG_REFERENCE
+}
+[ACadSharp.IO.DwgWriter]::Write($env:QA_DWG_SHEET, $drawing, $config, $null)
+'''
+
+
+@pytest.mark.parametrize('version,signature', [('2013','AC1027'), ('2018','AC1032')])
+@pytest.mark.parametrize('kind', ['block', 'raster'])
+@pytest.mark.parametrize('mode', ['relative', 'staged-absolute', 'missing', 'outside'])
+def test_reviewed_dwg_references(project, monkeypatch, version, signature, kind, mode):
+    import os, subprocess
+    from pathlib import Path
+    import ezdwg
+    from nodelang import clean_revit_adapter as adapter, session_files as files
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    if not os.environ.get('ARCHHUB_QA_ACADSHARP_DLL'):
+        pytest.skip('Independent linked-DWG writer requires the ACadSharp QA DLL.')
+    # DomCR/ACadSharp samples/sample_AC1027.dwg, sample_AC1032.dwg and image.JPG.
+    if kind == 'raster' and not os.environ.get('ARCHHUB_QA_DWG_SAMPLES'):
+        pytest.skip('Set ARCHHUB_QA_DWG_SAMPLES to the ACadSharp sample directory.')
+    root, source = project
+    sentinel = root/'unrelated.txt'
+    sentinel.write_text('preserve')
+    destination = root/'Issued CAD'
+    item = next(row for row in files.catalogue() if row['id'] == 'file_export_dwg')
+    doc = files.new_document('Reference review')
+    doc['nodes'] = [{'id':'export', 'item':item['id'], 'type':item['engine'], 'paramDefs':item['paramDefs'],
+                     'params':{**item['params'], 'project_id':'court', 'session':'48884', 'document':str(source),
+                               'path':str(destination), 'views':[41], 'version':version, 'setup_source':'Revit default'},
+                     'position':{'x':0,'y':0}}]
+    path = root/'export.archhub'
+    files.write_document(path, doc)
+    owner = files.SessionFiles(root/'sessions')
+    monkeypatch.setattr(adapter, 'live_sessions', lambda:[{'port':48884,'pid':8,'document':'Model','revit_version':'2025'}])
+    asset_name = 'detail.dwg' if kind == 'block' else 'image.JPG'
+    before = {}
+    def export(port, route, body, *, timeout=None):
+        assert route == '/exec' and body['transaction'] is False
+        stage = Path(json.loads(re.search(r'string folder = (.*?);', body['code'])[1]))
+        (stage/'sheets').mkdir()
+        (stage/'assets').mkdir()
+        sheet, target = stage/'sheets/plan.dwg', stage/'assets'/asset_name
+        reference = {'relative': '../assets/'+asset_name, 'missing':'../assets/missing'+target.suffix,
+                     'outside':'../../outside'+target.suffix, 'staged-absolute':str(target)}[mode]
+        if kind == 'raster':
+            image = (Path(os.environ['ARCHHUB_QA_DWG_SAMPLES'])/'image.JPG').read_bytes()
+            assert hashlib.sha256(image).hexdigest() == '55e9a686d51f82692ca6bbfb2be367f899fa0f16d3c408e80d7930ddae72d4ff'
+            target.write_bytes(image)
+        env = dict(os.environ, QA_DWG_VERSION=signature, QA_DWG_KIND=kind, QA_DWG_REFERENCE=reference,
+                   QA_DWG_SHEET=str(sheet), QA_DWG_TARGET=str(target))
+        subprocess.run(['pwsh.exe','-NoProfile','-NonInteractive','-Command',_DWG_LINK_FIXTURE],
+                       env=env, check=True, capture_output=True, timeout=30)
+        assert adapter._dwg_references(ezdwg.raw, sheet) == [reference]
+        before.update({f.relative_to(stage).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest() for f in (sheet,target)})
+        return {'status':'ok','result':list(before)}
+    monkeypatch.setattr(adapter,'_call',export)
+    run = owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    card = next(row for row in ask_reviews() if row['id'] == run['approvalId'])
+    assert str(destination) in card['text'] and not before and not destination.exists()
+    if mode == 'relative':
+        assert ask_apply(card['id'], card['input_digest'], 'approve')['status'] == 'approved'
+        published = destination/'sheets/plan.dwg'
+        ref, = adapter._dwg_references(ezdwg.raw, published)
+        assert hashlib.sha256((published.parent/ref).read_bytes()).hexdigest() == before['assets/'+asset_name]
+        result = files.read_document(path)['nodes'][0]['result']['output']
+        assert result['receipt']['dwg_manifest'] == before
+    else:
+        reason = {'staged-absolute':'relative','missing':'missing','outside':'outside'}[mode]
+        with pytest.raises(ValueError, match=reason):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        failed = next(row for row in ask_reviews() if row['id'] == card['id'])
+        assert failed['status'] == 'failed' and reason in failed['error']
+        assert before and not destination.exists()
+    assert sentinel.read_text() == 'preserve' and not list(root.glob('.archhub-dwg-*'))

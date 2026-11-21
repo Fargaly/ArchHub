@@ -574,6 +574,85 @@ def delivery_events(history, message):
     return result
 
 
+def message_delivery(history, message, *, viewer=None, visible_reply=None):
+    """Project persisted evidence for readers without affecting delivery arbitration."""
+    from .workshop_delivery_state import project_injection_delivery
+    events = delivery_events(history, message)
+    # Answer receipts reference a note. Only its visible, verified author can settle this read.
+    answer_refs = {key: value["answered"].get("reply_message_id") for key, value in events.items() if "answered" in value}
+    for key in answer_refs:
+        record = events[key].pop("answered")
+        if not events[key]:
+            events[key]["attempt"] = {"label": record["label"]}
+    result = project_injection_delivery({k: v for k, v in events.items() if v}, addressed=agent_addressed(message))
+    route = _routing(message) or {}
+    rows = {row["recipient"]: row for row in result["delivery"]}
+    identities = {}
+    for target in route.get("recipients", []):
+        key = target["session"]
+        if "native-control" in events.get(key, {}):
+            continue
+        identities[key] = recipient_identity(target)
+        rows.setdefault(key, {"recipient": key, "label": target.get("agent") or key, "state": "pending",
+                              "via": "workshop", "reminded": False, "escalated": False})
+    if not rows:
+        return result
+    db = history._db
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE name IN "
+                                      "('workshop_live_deliveries','workshop_claims')")}
+    live = list(db.execute("SELECT * FROM workshop_live_deliveries WHERE message_id=?", (message["id"],))) if "workshop_live_deliveries" in tables else []
+    claims = list(db.execute("SELECT * FROM workshop_claims WHERE message_id=? AND step='initial'", (message["id"],))) if "workshop_claims" in tables else []
+    sender = route.get("sender") or {}
+    answers = {}
+    # Filtering public in SQL makes SQLite choose the whole-room public/sequence index.
+    # This predicate also works on old profiles before the reply index is available.
+    for raw in db.execute("SELECT * FROM messages WHERE conversation_id=? AND reply_to=? AND category=? ORDER BY sequence",
+                          (ROOM, message["id"], CATEGORY)):
+        if not raw["public"]:
+            continue
+        reply = history._message(raw)
+        if (_message_project(reply) and _message_project(reply) != route.get("project", "")
+                and not (viewer and _reply_reaches(_replied_author(history, reply), reply, viewer))
+                or visible_reply and not visible_reply(reply) or reply["author"] == message["author"]):
+            continue
+        reply_route = _routing(reply) or {}
+        targets = reply_route.get("recipients") or []
+        if targets:
+            # Public room visibility does not redirect an explicitly addressed reply.
+            _, separator, parent_key = message["author"].removesuffix("]").rpartition(" [")
+            parent_key = sender.get("session") or (parent_key if separator else None)
+            if not any(target.get("session") == parent_key or sender and
+                       recipient_identity(target) == recipient_identity(sender) for target in targets):
+                continue
+        author = reply_route.get("sender") or {}
+        if not author:
+            for key, ref in answer_refs.items():
+                if ref == reply["id"] and reply["author"].endswith(" [" + key + "]"):
+                    answers[key] = ref
+            continue
+        if (not author.get("session") or not reply["author"].endswith(" [" + author["session"] + "]")
+                or author["session"] == sender.get("session")
+                or recipient_identity(author) == recipient_identity(sender)):
+            continue
+        answers[author["session"]] = answers[recipient_identity(author)] = reply["id"]
+    for key, row in rows.items():
+        records = events.get(key, {})
+        identity = identities.get(key) or recipient_identity({**records.get("attempt", {}), **records.get("addressed", {}), "session": key})
+        reply_id = answers.get(key) or answers.get(identity)
+        if reply_id:
+            row.update(state="answered", reply_message_id=reply_id)
+        elif row["state"] not in ("answered", "delivered"):
+            states = {("pending" if r["state"] in ("pending", "queued") else "refused" if r["state"] == "returned" else delivery_outcome(r["state"])) for r in live
+                      if r["recipient"] == key or recipient_identity(dict(r)) == identity}
+            states.update(claim_state(r) for r in claims if tuple(json.loads(r["recipient"])) in (identity, ("session", key)))
+            if "initial-outcome" in records:
+                states.add(legacy_state(records, "initial"))
+            row["state"] = next((v for v in ("delivered", "uncertain", "refused") if v in states), row["state"])
+    states = {row["state"] for row in rows.values()}
+    return {"state": next(v for v in ("pending", "uncertain", "refused", "delivered", "answered") if v in states),
+            "delivery": list(rows.values())}
+
+
 def recipient_identity(row, declarations=()):
     """F320: the one identity of an addressee, defined once. (runtime, native session id) when the session has a
     native id, otherwise its declaration key. Every receipt read and every "same addressee" decision uses it."""
@@ -1752,9 +1831,8 @@ def _read(history, body, identity, runtime=None):
         result["declarations"].append(row)
         result["declarations_after"] = row["root"]
         size += row_size
-    from .workshop_delivery_state import project_injection_delivery
     for message in result["messages"]:
-        message["state"] = project_injection_delivery(delivery_events(history, message), addressed=agent_addressed(message))["state"]
+        message["state"] = message_delivery(history, message, viewer=caller, visible_reply=lambda reply: _room_visible(reply, identity, caller, history))["state"]
     return result
 
 

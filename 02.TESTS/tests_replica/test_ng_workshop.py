@@ -123,7 +123,18 @@ print(json.dumps({'lock_errors':0}))
             mailbox.call('send', {'to':'ng-claude','text':'Please reply.', 'idempotency_key':'one'}, self.context)
             self.assertEqual(len(transport.sent), 1)
             self.assertEqual(transport.sent[0][0], {'app':'claude','id':'ng-claude'})
+            from nodelang.workshop_api import WorkshopAPI
+            api = WorkshopAPI(None, SimpleNamespace(subject_root='viewer'), 'unused', 'unused',
+                              guard=lambda: None, request_id='court', route='court')
+            def check(expected):
+                for messages in (mailbox.call('read', {'since': 0}, self.context)['messages'],
+                                 api.listWorkshopMessages()['messages']):
+                    self.assertEqual(next(m['state'] for m in messages if m['id'] == first['message_id']), expected)
+            check('delivered')
+            mailbox.call('send', {'to':'founder','text':'My follow-up','reply_to':first['message_id']}, self.context)
+            check('delivered')
             reply = mailbox.call('send', {'to':'founder','text':'Answer', 'reply_to':first['message_id']}, recipient)
+            check('answered')
             # Founder 2026-10-28: no pending state. Delivery is one live row, made at send time.
             from nodelang.workshop_live import deliveries
             with mailbox.application_history(None) as history:
@@ -132,6 +143,91 @@ print(json.dumps({'lock_errors':0}))
             self.assertEqual([row['state'] for row in rows], ['delivered'])
             self.assertEqual(first['delivery'][0]['state'], 'delivered')
             self.assertEqual(linked['reply_to'], first['message_id'])
+
+    def test_recipient_delivery_evidence_stays_separate(self):
+        from nodelang.workshop_api import WorkshopAPI
+        from nodelang.workshop_live import SCHEMA
+        api = WorkshopAPI(None, SimpleNamespace(subject_root='viewer'), 'unused', 'unused',
+                          guard=lambda: None, request_id='court', route='court')
+        targets = [{"session": key, "agent": key, "runtime": "codex", "native_session_id": key}
+                   for key in ("one", "two")]
+        with mailbox.application_history() as history:
+            parent = history.append(mailbox.ROOM, author="Sender", category=mailbox.CATEGORY,
+                content="To one,two:\nQuestion", evidence=[mailbox.ROUTING_EVIDENCE,
+                json.dumps({"recipients":targets})], idempotency_key="multi-test")
+            history._db.execute(SCHEMA)
+            for key, status in (("one", "delivered"), ("two", "uncertain")):
+                history._db.execute("INSERT INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (parent["id"],key,key,"codex",key,"workshop",status,"","2026-01-01",0))
+            for label, private, project in (("private", True, ""), ("other-project", False, "unrelated")):
+                author = {"session":"one", "native_session_id":"one", "runtime":"codex"}
+                reply = history.append(mailbox.ROOM, author="Agent [one]", category=mailbox.CATEGORY,
+                    content="This reply must stay scoped", recipients=("one",) if private else (),
+                    reply_to=parent["id"], evidence=[mailbox.ROUTING_EVIDENCE,
+                    json.dumps({"sender":author, "project":project})], idempotency_key=label)
+                if private:
+                    mailbox._delivery_receipt(history, parent, targets[0], "answered", reply_message_id=reply["id"])
+        def check(second):
+            message = next(m for m in api.listWorkshopMessages()["messages"] if m["id"] == parent["id"])
+            self.assertEqual({r["recipient"]:r["state"] for r in message["delivery"]}, {"one":"delivered","two":second})
+            self.assertFalse(any("reply_message_id" in r for r in message["delivery"]))
+            self.assertEqual(message["state"],second)
+            notes = mailbox.call("read", {"since":0}, self.context)["messages"]
+            self.assertEqual(next(m["state"] for m in notes if m["id"] == parent["id"]), second)
+        check("uncertain")
+        with mailbox.application_history() as history:
+            history._db.execute("UPDATE workshop_live_deliveries SET state='refused' WHERE message_id=? AND recipient='two'",
+                                (parent["id"],))
+        check("refused")
+        # Earlier profiles may lack the optional reply index. Reading still respects scope.
+        with mailbox.application_history() as history:
+            history._db.execute("DROP INDEX IF EXISTS workshop_reply_to")
+            viewed = mailbox.message_delivery(history, parent)
+            self.assertEqual(viewed["state"], "refused")
+            self.assertFalse(any("reply_message_id" in r for r in viewed["delivery"]))
+            self.assertIsNone(history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_reply_to'").fetchone())
+
+    def test_cross_project_answer_only_reaches_addressed_parent_author(self):
+        self._check_reply_address(cross_project=True)
+
+    def test_same_project_note_to_third_peer_is_visible_without_answering(self):
+        self._check_reply_address(cross_project=False)
+
+    def _check_reply_address(self, cross_project):
+        from nodelang.workshop_api import WorkshopAPI
+        import psutil
+        class Transport:
+            def inject(self, recipient, text, **kwargs):
+                return {"status":"injected", "dispatch_attempted": True}
+        contexts = [self.context, {"claude/sessionID":"other-project"}, {"threadId":"third-viewer"}]
+        declarations = []
+        with patch.object(mailbox, 'project_of', side_effect=lambda cwd, paths: Path(cwd).name), patch.object(mailbox, '_local_transport', return_value=Transport()):
+            for ctx, project in zip(contexts, ("Alpha", "Beta" if cross_project else "Alpha", "Alpha")):
+                cwd = Path(self.fixture.name) / project
+                cwd.mkdir(exist_ok=True)
+                peer = SimpleNamespace(pid=os.getpid(), created_at=psutil.Process().create_time(), cwd=str(cwd))
+                declarations.append(mailbox.call("declare", {"task":"court", "paths":[str(cwd)],
+                    "status":"working", "request_id":"unassigned"}, ctx, peer=peer)["declaration"])
+            a, b, other = declarations
+            parent = mailbox.call("send", {"to":b["agent"], "text":"Please answer"}, contexts[0])["message_id"]
+            wrong = mailbox.call("send", {"to":other["agent"], "text":"For someone else", "reply_to":parent}, contexts[1])["message_id"]
+            author_view = WorkshopAPI(None, SimpleNamespace(subject_root=a["session"]), "", "",
+                                      guard=lambda:None, request_id="court", route="court")
+            for page in (mailbox.call("read", {"since":0}, contexts[0]), author_view.listWorkshopMessages()):
+                notes = {n["id"]:n for n in page["messages"]}
+                self.assertEqual(wrong in notes, not cross_project)
+                self.assertEqual(notes[parent]["state"], "delivered")
+                self.assertTrue(all("reply_message_id" not in row for row in notes[parent].get("delivery", [])))
+            child = mailbox.call("send", {"to":a["agent"], "text":"Answer", "reply_to":parent}, contexts[1])["message_id"]
+            for viewer, ctx, admitted in ((a, contexts[0], True), (other, contexts[2], not cross_project)):
+                studio = WorkshopAPI(None, SimpleNamespace(subject_root=viewer["session"]), "", "",
+                                     guard=lambda:None, request_id="court", route="court")
+                for page in (mailbox.call("read", {"since":0}, ctx), studio.listWorkshopMessages()):
+                    notes = {note["id"]:note for note in page["messages"]}
+                    self.assertEqual(child in notes, admitted)
+                    self.assertEqual(notes[parent]["state"], "answered" if admitted else "delivered")
+                    if "delivery" in notes[parent]:
+                        self.assertEqual(notes[parent]["delivery"][0].get("reply_message_id"), child if admitted else None)
 
     def test_ui_thread_uses_same_file_without_owner_graph(self):
         from nodelang.workshop_api import WorkshopAPI

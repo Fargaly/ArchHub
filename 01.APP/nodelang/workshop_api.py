@@ -124,8 +124,7 @@ class WorkshopAPI:
 
     def listWorkshopMessages(self, before=None):
         """The existing public room, including notes that have no Work reference."""
-        from .workshop_mailbox import CATEGORY, agent_addressed, delivery_events
-        from .workshop_delivery_state import project_injection_delivery
+        from .workshop_mailbox import CATEGORY, message_delivery, _room_visible
         if before is not None and (type(before) is not int or before < 1):
             raise ValueError("Workshop message cursor is invalid")
         from .workshop_mailbox import application_history, read_declarations
@@ -135,13 +134,18 @@ class WorkshopAPI:
                 rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
                     "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
                     ("app:workshop", CATEGORY, before, before)), 100, 180000)
-                events = {row["id"]: delivery_events(history, row) for row in rows}
+                viewer = next((r for r in declared if r["session"] == self.binding.subject_root), None)
+                identity = {"sender_key": self.binding.subject_root, "sender_label": (viewer or {}).get("agent", "")}
+                def visible(note):
+                    return viewer is None or _room_visible(note, identity, viewer, history)
+                shown = [row for row in rows if visible(row)]
+                states = {row["id"]: message_delivery(history, row, viewer=viewer, visible_reply=visible) for row in shown}
         from .workshop_mailbox import _routing
         messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
             "project": (_routing(row) or {}).get("project") or "",
-            **project_injection_delivery(events[row["id"]], addressed=agent_addressed(row))}
-            for row in reversed(rows)]
+            **states[row["id"]]}
+            for row in reversed(shown)]
         return {"messages":messages, "more":more, "next_before":rows[-1]["sequence"] if rows else None}
 
 

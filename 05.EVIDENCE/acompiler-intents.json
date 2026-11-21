@@ -9,6 +9,8 @@
         "01.APP/nodelang/settings_owner.py",
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_js/settings_design_areas.test.cjs",
+        "02.TESTS/tests_js/settings_scope.test.cjs",
         "02.TESTS/tests_replica/test_host_verbs_folded.py",
         "02.TESTS/tests_replica/test_ifc_export_canvas.py",
         "04.DOCS/DECISIONS.md"

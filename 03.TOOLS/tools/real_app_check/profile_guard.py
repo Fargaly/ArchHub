@@ -104,7 +104,16 @@ def install(log=None, *, protected=()):
     os.environ["ARCHHUB_PROFILE_GUARD_LOG"] = str(receipt)
     receipt.parent.mkdir(parents=True, exist_ok=True)
     attempts = []
+    isolated_state = os.environ.get("ARCHHUB_TEST_STATE_DIR")
+    outage = Path(isolated_state) / "account-outage.active" if isolated_state else None
     def deny(event, args):
+        if event == "http.client.connect" and outage and outage.is_file():
+            connection, host, _port = args
+            # A proxy may carry TLS to the original account host.
+            target = getattr(connection, "_tunnel_host", None) or host
+            if target in ("api.archhub.io", "archhub-cloud.fly.dev"):
+                (outage.parent / "account-outage.observed").touch()
+                raise ConnectionRefusedError("Account connection disabled for this isolated QA run")
         try:
             _deny_profile_write(event, args, protected=roots, attempts=attempts)
         except AssertionError:

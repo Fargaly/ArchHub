@@ -667,3 +667,42 @@ def test_flat_installed_owner_plan_needs_only_the_shipped_specification(tmp_path
     assert plan['sources']['specification']['sha256'] == hashlib.sha256(
         (installed / 'docs/SPEC.md').read_bytes()).hexdigest()
     assert plan['service_args'] == ['-B', str(installed / 'nodelang/launcher.py')]
+
+
+def test_isolated_account_connection_cut_keeps_loopback_and_recovers(tmp_path):
+    script = """
+import http.client, os, runpy, socket, sys
+from pathlib import Path
+state = Path(sys.argv[2])
+os.environ['ARCHHUB_TEST_STATE_DIR'] = str(state)
+runpy.run_path(sys.argv[1])['install'](state / 'guard.jsonl')
+with socket.socket() as listener:
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    def connect(host):
+        conn = http.client.HTTPConnection(host, timeout=2)
+        # Real HTTP connect and audit event; keep the test server local.
+        conn._create_connection = lambda *args: socket.create_connection(listener.getsockname(), timeout=2)
+        try:
+            conn.connect()
+            listener.accept()[0].close()
+        finally:
+            conn.close()
+    marker = state / 'account-outage.active'
+    connect('api.archhub.io')
+    marker.touch()
+    for host in ('api.archhub.io', 'archhub-cloud.fly.dev'):
+        try:
+            connect(host)
+        except ConnectionRefusedError:
+            pass
+        else:
+            raise AssertionError('Account connection unexpectedly succeeded')
+    assert (state / 'account-outage.observed').is_file()
+    connect('127.0.0.1')
+    connect('unrelated.example')
+    marker.unlink()
+    connect('api.archhub.io')
+"""
+    subprocess.run([sys.executable, '-B', '-c', script, str(TOOL / 'profile_guard.py'), str(tmp_path)],
+                   check=True, timeout=15)

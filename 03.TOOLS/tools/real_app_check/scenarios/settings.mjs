@@ -47,7 +47,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
  function outageEvidence(result, instruction) {
   fs.writeFileSync(path.join(out, 'account-outage.json'), JSON.stringify({result, instruction, observation}, null, 2));
  }
- if (outageRequested) outageEvidence('NOT EXERCISED', 'Waiting for the signed-in Projects fixture. Keep the QA machine online.');
+ if (outageRequested) outageEvidence('NOT EXERCISED', 'Waiting for the signed-in Projects fixture. No authenticated outage has been observed.');
  const entry=await recordStep(declaredSteps[0],async()=>{
   const access=await until(()=>js("window.ArchHubAPI?.getSnapshot()?.desktopAccess"),value=>value&&value.state!=='pending');
   assert(access&&typeof access.admitted==='boolean','The installed admission decision was not shown');
@@ -237,7 +237,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert.deepEqual(await current(),edited);assert.equal(await dirty(),true);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
    const held=await js('globalThis.__archhubProjectsWitness.held');
    if (outageRequested) {
-    // The existing Projects witness holds only its local autosave while the operator changes connectivity.
+    const cut=path.join(isolated,'state','account-outage.active'), observed=path.join(isolated,'state','account-outage.observed');
     stopProtected = true;
     try {
      const account = await js("(async()=>{const a=await window.ArchHubAPI.refreshDesktopAccess(true);return a.admitted && a.subject;})()");
@@ -263,7 +263,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
      const online = await read();
      observation.statuses.push(online.status);
      assert(online.status === 200 && online.listed);
-     outageEvidence('NOT EXERCISED', 'Disconnect the dedicated QA machine from the account service now. Keep loopback available.');
+     fs.closeSync(fs.openSync(cut,'wx'));
      function inspectView(subject) {
       const api = window.ArchHubAPI, snapshot = api.getSnapshot(), access = snapshot.desktopAccess;
       const entry = document.querySelector('[data-desktop-admission]');
@@ -279,20 +279,18 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
      const denial = await read();
      observation.statuses.push(denial.status);
      if (!compareOutageObservation(denial, await inspect(), 'disconnect')) {
-      stopProtected = false;
-      outageEvidence('NOT EXERCISED', 'No outage observed before the deadline.');
-      return {not_exercised:'Operator outage was not observed.',got:{accountOutage:observation}};
+      throw Error('The isolated connection cut did not lock Studio.');
      }
      assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
      assert.equal(label,'INSTALLED BUILD','Installed Windows evidence is required for the outage verdict.');
+     assert(fs.existsSync(observed),'The isolated transport did not observe the cut');
      observation.lockedScreenshot = path.basename(await shot('Account service outage - locked Studio'));
-     outageEvidence('NOT EXERCISED', '503 and locked Studio observed. Reconnect the same QA machine now.');
+     fs.unlinkSync(cut);
      await waitForOutageView(inspect, view => view.restored);
      const reopened = await read();
      observation.statuses.push(reopened.status);
      if (!compareOutageObservation(reopened, await inspect(), 'reconnect')) {
-      outageEvidence('NOT EXERCISED', 'Reconnect was not observed before the deadline.');
-      return {not_exercised:'Same-account reconnect was not exercised.',got:{accountOutage:observation}};
+      throw Error('The account did not recover after restoring its transport.');
      }
      observation.sameAccount = true;
      assert.equal(await js('window.ArchHubAPI.getSessionPath()'),savedPath);
@@ -302,14 +300,18 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
      observation.savedFilePreserved = true;
      observation.draftPreserved = true;
      stopProtected = false;
-     outageEvidence('PASS', 'Live workspace list returned 200, then data-free 503 with locked Studio, then 200 for the same account. The saved bytes, path and dirty document matched.');
+     outageEvidence('NOT EXERCISED','Same account and dirty edit restored. Explicit save and reopen pending.');
     } catch (error) {
      outageEvidence('FAIL', 'The outage assertions failed. Inspect the Projects step.');
      return {pass:false,why:'The account outage evidence did not satisfy the installed assertions.',got:{accountOutage:observation}};
-    }
+    } finally { fs.rmSync(cut,{force:true}); }
    }
    await js('globalThis.__archhubProjectsWitness.restore();window.ArchHubAPI.saveSession()');const savedBytes=fs.readFileSync(baseline);assert.notDeepEqual(savedBytes,baselineBytes);assert.equal(await dirty(),false);
    await call('newSession',['Different disposable Canvas']);await call('openSession',[baseline]);assert.deepEqual(await current(),edited);assert.deepEqual(fs.readFileSync(baseline),savedBytes);
+   if(outageRequested){
+    observation.explicitSaveAndReopen=true;
+    outageEvidence('PASS','The isolated account connection was cut and restored. The same account recovered its draft, saved it and reopened the verified file.');
+   }
    const adds=Array.from({length:10},(_,i)=>path.join(folder,'parallel-add-'+i));for(const directory of adds)fs.mkdirSync(directory);
    await js('Promise.all('+JSON.stringify(adds)+'.map(folder=>window.ArchHubAPI.addWorkspace({folder})))');
    for(const directory of adds)assert.equal(rows().filter(row=>path.normalize(row.path)===path.normalize(directory)).length,1);

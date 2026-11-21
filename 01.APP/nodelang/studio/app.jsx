@@ -40,12 +40,16 @@
   function QuitDesktop(){const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(DESKTOP_QUIT_ACTIONS,{Quit:()=>api.windowAction('quit')});return <><Btn ghost onClick={event=>runAction('appShell.DesktopQuit',event)}>Quit ArchHub</Btn><window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/></>;}
   function SignInControls() {
     const s=useData(),access=s.desktopAccess||{};
+    const start=async()=>{
+      try { await api.signIn(true); }
+      catch { throw Error('Could not start sign-in. Check your connection and choose Retry.'); }
+    };
     const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(DESKTOP_SIGNIN_ACTIONS,{
-      SignIn:async()=>{const result=await api.signIn(true);return {...result,message:'Complete sign-in in your browser.'};},
-      Retry:async()=>{const result=await api.refreshDesktopAccess(true);return {...result,message:result.admitted?'Account verified.':'Not signed in. Your work stays locked.'};},
+      SignIn:start,
+      Retry:()=>access.notice?start():api.refreshDesktopAccess(true),
     });
     const busy=actionState.status==='waiting';
-    return <><p>Sign in to archhub.io to use ArchHub. An internet connection is required.</p><p role="status">{access.admitted?'Opening your workspace…':access.signingIn?'Complete sign-in in your browser.':access.state==='pending'?'Checking your account…':access.state==='unavailable'?'Connection lost. Reconnect to continue.':access.state==='session_invalid'?'Your session could not be verified. Sign in again.':'Sign in with your account to continue.'}</p><window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/><div className="flex"><Btn p disabled={busy} onClick={event=>runAction('appShell.DesktopSignIn',event)}>Sign in with your browser</Btn><Btn disabled={busy} onClick={event=>runAction('appShell.DesktopRetry',event)}>Retry</Btn><QuitDesktop/></div></>;
+    return <><p>Sign in to archhub.io to use ArchHub. An internet connection is required.</p><p role="status">{access.admitted?'Opening your workspace…':access.notice||(access.signingIn?'Complete sign-in in your browser.':access.state==='pending'?'Checking your account…':access.state==='unavailable'?'Connection lost. Reconnect to continue.':access.state==='session_invalid'?'Your session could not be verified. Sign in again.':'Sign in with your account to continue.')}</p>{actionState.status!=='loaded'&&<window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>}<div className="flex"><Btn p disabled={busy} onClick={event=>runAction('appShell.DesktopSignIn',event)}>Sign in with your browser</Btn><Btn disabled={busy} onClick={event=>runAction('appShell.DesktopRetry',event)}>Retry</Btn><QuitDesktop/></div></>;
   }
   function DesktopSignIn() {
 

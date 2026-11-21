@@ -44,13 +44,22 @@ async function refreshDesktopAccess(force=false){
  const generation=++desktopGeneration;
  const work=(async()=>{
   try{
-   if(accountSignInPending){const phase=await request('/api/universal/cloud-signin');if(generation!==desktopGeneration)return desktopAccess;if(['done','failed','idle'].includes(phase.phase))accountSignInPending=false;showDesktopAccess({signingIn:accountSignInPending,notice:phase.phase==='failed'?(phase.error||'Sign-in failed. Try again.'):'Complete sign-in in your browser.'});}
+   if(accountSignInPending){
+    const phase=await request('/api/universal/cloud-signin');
+    if(generation!==desktopGeneration)return desktopAccess;
+    accountSignInPending=!['done','failed','idle'].includes(phase.phase);
+    let notice='';
+    if(phase.phase==='failed')notice=phase.error_code==='browser_open_failed'
+     ?'Could not open the browser. Check your default browser and choose Retry.'
+     :'Sign-in failed. Choose Retry to sign in again.';
+    showDesktopAccess({signingIn:accountSignInPending,notice});
+   }
    const answer=await request('/api/universal/desktop-access');if(generation!==desktopGeneration)return desktopAccess;
    if(answer.admitted!==true||answer.state!=='admitted'||typeof answer.subject!=='string'||!answer.subject){lockDesktop(['signed_out','session_invalid'].includes(answer.state)?answer.state:'unavailable');return desktopAccess;}
    const switching=Boolean(desktopSubject&&desktopSubject!==answer.subject);
    if(switching)lockDesktop('switching');
    await changeDesktopSubject(answer.subject);if(generation!==desktopGeneration)return desktopAccess;
-   showDesktopAccess({admitted:true,state:'admitted',subject:answer.subject,email:answer.email||null,ready:ready&&!switching});
+   showDesktopAccess({admitted:true,state:'admitted',notice:'',subject:answer.subject,email:answer.email||null,ready:ready&&!switching});
    if(switching&&ready){if(sessionDocument)projectFile();else await api.newSession();showDesktopAccess({ready:true});void refreshAccount().catch(()=>{});void api.listWorkspaces().catch(()=>{});}
    for(const resolve of desktopWaiters)resolve();desktopWaiters.clear();return desktopAccess;
   }catch(error){if(generation===desktopGeneration)lockDesktop('unavailable');return desktopAccess;}

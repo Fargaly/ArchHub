@@ -9,6 +9,7 @@ const studio=path.resolve(__dirname,'../../01.APP/nodelang/studio');
 // UI contract fixture only: the real pinned cloud decision has its own backend and installed courts.
 function fixture(storage=new Map(),previousView=null){
  const calls=[],events=new Map();
+ let signin={phase:'pending'};
  let pendingStatus=null;let access={ok:true,admitted:false,state:'signed_out',subject:null,email:null},refuse=false;
  const file={format:'archhub',version:1,id:'fixture-A',title:'Private A',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}};
  const localStorage={get length(){return storage.size;},key:i=>[...storage.keys()][i]||null,getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)};
@@ -23,7 +24,7 @@ function fixture(storage=new Map(),previousView=null){
    let data={ok:true,result:[],items:[],recent:[],directory:'fixture',sessions:[],messages:[],agents:[],providers:[]},status=200;
    if(url==='/api/universal/desktop-access'){const captured=access;if(pendingStatus)await pendingStatus;data=captured;}
    else if(url==='/api/universal/cloud-signout'){access={ok:true,admitted:false,state:'signed_out',subject:null,email:null};data=access;}
-   else if(url==='/api/universal/cloud-signin')data={ok:true,phase:'pending'};
+   else if(url==='/api/universal/cloud-signin')data={ok:true,...signin};
    else if(refuse){status=503;data={ok:false,code:'desktop_access_required',state:'unavailable',error:'Connection unavailable'};}
    else if(url==='/api/commands')data={commands:[]};
    else if(url==='/api/session-files'&&body?.action==='initial')data={ok:true,document:access.subject==='B'?{...structuredClone(file),id:'fixture-B',title:'Untitled'}:structuredClone(file),path:access.subject==='B'?'':'C:/fixture/A.archhub'};
@@ -36,7 +37,7 @@ function fixture(storage=new Map(),previousView=null){
   }};
  context.window=context;vm.createContext(context);
  for(const name of ['studio-authority.js','api.js'])vm.runInContext(fs.readFileSync(path.join(studio,name),'utf8'),context,{filename:name});
- return {context,api:context.ArchHubAPI,calls,storage,holdStatus:()=>{let release;pendingStatus=new Promise(resolve=>{release=()=>{pendingStatus=null;resolve();};});return release;},set:subject=>{access=subject?{ok:true,admitted:true,state:'admitted',subject,email:subject+'@example.test'}:{ok:true,admitted:false,state:'unavailable',subject:null,email:null};},refuse:value=>{refuse=value;},close:()=>context.dispatchEvent(new Event('offline'))};
+ return {context,api:context.ArchHubAPI,calls,storage,signin:value=>{signin=value;},holdStatus:()=>{let release;pendingStatus=new Promise(resolve=>{release=()=>{pendingStatus=null;resolve();};});return release;},set:subject=>{access=subject?{ok:true,admitted:true,state:'admitted',subject,email:subject+'@example.test'}:{ok:true,admitted:false,state:'unavailable',subject:null,email:null};},refuse:value=>{refuse=value;},close:()=>context.dispatchEvent(new Event('offline'))};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('initial desktop admission does not load work or expose a document',async()=>{
@@ -84,4 +85,23 @@ test('a late prior status cannot unlock after signout or overwrite a newer accou
  const release=f.holdStatus(),old=f.api.refreshDesktopAccess(true);await settle();
  const logout=f.api.signIn(false);await settle();release();await Promise.all([old,logout]);assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);
  f.set('B');await f.api.refreshDesktopAccess(true);assert.equal(f.api.getSnapshot().desktopAccess.subject,'B');f.close();
+});
+
+test('locked sign-in reports dispatch failure safely and retries without granting access',async()=>{
+ const f=fixture();await settle();
+ f.signin({phase:'failed',error_code:'browser_open_failed',error:'private provider details'});
+ await f.api.signIn(true);
+ const access=()=>f.api.getSnapshot().desktopAccess;
+ assert.match(access().notice,/default browser.*Retry/);
+ assert.equal(access().signingIn,false);
+ f.signin({phase:'waiting'});
+ await f.api.signIn(true);
+ assert.equal(access().notice,'');
+ assert.equal(access().signingIn,true);
+ assert.equal(access().admitted,false);
+ assert.equal(f.api.getSessionDocument(),null);
+ assert.equal(f.calls.filter(c=>c.url.endsWith('/cloud-signin')&&c.body).length,2);
+ f.signin({phase:'failed',error:'private provider details'});
+ await f.api.refreshDesktopAccess(true);
+ assert.equal(access().notice,'Sign-in failed. Choose Retry to sign in again.');
 });

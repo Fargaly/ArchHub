@@ -385,10 +385,16 @@ class SignIn:
             # On its own thread: the browser (or a court standing in for it)
             # may call the loopback before this thread is back in the loop.
             try:
-                opener(url)
-            except Exception as failed:
-                self._set(phase="failed", error=f"browser did not open: {failed}"[:200])
-                self._cancel = True
+                opened = opener(url)
+            except Exception:
+                opened = False  # An OS exception can contain the private sign-in URL.
+            if opened is not False:
+                return
+            with self._lock:
+                if self._state["phase"] == "waiting":
+                    self._set(phase="failed", error_code="browser_open_failed", url="",
+                              error="Could not open the browser. Check your default browser and choose Retry.")
+                    self._cancel = True
 
         threading.Thread(target=_open, name="archhub-cloud-signin-browser", daemon=True).start()
         started = time.monotonic()
@@ -408,7 +414,10 @@ class SignIn:
                 continue
         code = str(server.received_code)
         server.server_close()
-        self._set(phase="exchanging")
+        with self._lock:
+            if self._cancel:
+                return
+            self._set(phase="exchanging")
         try:
             _preserve_legacy_resume_before_exchange(self.path, self._http)
         except (OSError, ValueError):

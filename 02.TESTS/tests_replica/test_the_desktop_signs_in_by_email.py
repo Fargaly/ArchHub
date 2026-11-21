@@ -224,6 +224,30 @@ def test_sign_out_forgets_the_session_and_keeps_the_rest(tmp_path):
     assert seen[-1] == ("POST", "https://api.archhub.io/v1/auth/logout", "Bearer ah_" + "y" * 40)
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_browser_dispatch_failure_allows_a_fresh_attempt(cloud, tmp_path, monkeypatch, raises):
+    monkeypatch.setattr(cloud_signin, "_CURRENT", {"attempt": None})
+    record = tmp_path / "cloud.json"
+    options = {"base_url": f"http://127.0.0.1:{cloud.server_port}", "path": record}
+
+    def refused(url):
+        if raises:
+            raise OSError("private dispatch details " + url)
+        return False
+
+    cloud_signin.begin("google", opener=refused, **options)
+    first = cloud_signin._CURRENT["attempt"]
+    state = _wait(first)
+    assert state["phase"] == "failed" and state["error_code"] == "browser_open_failed"
+    assert state["url"] == "" and state["error"] == "Could not open the browser. Check your default browser and choose Retry."
+    assert not record.exists()
+    assert [kind for kind, _ in cloud.seen] == ["google/start"]
+    cloud_signin.begin("google", opener=_browser_that_follows, **options)
+    second = cloud_signin._CURRENT["attempt"]
+    assert second is not first and _wait(second)["phase"] == "done"
+    assert [kind for kind, _ in cloud.seen] == ["google/start", "google/start", "exchange", "me"]
+
+
 def test_a_second_click_joins_the_waiting_attempt(cloud, tmp_path, monkeypatch):
     monkeypatch.setattr(cloud_signin, "_CURRENT", {"attempt": None})
     landed = {}

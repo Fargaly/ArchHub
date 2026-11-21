@@ -29,6 +29,9 @@ on:
       verify_workshop_replies:
         description: 'Verify persisted Workshop reply attribution and private reply visibility across two installed builds'
         type: boolean
+      verify_previous_canvas:
+        description: 'Exercise Rerun and Fork on the pinned previous installed build before upgrading'
+        type: boolean
       verify_dwg:
         description: 'Verify the installed DWG reader and Projects export settings using public linked drawings'
         type: boolean
@@ -589,6 +592,7 @@ jobs:
       PUBLISHED_BYTES: '416586952'
       VERIFY_MINUTES: ${{ inputs.verify_minutes }}
       VERIFY_WORKSHOP_REPLIES: ${{ inputs.verify_workshop_replies }}
+      VERIFY_PREVIOUS_CANVAS: ${{ inputs.verify_previous_canvas }}
       VERIFY_CONNECTORS: ${{ inputs.verify_connectors }}
       PREVIOUS_INSTALLER: ${{ inputs.previous_installer }}
       PUBLISHED_CANDIDATE: ${{ inputs.published_candidate }}
@@ -704,6 +708,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $previousPin = Join-Path $env:VERIFY_EVIDENCE 'upgrade-previous-pin.json'
           $upgrade = Test-Path -LiteralPath $previousPin
+          if ($env:VERIFY_PREVIOUS_CANVAS -eq 'true' -and !$upgrade) { throw 'Previous-build Canvas verification requires a pinned previous installer.' }
           if ($env:VERIFY_WORKSHOP_REPLIES -eq 'true' -and !$upgrade) { throw 'Workshop reply verification requires a pinned previous installer.' }
           if ($env:VERIFY_CONNECTORS -eq 'true' -and !$upgrade) { throw 'Connector verification requires a pinned previous installer.' }
           $pins = @()
@@ -789,6 +794,20 @@ jobs:
                 }
                 & (Join-Path $app '.venv/Scripts/python.exe') -I -B selected/03.TOOLS/tools/real_app_check/upgrade_persistence.py $phase $pin.build
                 if ($LASTEXITCODE -ne 0) { throw "Installed owner persistence check failed during $phase." }
+              }
+              if ($previous -and $env:VERIFY_PREVIOUS_CANVAS -eq 'true') {
+                $witness = 'selected/03.TOOLS/tools/real_app_check'
+                $savedPath = $env:PATH
+                try {
+                  $env:PATH = (Join-Path $app 'runtime') + [IO.Path]::PathSeparator + $savedPath
+                  & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario (Join-Path $witness 'scenarios/rerun_fork.mjs') --out (Join-Path $env:VERIFY_EVIDENCE 'canvas') --boot-seconds 600 --probe-seconds 300
+                  $state | Add-Member -NotePropertyName canvas_exit -NotePropertyValue $LASTEXITCODE
+                } catch {
+                  $state | Add-Member -NotePropertyName canvas_failure -NotePropertyValue $_.Exception.Message
+                } finally {
+                  $env:PATH = $savedPath
+                }
+                $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
               }
             } catch {
               $state | Add-Member -NotePropertyName failure -NotePropertyValue $_.Exception.Message
@@ -889,6 +908,21 @@ jobs:
             else { @{asked=$asked;result='NOT EXERCISED';did=$extendedCases[$case]} }
             $row | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence "$case-result.json") -Encoding utf8
           }
+      - name: Report Canvas acceptance on the previous installed build
+        if: ${{ always() && inputs.verify_previous_canvas }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prior = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'previous-install.json') | ConvertFrom-Json
+          if ($prior.canvas_failure) { throw $prior.canvas_failure }
+          $report = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'canvas/report.json') | ConvertFrom-Json
+          $steps = @(Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'canvas/steps.json') | ConvertFrom-Json)
+          $failed = @($steps | Where-Object { $_.result -cne 'PASS' } | ForEach-Object { "$($_.asked): $($_.did)" })
+          if ($failed.Count) { throw ($failed -join "; ") }
+          if ($null -eq $prior.canvas_exit -or $prior.canvas_exit -ne 0 -or $report.result -cne 'PASS' -or
+              $report.label -cne 'INSTALLED BUILD' -or $report.build -cne $prior.installed_build -or $steps.Count -ne 3) {
+            throw "Incomplete previous-build Canvas evidence. Installed $($prior.installed_build), observed $($report.build), exit $($prior.canvas_exit), result $($report.result), steps $($steps.Count)."
+          }
       - name: Retain install identity, actual window and all six outcomes
         if: always()
         uses: actions/upload-artifact@v7
@@ -911,6 +945,9 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/office-result.json
             ${{ runner.temp }}/archhub-verify-published/session-folder-result.json
             ${{ runner.temp }}/archhub-verify-published/admission-result.json
+            ${{ runner.temp }}/archhub-verify-published/canvas/report.json
+            ${{ runner.temp }}/archhub-verify-published/canvas/steps.json
+            ${{ runner.temp }}/archhub-verify-published/canvas/*.png
             ${{ runner.temp }}/archhub-verify-published/settings/report.json
             ${{ runner.temp }}/archhub-verify-published/settings/steps.json
             ${{ runner.temp }}/archhub-verify-published/settings/*.png

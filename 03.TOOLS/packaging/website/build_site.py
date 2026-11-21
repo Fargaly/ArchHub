@@ -199,10 +199,38 @@ const paintRel=v=>{document.querySelectorAll('[data-rel]').forEach(e=>{const k=e
 document.querySelectorAll('a[data-dl]').forEach(e=>e.href=v.url);document.querySelectorAll('[data-build]').forEach(e=>e.textContent=v.tag);
 const meta=document.querySelector('meta[name="archhub-build"]');if(meta)meta.setAttribute('content',v.tag);
 const note=document.querySelector('[data-rel-note]');if(note)note.hidden=true};
-const fromOffer=d=>{if(!d||!d.build_id||!d.asset_name||!d.asset_bytes)return null;return{tag:d.build_id,date:d.built_at?new Date(d.built_at).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}):'',size:d.asset_name+', '+Math.round(d.asset_bytes/1048576)+' MB',sha:d.asset_sha256||'',url:'https://github.com/Fargaly/ArchHub/releases/latest/download/'+d.asset_name}};
-const fromGitHub=r=>{if(!r)return null;const a=(r.assets||[]).find(x=>x.name==='ArchHub-Setup-0.exe');const id=(/^BUILD_ID: ([A-Za-z0-9._-]+)$/m.exec(r.body||'')||[])[1],sha=(/^SHA256 ArchHub-Setup-0.exe: ([0-9a-f]{64})$/m.exec(r.body||'')||[])[1];if(!a||!id)return null;return{tag:id,date:new Date(r.published_at).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}),size:a.name+', '+Math.round(a.size/1048576)+' MB',sha:sha||'',url:a.browser_download_url}};
-// Same-origin /download.json always follows releases/latest (Caddy redirect); GitHub API is the fallback.
-fetch('/download.json').then(r=>r.ok?r.json():null).then(d=>{const v=fromOffer(d);if(v){paintRel(v);return null}return fetch('https://api.github.com/repos/Fargaly/ArchHub/releases/latest').then(r=>r.ok?r.json():null)}).then(r=>{if(r==null)return;const v=fromGitHub(r);if(v)paintRel(v);else{const note=document.querySelector('[data-rel-note]');if(note)note.hidden=false}}).catch(()=>{const note=document.querySelector('[data-rel-note]');if(note)note.hidden=false})})()</script>"""
+const installer='ArchHub-Setup-0.exe', repo='https://github.com/Fargaly/ArchHub/releases/download/build-';
+function releaseFacts(id,sha,bytes,date){
+ if(typeof id!=='string'||!/^[A-Za-z0-9._-]{1,128}$/.test(id)||typeof sha!=='string'||!/^[0-9a-f]{64}$/i.test(sha)||!Number.isSafeInteger(bytes)||bytes<=0)return null;
+ return {tag:id,sha:sha.toLowerCase(),url:repo+id+'/'+installer,size:installer+', '+Math.round(bytes/1048576)+' MB',
+  date:Number.isFinite(Date.parse(date))?new Date(date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}):''};
+}
+function fromOffer(d){
+ return d?.asset_name===installer?releaseFacts(d.build_id,d.asset_sha256,d.asset_bytes,d.built_at):null;
+}
+function fromGitHub(r){
+ if(r?.draft!==false||r.prerelease!==false||!r.tag_name?.startsWith('build-')||!Array.isArray(r.assets))return null;
+ const id=r.tag_name.slice(6), asset=r.assets.find(a=>a.name===installer);
+ if(!asset)return null;
+ const notes=r.body||'', bodyId=/^BUILD_ID: (\\S+)\\s*$/m.exec(notes)?.[1];
+ const bodySha=/^SHA256 ArchHub-Setup-0\\.exe: ([0-9a-f]{64})(?: \\([0-9]+ bytes\\))?\\s*$/im.exec(notes)?.[1]?.toLowerCase();
+ const assetSha=/^sha256:([0-9a-f]{64})$/i.exec(asset.digest||'')?.[1]?.toLowerCase();
+ if((bodyId&&bodyId!==id)||(asset.digest&&!assetSha)||(bodySha&&assetSha&&bodySha!==assetSha))return null;
+ const facts=releaseFacts(id,assetSha||bodySha,asset.size,r.published_at);
+ return facts&&facts.url===asset.browser_download_url?facts:null;
+}
+async function readRelease(url,parse){
+ try{const response=await fetch(url);return response.ok?parse(await response.json()):null;}
+ catch{return null;}
+}
+if(document.querySelector('[data-rel]')){
+ (async()=>{
+  const facts=await readRelease('/download.json',fromOffer)||await readRelease('https://api.github.com/repos/Fargaly/ArchHub/releases/latest',fromGitHub);
+  if(facts)paintRel(facts);
+  else{const note=document.querySelector('[data-rel-note]');if(note)note.hidden=false;}
+ })();
+}
+})()</script>"""
 
 
 def design():
@@ -241,9 +269,10 @@ def from_design(markup):
     return re.sub(r'<b class="soonchip">[^<]*</b>', soon_chip(), markup)
 
 
-def release_facts(markup, build_id, sha256):
-    """The design's release card shows this build; the page script then reads the newest release."""
-    facts = {"tag": build_id, "sha": sha256.lower(), "date": "", "size": "ArchHub-Setup-0.exe"}
+def release_facts(markup):
+    """The stable download works even when its current metadata cannot be verified."""
+    facts = {"tag": "Latest stable release", "sha": "Checksum unavailable", "date": "", "size": "ArchHub-Setup-0.exe"}
+    markup = re.sub(r'(<p[^>]*data-rel-note[^>]*>)[^<]*', r'\g<1>Current release details are unavailable.', markup)
     markup = re.sub(r'(<[^>]*data-rel="(tag|sha|date|size)"[^>]*>)[^<]*', lambda m: m.group(1) + html.escape(facts[m.group(2)]), markup)
     markup = re.sub(r'(<a[^>]*data-rel="url"[^>]*href=")[^"]*', r'\g<1>' + LATEST_INSTALLER, markup)
     markup = re.sub(r'(<a[^>]*href=")[^"]*("[^>]*data-rel="url")', r'\g<1>' + LATEST_INSTALLER + r'\g<2>', markup)
@@ -373,7 +402,7 @@ def build_site(output, build_id, installer_url, sha256):
             continue
         name = "404.html" if route == "404" else route.strip("/") + "/index.html" if route != "/" else "index.html"
         title = re.search(r'aria-label="([^"]+)"', markup)
-        pages[name] = (title.group(1) if title and route != "/" else "ArchHub", release_facts(from_design(markup), build_id, sha256))
+        pages[name] = (title.group(1) if title and route != "/" else "ArchHub", release_facts(from_design(markup)))
     for index, row in enumerate(guides()):
         pages[f"docs/{row[0]}/index.html"] = (row[1], doc_article(look["pages"]["/docs/*"], index, build_id))
     labels = {c["id"]: c["label"] for c in data["categories"]}

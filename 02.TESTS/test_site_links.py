@@ -131,6 +131,53 @@ class StaticSiteTest(unittest.TestCase):
                     prepare_deploy_context(context, "test", "https://example.org/test/setup.exe", "a" * 64)
             self.assertFalse((context / "Dockerfile").exists())
 
+    def test_stable_download_keeps_the_checksum_bound_to_the_installer(self):
+        from build_site import UI_SCRIPT, design, from_design, release_facts
+
+        markup = release_facts(from_design(design()["pages"]["/download"]))
+        script = r"""
+const {JSDOM}=require('jsdom'), assert=require('node:assert/strict');
+const {markup,loader,latest}=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const name='ArchHub-Setup-0.exe', id='20261120-official', sha='b'.repeat(64);
+const pinned=latest.replace('/latest/download/', '/download/build-'+id+'/');
+const offer={build_id:id,asset_sha256:sha,asset_bytes:64,asset_name:name};
+const release={draft:false,prerelease:false,tag_name:'build-'+id,assets:[
+ {name,size:64,digest:'sha256:'+sha,browser_download_url:pinned}]};
+async function check(first,second,verified,expectedCalls){
+ const dom=new JSDOM(markup,{url:'https://archhub.io/download/',runScripts:'outside-only'});
+ const w=dom.window, field=k=>w.document.querySelector('[data-rel="'+k+'"]'),calls=[];
+ try{
+  assert.equal(field('url').href,latest);
+  assert.equal(field('sha').textContent,'Checksum unavailable');
+  w.fetch=async url=>{
+   if(url==='https://api.github.com/repos/Fargaly/ArchHub')return {ok:false};
+   calls.push(url);const value=url==='/download.json'?first:second;
+   if(value instanceof Error)throw value;
+   return {ok:value!==null,json:async()=>{if(value==='invalid JSON')throw SyntaxError();return value;}};
+  };
+  w.eval(loader);await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,['/download.json','https://api.github.com/repos/Fargaly/ArchHub/releases/latest'].slice(0,expectedCalls));
+  assert.equal(field('url').href,verified?pinned:latest);
+  assert.equal(field('sha').textContent,verified?sha:'Checksum unavailable');
+  assert.equal(field('tag').textContent,verified?id:'Latest stable release');
+ }finally{w.close();}
+}
+(async()=>{
+ await check(offer,null,true,1);
+ for(const bad of [new TypeError('CORS'),null,'invalid JSON',{...offer,asset_sha256:'bad'}])
+  await check(bad,release,true,2);
+ await check(null,{...release,assets:[{...release.assets[0],digest:null}],body:'BUILD_ID: '+id+'\nSHA256 ArchHub-Setup-0.exe: '+sha+' (64 bytes)'},true,2);
+ for(const bad of [null,new TypeError('unavailable'),{...release,assets:[]},
+  {...release,body:'SHA256 ArchHub-Setup-0.exe: '+'c'.repeat(64)},
+  {...release,assets:[{...release.assets[0],browser_download_url:latest}]}])
+  await check(null,bad,false,2);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+        subprocess.run(["node", "-e", script], cwd=ROOT, check=True, timeout=20,
+                       input=json.dumps({"markup": markup, "latest": LATEST_INSTALLER,
+                                         "loader": UI_SCRIPT.removeprefix("<script>").removesuffix("</script>")}),
+                       text=True, encoding="utf-8")
+
     def test_design_pages_data_pages_and_honest_states(self):
         rows = load_links()
         build = "test-build-123"
@@ -197,9 +244,8 @@ class StaticSiteTest(unittest.TestCase):
                             self.assertTrue(local.is_file() or (local / "index.html").is_file(), target)
             for name in ("download/index.html",):
                 self.assertIn(f'href="{LATEST_INSTALLER}"', (output / name).read_text(encoding="utf-8"))
-            self.assertIn(f'data-rel="tag">{build}<', (output / "download/index.html").read_text(encoding="utf-8"))
+            self.assertIn('data-rel="tag">Latest stable release<', (output / "download/index.html").read_text(encoding="utf-8"))
             home = (output / "index.html").read_text(encoding="utf-8")
-            self.assertIn("fetch('/download.json')", home)
             self.assertIn('data-rel="tag"', home)
             changelog = (output / "changelog/index.html").read_text(encoding="utf-8")
             self.assertIn('id="changelog-live"', changelog)

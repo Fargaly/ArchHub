@@ -1108,9 +1108,19 @@ def record_edit_state(s, body):
         return {'ok': True, 'accepted': True, 'unsaved': bool(dirty)}
 
 
+def _request_session_files(s, req):
+    from .session_files import SessionFiles
+    admission = getattr(req, 'desktop_admission', None)
+    signer = admission.get('_sign_resume_pointer') if admission else None
+    if getattr(s, 'desktop_access', None) is not None:
+        if not callable(signer):
+            raise DesktopAccessRefused('session_invalid')
+        s.ensure_current_desktop_access(admission)
+    return SessionFiles(sign_resume_pointer=signer)
+
+
 def r_session_files(s, req):
     from .canvas_documents import CanvasSaveConflict
-    from .session_files import SessionFiles
     action = (req.body or {}).get('action')
     if action == 'edit_state':
         return record_edit_state(s, req.body or {})
@@ -1123,8 +1133,7 @@ def r_session_files(s, req):
         from .enforce import guard_effect
         admitted = getattr(req, 'desktop_admission', None)
         invoke = (lambda *args, **kwargs: s.invoke_admitted_effect(admitted, *args, **kwargs)) if admitted else guard_effect
-        signer = admitted.get('_sign_resume_pointer') if admitted else None
-        result = SessionFiles(sign_resume_pointer=signer).dispatch(req.body, invoke=invoke, picker=s.native_file_picker,
+        result = _request_session_files(s, req).dispatch(req.body, invoke=invoke, picker=s.native_file_picker,
                                          save_picker=s.native_save_file_picker, stopped=s.is_halted)
     except CanvasSaveConflict as conflict:
         raise Refused(str(conflict), 400, code='canvas_save_conflict') from conflict
@@ -1234,7 +1243,8 @@ def r_canvas_op(s, req):
     if op in _MCP_OPS:
         if op not in ('mcp_servers',) and s.is_halted():
             raise Refused('Stopped by you. Press Resume to continue.', 403)
-        return {'ok': True, 'result': _mcp_op(op, list(args))}
+        return {'ok': True, 'result': _mcp_op(
+            op, list(args), current_path=lambda: _request_session_files(s, req).current_path())}
     reads = {'list_skills': [],
              'project_state': {'versions': [], 'modelReview': {'operation': '', 'results': [], 'issues': []}, 'dismissed': []}}
     if op in reads:
@@ -1251,7 +1261,7 @@ def r_canvas_op(s, req):
         kind = args[0] if args else None
         if kind not in ('Button', 'Card', 'Text'):
             raise Refused('Choose Button, Card or Text.')
-        interface_path = session_files.SessionFiles().current_path()
+        interface_path = _request_session_files(s, req).current_path()
         if not interface_path:
             raise Refused('Open a workflow before adding an interface element.')
         if len(args) > 1 and session_files.local_path(args[1]) != session_files.local_path(interface_path):
@@ -1270,10 +1280,10 @@ def r_canvas_op(s, req):
         canvas_documents.edit(interface_path, 'Studio', 'Add interface element', place, solve_changed=False)
         return {'ok': True, 'result': {'id': identity}}
     if op == 'fork_node':
-        from .session_files import SessionFiles, read_document
+        from .session_files import read_document
         from .canvas_documents import edit
         from .agent_work import fork
-        path = SessionFiles().current_path()
+        path = _request_session_files(s, req).current_path()
         if not path:
             raise Refused('Open a task workflow before forking.')
         changed = []
@@ -1355,7 +1365,7 @@ def _mcp_rows():
     return rows
 
 
-def _mcp_op(op, args):
+def _mcp_op(op, args, *, current_path=None):
     from . import custom_mcp
     try:
         if op == 'add_mcp_server':
@@ -1378,7 +1388,8 @@ def _mcp_op(op, args):
                 raise custom_mcp.McpRefused('Only tools become nodes. Resources and prompts are not imported yet.')
             _mcp_discover(str(args[0] if args else ''))
         elif op in ('prepare_mcp_tool', 'import_mcp_tool'):
-            return _mcp_import(str(args[0]), str(args[1]), prepare=op == 'prepare_mcp_tool')
+            return _mcp_import(str(args[0]), str(args[1]), prepare=op == 'prepare_mcp_tool',
+                               current_path=current_path)
         elif op == 'sign_in_mcp_server':
             server_id = str(args[0] if args else '')
             _MCP_SEEN[server_id] = ('Signing in… finish it in your browser', [])
@@ -1414,7 +1425,7 @@ def _mcp_sign_in(server_id):
             _MCP_SEEN[server_id] = ('Sign-in failed: %s' % failed, [])
 
 
-def _mcp_import(server_id, tool, *, prepare=False):
+def _mcp_import(server_id, tool, *, prepare=False, current_path=None):
     """Build the connector node. Studio adds it through its own open document's editor."""
     from uuid import uuid4
     from . import canvas_documents, session_files
@@ -1429,7 +1440,7 @@ def _mcp_import(server_id, tool, *, prepare=False):
     }
     if prepare:
         return {'node': node}
-    path = session_files.SessionFiles().current_path()
+    path = current_path() if current_path is not None else session_files.SessionFiles().current_path()
     if not path:
         raise Refused('Open a canvas before adding a tool.')
 
@@ -2073,9 +2084,11 @@ def r_settings_action(s, req):
         if function == 'setAppearance' and args[1] is None:
             raise Refused('Choose a setting value, or use Reset to inherit it.')
         from .settings_owner import PreferenceScope, SettingsDestinationChanged
-        from .session_files import SessionFiles
+        def current_path():
+            return _request_session_files(s, req).current_path()
         scope_owner = PreferenceScope(settings, s.files.get('workspaces') or
-            JsonFile(settings.path.with_name('workspaces.json'), {'roots': []}), SessionFiles().current_path())
+            JsonFile(settings.path.with_name('workspaces.json'), {'roots': []}), current_path(),
+            current_path=current_path)
         surface = (body.get('context') or {}).get('surface', 'settings')
         scope_owner.view_scope = None if surface.startswith('settings') else 'Session'
         try:

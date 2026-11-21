@@ -1110,8 +1110,9 @@ class PreferenceScope:
     """Scope resolution over the three existing owners: Settings, workspaces and the open file."""
     SCOPES = ('User', 'Workspace', 'Session')
 
-    def __init__(self, settings, workspaces, path='', workspace='', document=None):
+    def __init__(self, settings, workspaces, path='', workspace='', document=None, *, current_path=None):
         self.settings, self.workspaces, self.path = settings, workspaces, path
+        self._current_path = current_path
         rows = preference_settings(settings=settings)['appearanceSettings']
         self.keys = {row['id']: row['storageKey'] for row in rows}
         self.keyboard = {'Keyboard.' + row['id'] for row in keyboard_settings(settings=_PreferenceValues({}))['keyboardCommands']}
@@ -1140,7 +1141,7 @@ class PreferenceScope:
         try:
             if self.path or self.document is None:
                 from .session_files import SessionFiles
-                active = SessionFiles().current_path()
+                active = self._current_path() if self._current_path is not None else SessionFiles().current_path()
                 if (Path(active) if active else None) != (Path(self.path) if self.path else None):
                     raise ValueError('The active session changed. Refresh Settings and choose its scope again.')
             current = PreferenceScope(self.settings, self.workspaces, self.path,

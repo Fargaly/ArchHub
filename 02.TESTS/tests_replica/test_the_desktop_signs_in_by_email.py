@@ -798,3 +798,92 @@ def test_legacy_recovery_migrates_only_with_a_trusted_bearer(cloud, tmp_path, mo
         assert path.read_bytes() == original
     finally:
         app.close()
+
+@pytest.mark.parametrize("consumer", ["interface", "fork", "library", "settings"])
+def test_implicit_canvas_consumers_follow_the_verified_account(cloud, tmp_path, monkeypatch, consumer):
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import catalogue, new_document, write_document
+
+    state = tmp_path / "profile"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+    record = cloud_signin.cloud_session_path()
+    first, second = "ah_" + "a" * 40, "ah_" + "b" * 40
+    cloud.me_accounts = {first: cloud.me_body, second: {**cloud.me_body, "user_id": "u-43"}}
+    item = next(row for row in catalogue() if row["id"] == "n_text")
+
+    def fixture(title):
+        path = tmp_path / (title + ".archhub")
+        doc = new_document(title)
+        doc["properties"]["settings"] = {"Appearance.Theme": "Dark"}
+        doc["nodes"].append({"id": "seed", "item": item["id"], "type": item["engine"],
+                             "title": "Seed", "position": {"x": 0, "y": 0}, "params": item["params"]})
+        write_document(path, doc)
+        return path, doc["id"]
+
+    a_path, a_id = fixture("First account")
+    b_path, b_id = fixture("Second account")
+    _sign_in_again(cloud, record, first)
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+    app.files["settings"].update({"appearanceTheme": "Light", "settingsScope": "Session"})
+
+    def request(route, body, subject):
+        return _desktop_request(app, route, body=body, subject=subject)
+
+    def open_file(path, subject):
+        return request("/api/session-files", {"action": "open", "path": str(path)}, subject)
+
+    def canvas(op, args, subject):
+        return request("/api/universal/canvas-op", {"op": op, "args": args}, subject)
+
+    def settings(function, subject, args=(), destination=None):
+        body = {"function": function, "args": list(args)}
+        if destination is not None:
+            body["context"] = {"settingsDestination": destination}
+        return request("/api/universal/settings-action", body, subject)
+
+    def operate(subject, path):
+        op, args = {
+            "interface": ("add_interface_element", ["Button", str(path)]),
+            "fork": ("fork_node", ["seed"]),
+            "library": ("import_mcp_tool", ["disposable", "fixture tool"]),
+        }[consumer]
+        return canvas(op, args, subject)
+
+    try:
+        assert open_file(a_path, "u-42")[0] == 200
+        if consumer == "settings":
+            status, reply = settings("readEffectivePreferences", "u-42")
+            assert status == 200 and reply["result"]["settingsDestination"]["session"] == a_id
+        else:
+            assert operate("u-42", a_path)[0] == 200
+        original = a_path.read_bytes()
+
+        _sign_in_again(cloud, record, second)
+        if consumer == "settings":
+            status, reply = settings("readEffectivePreferences", "u-43")
+            assert status == 200
+            result = reply["result"]
+            assert result["settingsDestination"]["session"] == "" and not result["settingsScopes"]["Session"]
+            assert next(row["value"] for row in result["appearanceSettings"] if row["id"] == "Appearance.Theme") == "Light"
+            destination = result["settingsDestination"]
+            assert settings("setSettingsScope", "u-43", ["User"], destination)[0] == 200
+            status, reply = settings("exportPreferences", "u-43", ["All"])
+            assert status == 200 and "Session" not in reply["result"]["settingsExport"]["scopes"]
+        else:
+            status, reply = operate("u-43", a_path)
+            assert status == 409 and "Open a" in reply["error"]
+            if consumer == "library":
+                status, reply = canvas("prepare_mcp_tool", ["disposable", "fixture tool"], "u-43")
+                assert status == 200 and reply["result"]["node"]["title"] == "fixture tool"
+        assert a_path.read_bytes() == original
+
+        assert open_file(b_path, "u-43")[0] == 200
+        if consumer == "settings":
+            status, reply = settings("readEffectivePreferences", "u-43")
+            assert status == 200 and reply["result"]["settingsDestination"]["session"] == b_id
+        else:
+            assert operate("u-43", b_path)[0] == 200
+        assert a_path.read_bytes() == original
+    finally:
+        app.close()

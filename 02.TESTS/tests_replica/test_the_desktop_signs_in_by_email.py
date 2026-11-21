@@ -314,11 +314,10 @@ def test_the_old_mailed_marker_is_refused(cloud, tmp_path):
     this attempt's own state. With email sign-in gone, only the state this
     attempt sent through Google is accepted."""
     base = f"http://127.0.0.1:{cloud.server_port}"
-    opened = []
     google = cloud_signin.SignIn("google", base_url=base, path=tmp_path / "g.json",
-                                 opener=lambda url: opened.append(url)).start()
-    _wait(google, phases=("waiting",))
-    loopback = opened[0].split("?")[0]
+                                 opener=lambda _url: None).start()
+    waiting = _wait(google, phases=("waiting",))
+    loopback = waiting["url"].split("?", 1)[0]
     with pytest.raises(urllib.error.HTTPError) as refused:
         urllib.request.urlopen(loopback + "?" + urlencode({"code": "x", "state": "archhub"}), timeout=5)
     assert refused.value.code == 400

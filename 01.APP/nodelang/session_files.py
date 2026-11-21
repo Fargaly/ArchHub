@@ -1831,7 +1831,7 @@ class SessionFiles:
             return []
         if not isinstance(rows, list):
             raise ValueError('Recent session list is invalid')
-        return rows
+        return [row for row in rows if isinstance(row, dict) and isinstance(row.get('path'), str) and row['path']]
 
     def recent(self):
         target = self.metadata/'recent.json'

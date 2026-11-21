@@ -887,3 +887,37 @@ def test_implicit_canvas_consumers_follow_the_verified_account(cloud, tmp_path, 
         assert a_path.read_bytes() == original
     finally:
         app.close()
+
+def test_mixed_legacy_recent_rows_keep_valid_entries_during_explicit_open(cloud, tmp_path, monkeypatch):
+    from nodelang.session_files import SessionFiles, new_document, write_document
+    from nodelang.user_paths import strip_test_write
+
+    state = tmp_path / "profile"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    record = cloud_signin.cloud_session_path()
+    _sign_in_again(cloud, record, "ah_" + "a" * 40)
+    access = DesktopAccess(record).check(bind_resume=True)
+    files = SessionFiles(sign_resume_pointer=access["_sign_resume_pointer"])
+    old, legacy, opened = [tmp_path / (name + ".archhub") for name in ("older", "legacy", "newly opened")]
+    for path in (old, legacy, opened):
+        write_document(path, new_document(path.stem))
+    original = {path: path.read_bytes() for path in (old, legacy, opened)}
+
+    assert files.dispatch({"action": "open", "path": str(old)})["path"] == str(old)
+    recent = files.metadata / "recent.json"
+    signed = strip_test_write(json.loads(recent.read_bytes()))[0]
+    unsigned = {"path": str(legacy), "title": "Legacy recent"}
+    mixed = [None, {"path": []}, "old scalar", {}, unsigned, signed]
+    recent.write_text(json.dumps(mixed), encoding="utf-8")
+    before = recent.read_bytes()
+
+    assert [row["path"] for row in SessionFiles().recent()] == [str(legacy), str(old)]
+    assert [row["path"] for row in files.recent()] == [str(old)]
+    assert recent.read_bytes() == before
+
+    assert files.dispatch({"action": "open", "path": str(opened)})["path"] == str(opened)
+    rows = strip_test_write(json.loads(recent.read_bytes()))
+    assert rows[0]["path"] == str(opened) and rows[0]["desktop_resume"].startswith("v2:")
+    assert rows[1:] == [unsigned, signed]
+    assert [row["path"] for row in files.recent()] == [str(opened), str(old)]
+    assert all(path.read_bytes() == content for path, content in original.items())

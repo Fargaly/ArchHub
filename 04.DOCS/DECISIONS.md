@@ -587,3 +587,13 @@ Prior art: PyCA -> records the security fixes in releases 49 and 50; PyPI -> dis
 Replaces: the previous cryptography constraints in the desktop and cloud requirements.
 
 Evidence: CPython 3.14.3 selected the official 50.0.2 Windows x64 wheel offline. Its 3,824,692 bytes matched SHA-256 7afa5a6602a9f29af1f3a2965f831bae7c9d5d597b7cbb716d41ab3b7d89879c. ArchHub loaded its native extension. Valid Ed25519 invitations and signed marketplace contents verified. The marketplace rejected altered contents. The existing OAuth grant owner encrypted and decrypted a test value, and both local RSA login and cached-key verification passed. Windows DPAPI round-tripped disposable data. The Python TLS trust store accepted a generated certificate in memory. The checks used only local test data.
+
+## D-043 Verify Workshop task and reply persistence across a Windows upgrade (2026-11-21)
+
+Request: F6 and F15. Prove that upgrading ArchHub preserves the guest's Workshop conversations and their attached files, within the existing hosted Windows upgrade job.
+
+Prior art: Same-user Inno Setup upgrade -> seeds and reopens the saved Canvas and scoped Settings on one hosted Windows guest. Installed Workshop owner -> binds tasks to session files and persists messages, authors and reply IDs in the existing workshop/messages.sqlite3 database.
+
+Replaces: The Canvas- and Settings-only upgrade evidence is extended with task, reply and attached-file persistence checks.
+
+Verification: Seed two synthetic tasks, a question and reply from distinct authors, and one message on the other task. After Setup, check the two original bindings through a read-only connection to the existing guest database before an owner can recover them. Reopen both tasks through the installed owners and compare message membership, authors, reply IDs, document identities, paths and file hashes. The check uses the same two Setups, guest and receipt files. It adds verification coverage only and opens no second store.

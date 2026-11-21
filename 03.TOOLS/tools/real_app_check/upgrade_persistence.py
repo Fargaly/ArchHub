@@ -68,13 +68,13 @@ def snapshot(seed, run, workspace, document_path, state):
 STALE_CONNECTOR = b'# Synthetic hosted upgrade witness. No connector is started.\n'
 
 
-def connector_guest(app, evidence):
+def hosted_guest(app, evidence):
     import ctypes
     from ctypes import wintypes
     name = ctypes.create_unicode_buffer(257)
     size = wintypes.DWORD(len(name))
     if not ctypes.windll.advapi32.GetUserNameW(name, ctypes.byref(size)) or name.value.lower() != 'runneradmin':
-        raise RuntimeError('Connector fixtures require the disposable Windows runner account.')
+        raise RuntimeError('Upgrade fixtures require the disposable Windows runner account.')
     home = Path(r'C:\Users\runneradmin')
     if (os.environ.get('GITHUB_REPOSITORY', '').lower() != 'fargaly/archhub'
             or os.environ.get('RUNNER_OS') != 'Windows' or not sys.flags.isolated or not sys.dont_write_bytecode
@@ -185,30 +185,147 @@ def verify_setup_observation(post, run, build, seeded, shipped):
         raise ValueError('Native Setup refresh was not proved before the separate launcher setup call.')
 
 
+def plain_path(path):
+    import stat
+    if not path.is_absolute() or '..' in path.parts:
+        raise RuntimeError('Unexpected relative guest path.')
+    for part in (*reversed(path.parents), path):
+        if part.is_symlink() or (part.exists() and getattr(part.lstat(), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            raise RuntimeError('Redirected guest path refused.')
+    return path
+
+
+def persisted_workshop_bindings(app, previous):
+    import sqlite3
+    from contextlib import closing
+
+    tasks = previous['tasks']
+    ids = [task['task_id'] for task in tasks]
+    if len(ids) != 2 or ids[0] == ids[1]:
+        raise ValueError('Invalid seeded Workshop task identities.')
+    database = plain_path(app / 'workshop/messages.sqlite3')
+    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+        bindings = dict(db.execute('SELECT id, session_path FROM workshop_tasks WHERE id IN (?, ?)', ids))
+    for task in tasks:
+        path = plain_path(Path(task['path']))
+        if (not path.is_relative_to(Path.home()) or path.suffix != '.archhub'
+                or bindings.get(task['task_id']) != str(path) or not path.is_file()):
+            raise ValueError('Original Workshop task-to-file binding or file missing before owner reopen.')
+    return bindings
+
+
+
+def workshop_snapshot(app, run, previous=None):
+    from nodelang import session_files, workshop_mailbox as mailbox, workshop_tasks as tasks
+
+    sessions = session_files.sessions_directory().resolve()
+    if (mailbox.profile_database().resolve() != app / 'workshop/messages.sqlite3'
+            or not sessions.is_relative_to(Path.home().resolve())
+            or not all(Path(module.__file__).resolve().is_relative_to(app) for module in (mailbox, tasks, session_files))):
+        raise RuntimeError('Workshop witness requires the installed owners and disposable guest paths.')
+    titles = ['Upgrade Workshop ' + run, 'Upgrade isolation ' + run]
+    posts = [('QA author', 'Question ' + run), ('QA reviewer', 'Reply ' + run), ('QA control', 'Isolated ' + run)]
+    with mailbox.application_history() as history:
+        if previous is None:
+            if any(row['title'] in titles for row in tasks.rows(history)):
+                raise ValueError('Synthetic Workshop task already exists before seed.')
+            ids = [tasks.create_session(history, title, 'QA author', select=False)['taskId'] for title in titles]
+            message_ids = []
+            for i, (author, text) in enumerate(posts):
+                message = history.append(mailbox.ROOM, author=author, content=text, category=mailbox.CATEGORY,
+                                         refs=[ids[1] if i == 2 else ids[0]], reply_to=message_ids[0] if i == 1 else None,
+                                         reply_principal=author, idempotency_key='upgrade-' + run + '-' + str(i))
+                message_ids.append(message['id'])
+        else:
+            ids = [task['task_id'] for task in previous['tasks']]
+            message_ids = [m['id'] for task in previous['tasks'] for m in task['messages']]
+        if len(set(ids)) != 2 or len(set(message_ids)) != 3:
+            raise ValueError('Workshop fixture identities are not distinct.')
+        result = []
+        for i, task_id in enumerate(ids):
+            row = tasks.get(history, task_id)
+            if not row or row['title'] != titles[i] or not row.get('session_path'):
+                raise ValueError('Workshop task or its attached session is missing.')
+            path = Path(row['session_path']).resolve()
+            if (not path.is_relative_to(sessions) or path.suffix != '.archhub' or not path.is_file()
+                    or (previous and str(path) != previous['tasks'][i]['path'])):
+                raise ValueError('The task no longer owns the same guest .archhub file.')
+            view = tasks.open_session(history, task_id, select=False)
+            doc = session_files.read_document(path)
+            if (view['taskId'] != task_id or Path(view['path']).resolve() != path
+                    or view['id'] != doc['id'] or doc['properties']['taskContext']['task'] != task_id):
+                raise ValueError('Reopened Workshop session and attached document disagree.')
+            indices = (2,) if i else (0, 1)
+            thread = tasks._bound_messages(history, task_id)
+            if [(m['id'], m['who'], m['text']) for m in thread] != [(message_ids[j], *posts[j]) for j in indices]:
+                raise ValueError('Task thread lost, reordered or exposed messages from another task.')
+            messages = []
+            for j in indices:
+                author, text = posts[j]
+                m = history.get(mailbox.ROOM, message_ids[j], principal=author)
+                if (not m or m['author'] != author or m['content'] != text or m['refs'] != [task_id]
+                        or m['reply_to'] != (message_ids[0] if j == 1 else None)):
+                    raise ValueError('Stored Workshop author, body, task reference or reply linkage differs.')
+                messages.append({'id': m['id'], 'author': author, 'content': text, 'reply_to': m['reply_to']})
+            result.append({'task_id': task_id, 'path': str(path), 'document_id': view['id'],
+                           'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'messages': messages})
+    if result[0]['path'] == result[1]['path'] or result[0]['document_id'] == result[1]['document_id']:
+        raise ValueError('Separate Workshop tasks share the same session file.')
+    observed = {'fixture': 'Synthetic guest Workshop threads', 'run': run, 'tasks': result}
+    if previous is not None and previous != observed:
+        raise ValueError('Workshop thread or attached file changed across the upgrade.')
+    return observed
+
+
 def main():
     phase, expected_build = sys.argv[1:]
     if (phase not in ('seed', 'verify') or os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'
             or os.environ.get('GITHUB_ACTIONS') != 'true'):
         raise RuntimeError('Use the verify-published hosted Windows runner.')
-    app = (Path(os.environ['LOCALAPPDATA']) / 'ArchHub').resolve()
+    app = Path(os.environ['LOCALAPPDATA']) / 'ArchHub'
+    evidence = Path(os.environ['VERIFY_EVIDENCE'])
+    hosted_guest(app, evidence)
+    if (Path(os.environ['RUNNER_TEMP']) != Path(r'D:\a\_temp')
+            or evidence != Path(os.environ['RUNNER_TEMP']) / 'archhub-verify-published'
+            or not plain_path(evidence).is_dir()):
+        raise RuntimeError('Unexpected Windows runner evidence destination.')
+    receipt = plain_path(evidence / ('upgrade-' + phase + '.json'))
+    if receipt.exists():
+        raise RuntimeError('Refusing to overwrite an existing upgrade receipt.')
+    plain_path(app / 'BUILD_ID')
+    plain_path(Path(sys.executable))
+    for module in ('session_files', 'workshop_tasks', 'workshop_mailbox'):
+        if not plain_path(app / 'nodelang' / (module + '.py')).is_file():
+            raise RuntimeError('Expected installed application modules are missing.')
     if Path(sys.executable).resolve() != app / '.venv/Scripts/python.exe':
         raise RuntimeError('Run with the installed application interpreter.')
     if (app / 'BUILD_ID').read_text(encoding='utf-8').strip() != expected_build:
         raise RuntimeError('The installed build identity changed before the data check.')
-    sys.path.insert(0, str(app))
-    from nodelang import session_files
-    state = session_files.profile_directory().resolve()
-    if state != app or not Path(session_files.__file__).resolve().is_relative_to(app):
-        raise RuntimeError('Use the real installed package and its default user state.')
-    run = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
-    workspace = Path.home() / 'ArchHub' / ('Upgrade QA ' + run)
-    document = session_files.sessions_directory() / ('upgrade-' + run + '.archhub')
-    evidence = Path(os.environ['VERIFY_EVIDENCE'])
-    receipt = evidence / ('upgrade-' + phase + '.json')
+    install_file = plain_path(evidence / ('previous-install.json' if phase == 'seed' else 'install.json'))
+    install = json.loads(install_file.read_text(encoding='utf-8-sig'))
+    if (install.get('setup_verified') is not True or install.get('install_exit') != 0
+            or install.get('first_run_exit') != 0 or install.get('installed_build') != expected_build
+            or Path(install.get('installed_root') or '') != app or not install.get('setup_sha256')
+            or install['setup_sha256'] != install.get('expected_sha256')):
+        raise RuntimeError('Missing verified Setup provenance for this guest phase.')
     record = {'phase': phase, 'build': expected_build, 'result': 'FAIL'}
     try:
+        if phase == 'verify':
+            seed = json.loads(plain_path(evidence / 'upgrade-seed.json').read_text(encoding='utf-8'))
+            if seed['result'] != 'PASS' or seed['workshop']['run'] != os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']:
+                raise ValueError('Missing matching hosted Workshop seed.')
+            record['workshop_bindings_before_reopen'] = persisted_workshop_bindings(app, seed['workshop'])
+        sys.path.insert(0, str(app))
+        from nodelang import session_files
+        if Path(session_files.__file__).resolve() != app / 'nodelang/session_files.py':
+            raise RuntimeError('Unexpected installed session module.')
+        state = session_files.profile_directory().resolve()
+        if state != app:
+            raise RuntimeError('Use the real installed package and its default user state.')
+        run = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
+        workspace = Path.home() / 'ArchHub' / ('Upgrade QA ' + run)
+        document = session_files.sessions_directory() / ('upgrade-' + run + '.archhub')
         if os.environ.get('VERIFY_CONNECTORS', '').lower() == 'true':
-            connector_guest(app, evidence)
             previous = None
             if phase == 'verify':
                 seed = json.loads((evidence / 'upgrade-seed.json').read_text(encoding='utf-8'))
@@ -234,6 +351,7 @@ def main():
             before = json.loads((evidence / 'upgrade-seed.json').read_text(encoding='utf-8'))
             if before['result'] != 'PASS' or before['snapshot'] != data:
                 raise ValueError('Installed owner readback differs from the pre-upgrade evidence.')
+        record['workshop'] = workshop_snapshot(app, run, None if phase == 'seed' else before['workshop'])
         record['preference_checks'] = {scope: 'PASS' if value is not None else 'NOT EXERCISED'
                                        for scope, value in data['values'].items()}
         record['result'] = 'PASS'

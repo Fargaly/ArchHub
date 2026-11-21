@@ -200,6 +200,11 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
+    if engine == 'library.publish_pdf':
+        from .library_engines import pdf_sheet_size
+        selected_size = pdf_sheet_size(feeds.get('sheet_size', params.get('sheet_size', 'From Projects')), document)
+        params = {**params, 'sheet_size': selected_size}
+        feeds = {**feeds, 'sheet_size': selected_size}
     sheet_write = engine == 'revit.create_sheets'
     if sheet_write or engine == 'library.place_on_sheet':
         from .nodeslib_v2_engines import sheet_title_block

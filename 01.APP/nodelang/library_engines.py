@@ -1305,6 +1305,19 @@ LIBRARY_ITEM_ENGINES["i_vis"] = {"engine": "library.vision",
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("i_vis", None)
 
 
+PDF_NATIVE_SHEET_SIZE = "Use Sheet Size"
+PDF_PAPER_FORMATS = {PDF_NATIVE_SHEET_SIZE: "Default", "A0": "ISO_A0", "A1": "ISO_A1", "A3": "ISO_A3"}
+
+
+def pdf_sheet_size(value, document=None):
+    if value == "From Projects":
+        from .session_files import resolve_setting
+        value = resolve_setting(document or {}, "Projects.Sheet size")["value"]
+    if not isinstance(value, str) or value not in PDF_PAPER_FORMATS:
+        raise ValueError("Choose Use Sheet Size, A0, A1 or A3 for PDF export.")
+    return value
+
+
 _EXPORT_PDF = """
 var folder = %s;
 var wanted = new List<string>{%s};
@@ -1318,6 +1331,7 @@ if (sheets.Count == 0) throw new Exception("no sheet to publish");
 System.IO.Directory.CreateDirectory(folder);
 var options = new PDFExportOptions();
 options.Combine = false;
+options.PaperFormat = ExportPaperFormat.%s;
 if (!Doc.Export(folder, sheets, options)) throw new Exception("Revit declined the PDF export");
 var written = new List<string>();
 foreach (var f in System.IO.Directory.GetFiles(folder, "*.pdf")) written.Add(f);
@@ -1334,7 +1348,8 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     session, why = sole_session()
     if session is None:
         return {"out": []}, why
-    held = _wired(feeds, "in", "sheets")
+    size = pdf_sheet_size(feeds.get("sheet_size", params.get("sheet_size", "From Projects")))
+    held = _wired(feeds, "sheets", "in")
     wanted = [str(item_field(row, "number") or row) for row in as_list(held)] if held is not None else [
         piece.strip() for piece in _text(params, "sheets").split(",") if piece.strip()]
     # Always a fresh, dated folder under Documents/ArchHub/pdf: a graph is
@@ -1344,10 +1359,10 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     from .user_paths import state_directory
     base = str(state_directory() / "pdf") if os.environ.get("ARCHHUB_TEST_STATE_DIR") else os.path.join(os.path.expanduser("~"), "Documents", "ArchHub", "pdf")
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    asked = os.path.basename(_text(params, "folder").replace(chr(92), "/").rstrip("/"))
+    asked = os.path.basename(_text(feeds, "folder", _text(params, "folder")).replace(chr(92), "/").rstrip("/"))
     safe = "".join(ch for ch in asked if ch.isalnum() or ch in "-_ ").strip()
     folder = os.path.join(base, (safe + "-" + stamp) if safe else stamp)
-    script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted))
+    script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted), PDF_PAPER_FORMATS[size])
     try:
         # A sheet set takes longer than a read: three minutes before "did not answer".
         answer = _execute(session, script, "ArchHub publish pdf", timeout=180.0)
@@ -1363,7 +1378,8 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 LIBRARY_ENGINES["library.publish_pdf"] = publish_pdf
 LIBRARY_ITEM_ENGINES["o_pdf"] = {"engine": "library.publish_pdf",
-                                 "params": {"sheets": "", "folder": ""}}
+                                 "params": {"sheets": "", "folder": "", "sheet_size": "From Projects"},
+                                 "paramDefs": [{"id": "sheet_size", "type": "enum", "options": ["From Projects", *PDF_PAPER_FORMATS]}]}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
 
 
@@ -1772,6 +1788,7 @@ ENGINE_SOCKETS = {
     "revit.set_parameter_by_name": {"source": ("elements", "out"), "target": ("elements", "parameter", "value", "grant")},
     "excel.write_range": {"source": ("file", "out"), "target": ("rows", "grant")},
     "revit.export_ifc": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "setup_source", "setup_name", "views")},
+    "library.publish_pdf": {"source": ("out",), "target": ("in", "sheets", "folder", "sheet_size")},
     "library.place_on_sheet": {"source": ("out",), "target": ("in", "sheet", "views", "title_block")},
     "revit.create_sheets": {"source": ("sheets", "out"), "target": ("rows", "title_block", "grant")},
     "revit.renumber_rename": {"source": ("elements", "out"), "target": ("elements", "number_format", "name_format", "grant")},
@@ -1970,7 +1987,8 @@ LIBRARY_ITEM_ENGINES.update({
     "o_skill_handoff": {"engine": "library.save_skill",
                         "params": {"name": "", "path": "", "description": ""}},
     "o_pdf_handoff": {"engine": "library.publish_pdf",
-                      "params": {"sheets": "", "folder": ""}},
+                      "params": {"sheets": "", "folder": "", "sheet_size": "From Projects"},
+                      "paramDefs": [{"id": "sheet_size", "type": "enum", "options": ["From Projects", *PDF_PAPER_FORMATS]}]},
     "o_email_handoff": {"engine": "library.draft_email",
                         "params": {"to": "", "subject": ""}},
     "o_notify_handoff": {"engine": "library.notify",
@@ -2773,6 +2791,8 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
                       'out':{'type':'list','direction':'output'}}
     if engine in DECISION_INTERFACES:
         interfaces = DECISION_INTERFACES[engine]
+    if engine == "library.publish_pdf":
+        interfaces = {**interfaces, "sheet_size": {"type": "string", "direction": "input"}}
     if engine == "library.place_on_sheet":
         interfaces = {**interfaces, "sheet": {"type": "string", "direction": "input"},
                       "views": {"type": "list", "direction": "input"}}

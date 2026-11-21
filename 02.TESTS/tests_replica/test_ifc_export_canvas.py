@@ -184,6 +184,7 @@ def test_two_exports_report_each_approved_node_independently(project,monkeypatch
     assert calls==['IFC4RV','IFC4RV']
 
 @pytest.mark.parametrize('identity,default,global_value,workspace_value,session_value,invalid', [
+    ('Projects.Sheet size','Use Sheet Size','A0','A1','A3','A2'),
     ('Projects.Title block','Not set','Office A1 title block','Office A0 title block','Office A3 title block','missing'),
     ('Projects.IFC version','IFC4','IFC2x3','IFC4.3','IFC4','IFC9'),
     ('Projects.IFC export setup','','Global exchange','Workspace exchange','Session exchange','invalid\nname'),
@@ -434,3 +435,51 @@ def test_place_on_sheet_named_inputs(project, monkeypatch, feeds, expected):
     output, _ = files._dispatch_node(files.new_document('Placement'), node, item['engine'], params, feeds,
                                      invoke=guard_effect, stopped=None, depth=0)
     assert seen == [expected[0]] and output['placed'] == expected[1]
+
+@pytest.mark.parametrize('global_size,session_size,node_size,wire_size,expected', [
+    (None, None, None, None, 'Default'),
+    ('A3', None, None, None, 'ISO_A3'),
+    ('A3', 'A1', None, None, 'ISO_A1'),
+    ('A3', 'A1', 'A0', None, 'ISO_A0'),
+    ('A1', None, 'A0', 'Use Sheet Size', 'Default'),
+    ('A1', None, 'A0', 'A2', 'refused'),
+])
+def test_pdf_paper_format_at_export_transport(project, monkeypatch, global_size, session_size, node_size, wire_size, expected):
+    from nodelang import clean_revit_adapter as adapter, settings_owner, session_files as files
+    from nodelang.enforce import guard_effect
+    if global_size:
+        settings_owner.preference_settings('setAppearance', ['Projects.Sheet size', global_size])
+    document = files.new_document('PDF set')
+    if session_size:
+        document['properties']['settings'] = {'Projects.Sheet size': session_size}
+    params = {'sheets': 'A101, A102', 'folder': 'Print'}
+    if node_size:
+        params['sheet_size'] = node_size
+    feeds = {} if wire_size is None else {'sheet_size': wire_size}
+    item = next(row for row in files.catalogue() if row['id'] == 'o_pdf_handoff')
+    choice = next(row for row in item['paramDefs'] if row['id'] == 'sheet_size')
+    assert choice['type'] == 'enum' and 'Use Sheet Size' in choice['options']
+    node = {'id':'pdf','type':item['engine'],'params':params}
+    monkeypatch.setattr(adapter, 'sole_session', lambda: ({'port':48884, 'document':'Mixed paper set'}, ''))
+    native_formats = {'A101':'ISO_A1', 'A102':'ISO_A3'}
+    submitted = []
+    def broker(port, route, body, *, timeout):
+        assert (port, route, body['transaction_name']) == (48884, '/exec', 'ArchHub publish pdf')
+        code = body['code']
+        paper = re.search(r'options.PaperFormat = ExportPaperFormat\.(\w+);', code)[1]
+        numbers = json.loads('[' + re.search(r'var wanted = new List<string>\{(.*?)\};', code)[1] + ']')
+        effective = [native_formats[number] if paper == 'Default' else paper for number in numbers]
+        submitted.append((numbers, paper, effective))
+        return {'status':'ok', 'result':{'files':[number + '.pdf' for number in numbers]}}
+    monkeypatch.setattr(adapter, '_call', broker)
+    def export():
+        return files._dispatch_node(document, node, item['engine'], params, feeds, invoke=guard_effect, stopped=None, depth=0)
+    if expected == 'refused':
+        with pytest.raises(ValueError, match='PDF export'):
+            export()
+        assert not submitted
+    else:
+        output, _ = export()
+        expected_pages = ['ISO_A1','ISO_A3'] if expected == 'Default' else [expected, expected]
+        assert submitted == [(['A101','A102'], expected, expected_pages)]
+        assert output['out'] == ['A101.pdf','A102.pdf']

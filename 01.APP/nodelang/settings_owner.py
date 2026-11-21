@@ -850,7 +850,16 @@ def preference_settings(function='readControls', args=(), settings=None):
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
+    from .library_engines import PDF_NATIVE_SHEET_SIZE, PDF_PAPER_FORMATS
     title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']
+    if args and args[0] == 'Projects.Sheet size' and function in ('setAppearance', 'resetAppearance'):
+        if function == 'setAppearance':
+            if not isinstance(args[1], str) or args[1] not in PDF_PAPER_FORMATS:
+                raise ValueError('Choose a listed PDF sheet size.')
+            settings.update({'sheetSize': args[1]})
+        else:
+            settings.update({}, remove=['sheetSize'])
+        function, args = 'readControls', ()
     if args and args[0] == 'Projects.Title block' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
             if args[1] not in title_blocks:
@@ -915,7 +924,11 @@ def preference_settings(function='readControls', args=(), settings=None):
     title_block = {'id': 'Projects.Title block', 'storageKey': 'titleBlock', 'page': 'Projects', 'group': 'Templates',
                    'label': 'Title block', 'description': 'Used when agents create sheets.', 'type': 'choice',
                    'options': title_blocks, 'default': title_blocks[0], 'value': settings.read().get('titleBlock', title_blocks[0])}
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block]}
+    sheet_size = {'id': 'Projects.Sheet size', 'storageKey': 'sheetSize', 'page': 'Projects', 'group': 'Templates',
+                  'label': 'Sheet size', 'description': 'Paper size for PDF sets. Use Sheet Size follows each Revit sheet.',
+                  'type': 'choice', 'options': list(PDF_PAPER_FORMATS), 'default': PDF_NATIVE_SHEET_SIZE,
+                  'value': settings.read().get('sheetSize', PDF_NATIVE_SHEET_SIZE)}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size]}
 
 
 def preference_setting(identity):

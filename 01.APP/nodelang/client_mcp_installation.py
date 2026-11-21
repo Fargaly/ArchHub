@@ -22,10 +22,13 @@ entries are counted and reported; project .mcp.json files are not searched.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import stat
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 from .native_workshop_profile import SERVER_NAME
@@ -166,20 +169,57 @@ def base_python(install_root):
     return Path(found.group(1)) if found and Path(found.group(1)).is_file() else None
 
 
-def deploy_supervisor(install_root, state_root):
-    """Copy the stdlib supervisor to <LocalAppData>\\ArchHub-Runtime (idempotent); its path, or None without a base Python."""
+def _supervisor_launch(install_root, state_root):
     python = base_python(install_root)
     if python is None:
         return None
+    return python, Path(state_root).parent / RUNTIME_FOLDER / "mcp_supervisor.py"
+
+
+def deploy_supervisor(install_root, state_root):
+    """Prepare the installed supervisor for future client launches."""
+    launch = _supervisor_launch(install_root, state_root)
+    if launch is None:
+        return None
+    _, target = launch
     source = Path(install_root) / "nodelang" / "mcp_supervisor.py"
-    target = Path(state_root).parent / RUNTIME_FOLDER / "mcp_supervisor.py"
+    _require_plain(source, "file")
+    _require_plain(target, "file", may_be_absent=True)
     data = source.read_bytes()
     if not target.is_file() or target.read_bytes() != data:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(target.name + ".tmp")
-        temporary.write_bytes(data)
-        os.replace(temporary, target)
-    return python, target
+        fd, temporary = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=target.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+            # A Windows reader can briefly hold the old script open during replacement.
+            for attempt in range(6):
+                try:
+                    os.replace(temporary, target)
+                    break
+                except PermissionError as error:
+                    if getattr(error, "winerror", None) not in (5, 32) or attempt == 5:
+                        raise
+                    time.sleep(0.01 * (attempt + 1))
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+    return launch
+
+
+def refresh_legacy_supervisor(install_root, state_root):
+    """Upgrade the shipped pre-receipt runtime even for clients Setup does not configure."""
+    launch = _supervisor_launch(install_root, state_root)
+    if launch is None:
+        return
+    _, target = launch
+    identity = _require_plain(target, "file", may_be_absent=True)
+    if identity is None or identity[2] != 10895:
+        return
+    # This exact deployed Windows script predates connector drain receipts.
+    with target.open("rb") as previous:
+        digest = hashlib.file_digest(previous, "sha256").hexdigest()
+    if digest == "e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3":
+        deploy_supervisor(install_root, state_root)
 
 
 def previous_entry(install_root) -> dict:
@@ -207,7 +247,7 @@ def managed_entry(install_root, state_root) -> dict:
     python = root / ".venv" / "Scripts" / "python.exe"
     _require_plain(python, "file")
     _require_plain(root / "nodelang" / "native_agent_mcp.py", "file")
-    deployed = deploy_supervisor(root, state_root)
+    deployed = _supervisor_launch(root, state_root)
     if deployed is None:
         return previous_entry(root)  # no venv base recorded yet (first setup still running)
     return {
@@ -425,7 +465,8 @@ def register_claude_code(install_root, state_root, *, consent, environment=None,
     """
     env = os.environ if environment is None else environment
     before = readiness(install_root, state_root, environment=env)
-    if consent is not True or before["claude_code"] not in ("ready_to_register", "migration_available"):
+    registered = before["claude_code"] in ("registered", "registered_with_project_overrides")
+    if consent is not True or not (registered or before["claude_code"] in ("ready_to_register", "migration_available")):
         return before
     # Custody and identity of the launcher are checked again just before it runs.
     if find_claude_code(env) != before["launcher"]:
@@ -433,6 +474,9 @@ def register_claude_code(install_root, state_root, *, consent, environment=None,
                       reason="launcher_changed_before_run", exit_code=None)
         return before
     exe = before["executable"]
+    deploy_supervisor(install_root, state_root)
+    if registered:
+        return before
     exit_code, reason = None, "entry_not_found_after_command"
     config, _problem = _user_config(env)
     servers = (config or {}).get("mcpServers", {})

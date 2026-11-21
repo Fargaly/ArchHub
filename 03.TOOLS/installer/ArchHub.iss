@@ -601,7 +601,7 @@ begin
     if not WizardSilent() then BackupProgress.Show();
     BackupProgress.Animate();
     try
-      if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration preflight-connectors', ConnectorTemp, SW_HIDE, ewWaitUntilTerminated, BackupCode, @OnConnectorLog) then
+      if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration preflight-connectors "' + ExpandConstant('{app}') + '"', ConnectorTemp, SW_HIDE, ewWaitUntilTerminated, BackupCode, @OnConnectorLog) then
         Result := 'Assistant connector preflight could not start. Your installed files were kept.'
       else if BackupCode <> 0 then
         Result := 'Assistant connector preflight refused. Your installed files were kept.';

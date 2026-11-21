@@ -1,11 +1,27 @@
 """Upgrade old client entries using fixture profiles only."""
 import json
+import os
+import shutil
+import subprocess
+import sys
 import tomllib
+from types import SimpleNamespace
 import pytest
 
 from nodelang import assistant_registration as registration
 from nodelang.native_workshop_profile import SERVER_NAME
-pytest_plugins = ("tests_replica.test_assistant_registration",)
+from tests_replica.test_client_mcp_installation import _rig
+
+
+@pytest.fixture
+def machine(tmp_path, monkeypatch):
+    install, state, profile, env = _rig(tmp_path / "Custom install with spaces")
+    (install / ".venv/pyvenv.cfg").write_text(f"executable = {sys.executable}\n", encoding="utf-8")
+    source = install / "nodelang/mcp_supervisor.py"
+    source.write_text("print('migrated connector')\n", encoding="utf-8")
+    monkeypatch.setattr(registration, "install_roots", lambda environment=None: (install, state))
+    return SimpleNamespace(install=install, state=state, profile=profile, env=env,
+                           supervisor=state.parent / "ArchHub-Runtime/mcp_supervisor.py", source=source)
 
 
 def test_codex_runpy_is_migrated_not_left_on_deleted_module(machine):
@@ -21,6 +37,58 @@ def test_codex_runpy_is_migrated_not_left_on_deleted_module(machine):
     assert tomllib.loads(config.read_text())['model'] == 'fixture'
     assert 'clean_coordination_mcp' not in config.read_text()
     assert result['backup']
+    assert machine.supervisor.read_bytes() == machine.source.read_bytes()
+
+
+def test_setup_commands_refresh_current_entries_without_rewriting_configs(machine):
+    from pathlib import Path
+    package = machine.install / 'nodelang'
+    (package / '__init__.py').touch()
+    for name in ('assistant_registration', 'client_mcp_installation', 'native_workshop_profile',
+                 'workshop_config', 'user_paths'):
+        shutil.copyfile(Path(registration.__file__).with_name(name + '.py'), package / (name + '.py'))
+    env = dict(machine.env, ARCHHUB_TEST_STATE_DIR=str(machine.state),
+               CODEX_HOME=str(machine.profile / '.codex'), SYSTEMROOT=os.environ['SYSTEMROOT'])
+    codex = machine.profile / '.codex/config.toml'
+    gemini = machine.profile / '.gemini/settings.json'
+    codex.parent.mkdir()
+    gemini.parent.mkdir()
+    codex.write_text(registration._codex_block(registration.codex_entry(machine.install, machine.state)))
+    gemini.write_text(json.dumps({'mcpServers': registration.mcp_server_spec(
+        'gemini-cli', environment=env)['add']}))
+    original = [(p.read_bytes(), p.stat().st_mtime_ns) for p in (codex, gemini)]
+    machine.supervisor.parent.mkdir()
+    machine.supervisor.write_bytes(b'# earlier runtime')
+    stamp = machine.supervisor.stat().st_mtime_ns
+    command = [sys.executable, '-u', '-E', '-s', '-B', '-m', 'nodelang.assistant_registration']
+    classifier = machine.profile / 'mainrel-connectors'
+    shutil.copytree(package, classifier / 'nodelang')
+    def setup(action, *args, cwd=machine.install):
+        return subprocess.check_output([*command, action, *args], cwd=cwd, env=env, text=True, timeout=20)
+    assert setup('preflight-connectors', str(machine.install), cwd=classifier) == ''
+    registration.migrate_install_connectors(consent=False, environment=env)
+    assert machine.supervisor.read_bytes() == b'# earlier runtime' and machine.supervisor.stat().st_mtime_ns == stamp
+    assert setup('migrate-connectors').splitlines() == ['codex: registered', 'gemini-cli: registered']
+    assert machine.supervisor.read_bytes() == machine.source.read_bytes()
+    assert [(p.read_bytes(), p.stat().st_mtime_ns) for p in (codex, gemini)] == original
+    codex.unlink()
+    gemini.unlink()
+    first_install = machine.profile / 'Brand new install'
+    assert setup('preflight-connectors', str(first_install), cwd=classifier) == ''
+    assert not first_install.exists()
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_setup_without_managed_records_preserves_absent_or_unrecognised_runtime(machine, present):
+    if present:
+        machine.supervisor.parent.mkdir()
+        machine.supervisor.write_bytes(b"x" * 10895)
+        stamp = machine.supervisor.stat().st_mtime_ns
+    registration.migrate_install_connectors(consent=True, environment=machine.env)
+    if present:
+        assert machine.supervisor.read_bytes() == b"x" * 10895 and machine.supervisor.stat().st_mtime_ns == stamp
+    else:
+        assert not machine.supervisor.parent.exists()
 
 
 def test_inline_runpy_loader_is_recognised_but_extra_code_is_refused():
@@ -77,20 +145,14 @@ def test_setup_publishes_ready_only_after_managed_migration(tmp_path, monkeypatc
 @pytest.mark.parametrize('override', [False, True])
 def test_registration_and_setup_follow_exact_launcher_state_root(tmp_path, monkeypatch, override):
     import colleague_setup as setup
-    import ast
-    from pathlib import Path
-    import os
+    from nodelang.user_paths import state_directory
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    monkeypatch.delenv('ARCHHUB_STATE_DIR', raising=False)
     monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR', raising=False)
     if override:
         monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'explicit-state'))
-    source = ast.parse((Path(__file__).resolve().parents[2] / "01.APP/nodelang/launcher.py").read_text(encoding='utf-8-sig'))
-    assignment = next(node for node in source.body if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == 'state_dir' for target in node.targets))
-    namespace = {'Path': Path, 'os': os}
-    exec(compile(ast.Module(body=[assignment], type_ignores=[]), '<isolated-launcher-state>', 'exec'), namespace)
-    assert setup._launcher_state_root() == namespace['state_dir']
-    assert registration.install_roots()[1] == namespace['state_dir']
+    expected = tmp_path / 'explicit-state' if override else tmp_path / 'local' / 'ArchHub'
+    assert state_directory() == setup._launcher_state_root() == registration.install_roots()[1] == expected
 
 
 def test_gemini_deleted_module_is_migrated_with_encrypted_backup(machine):
@@ -107,3 +169,4 @@ def test_gemini_deleted_module_is_migrated_with_encrypted_backup(machine):
     assert after['mcpServers']['other'] == before['mcpServers']['other']
     assert 'clean_coordination_mcp' not in config.read_text()
     assert result['backup']
+    assert machine.supervisor.read_bytes() == machine.source.read_bytes()

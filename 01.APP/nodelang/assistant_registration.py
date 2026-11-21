@@ -35,8 +35,10 @@ from pathlib import Path
 from .client_mcp_installation import (
     LEGACY_NAMES,
     RegistrationRefused,
+    deploy_supervisor,
     is_previous_entry,
     managed_entry,
+    refresh_legacy_supervisor,
     readiness as claude_readiness,
     register_claude_code,
     confirm_entries,
@@ -278,6 +280,8 @@ def migrate_codex(install_root, state_root, *, consent, environment=None) -> dic
     from .workshop_config import WorkshopConfigRefused, write_with_backup
     env = os.environ if environment is None else environment
     before = codex_readiness(install_root, state_root, env)
+    if consent is True and before["state"] == "registered":
+        deploy_supervisor(install_root, state_root)
     if consent is not True or before["state"] != "migration_available":
         return before
     path = Path(before["config"])
@@ -301,6 +305,7 @@ def migrate_codex(install_root, state_root, *, consent, environment=None) -> dic
         return dict(before, state="migration_unconfirmed",
                     reason="the rewrite would change more than this server's entry")
     backup_dir = Path(state_root) / "private-client-backups"
+    deploy_supervisor(install_root, state_root)
     from .client_mcp_installation import _require_plain
     _require_plain(backup_dir, "directory", may_be_absent=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -328,7 +333,10 @@ def register_codex(install_root, state_root, *, consent, environment=None) -> di
     before = codex_readiness(install_root, state_root, env)
     if consent is True and before["state"] == "migration_available":
         return migrate_codex(install_root, state_root, consent=True, environment=env)
-    if consent is not True or before["state"] != "ready_to_register":
+    if consent is not True or before["state"] not in ("ready_to_register", "registered"):
+        return before
+    deploy_supervisor(install_root, state_root)
+    if before["state"] == "registered":
         return before
     path = Path(before["config"])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -658,11 +666,22 @@ def repair_hooks(client, *, consent, plan_digest, environment=None):
         return _repair_hooks(client, consent=consent, plan_digest=plan_digest, environment=environment)
 
 
+def _gemini_entry(install_root, state_root):
+    entry = managed_entry(install_root, state_root)
+    entry.pop('type')
+    entry['env']['ARCHHUB_COORDINATION_VENDOR'] = 'gemini'
+    return entry
+
+
+def _current_gemini_entry(entry, expected):
+    # Both vendor names are shipped and resolve to the same Gemini identity.
+    return entry == expected or entry == dict(expected, env=dict(expected['env'], ARCHHUB_COORDINATION_VENDOR='gemini-cli'))
+
+
 def migrate_gemini(install_root, state_root, *, consent, environment=None) -> dict:
     """Replace only this product's retired Gemini entry, with encrypted custody."""
     import hashlib
     from .workshop_config import write_with_backup, settings_target
-    from .runtime_credentials import protect_current_user_data
     from .client_mcp_installation import _require_plain
     env = os.environ if environment is None else environment
     profile = env.get('USERPROFILE')
@@ -678,17 +697,18 @@ def migrate_gemini(install_root, state_root, *, consent, environment=None) -> di
     data = json.loads(raw.decode('utf-8'))
     servers = data.get('mcpServers') if type(data) is dict else None
     old = servers.get(SERVER_NAME) if type(servers) is dict else None
-    entry = managed_entry(install_root, state_root)
-    entry.pop('type', None)
-    entry['env']['ARCHHUB_COORDINATION_VENDOR'] = 'gemini'
-    if old == entry:
+    entry = _gemini_entry(install_root, state_root)
+    if _current_gemini_entry(old, entry):
+        deploy_supervisor(install_root, state_root)
         return {'client': 'gemini-cli', 'state': 'registered'}
     if not (_dev_era_connector_entry(old, 'gemini') or is_previous_entry(old, install_root)):
         return {'client': 'gemini-cli', 'state': 'conflict' if old is not None else 'not_connected'}
     servers[SERVER_NAME] = entry
+    deploy_supervisor(install_root, state_root)
     backups = Path(state_root) / 'private-client-backups'
     _require_plain(backups, 'directory', may_be_absent=True)
     backups.mkdir(parents=True, exist_ok=True)
+    from .runtime_credentials import protect_current_user_data
     result = write_with_backup(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n', backups,
         expected_digest=hashlib.sha256(raw).hexdigest(),
         protect_backup=lambda value: protect_current_user_data(value, purpose='archhub.client-hook-backup/v1'))
@@ -703,8 +723,10 @@ def migrate_install_connectors(*, consent, environment=None, warning=None) -> li
     ownership = preflight_install_connectors(env, warning=warning)
     root, state = install_roots(env)
     rows = []
+    if consent is True and all(value == 'absent' for value in ownership.values()):
+        refresh_legacy_supervisor(root, state)
     for vendor, migrate in (('codex', migrate_codex), ('gemini', migrate_gemini)):
-        if ownership.get(vendor) == 'retired':
+        if ownership.get(vendor) in ('current', 'retired'):
             rows.append(migrate(root, state, consent=consent, environment=env))
         else:
             rows.append({'client': 'gemini-cli' if vendor == 'gemini' else vendor,
@@ -712,11 +734,15 @@ def migrate_install_connectors(*, consent, environment=None, warning=None) -> li
     return rows
 
 
-def preflight_install_connectors(environment=None, *, warning=None):
+def preflight_install_connectors(environment=None, *, warning=None, install_root=None):
     """Leave unrecognised user settings unchanged; disclose file and reason."""
     import tomllib
     from .client_mcp_installation import _require_plain
     env = os.environ if environment is None else environment
+    root, state = install_roots(env)
+    if install_root is not None:
+        root = Path(install_root)
+        _require_plain(root, 'directory', may_be_absent=True)
     paths = [('codex', _codex_config(env), tomllib.loads, 'mcp_servers')]
     if env.get('USERPROFILE'):
         from .workshop_config import settings_target
@@ -736,9 +762,14 @@ def preflight_install_connectors(environment=None, *, warning=None):
             if type(data) is not dict or type(data.get(table, {})) is not dict:
                 raise ValueError('connector table is unreadable')
             entry = data.get(table, {}).get(SERVER_NAME)
-            ownership[vendor] = ('absent' if entry is None else
-                                 'retired' if (_dev_era_connector_entry(entry, vendor)
-                                               or is_previous_entry(entry, install_roots(env)[0])) else 'other')
+            if entry is None:
+                ownership[vendor] = 'absent'
+            elif _dev_era_connector_entry(entry, vendor) or is_previous_entry(entry, root):
+                ownership[vendor] = 'retired'
+            else:
+                current = (_current_gemini_entry(entry, _gemini_entry(root, state)) if vendor == 'gemini'
+                           else entry == codex_entry(root, state))
+                ownership[vendor] = 'current' if current else 'other'
             if entry is not None and ownership[vendor] == 'other':
                 report('Connector warning: ' + str(path) + ': unknown or unmanaged entry; left untouched')
         except (OSError, ValueError, RegistrationRefused):
@@ -860,8 +891,8 @@ def disconnect_hooks_on_uninstall(environment=None) -> list:
 def main(argv=None) -> int:
     import sys
     args = sys.argv[1:] if argv is None else argv
-    if args == ['preflight-connectors']:
-        preflight_install_connectors()
+    if args[:1] == ['preflight-connectors'] and len(args) in (1, 2):
+        preflight_install_connectors(install_root=args[1] if len(args) == 2 else None)
         return 0
     if args == ['migrate-connectors']:
         rows = migrate_install_connectors(consent=True)

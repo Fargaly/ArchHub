@@ -739,6 +739,8 @@ def _assistant_integration(root: Path, identity: str) -> None:
     requested = [argument.split("=", 1)[1] for argument in sys.argv[1:]
                  if argument.startswith("--assistant=")]
     choice = "not_asked"
+    if report["claude_code"] in ("registered", "registered_with_project_overrides") and requested:
+        choice = "accepted" if requested[-1] == "claude-code" else "declined"
     if report["claude_code"] in ("ready_to_register", "migration_available"):
         question = ("  Connect ArchHub tools to Claude Code for this Windows user?"
                     " It adds one entry to your Claude Code MCP list and"
@@ -764,8 +766,8 @@ def _assistant_integration(root: Path, identity: str) -> None:
                 answer = None
             if answer is not None:
                 choice = "accepted" if answer.strip().lower() in ("y", "yes") else "declined"
-        if choice == "accepted":
-            report = register_claude_code(root, state, consent=True)
+    if choice == "accepted":
+        report = register_claude_code(root, state, consent=True)
     print("  claude code:", report["claude_code"])
     if report.get("reason"):
         suffix = "" if report.get("exit_code") is None else " (exit %d)" % report["exit_code"]

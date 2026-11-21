@@ -445,9 +445,108 @@ def test_the_agent_starts_the_supervisor_outside_the_install_and_the_old_entry_i
     entry = installation.managed_entry(root, state)
     runtime = state.parent / "ArchHub-Runtime" / "mcp_supervisor.py"
     assert entry["command"] == str(base) and entry["args"] == ["-I", "-B", str(runtime), str(root)]
-    assert runtime.read_text(encoding="utf-8") == "def main(argv): pass\n"
+    assert not runtime.exists()
     assert str(root) not in entry["command"]                       # nothing the agent starts lives in the install
     old = installation.previous_entry(root)
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {SERVER_NAME: old}}), encoding="utf-8")
     report = installation.readiness(root, state, environment=environment)
     assert report["claude_code"] == "migration_available" and report["replace_own"] is True
+
+
+def test_readiness_and_specs_never_publish_but_explicit_registration_does(tmp_path, monkeypatch):
+    from nodelang import assistant_registration as registration
+    root, state, _, env = _rig(tmp_path)
+    (root / ".venv/pyvenv.cfg").write_text(f"executable = {sys.executable}\n", encoding="utf-8")
+    source = root / "nodelang/mcp_supervisor.py"
+    source.write_text("print('fixture supervisor')\n", encoding="utf-8")
+    target = state.parent / installation.RUNTIME_FOLDER / source.name
+    monkeypatch.setattr(registration, "install_roots", lambda _: (root, state))
+
+    def inspect():
+        registration.readiness(env)
+        for vendor in ("claude-code", "codex", "opencode", "gemini-cli", "goose"):
+            registration.mcp_server_spec(vendor, environment=env)
+        registration.register_codex(root, state, consent=False, environment=env)
+
+    inspect()
+    assert not target.parent.exists()
+    target.parent.mkdir()
+    target.write_bytes(b"# prepared by the newer release\n")
+    before = target.read_bytes(), target.stat().st_mtime_ns
+    inspect()
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before
+    target.unlink()
+    result = registration.register_codex(root, state, consent=True, environment=env)
+    assert result["state"] == "registered" and target.read_bytes() == source.read_bytes()
+    entry = result["entry"]
+    assert subprocess.check_output([entry["command"], *entry["args"]], text=True).strip() == "fixture supervisor"
+
+
+def test_concurrent_supervisor_prepares_publish_one_complete_file(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+    root, state, _, _ = _rig(tmp_path)
+    (root / ".venv/pyvenv.cfg").write_text(f"executable = {sys.executable}\n", encoding="utf-8")
+    source = root / "nodelang/mcp_supervisor.py"
+    source.write_bytes(b"# installed supervisor\n" * 1024)
+    replace = installation.os.replace
+    ready = Barrier(4)
+    publisher = local()
+
+    def publish(src, dst):
+        if not getattr(publisher, "started", False):
+            publisher.started = True
+            ready.wait(timeout=10)
+        replace(src, dst)
+
+    monkeypatch.setattr(installation.os, "replace", publish)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(installation.deploy_supervisor, root, state) for _ in range(4)]
+        destinations = {f.result()[1] for f in futures}
+    target, = destinations
+    assert target.read_bytes() == source.read_bytes()
+    assert list(target.parent.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("overridden", [False, True])
+def test_colleague_setup_refreshes_registered_claude_on_explicit_request(tmp_path, monkeypatch, overridden):
+    import colleague_setup
+    root, state, home, env = _rig(tmp_path)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(sys, "argv", ["colleague_setup.py", "--assistant=claude-code"])
+    (root / ".venv/pyvenv.cfg").write_text(f"executable = {sys.executable}\n")
+    source = root / "nodelang/mcp_supervisor.py"
+    source.write_bytes(b"# current connector")
+    target = state.parent / installation.RUNTIME_FOLDER / source.name
+    if not overridden:
+        target.parent.mkdir()
+        target.write_bytes(b"# previous")
+    config = home / ".claude.json"
+    data = {"mcpServers": {SERVER_NAME: installation.managed_entry(root, state)}}
+    if overridden:
+        data["projects"] = {"C:/fixture": {"mcpServers": {SERVER_NAME: {"command": "local.exe"}}}}
+    config.write_text(json.dumps(data))
+    original = config.read_bytes(), config.stat().st_mtime_ns
+    colleague_setup._assistant_integration(root, "fixture")
+    receipt = json.loads((state / "assistant-integration.json").read_text())
+    assert receipt["choice"] == "accepted" and receipt["project_overrides"] == int(overridden)
+    assert original == (config.read_bytes(), config.stat().st_mtime_ns)
+    assert target.read_bytes() == source.read_bytes()
+
+
+@pytest.mark.parametrize("redirected", ["source", "parent", "target"])
+def test_explicit_deployment_refuses_redirected_runtime_paths(tmp_path, monkeypatch, redirected):
+    root, state, _, _ = _rig(tmp_path)
+    (root / ".venv/pyvenv.cfg").write_text(f"executable = {sys.executable}\n")
+    source = root / "nodelang/mcp_supervisor.py"
+    source.write_bytes(b"# installed")
+    target = state.parent / installation.RUNTIME_FOLDER / source.name
+    target.parent.mkdir()
+    target.write_bytes(b"# earlier")
+    _pretend_redirected(monkeypatch, {"source": source, "parent": target.parent, "target": target}[redirected])
+    with pytest.raises(installation.RegistrationRefused, match="redirected"):
+        installation.deploy_supervisor(root, state)
+    assert target.read_bytes() == b"# earlier" and list(target.parent.iterdir()) == [target]

@@ -7,6 +7,7 @@ from collections import Counter
 import copy
 from functools import lru_cache
 import hashlib
+from hmac import compare_digest
 import json
 import logging
 import math
@@ -1833,9 +1834,19 @@ class SessionFiles:
         return rows
 
     def recent(self):
-        with _METADATA_LOCK, canvas_documents.locked(self.metadata/'recent.json'):
-            return [{key: value for key, value in row.items() if key != 'desktop_resume'}
-                    for row in self._recent() if self._owns_resume_pointer(row)]
+        target = self.metadata/'recent.json'
+        with _METADATA_LOCK, canvas_documents.locked(target):
+            owned = []
+            changed = False
+            rows = self._recent()
+            for row in rows:
+                if self._upgrade_resume_pointer(row):
+                    changed = True
+                if self._owns_resume_pointer(row):
+                    owned.append({key: value for key, value in row.items() if key != 'desktop_resume'})
+            if changed:
+                self._write_pointer_metadata(target, rows)
+            return owned
 
     def known_paths(self):
         return None if self.sign_resume_pointer is None else {row['path'] for row in self.recent()}
@@ -1845,44 +1856,75 @@ class SessionFiles:
             row = {'id': str(path), 'path': str(path), 'name': document['title'], 'title': document['title']}
             self._sign_pointer(row)
             rows = [row] + [r for r in self._recent() if r['path'] != str(path)]
-            target = self.metadata/'recent.json'
-            with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
-                temporary = stream.name
-                json.dump(stamp_test_write(rows[:20]),stream)
-            try:
-                _metadata_io(os.replace, temporary, target)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+            self._write_pointer_metadata(self.metadata/'recent.json', rows[:20])
+
+    def _write_pointer_metadata(self, target, value):
+        with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
+            temporary = stream.name
+            json.dump(stamp_test_write(value), stream)
+        try:
+            _metadata_io(os.replace, temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def _current(self, identity, path):
-        with _METADATA_LOCK:
-            current = self.metadata/'current.json'
+        current = self.metadata/'current.json'
+        with _METADATA_LOCK, canvas_documents.locked(current):
             pointer = {'id': identity, 'path': str(local_path(path)) if path else ''}
             self._sign_pointer(pointer)
-            with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
-                temporary = stream.name
-                json.dump(stamp_test_write(pointer), stream)
-            try:
-                _metadata_io(os.replace, temporary, current)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+            self._write_pointer_metadata(current, pointer)
+
+    def _read_current(self):
+        current = self.metadata/'current.json'
+        with _METADATA_LOCK:
+            held = self._load_resume_pointer(current)
+            if self.sign_resume_pointer is not None and self._legacy_resume_parts(held):
+                with canvas_documents.locked(current):
+                    held = self._load_resume_pointer(current)
+                    if self._upgrade_resume_pointer(held):
+                        self._write_pointer_metadata(current, held)
+            return held
 
     def _sign_pointer(self, pointer):
         if self.sign_resume_pointer is not None:
             pointer['desktop_resume'] = self.sign_resume_pointer(pointer['id'], pointer['path'])
 
+    @staticmethod
+    def _resume_pointer_parts(held):
+        if isinstance(held, dict):
+            parts = tuple(held.get(key) for key in ('id', 'path', 'desktop_resume'))
+            if all(type(value) is str for value in parts) and parts[2].isascii():
+                return parts
+        return None
+
+    def _legacy_resume_parts(self, held):
+        parts = self._resume_pointer_parts(held)
+        return parts if parts is not None and len(parts[2]) == 64 else None
+
+    def has_legacy_resume_pointers(self):
+        """Check the pointer format before making the extra old-account verification."""
+        with _METADATA_LOCK:
+            try:
+                current = self._load_resume_pointer(self.metadata/'current.json')
+            except (OSError, ValueError):
+                current = None
+            return bool(self._legacy_resume_parts(current)) or any(
+                self._legacy_resume_parts(row) for row in self._recent())
+
+    def _upgrade_resume_pointer(self, held):
+        verify = getattr(self.sign_resume_pointer, 'verify_legacy', None)
+        legacy = self._legacy_resume_parts(held) if verify is not None else None
+        if legacy is None or not verify(*legacy):
+            return False
+        self._sign_pointer(held)
+        return True
+
     def _owns_resume_pointer(self, held):
         if self.sign_resume_pointer is None:
             return True
-        if not isinstance(held, dict):
-            return False
-        from hmac import compare_digest
-        identity, path, signature = (held.get(key) for key in ('id', 'path', 'desktop_resume'))
-        return (all(type(value) is str for value in (identity, path, signature))
-                and len(signature) == 64 and signature.isascii()
-                and compare_digest(signature, self.sign_resume_pointer(identity, path)))
+        parts = self._resume_pointer_parts(held)
+        return parts is not None and compare_digest(parts[2], self.sign_resume_pointer(*parts[:2]))
 
     def current_path(self):
         """The file the founder has open. Every reader asks here; none of them writes this choice."""
@@ -1895,12 +1937,10 @@ class SessionFiles:
         """The file the app has open now (agents edit the same file), then recent files."""
         with _METADATA_LOCK:
             rows = []
-            current = self.metadata/'current.json'
-            if current.exists():
-                held = self._load_resume_pointer(current)
-                if held and self._owns_resume_pointer(held):
-                    path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
-                    rows.append({'path':path,'open_in_app':True})
+            held = self._read_current()
+            if held and self._owns_resume_pointer(held):
+                path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
+                rows.append({'path':path,'open_in_app':True})
             rows += [{'path':r['path'],'open_in_app':False,'title':r.get('title','')} for r in self.recent() if r['path'] not in {x['path'] for x in rows}]
             return rows
 
@@ -1992,9 +2032,7 @@ class SessionFiles:
         if action == 'initial':
             import sys
             launch = next((a for a in sys.argv[1:] if str(a).lower().endswith('.archhub')), None)
-            current = self.metadata/'current.json'
-            with _METADATA_LOCK:
-                held = self._load_resume_pointer(current)
+            held = self._read_current()
             if self.sign_resume_pointer is not None and (
                     not self._owns_resume_pointer(held)
                     or launch and str(Path(launch).resolve()) != held.get('path')):

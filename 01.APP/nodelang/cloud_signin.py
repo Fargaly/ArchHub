@@ -15,6 +15,7 @@ import base64
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import secrets
 import socket
@@ -31,6 +32,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from .cloud_relay import DEFAULT_BASE, SIGN_IN_AGAIN as _SIGN_IN_AGAIN, pinned_cloud_base
 from .cloud_session import cloud_session_path, open_cloud_request
 from .http_server import create_http_server
+from .user_paths import state_directory
 
 WAIT_SECONDS = 300.0
 METHODS = ("google",)
@@ -113,6 +115,51 @@ def read_cloud_session(path: Path) -> dict:
                 held.update(_decode_session_secret(existing))
             return _persist_cloud_session(path, held, None)
         return held
+
+
+def desktop_resume_key(path: Path) -> bytes:
+    """One random profile key in the existing account-session vault."""
+    from app import secrets_store
+
+    location = os.path.normcase(os.path.abspath(path))
+    name = hashlib.sha256(("ArchHub desktop resume key\0" + location).encode()).hexdigest()
+    reference = "archhub-account-session:v1:" + name
+    with _SESSION_WRITE_LOCK, _session_file_lock(path):
+        saved = secrets_store.load_session_secret(reference)
+        if saved is None:
+            saved = secrets.token_hex(32)
+            secrets_store.save_session_secret(reference, saved)
+        key = bytes.fromhex(saved)
+        if len(saved) != 64 or len(key) != 32:
+            raise OSError("invalid protected desktop recovery key")
+        return key
+
+
+def _preserve_legacy_resume_before_exchange(path: Path, http) -> None:
+    """Upgrade pointers while their old credential can still prove ownership."""
+    from .cloud_session import DesktopAccess
+    from .session_files import SessionFiles
+
+    if path.resolve() != cloud_session_path().resolve():
+        return
+    metadata = state_directory() / "data" / "sessions"
+    if not metadata.is_dir():
+        return
+    held = read_cloud_session(path)
+    bearer = held.get("token")
+    if not bearer or not SessionFiles(metadata).has_legacy_resume_pointers():
+        return
+
+    def fetch(url, token):
+        return http("GET", url, headers={"Authorization": "Bearer " + token})
+
+    verdict = DesktopAccess(path, fetch=None if http is http_json else fetch).check(
+        expected_bearer=bearer, bind_resume=True)
+    if not verdict["admitted"]:
+        return
+    with _SESSION_WRITE_LOCK, _session_file_lock(path):
+        if read_cloud_session(path) == held:
+            SessionFiles(metadata, sign_resume_pointer=verdict["_sign_resume_pointer"]).open_files()
 
 
 def write_cloud_session(path: Path, patch: dict, *, expected_token: str | None = None) -> dict:
@@ -362,6 +409,11 @@ class SignIn:
         code = str(server.received_code)
         server.server_close()
         self._set(phase="exchanging")
+        try:
+            _preserve_legacy_resume_before_exchange(self.path, self._http)
+        except (OSError, ValueError):
+            logging.getLogger(__name__).warning(
+                "Legacy Canvas recovery could not be migrated. Open the saved Canvas explicitly.")
         try:
             status, payload = self._http(
                 "POST", f"{self.base_url}/v1/auth/exchange",

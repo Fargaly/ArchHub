@@ -61,7 +61,12 @@ class _FakeCloud(BaseHTTPRequestHandler):
                 self.send_header("Location", self.server.me_redirect)
                 self.end_headers()
                 return
-            self._json(self.server.me_status, self.server.me_body)
+            accounts = self.server.me_accounts
+            if self.server.me_status == 200 and accounts is not None:
+                account = accounts.get(auth.removeprefix("Bearer "))
+                self._json(200 if account else 401, account or {})
+            else:
+                self._json(self.server.me_status, self.server.me_body)
             return
         self._json(404, {"error": "no such route"})
 
@@ -73,7 +78,9 @@ class _FakeCloud(BaseHTTPRequestHandler):
             if self.server.refuse_exchange:
                 self._json(400, {"error": "code_expired"})
                 return
-            self._json(200, {"token": "ah_" + "x" * 40, "expires_at": 4102444800})
+            if self.server.retire_on_exchange:
+                self.server.me_accounts.pop(self.server.retire_on_exchange, None)
+            self._json(200, {"token": self.server.exchange_token, "expires_at": 4102444800})
             return
         if self.path == "/v1/auth/logout":
             self.server.seen.append(("logout", self.headers.get("Authorization", "")))
@@ -92,7 +99,10 @@ def cloud(monkeypatch):
     server.seen = []
     server.google_down = False
     server.refuse_exchange = False
+    server.exchange_token = "ah_" + "x" * 40
     server.me_status = 200
+    server.me_accounts = None
+    server.retire_on_exchange = None
     server.me_redirect = None
     server.me_body = {"user_id": "u-42", "email": "Ahmed@Example.com", "plan": "studio"}
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -629,3 +639,162 @@ def test_relaunch_automatically_recovers_only_the_bound_credentials(cloud, tmp_p
         assert path.read_bytes() == original
     finally:
         server.close()
+
+
+def _sign_in_again(cloud, record, token):
+    cloud.exchange_token = token
+    attempt = cloud_signin.SignIn("google", base_url=f"http://127.0.0.1:{cloud.server_port}", path=record,
+                                  opener=_browser_that_follows).start()
+    assert _wait(attempt)["phase"] == "done"
+    assert cloud_signin.read_cloud_session(record)["token"] == token
+
+
+def test_same_verified_account_recovers_after_ordinary_sign_in_rotation(cloud, tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from app import secrets_store
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import new_document, write_document
+
+    state = tmp_path / "profile"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    monkeypatch.setattr(secrets_store, "_MEMORY_KEYS", {})
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+    record = cloud_signin.cloud_session_path()
+    base = f"http://127.0.0.1:{cloud.server_port}"
+    old, renewed, other, returned = ("ah_" + char * 40 for char in "abcd")
+    same_account = {"user_id": "u-42", "email": "changed@example.com"}
+    cloud.me_accounts = {old: cloud.me_body, renewed: same_account,
+                         other: {**same_account, "user_id": "u-43"}, returned: same_account}
+
+    _sign_in_again(cloud, record, old)
+    path = tmp_path / "existing.archhub"
+    document = new_document("Retain across account credential changes")
+    write_document(path, document)
+    original = path.read_bytes()
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+
+    def call(action, subject="u-42", **body):
+        return _desktop_request(app, "/api/session-files", subject=subject, body={"action": action, **body})
+
+    try:
+        assert call("open", path=str(path))[1]["document"]["id"] == document["id"]
+        metadata = state / "data" / "sessions"
+        current, recent = (metadata / name for name in ("current.json", "recent.json"))
+        before = current.read_bytes(), recent.read_bytes()
+        assert json.loads(before[0])["desktop_resume"].startswith("v2:")
+        cloud.retire_on_exchange = old
+        _sign_in_again(cloud, record, renewed)
+        assert call("initial")[1]["path"] == str(path)
+        assert [row["path"] for row in call("catalogue")[1]["recent"]] == [str(path)]
+
+        cloud.me_status = 503
+        assert call("initial")[0] == 503
+        cloud.me_status = 401
+        assert call("catalogue")[0] == 401
+        cloud.me_status = 200
+        cloud_signin.sign_out(record, wait=True)
+        assert call("initial")[0] == 401
+
+        _sign_in_again(cloud, record, other)
+        assert call("initial", subject="u-43")[1]["path"] == ""
+        assert call("catalogue", subject="u-43")[1]["recent"] == []
+        _sign_in_again(cloud, record, returned)
+        assert call("initial")[1]["path"] == str(path)
+        assert (current.read_bytes(), recent.read_bytes(), path.read_bytes()) == (*before, original)
+    finally:
+        app.close()
+
+    # The court supplies only its synthetic vault entries to a new interpreter.
+    # No in-process DesktopAccess signer, account cache or SessionFiles instance survives.
+    probe = r"""
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from app import secrets_store
+from nodelang import cloud_relay
+from nodelang.cloud_session import DesktopAccess
+from nodelang.session_files import SessionFiles
+cloud_relay.PINNED_BASES += (sys.argv[2],)
+secrets_store._MEMORY_KEYS.update(json.load(sys.stdin))
+auth = DesktopAccess(Path(sys.argv[3])).check(bind_resume=True)
+assert auth["admitted"] and auth["subject"] == "u-42"
+files = SessionFiles(sign_resume_pointer=auth["_sign_resume_pointer"])
+print(json.dumps([files.dispatch({"action": "initial"})["path"], [row["path"] for row in files.recent()]]))
+"""
+    app_source = Path(__file__).resolve().parents[2] / "01.APP"
+    child = subprocess.run([sys.executable, "-B", "-c", probe, str(app_source), base, str(record)],
+                           input=json.dumps(secrets_store._MEMORY_KEYS), capture_output=True, text=True, timeout=30)
+    assert child.returncode == 0, child.stderr
+    assert json.loads(child.stdout) == [str(path), [str(path)]]
+    assert (current.read_bytes(), recent.read_bytes(), path.read_bytes()) == (*before, original)
+    key = next(value for value in secrets_store._MEMORY_KEYS.values() if re.fullmatch(r"[0-9a-f]{64}", value))
+    assert all(key.encode() not in file.read_bytes() for file in (record, current, recent, path))
+
+
+@pytest.mark.parametrize("legacy", ["still-admitted", "revoked-before-exchange", "first-read"])
+def test_legacy_recovery_migrates_only_with_a_trusted_bearer(cloud, tmp_path, monkeypatch, legacy):
+    import hmac
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import new_document, write_document
+
+    state = tmp_path / "profile"
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
+    record = cloud_signin.cloud_session_path()
+    old, new = "ah_" + "x" * 40, "ah_" + "y" * 40
+    cloud.me_accounts = {old: cloud.me_body, new: cloud.me_body}
+    _sign_in_again(cloud, record, old)
+
+    metadata = state / "data" / "sessions"
+    metadata.mkdir(parents=True, exist_ok=True)
+    current, recent = (metadata / name for name in ("current.json", "recent.json"))
+    path = tmp_path / "legacy.archhub"
+    document = new_document("Original legacy Canvas")
+    write_document(path, document)
+    original = path.read_bytes()
+
+    def old_pointer(identity, location):
+        payload = json.dumps(["u-42", identity, location], ensure_ascii=False, separators=(",", ":"))
+        digest = hmac.digest(old.encode(), b"ArchHub desktop resume v1\0" + payload.encode(), "sha256").hex()
+        return {"id": identity, "path": location, "desktop_resume": digest}
+
+    good = old_pointer(str(path), str(path))
+    forged = {**good, "path": str(tmp_path / "tampered.archhub")}
+    unsigned = {"id": "unsigned", "path": str(tmp_path / "unsigned.archhub")}
+    current.write_text(json.dumps(old_pointer(document["id"], str(path))), encoding="utf-8")
+    recent.write_text(json.dumps([good, forged, unsigned]), encoding="utf-8")
+
+    if legacy != "first-read":
+        if legacy == "revoked-before-exchange":
+            cloud.me_accounts.pop(old)
+        cloud.retire_on_exchange = old
+        _sign_in_again(cloud, record, new)
+        assert not cloud.me_accounts.get(old)
+
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+    app.native_file_picker = lambda *args: str(path)
+
+    def call(action):
+        return _desktop_request(app, "/api/session-files", body={"action": action}, subject="u-42")[1]
+
+    try:
+        if legacy == "revoked-before-exchange":
+            assert call("initial")["path"] == ""
+            assert call("catalogue")["recent"] == []
+            assert not json.loads(current.read_bytes())["desktop_resume"].startswith("v2:")
+            assert call("open")["document"]["id"] == document["id"]
+        else:
+            assert call("initial")["path"] == str(path)
+            assert [row["path"] for row in call("catalogue")["recent"]] == [str(path)]
+            assert json.loads(current.read_bytes())["desktop_resume"].startswith("v2:")
+            from nodelang.user_paths import strip_test_write
+            rows = strip_test_write(json.loads(recent.read_bytes()))
+            assert rows[0]["desktop_resume"].startswith("v2:")
+            assert rows[1:] == [forged, unsigned]
+            pointer = json.loads(current.read_bytes())
+            current.write_text(json.dumps({**pointer, "path": forged["path"]}), encoding="utf-8")
+            assert call("initial")["path"] == ""
+        assert path.read_bytes() == original
+    finally:
+        app.close()

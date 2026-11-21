@@ -181,6 +181,20 @@ class DesktopAccessRefused(PermissionError):
         self.status = 503 if state == "unavailable" else 401
 
 
+class _ResumeSigner:
+    def __init__(self, key, base, subject, bearer):
+        self._key, self._base, self._subject, self._bearer = key, base, subject, bearer
+
+    def __call__(self, identity, path):
+        payload = json.dumps([self._base, self._subject, identity, path], ensure_ascii=False, separators=(",", ":"))
+        return "v2:" + hmac.digest(self._key, b"ArchHub desktop resume v2\0" + payload.encode(), "sha256").hex()
+
+    def verify_legacy(self, identity, path, signature):
+        payload = json.dumps([self._subject, identity, path], ensure_ascii=False, separators=(",", ":"))
+        digest = hmac.digest(self._bearer.encode(), b"ArchHub desktop resume v1\0" + payload.encode(), "sha256").hex()
+        return hmac.compare_digest(signature, digest)
+
+
 class DesktopAccess:
     """Admit work using a fresh server verdict for the current protected account."""
 
@@ -221,7 +235,7 @@ class DesktopAccess:
         return result
 
     def check(self, *, expected_bearer=None, bind_resume=False):
-        from .cloud_signin import read_cloud_session
+        from .cloud_signin import desktop_resume_key, read_cloud_session
 
         try:
             path = self._path or cloud_session_path()
@@ -242,6 +256,7 @@ class DesktopAccess:
                     or not isinstance(email, str) or "@" not in email or len(email) > 320):
                 return self._verdict("unavailable")
             subject, email = str(subject).strip(), email.strip().casefold()
+            key = desktop_resume_key(path) if bind_resume else None
             # Signout/rotation during the network call invalidates that response.
             current = read_cloud_session(path)
             if current.get("token") != bearer or not self._usable(current) or _pinned_base(current) != base:
@@ -250,12 +265,8 @@ class DesktopAccess:
             return self._verdict("unavailable")
 
         verdict = self._verdict("admitted", subject, email)
-        if bind_resume:
-            def sign_pointer(identity, path):
-                payload = json.dumps([subject, identity, path], ensure_ascii=False, separators=(",", ":"))
-                return hmac.digest(bearer.encode(), b"ArchHub desktop resume v1\0" + payload.encode(), "sha256").hex()
-
-            verdict["_sign_resume_pointer"] = sign_pointer
+        if key is not None:
+            verdict["_sign_resume_pointer"] = _ResumeSigner(key, base, subject, bearer)
         return verdict
 
     def require(self, *, subject=None, expected_bearer=None):

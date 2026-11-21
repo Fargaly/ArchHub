@@ -12323,6 +12323,8 @@
         "01.APP/nodelang/studio/ds_screens.jsx",
         "02.TESTS/tests/test_properties_rerun_fork.py",
         "02.TESTS/tests_js/properties_rerun_fork_live.cjs",
+        "03.TOOLS/tools/real_app_check/harness.mjs",
+        "03.TOOLS/tools/real_app_check/scenarios/rerun_fork.mjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

@@ -3910,8 +3910,14 @@
       ]
     },
     "MAINREL": {
-      "source": "Founder2026-10-18 BRIEF-MAINREL.md: eight measured PREMORTEM-A release guards; Codex/Gemini old connector migration and file fallback; no live installation. Base d89a50fd2304ea4cbda75e1313c08ed187404f2f.",
+      "source": "Founder2026-10-18 BRIEF-MAINREL.md: eight measured PREMORTEM-A release guards; Codex/Gemini old connector migration and file fallback; no live installation. Base d89a50fd2304ea4cbda75e1313c08ed187404f2f. Founder update request, November 21: inspecting assistant connections is read-only. Consented setup refreshes the owned connector without changing existing client choices or interrupting work.",
       "scope": [
+        "01.APP/colleague_setup.py",
+        "01.APP/nodelang/assistant_registration.py",
+        "01.APP/nodelang/client_mcp_installation.py",
+        "02.TESTS/tests_replica/test_client_mcp_installation.py",
+        "02.TESTS/tests_replica/test_mainrel_connectors.py",
+        "03.TOOLS/installer/ArchHub.iss",
         "BRIEF-MAINREL.md",
         "MAINREL.patch",
         "MAINREL.patch.sha256",

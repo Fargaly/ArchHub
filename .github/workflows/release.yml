@@ -29,6 +29,9 @@ on:
       verify_dwg:
         description: 'Verify the installed DWG reader and Projects export settings using public linked drawings'
         type: boolean
+      verify_pdf:
+        description: 'Verify installed Publish PDF cards, scoped sheet selection and refusal before Revit discovery'
+        type: boolean
       verify_minutes:
         description: 'Maximum minutes for the clean published-installer check'
         required: false
@@ -800,6 +803,18 @@ jobs:
           $python = Join-Path $receipt.installed_root '.venv/Scripts/python.exe'
           & $python -I -B selected/03.TOOLS/tools/real_app_check/installed_dwg.py | Tee-Object -FilePath (Join-Path $env:VERIFY_EVIDENCE 'dwg-results.log')
           if ($LASTEXITCODE -ne 0) { throw 'The installed DWG export check failed.' }
+      - name: Verify Publish PDF with the installed node engine
+        if: ${{ inputs.verify_pdf }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'install.json') | ConvertFrom-Json
+          if (-not $receipt.setup_verified -or $receipt.install_exit -ne 0 -or $receipt.installed_build -cne $env:PUBLISHED_BUILD) {
+            throw 'The selected Windows installer must complete before the PDF check.'
+          }
+          $python = Join-Path $receipt.installed_root '.venv/Scripts/python.exe'
+          & $python -I -B selected/03.TOOLS/tools/real_app_check/installed_pdf.py | Tee-Object -FilePath (Join-Path $env:VERIFY_EVIDENCE 'pdf-results.log')
+          if ($LASTEXITCODE -ne 0) { throw 'The installed PDF check failed.' }
       - name: Check out the pinned optional-sign-in release witness
         if: steps.pins.outputs.ui_contract == 'stable-optional-sign-in'
         uses: actions/checkout@v7
@@ -880,6 +895,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/upgrade-*.json
             ${{ runner.temp }}/archhub-verify-published/install.json
             ${{ runner.temp }}/archhub-verify-published/dwg-results.log
+            ${{ runner.temp }}/archhub-verify-published/pdf-results.log
             ${{ runner.temp }}/archhub-verify-published/ui-contract.json
             ${{ runner.temp }}/archhub-verify-published/setup.log
             ${{ runner.temp }}/archhub-verify-published/first-run.log

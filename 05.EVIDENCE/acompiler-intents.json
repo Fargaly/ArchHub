@@ -12404,6 +12404,7 @@
         "01.APP/nodelang/studio/ui.jsx",
         "02.TESTS/tests_js/keyboard_shortcuts.test.cjs",
         "02.TESTS/tests_js/settings_scope.test.cjs",
+        "02.TESTS/tests_js/wire_settings.test.cjs",
         "02.TESTS/tests_replica/test_scoped_preferences.py"
       ]
     },

@@ -99,7 +99,9 @@ def test_every_revit_script_compiles_against_the_installed_revit_api_and_core(tm
     # The library authoring cards send their scripts through the same broker.
     scripts += [("tag-rooms", library_engines._TAG_ROOMS),
                 ("place-tags", library_engines._PLACE_TAGS % (json.dumps("Doors"), "true")),
-                ("place-on-sheet", library_engines._PLACE_ON_SHEET % (json.dumps("A101"), json.dumps("Plan"))),
+                ("place-on-existing-or-new-sheet", library_engines._PLACE_ON_SHEET % (json.dumps("A101"), json.dumps("Plan"), revit.title_block_lookup("", first_if_unset=True), "")),
+                ("place-on-new-sheet-with-title-block", library_engines._PLACE_ON_SHEET % (json.dumps("A102"), json.dumps("Plan"), revit.title_block_lookup("Office A1 title block"), revit.TITLE_BLOCK_READBACK)),
+                ("create-sheet-with-title-block", revit._script_for("revit.create_sheets", {**rows, "title_block": "Office A1 title block"})),
                 ("export-pdf", library_engines._EXPORT_PDF % (json.dumps(r"C:\out"), json.dumps("A101")))]
     _compile(tmp_path, "", ["System", "System.Collections.Generic", "System.Linq", "Autodesk.Revit.DB",
                             "Autodesk.Revit.UI"], scripts, [folder / "RevitAPI.dll", folder / "RevitAPIUI.dll", core],

@@ -23,7 +23,7 @@ def catalogue_entry():
         "compiler_rustflags": {"type": "text", "editor": "text", "default": "-C target-feature=+crt-static"},
         "compiler_jobs": {"type": "integer", "editor": "number", "default": 2},
         "post_limit": {"type": "integer", "editor": "number", "default": 3000},
-        "rules": {"type": "text", "editor": "multiline", "default": '{"document":{"block_types":["paragraph","heading"]},"model":{"value_types":["string","number","integer","boolean","object","list"]},"post":{"platforms":["web"]},"ifc-export":{"operation":"revit.export_ifc","versions":["IFC2x2","IFCBCA","IFC2x3","IFC2x3CV2","IFC2x3BFM","IFC2x3FM","IFCCOBIE","IFC4RV","IFC4DTV","IFCSG","IFC4x3RV","IFC4x3DTV"]}}'},
+        "rules": {"type": "text", "editor": "multiline", "default": '{"document":{"block_types":["paragraph","heading"]},"model":{"value_types":["string","number","integer","boolean","object","list"]},"post":{"platforms":["web"]},"sheet-create":{"operation":"revit.create_sheets"},"ifc-export":{"operation":"revit.export_ifc","versions":["IFC2x2","IFCBCA","IFC2x3","IFC2x3CV2","IFC2x3BFM","IFC2x3FM","IFCCOBIE","IFC4RV","IFC4DTV","IFCSG","IFC4x3RV","IFC4x3DTV"]}}'},
         "intent_rule_set": {"type": "text", "editor": "text", "default": "tools/archhub-compiler/rules.json"},
         "intent": {"type": "text", "editor": "text", "default": ""},
         "author": {"type": "text", "editor": "text", "default": ""},

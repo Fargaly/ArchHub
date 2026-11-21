@@ -850,6 +850,15 @@ def preference_settings(function='readControls', args=(), settings=None):
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
+    title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']
+    if args and args[0] == 'Projects.Title block' and function in ('setAppearance', 'resetAppearance'):
+        if function == 'setAppearance':
+            if args[1] not in title_blocks:
+                raise ValueError('Choose a listed title block.')
+            settings.update({'titleBlock': args[1]})
+        else:
+            settings.update({}, remove=['titleBlock'])
+        function, args = 'readControls', ()
     if args and args[0] == 'Projects.IFC export setup' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
             if not isinstance(args[1], str) or any(ord(c) < 32 for c in args[1]):
@@ -903,7 +912,10 @@ def preference_settings(function='readControls', args=(), settings=None):
     setup = {'id': 'Projects.IFC export setup', 'storageKey': 'ifcSetup', 'page': 'Projects', 'group': 'IFC and BCF',
              'label': 'IFC export setup', 'type': 'text', 'default': default_setup, 'value': settings.read().get('ifcSetup', default_setup),
              'description': 'Exact Revit IFC setup name. Leave empty to use the Revit default.'}
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup]}
+    title_block = {'id': 'Projects.Title block', 'storageKey': 'titleBlock', 'page': 'Projects', 'group': 'Templates',
+                   'label': 'Title block', 'description': 'Used when agents create sheets.', 'type': 'choice',
+                   'options': title_blocks, 'default': title_blocks[0], 'value': settings.read().get('titleBlock', title_blocks[0])}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block]}
 
 
 def preference_setting(identity):

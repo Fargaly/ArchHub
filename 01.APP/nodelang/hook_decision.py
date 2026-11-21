@@ -1666,6 +1666,13 @@ def _ask_who(event, data) -> str:
 
 def _ask_text(action, data):
     if isinstance(data, dict) and isinstance(data.get('node'), dict) and isinstance(data.get('feeds'), dict):
+        if data['node'].get('type') == 'revit.create_sheets':
+            request = data['node'].get('params', {}).get('_sheet_effect') or {}
+            target = request.get('sheet_target') or {}
+            rows = request.get('rows') or []
+            return '\n'.join(['Model: ' + str(target.get('path') or target.get('document') or ''),
+                              'Title block: ' + (request.get('title_block') or 'None'),
+                              *[str(row.get('number', '')) + '  ' + str(row.get('name', '')) for row in rows]]), 'Create sheets'
         if data['node'].get('type') == 'revit.export_ifc':
             request = data['node'].get('params', {}).get('_ifc_effect') or {}
             versions = {'IFC4RV': 'IFC4 (Reference View)', 'IFC2x3CV2': 'IFC2x3 (Coordination View 2)',
@@ -2143,12 +2150,12 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
             permit = True
         else:
             outcome = _release_ask(replay)
-            if (replay.get('kind') == 'canvas' and replay.get('payload', {}).get('node', {}).get('type') == 'revit.export_ifc'
+            if (replay.get('kind') == 'canvas' and replay.get('payload', {}).get('node', {}).get('type') in ('revit.export_ifc', 'revit.create_sheets')
                     and isinstance(outcome, dict)):
                 result = outcome.get('results', {}).get(replay['payload']['node']['id'], {})
                 if result.get('status') in ('Error', 'Blocked', 'Stopped', 'Unconfirmed', 'Declined'):
                     status = 'failed'
-                    error = result.get('error') or result.get('display') or 'IFC export failed'
+                    error = result.get('error') or result.get('display') or 'The approved Revit action failed.'
     except Exception as exc:
         status, error, permit = "failed", str(exc), False
     finally:
@@ -2183,44 +2190,51 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
 
 
 
-def _current_ifc_card():
+def _current_revit_card(operation):
+    if operation not in ("revit.create_sheets", "revit.export_ifc"):
+        raise ValueError("Unsupported Canvas approval operation.")
     active = _CLAIMED_ASK.get()
     if not active or active['used']:
-        raise ValueError('IFC export requires its one-shot Canvas approval.')
+        raise ValueError('The Revit operation requires its one-shot Canvas approval.')
     row = active['row']
     current = _read_holds(_ask_path(active['environment']))['holds'].get(row['id'])
     if not current or current.get('status') != 'releasing' or current.get('input_digest') != row['input_digest'] or current.get('replay') != row.get('replay'):
-        raise ValueError('The IFC approval is no longer releasing this exact call.')
+        raise ValueError('The Revit approval is no longer releasing this exact call.')
     replay = row.get('replay') or {}
     payload = replay.get('payload') or {}
     node = payload.get('node') or {}
-    if replay.get('kind') != 'canvas' or node.get('type') != 'revit.export_ifc':
-        raise ValueError('This approval does not cover IFC export.')
+    if replay.get('kind') != 'canvas' or node.get('type') != operation:
+        raise ValueError('This approval does not cover the requested Revit operation.')
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     if digest != row['input_digest']:
-        raise ValueError('The reviewed IFC payload changed.')
-    effect = node.get('params', {}).get('_ifc_effect')
+        raise ValueError('The reviewed Revit payload changed.')
+    effect = node.get('params', {}).get('_ifc_effect' if operation == 'revit.export_ifc' else '_sheet_effect')
     if not isinstance(effect, dict) or effect.get('pending_write', {}).get('author') != 'archhub/canvas':
-        raise ValueError('The reviewed IFC request has no Canvas service origin.')
+        raise ValueError('The reviewed Revit request has no Canvas service origin.')
     return active, row, node, effect
 
 
 def canvas_ifc_grant(effect):
+    return canvas_revit_grant('revit.export_ifc', effect)
+
+
+def canvas_revit_grant(operation, effect):
     from .nodeslib_v2_engines import _digest_payload
-    _active, row, node, expected = _current_ifc_card()
+    _active, row, node, expected = _current_revit_card(operation)
     if effect != expected:
-        raise ValueError('IFC inputs differ from the approved call.')
-    return {'caller': 'archhub', 'session': 'canvas', 'work': node['id'], 'action': 'revit.export_ifc',
+        raise ValueError('Revit inputs differ from the approved call.')
+    return {'caller': 'archhub', 'session': 'canvas', 'work': node['id'], 'action': operation,
             'scope': 'revit.write', 'input_digest': _digest_payload(expected), 'digest': row['input_digest'],
             'approval_id': row['id']}
 
 
 def verify_canvas_ifc_grant(request):
-    active, _row, _node, effect = _current_ifc_card()
-    expected = canvas_ifc_grant(effect)
-    if (request.get('operation') != 'revit.export_ifc' or request.get('scope') != 'revit.write'
+    operation = request.get('operation')
+    active, _row, _node, effect = _current_revit_card(operation)
+    expected = canvas_revit_grant(operation, effect)
+    if (request.get('scope') != 'revit.write'
             or request.get('input_digest') != expected['input_digest'] or request.get('grant') != expected):
-        raise ValueError('The IFC grant does not bind this exact approved call.')
+        raise ValueError('The Revit grant does not bind this exact approved call.')
     active['used'] = True
     return {'ok': True}
 

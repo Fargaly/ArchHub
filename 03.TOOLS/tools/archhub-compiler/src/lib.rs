@@ -2857,10 +2857,32 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
     } else {
         let content = &pending["content"];
         if (target.starts_with("revit://") || target.starts_with("autocad://") || pending.get("host").is_some())
+            && pending["kind"] != "sheet-create"
             && (pending["kind"] != "model" || pending["format"] != "host-parameter-edit-v1") {
             emit("E0010", "a host target cannot be disguised as another artifact kind");
         }
         match pending["kind"].as_str() {
+            Some("sheet-create") => {
+                let model = &content["sheet_target"];
+                let id = model["project_id"].as_str().unwrap_or("");
+                let valid_model = model.as_object().is_some_and(|m| m.len() == 5)
+                    && !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    && model["port"].as_u64().is_some_and(|port| (1..=65535).contains(&port))
+                    && model["pid"].as_u64().is_some_and(|pid| pid > 0)
+                    && model["document"].as_str().is_some_and(|s| !s.is_empty())
+                    && model["path"].is_string() && target == format!("revit://sheet-create/{id}");
+                let text = |v: &Value| v.as_str().is_some_and(|s| !s.chars().any(char::is_control));
+                let valid_rows = content["rows"].as_array().is_some_and(|rows| !rows.is_empty() && rows.iter().all(|row|
+                    row.as_object().is_some_and(|r| r.iter().all(|(k,v)| matches!(k.as_str(), "number" | "name") && text(v)))
+                        && ["number", "name"].iter().any(|k| row[*k].as_str().is_some_and(|s| !s.trim().is_empty()))));
+                if rules["sheet-create"]["operation"] != "revit.create_sheets" || pending["operation"] != "revit.create_sheets"
+                    || pending["intent"] != "SHEETCREATE"
+                    || pending["author"] != "archhub/canvas" || !valid_model || !valid_rows
+                    || !content.as_object().is_some_and(|c| c.keys().all(|k| matches!(k.as_str(), "sheet_target" | "rows" | "title_block")))
+                    || content.get("title_block").is_some_and(|v| !text(v) || v == "") {
+                    emit("E0009", "sheet creation must bind the reviewed model, sheet rows and selected title block");
+                }
+            }
             Some("ifc-export") => {
                 if rules["ifc-export"]["operation"] != "revit.export_ifc" {
                     emit("E0010", "IFC export requires its selected typed export rule");

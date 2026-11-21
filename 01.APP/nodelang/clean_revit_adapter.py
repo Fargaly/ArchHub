@@ -892,6 +892,31 @@ result = rows;
 }
 
 
+TITLE_BLOCK_READBACK = """
+Doc.Regenerate();
+bool matches = false;
+foreach (Element block in new FilteredElementCollector(Doc).OwnedByView(sheet.Id).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType())
+    if (block.GetTypeId() == tb) { matches = true; break; }
+if (!matches) throw new InvalidOperationException("Created sheet has a different title block.");
+"""
+
+
+def title_block_lookup(selected, *, first_if_unset=False):
+    lookup = "ElementId tb = ElementId.InvalidElementId;"
+    symbols = "new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol))"
+    if not selected:
+        return lookup + (" foreach (Element e in %s) { tb = e.Id; break; }" % symbols if first_if_unset else "")
+    return lookup + """
+string wanted = %s;
+foreach (FamilySymbol symbol in %s) {
+    if (symbol.Name != wanted && symbol.FamilyName != wanted && symbol.FamilyName + " : " + symbol.Name != wanted) continue;
+    if (tb != ElementId.InvalidElementId) throw new InvalidOperationException("Ambiguous title block: " + wanted);
+    tb = symbol.Id;
+}
+if (tb == ElementId.InvalidElementId) throw new InvalidOperationException("Title block is not loaded: " + wanted);
+""" % (_cs_string(selected), symbols)
+
+
 def _cs_string(value: object) -> str:
     return json.dumps("" if value is None else str(value))
 
@@ -1378,6 +1403,7 @@ def _require_write_grant(op_id: str, arguments: Mapping[str, object]) -> Mapping
         _source, _destination, target, _digest = _ifc_scoped_paths(arguments)
         if pending.get("target") != target:
             raise PermissionError("IFC export requires a typed pending export bound to the approved path")
+    # This hook compares pending content to the actual arguments and runs Enforce before host dispatch.
     from .domains.selfext import before_write_hooks
     annotations = before_write_hooks(arguments.get("mods_store"), op_id, arguments)
     if annotations:
@@ -1717,16 +1743,19 @@ result = rows;
             if isinstance(row, Mapping):
                 rows.append((_cs_string(row.get("number")), _cs_string(row.get("name"))))
         entries = ", ".join("new string[] { %s, %s }" % item for item in rows)
+        selected = arguments.get("title_block")
         return """
+%s
 var rows = new List<Dictionary<string,object>>();
-foreach (var pair in new [] { %s }) {
-    var sheet = ViewSheet.Create(Doc, ElementId.InvalidElementId);
+foreach (var pair in new string[][] { %s }) {
+    var sheet = ViewSheet.Create(Doc, tb);
     if (pair[0].Length > 0) sheet.SheetNumber = pair[0];
     if (pair[1].Length > 0) sheet.Name = pair[1];
-    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(sheet.Id)}, {"number", sheet.SheetNumber}, {"name", sheet.Name} });
+    %s
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(sheet.Id)}, {"number", sheet.SheetNumber}, {"name", sheet.Name}, {"title_block_type_id", global::RevitMCPCore.RevitIds.Of(tb)} });
 }
 result = rows;
-""" % entries
+""" % (title_block_lookup(selected), entries, TITLE_BLOCK_READBACK if selected else "")
     if op_id == "revit.renumber_rename":
         number_pattern = _cs_string(arguments.get("number_pattern") or arguments.get("number_format"))
         name_pattern = _cs_string(arguments.get("name_pattern") or arguments.get("name_format"))
@@ -1893,6 +1922,16 @@ def sole_session():
     return sessions[0], ""
 
 
+def sheet_target(instance=None):
+    session = _session_for(instance, live_sessions())
+    answer = _execute(session, "result = new [] {Doc.Title, Doc.PathName, Doc.ProjectInformation.UniqueId};", "ArchHub read", transaction_mode=False)
+    identity = answer.get("result")
+    if answer.get("status") != "ok" or not isinstance(identity, list) or len(identity) != 3 or not identity[2]:
+        raise RevitUnreachable("Cannot identify the target Revit model.")
+    return {"port": session["port"], "pid": session["pid"], "document": identity[0],
+            "path": identity[1], "project_id": identity[2]}
+
+
 def authoring(script: str, transaction: str, params: Mapping[str, object], *, timeout: float = 30.0):
     """One /exec against the one live Revit session; (session, answer) or (None, why)."""
     session, why = sole_session()
@@ -1909,6 +1948,14 @@ def authoring(script: str, transaction: str, params: Mapping[str, object], *, ti
 
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared Revit operation against a live session."""
+    if op_id == "revit.create_sheets":
+        from .nodeslib_v2_engines import sheet_title_block
+        selected = sheet_title_block(arguments, {})
+        arguments = dict(arguments)
+        if selected:
+            arguments["title_block"] = selected
+        else:
+            arguments.pop("title_block", None)
     write_grant = _require_write_grant(op_id, arguments) if op_id in _REVIT_WRITE_OPS else None
     if op_id == "revit.export_ifc":
         session, answer = _ifc_export(arguments)
@@ -1920,7 +1967,14 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
                 "this adapter does not yet carry out %s" % op_id
             )
         sessions = live_sessions()
-        session = _session_for(arguments.get("instance"), sessions)
+        target = arguments.get("sheet_target") if op_id == "revit.create_sheets" else None
+        session = _session_for(target["port"] if target else arguments.get("instance"), sessions)
+        if target:
+            if target["pid"] != session["pid"]:
+                raise RevitUnreachable("The approved Revit session changed.")
+            script = ('if (Doc.Title != %s || Doc.PathName != %s || Doc.ProjectInformation.UniqueId != %s) '
+                      'throw new InvalidOperationException("The approved Revit model changed.");\n'
+                      % tuple(_cs_string(target[k]) for k in ("document", "path", "project_id"))) + script
         answer = _execute(session, script, "ArchHub write" if write_grant else "ArchHub read")
     if answer.get("status") != "ok":
         raise RevitUnreachable(

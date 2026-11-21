@@ -25,6 +25,9 @@ touch a host nobody chose.
 
 from __future__ import annotations
 
+PROJECT_TITLE_BLOCK_SOURCE = "From Projects"
+
+
 def _input(id, label, kind, *, default="", required=False, help="", **metadata):
     row = {
         "id": id,
@@ -290,6 +293,7 @@ REVIT_OPERATIONS = [
     _write("revit.create_sheets", "revit", "Create sheets",
            "Create approved sheets from rows.", (
                _input("rows", "Sheet rows", "sheet-rows", required=True),
+               _input("title_block", "Title block", "text", default=PROJECT_TITLE_BLOCK_SOURCE),
            )),
     _write("revit.renumber_rename", "revit", "Renumber / rename",
            "Renumber or rename approved elements.", (

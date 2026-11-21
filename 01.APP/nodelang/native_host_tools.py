@@ -99,7 +99,7 @@ def register_host_tools(server, control=None, *, read_only=False) -> None:
             reason = reason or "Local permission changed. The command may have run; check the host. Do not run it again blindly."
         answer = {key: value for key, value in result.items()
                   if key not in ("work", "confirmed", "unconfirmed")}
-        return {**answer, "confirmed": reason is None,
+        return {**answer, "confirmed": reason is None and not answer.get("approvalId"),
                 **({"unconfirmed": reason} if reason else {})}
 
     @server.tool(name="hosts_state")
@@ -384,6 +384,9 @@ def _dispatch_broker(spec, arguments, read, effect):
             if params.get(key):
                 params["name"] = params[key]
                 break
+
+    if spec["op"] == "revit.create_sheets" and not params.get("grant"):
+        params["_native_host_effect"] = True
 
     def run():
         return _run_engine(spec["engine"], params)

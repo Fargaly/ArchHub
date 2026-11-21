@@ -1445,13 +1445,15 @@ var number = %s;
 var names = new List<string>{%s};
 ViewSheet sheet = null;
 foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) if (vs.SheetNumber == number) { sheet = vs; break; }
+long? createdTitleBlock = null;
 var placed = new List<string>(); var skipped = new List<string>();
 // The broker runs this inside the transaction it named; a second Start here would throw.
 if (sheet == null) {
-    ElementId tb = ElementId.InvalidElementId;
-    foreach (Element e in new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol))) { tb = e.Id; break; }
+    %s
     sheet = ViewSheet.Create(Doc, tb);
     sheet.SheetNumber = number;
+    %s
+    createdTitleBlock = global::RevitMCPCore.RevitIds.Of(tb);
 }
 var box = sheet.Outline;
 double w = box.Max.U - box.Min.U, h = box.Max.V - box.Min.V;
@@ -1465,25 +1467,31 @@ foreach (var name in names) {
     Viewport.Create(Doc, sheet.Id, view.Id, pt);
     placed.Add(name); i++;
 }
-result = new Dictionary<string, object>{ {"sheet", sheet.SheetNumber}, {"placed", placed}, {"skipped", skipped} };
+result = new Dictionary<string, object>{ {"sheet", sheet.SheetNumber}, {"placed", placed}, {"skipped", skipped}, {"created_title_block_type_id", createdTitleBlock} };
 """
 
 
 def place_on_sheet(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Named views onto one sheet (made if missing), two per row, through the live Revit."""
     import json
-    number = _text(params, "sheet")
+    number = _text(feeds, "sheet", _text(params, "sheet"))
     if not number:
         return {"out": []}, "no sheet number given"
-    held = _wired(feeds, "in", "views")
+    held = _wired(feeds, "views", "in")
     names = [str(item_field(row, "name") or row) for row in as_list(held)] if held is not None else [
         piece.strip() for piece in _text(params, "views").split(",") if piece.strip()]
     if not names:
         return {"out": []}, "no view named, nothing wired in"
-    script = _PLACE_ON_SHEET % (json.dumps(number), ", ".join(json.dumps(name) for name in names))
-    from .clean_revit_adapter import authoring
+    from .clean_revit_adapter import authoring, title_block_lookup, TITLE_BLOCK_READBACK
+    from .clean_host_catalogue_source import PROJECT_TITLE_BLOCK_SOURCE
+    from .nodeslib_v2_engines import resolve_sheet_title_block
+    selected = resolve_sheet_title_block(feeds.get("title_block", params.get("title_block", PROJECT_TITLE_BLOCK_SOURCE)))
+    script = _PLACE_ON_SHEET % (json.dumps(number), ", ".join(json.dumps(name) for name in names),
+                                title_block_lookup(selected, first_if_unset=True), TITLE_BLOCK_READBACK if selected else "")
     session, result = authoring(script, "ArchHub place on sheet", params)
     if session is None:
+        if selected:
+            raise ValueError(str(result))
         return {"out": []}, str(result)
     placed = as_list(result.get("placed"))
     skipped = as_list(result.get("skipped"))
@@ -1499,7 +1507,7 @@ LIBRARY_ENGINES.update({
 LIBRARY_ITEM_ENGINES.update({
     "a_rooms": {"engine": "library.tag_rooms", "params": {}},
     "a_tags": {"engine": "library.place_tags", "params": {"category": "Doors", "leader": "true"}},
-    "c_sheet": {"engine": "library.place_on_sheet", "params": {"sheet": "", "views": ""}},
+    "c_sheet": {"engine": "library.place_on_sheet", "params": {"sheet": "", "views": "", "title_block": "From Projects"}},
 })
 for _wired_now in ("a_rooms", "a_tags", "c_sheet"):
     LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
@@ -1764,7 +1772,8 @@ ENGINE_SOCKETS = {
     "revit.set_parameter_by_name": {"source": ("elements", "out"), "target": ("elements", "parameter", "value", "grant")},
     "excel.write_range": {"source": ("file", "out"), "target": ("rows", "grant")},
     "revit.export_ifc": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "setup_source", "setup_name", "views")},
-    "revit.create_sheets": {"source": ("sheets", "out"), "target": ("rows", "grant")},
+    "library.place_on_sheet": {"source": ("out",), "target": ("in", "sheet", "views", "title_block")},
+    "revit.create_sheets": {"source": ("sheets", "out"), "target": ("rows", "title_block", "grant")},
     "revit.renumber_rename": {"source": ("elements", "out"), "target": ("elements", "number_format", "name_format", "grant")},
 }
 
@@ -1920,7 +1929,7 @@ LIBRARY_ITEM_ENGINES.update({
     "d_place_tags": {"engine": "library.place_tags",
                      "params": {"category": "Doors", "leader": "true"}},
     "d_place_sheet": {"engine": "library.place_on_sheet",
-                      "params": {"sheet": "", "views": ""}},
+                      "params": {"sheet": "", "views": "", "title_block": "From Projects"}},
     "d_schedule": {"engine": "library.build_schedule", "params": {"columns": ""}},
     "d_legend": {"engine": "library.make_legend", "params": {"by": "type"}},
     "text_ops": {"engine": "text.ops",
@@ -1953,7 +1962,7 @@ LIBRARY_ITEM_ENGINES.update({
                         "params": {}},
     "f_write_table": {"engine": "excel.write_range",
                       "params": {"format": "xlsx", "sheet": "Sheet1", "range": "A1"}},
-    "b_create_sheets": {"engine": "revit.create_sheets", "params": {}},
+    "b_create_sheets": {"engine": "revit.create_sheets", "params": {"title_block": "From Projects"}},
     "b_renumber": {"engine": "revit.renumber_rename",
                    "params": {}},
     "w_watch": {"engine": "watch.preview", "params": {"as": "table"}},
@@ -2764,6 +2773,11 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
                       'out':{'type':'list','direction':'output'}}
     if engine in DECISION_INTERFACES:
         interfaces = DECISION_INTERFACES[engine]
+    if engine == "library.place_on_sheet":
+        interfaces = {**interfaces, "sheet": {"type": "string", "direction": "input"},
+                      "views": {"type": "list", "direction": "input"}}
+    if engine in ("revit.create_sheets", "library.place_on_sheet"):
+        interfaces = {**interfaces, "title_block": {"type": "string", "direction": "input"}}
     return _interface_ports(interfaces, sockets)
 
 

@@ -200,6 +200,26 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
+    sheet_write = engine == 'revit.create_sheets'
+    if sheet_write or engine == 'library.place_on_sheet':
+        from .nodeslib_v2_engines import sheet_title_block
+        selected = sheet_title_block(params, feeds, document)
+        if continuation and not _RELEASING.get(False):
+            continuation = {**continuation, 'sheet_binding': {'params': copy.deepcopy(params),
+                            'feeds': copy.deepcopy(feeds), 'selected': selected}}
+        if not sheet_write:
+            params = {**params, 'title_block': selected}
+            feeds = {**feeds, 'title_block': selected}
+    if sheet_write:
+        if params.get('_native_host_effect'):
+            from .native_host_tools import _allow_effect
+            _allow_effect('revit')
+        from .nodeslib_v2_engines import sheet_request, sheet_effect
+        from .clean_revit_adapter import sheet_target
+        effect = sheet_effect(sheet_request(params, feeds, document), sheet_target(params.get('instance')))
+        if _RELEASING.get(False) and params.get('_sheet_effect') != effect:
+            raise ValueError('Sheet inputs or the target model changed after approval. Run again.')
+        params = {**params, '_sheet_effect': effect}
     ifc_write = engine == 'revit.export_ifc'
     if ifc_write:
         from .nodeslib_v2_engines import ifc_export_request
@@ -223,10 +243,13 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
             continuation = {**continuation, 'bcf_binding': {'node': node['id'], 'source': source,
                             'digest': digest, 'version': params['bcf_version'], 'output': params['bcf_path'],
                             'version_input': version_input}}
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or ifc_write or engine in ('thing.file.write', 'script.python'))):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or ifc_write or sheet_write or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
+    if sheet_write:
+        params = {**params, 'title_block': selected}
+        feeds = {**feeds, 'title_block': selected}
     if engine == 'approval.gate' and _RELEASING.get(False):
         from hashlib import sha256
         from .nodeslib_v2_engines import approval_gate
@@ -1415,6 +1438,11 @@ def approval_current(document, continuation, identity):
     current = document.get('properties', {}).get('canvasRun', {})
     if not current.get('id') or current['id'] != expected.get('id') or current.get('inputs', {}).get(identity) != expected.get('inputs', {}).get(identity):
         return False
+    binding = continuation.get('sheet_binding')
+    if binding:
+        from .nodeslib_v2_engines import sheet_title_block
+        if sheet_title_block(binding['params'], binding['feeds'], document) != binding['selected']:
+            return False
     binding = continuation.get('ifc_binding')
     if binding:
         from .nodeslib_v2_engines import ifc_export_request

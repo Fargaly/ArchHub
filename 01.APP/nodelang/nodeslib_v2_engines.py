@@ -122,7 +122,7 @@ def _verified_write_grant(
     if path is not None and Path(str(grant.get("path"))).resolve() != path.resolve():
         raise ValueError("approval grant path does not match")
     verifier = _WRITE_GRANT_VERIFIER
-    if verifier is None and operation == "revit.export_ifc":
+    if verifier is None and operation in ("revit.create_sheets", "revit.export_ifc"):
         from .hook_decision import verify_canvas_ifc_grant
         verifier = verify_canvas_ifc_grant
     if verifier is None:
@@ -255,18 +255,58 @@ def revit_set_parameter(params: Mapping[str, object], feeds: Mapping[str, object
     return {"elements": rows, "out": rows}, "set %s on %d element(s)" % (name, len(rows))
 
 
+def sheet_title_block(params, feeds, document=None):
+    from .clean_host_catalogue_source import PROJECT_TITLE_BLOCK_SOURCE
+    return resolve_sheet_title_block(feeds.get("title_block", params.get("title_block", PROJECT_TITLE_BLOCK_SOURCE)), document)
+
+
+def resolve_sheet_title_block(value, document=None):
+    from .clean_host_catalogue_source import PROJECT_TITLE_BLOCK_SOURCE
+    if value == PROJECT_TITLE_BLOCK_SOURCE:
+        from .session_files import resolve_setting
+        value = resolve_setting(document or {}, "Projects.Title block")["value"]
+    if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+        raise ValueError("Choose one title block family and type.")
+    return "" if value == "Not set" else value.strip()
+
+
+def sheet_request(params, feeds, document=None):
+    rows = _rows(feeds.get("rows", feeds.get("in", params.get("rows"))))
+    if any(not isinstance(row, Mapping) or not (row.get("number") or row.get("name")) for row in rows):
+        raise ValueError("Each sheet row needs a number or a name.")
+    selected = sheet_title_block(params, feeds, document)
+    return {"rows": rows, **({"title_block": selected} if selected else {})}
+
+
+def sheet_effect(request, target):
+    content = {**request, "sheet_target": target}
+    pending = {"kind": "sheet-create", "operation": "revit.create_sheets", "intent": "SHEETCREATE",
+               "author": "archhub/canvas", "why": "Create the reviewed sheets in the selected Revit model.",
+               "target": "revit://sheet-create/" + target["project_id"], "content": content}
+    return {**content, "pending_write": pending}
+
+
 def revit_create_sheets(params: Mapping[str, object], feeds: Mapping[str, object]):
     params = _params_with_wired_grant(params, feeds)
     operation = "revit.create_sheets"
-    rows = _rows(_wired(feeds, "rows", "in"))
-    request = {"rows": rows}
-    grant = _require_grant(
-        params, operation=operation, scope="revit.write",
-        input_digest=_digest_payload(request),
-    )
-    answer = _confirmed_write(_revit(operation, {"grant": grant, "mods_store": params.get("mods_store"), **request}), operation)
-    made = answer.get("result") or answer.get("sheets") or []
-    return {"sheets": made, "out": made}, "created %d sheet(s)" % len(made)
+    request = sheet_request(params, feeds)
+    if "_sheet_effect" in params:
+        from .hook_decision import canvas_revit_grant
+        request = sheet_effect(request, params["_sheet_effect"]["sheet_target"])
+        grant = canvas_revit_grant(operation, request)
+    else:
+        grant = _require_grant(params, operation=operation, scope="revit.write", input_digest=_digest_payload(request))
+    answer = _confirmed_write(_revit(operation, {"grant": grant, "mods_store": params.get("mods_store"),
+                                                 "title_block": "", **request}), operation)
+    made = answer.get("result", answer.get("sheets"))
+    if not isinstance(made, list) or len(made) != len(request["rows"]):
+        raise ValueError("Revit did not confirm every requested sheet.")
+    for row, actual in zip(request["rows"], made):
+        if (not isinstance(actual, Mapping) or actual.get("id") is None
+                or any(row.get(k) and actual.get(k) != row[k] for k in ("number", "name"))
+                or (request.get("title_block") and actual.get("title_block_type_id") in (None, -1))):
+            raise ValueError("Revit sheet readback differs from the request.")
+    return {"sheets": made, "out": made, "receipt": answer["receipt"]}, "created %d sheet(s)" % len(made)
 
 
 def revit_renumber_rename(params: Mapping[str, object], feeds: Mapping[str, object]):

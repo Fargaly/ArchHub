@@ -107,7 +107,7 @@ fn run() -> Result<bool, String> {
         .map_err(|e| e.to_string())?;
         if !context.is_object() { return Err("artifact context must be an object".into()); }
         context["artifact_kind"] = payload["kind"].clone();
-        if payload["kind"] == "ifc-export" {
+        if payload["kind"] == "ifc-export" || payload["kind"] == "sheet-create" {
             context["files"] = serde_json::json!([payload["target"]]);
         }
         let mut report = analyze_artifact(&payload, &context);

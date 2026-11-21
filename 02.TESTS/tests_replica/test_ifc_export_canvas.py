@@ -184,6 +184,7 @@ def test_two_exports_report_each_approved_node_independently(project,monkeypatch
     assert calls==['IFC4RV','IFC4RV']
 
 @pytest.mark.parametrize('identity,default,global_value,workspace_value,session_value,invalid', [
+    ('Projects.Title block','Not set','Office A1 title block','Office A0 title block','Office A3 title block','missing'),
     ('Projects.IFC version','IFC4','IFC2x3','IFC4.3','IFC4','IFC9'),
     ('Projects.IFC export setup','','Global exchange','Workspace exchange','Session exchange','invalid\nname'),
 ])
@@ -281,3 +282,155 @@ def test_inherited_setup_approved_to_adapter(project,monkeypatch,setup,label):
     calls=transport(monkeypatch,target,expected_setup=setup)
     assert ask_apply(card['id'],card['input_digest'],'approve')['status']=='approved'
     assert calls==['IFC4RV'] and target.is_file()
+
+@pytest.mark.parametrize('entry', ['canvas', 'agent', 'revoked', 'wire', 'stale', 'host-refusal', 'canvas-refuse', 'agent-refuse'])
+def test_sheet_creation_uses_reviewed_model_and_title_block(project, monkeypatch, entry):
+    from nodelang import clean_revit_adapter as adapter, settings_owner, session_files as files
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    root, source = project
+    settings_owner.preference_settings('setAppearance', ['Projects.Title block', 'Office A1 title block'])
+    from nodelang import enforce
+    from nodelang.hook_decision import _CLAIMED_ASK
+    calls, decisions = [], []
+    inspect = enforce.inspect_pending
+    def observe(pending, *args, **kwargs):
+        held = _CLAIMED_ASK.get()['row']['replay']['payload']
+        reviewed = held['node']['params']['_sheet_effect']['pending_write']
+        assert pending == reviewed and not calls
+        result = inspect(pending, *args, **kwargs)
+        decisions.append((pending['operation'], result['ok']))
+        return result
+    monkeypatch.setattr(enforce, 'inspect_pending', observe)
+    monkeypatch.setattr(adapter, 'live_sessions', lambda: [{'port': 48884, 'pid': 7, 'revit_version': '2027', 'document': 'Model'}])
+    def broker(port, route, body):
+        if body.get('transaction') is False:
+            return {'status': 'ok', 'result': ['Model', str(source), 'fixture-project']}
+        assert decisions == [('revit.create_sheets', True)]
+        calls.append(body)
+        if entry == 'host-refusal':
+            return {'status': 'error', 'error': 'Title block is not loaded in the disposable model.'}
+        return {'status': 'ok', 'result': [{'id': 5, 'number': 'A101', 'name': 'Plan', 'title_block_type_id': 9}]}
+    monkeypatch.setattr(adapter, '_call', broker)
+    params = {'rows': [{'number': 'A101', 'name': 'Plan'}]}
+    if entry.endswith('-refuse'):
+        params['rows'][0]['unsupported'] = 'The sheet compiler rejects extra fields.'
+    if entry not in ('agent', 'revoked', 'agent-refuse'):
+        document = files.new_document('Sheets')
+        document['nodes'] = [{'id': 'sheets', 'item': 'b_create_sheets', 'type': 'revit.create_sheets',
+                              'params': params, 'position': {'x': 0, 'y': 0}}]
+        if entry == 'wire':
+            settings_owner.preference_settings('setAppearance', ['Projects.IFC export setup', 'A3 frame'])
+            document['nodes'][0]['params']['title_block'] = 'Explicit A2'
+            document['nodes'].append({'id':'setting','type':'thing.setting','params':{'setting':'Projects.IFC export setup'},'position':{'x':0,'y':120}})
+            document['wires'] = [{'id':'title-wire','from':{'node':'setting','socket':'value'},'to':{'node':'sheets','socket':'title_block'}}]
+        path = root / 'sheets.archhub'
+        files.write_document(path, document)
+        result = files.SessionFiles(root/'sessions').dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    else:
+        from nodelang import native_host_tools
+        from nodelang.user_paths import state_directory
+        class Server:
+            def tool(self, name, **options):
+                def register(fn):
+                    setattr(self, name, fn)
+                    return fn
+                return register
+        server = Server()
+        native_host_tools.register_host_tools(server)
+        settings = state_directory() / 'settings.json'
+        settings.write_text(json.dumps({'host_effects': {'revit': True}}))
+        result = server.revit_run('b_create_sheets', params)
+        assert result['confirmed'] is False, result
+    card = next(row for row in ask_reviews() if row['id'] == result['approvalId'])
+    assert ('A3 frame' if entry == 'wire' else 'Office A1 title block') in card['text'] and 'A101' in card['text'] and not calls
+    assert not decisions
+    if entry.endswith('-refuse'):
+        with pytest.raises(ValueError, match='E0009'):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        assert decisions == [('revit.create_sheets', False)] and not calls
+        return
+    if entry == 'revoked':
+        settings.write_text(json.dumps({'host_effects': {'revit': False}}))
+        with pytest.raises(ValueError, match='permission is disabled'):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        assert not calls
+        return
+    if entry == 'stale':
+        settings_owner.preference_settings('setAppearance', ['Projects.Title block', 'Office A3 title block'])
+        with pytest.raises(ValueError, match='changed'):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        assert not calls
+        return
+    if entry == 'host-refusal':
+        with pytest.raises(ValueError, match='not loaded'):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        assert len(calls) == 1
+        return
+    assert ask_apply(card['id'], card['input_digest'], 'approve')['status'] == 'approved'
+    ask_apply(card['id'], card['input_digest'], 'approve')
+    assert len(calls) == 1 and decisions == [('revit.create_sheets', True)]
+    if entry not in ('agent', 'revoked', 'agent-refuse'):
+        result = files.read_document(path)['nodes'][0]['result']
+        assert result['output']['sheets'][0]['title_block_type_id'] == 9
+        assert result['output']['receipt']['operation'] == 'revit.create_sheets'
+
+@pytest.mark.parametrize('change', ['target', 'operation', 'rows', 'extra argument', 'project id', 'title block'])
+def test_sheet_compiler_refuses_invalid_pending_request(project, change):
+    from nodelang.enforce import inspect_pending
+    from nodelang.nodeslib_v2_engines import sheet_effect
+    target = {'port': 48884, 'pid': 7, 'project_id': 'fixture-project', 'document': 'Model', 'path': str(project[1])}
+    pending = sheet_effect({'rows': [{'number': 'A101'}], 'title_block': 'Office A1 title block'}, target)['pending_write']
+    if change == 'target':
+        pending['target'] = 'revit://sheet-create/another-project'
+    elif change == 'operation':
+        pending['operation'] = 'revit.set_parameter_by_name'
+    elif change == 'rows':
+        pending['content']['rows'] = [{}]
+    elif change == 'extra argument':
+        pending['content']['unexpected'] = True
+    elif change == 'project id':
+        target['project_id'] = '../other'
+    else:
+        pending['content']['title_block'] = ['Office A1 title block']
+    checked = inspect_pending(pending)
+    assert not checked['ok']
+    assert any(row['code'] == 'E0009' for row in checked['diagnostics'])
+
+def test_sheet_catalogue_and_saved_node_default(project):
+    from nodelang import nodeslib_v2_engines as nodes, session_files as files
+    items = {item['id']: item for item in files.catalogue()}
+    for key in ('b_create_sheets', 'd_place_sheet'):
+        item = items[key]
+        assert item['params']['title_block'] == 'From Projects'
+        port = next(port for port in item['ports']['target'] if port['id'] == 'title_block')
+        assert port['type'] in ('string', 'text')
+    rows = [{'number': 'A101'}]
+    assert nodes.sheet_request({}, {'rows': rows}) == {'rows': rows}
+    assert nodes.sheet_request({'title_block': 'Node type'}, {'rows': rows, 'title_block': ''}) == {'rows': rows}
+
+@pytest.mark.parametrize('feeds,expected', [
+    ({'sheet':'W1','views':['North','South'],'title_block':'Wired family','in':['Legacy']},
+     ('W1',['North','South'],'Wired family')),
+    ({'in':['Legacy']}, ('L1',['Legacy'],'Literal family')),
+    ({}, ('L1',['Ground','Roof'],'Literal family')),
+])
+def test_place_on_sheet_named_inputs(project, monkeypatch, feeds, expected):
+    from nodelang import clean_revit_adapter as adapter, session_files as files
+    from nodelang.enforce import guard_effect
+    seen = []
+    def broker(script, transaction, params):
+        sheet, names, family = expected
+        assert transaction == 'ArchHub place on sheet'
+        assert 'var number = ' + json.dumps(sheet) + ';' in script
+        assert 'new List<string>{' + ', '.join(map(json.dumps, names)) + '}' in script
+        assert 'string wanted = ' + json.dumps(family) + ';' in script
+        seen.append(sheet)
+        return {'port': 48884}, {'sheet': sheet, 'placed': names, 'skipped': []}
+    monkeypatch.setattr(adapter, 'authoring', broker)
+    item = next(row for row in files.catalogue() if row['id'] == 'd_place_sheet')
+    assert {'in', 'sheet', 'views', 'title_block'} <= {row['id'] for row in item['ports']['target']}
+    params = {**item['params'], 'sheet':'L1', 'views':'Ground, Roof', 'title_block':'Literal family'}
+    node = {'id':'place', 'item':item['id'], 'type':item['engine'], 'params':params}
+    output, _ = files._dispatch_node(files.new_document('Placement'), node, item['engine'], params, feeds,
+                                     invoke=guard_effect, stopped=None, depth=0)
+    assert seen == [expected[0]] and output['placed'] == expected[1]

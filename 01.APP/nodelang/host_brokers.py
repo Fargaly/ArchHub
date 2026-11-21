@@ -946,6 +946,19 @@ def revit_verb(params: Mapping[str, object], feeds: Mapping[str, object]):
         for key, value in feeds.items():
             if key not in arguments and value is not None:
                 arguments[key] = value
+    if operation == "revit.create_sheets":
+        if isinstance(feeds, Mapping) and "title_block" in feeds:
+            arguments["title_block"] = feeds["title_block"]
+        if not arguments.get("grant"):
+            from .session_files import _dispatch_node, new_document
+            sheet_params = {"rows": arguments.get("rows", []), "title_block": arguments.get("title_block", "From Projects"),
+                           "instance": arguments.get("instance") or arguments.get("session", "")}
+            if arguments.get("_native_host_effect"):
+                sheet_params["_native_host_effect"] = True
+            node = {"id": "create-sheets", "item": "b_create_sheets", "type": operation, "title": "Create sheets",
+                    "params": sheet_params, "position": {"x": 0, "y": 0}}
+            return _dispatch_node(new_document("Create sheets"), node, operation, sheet_params, {},
+                                  invoke=None, stopped=None, depth=0)
     answer = invoke(operation, arguments)
     return {"out": answer.get("result", answer)}, operation
 

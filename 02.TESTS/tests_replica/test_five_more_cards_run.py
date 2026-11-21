@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from nodelang import library_engines as L
 from nodelang import model_router, pipeline_engines
 from nodelang.agent_composer import NO_MODEL_CHOSEN
@@ -196,8 +198,8 @@ def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_
     assert 'new List<string>{"A101", "A102"}' in code
     head = code.lstrip()
     folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
-    base = __import__("os").path.join(__import__("os").path.expanduser("~"), "Documents", "ArchHub", "pdf")
-    assert folder.startswith(base) and __import__("os").path.basename(folder).startswith(__import__("os").path.basename(str(tmp_path)) + "-"), folder
+    assert Path(folder).parent == Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "pdf"
+    assert Path(folder).name.startswith(tmp_path.name + "-")
     assert sent["body"]["transaction_name"] == "ArchHub publish pdf"
     assert out["out"] == [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]
     assert said.startswith("2 PDF(s) in") and "project-a.rvt" in said
@@ -382,13 +384,23 @@ def test_revit_acts_refuse_two_sessions_rather_than_guess_the_model(monkeypatch)
     assert called == []
 
 
-def test_publish_pdf_never_lets_a_graph_name_a_share(monkeypatch, tmp_path):
+@pytest.mark.parametrize("isolated_state", [True, False], ids=["isolated-state", "documents"])
+def test_publish_pdf_never_lets_a_graph_name_a_share(monkeypatch, tmp_path, isolated_state):
+    if isolated_state:
+        base = Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "pdf"
+    else:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("ARCHHUB_TEST_STATE_DIR")
+        base = home / "Documents" / "ArchHub" / "pdf"
     sent = _revit(monkeypatch, {"sheets": 1, "folder": "x", "files": []})
     out, said = L.publish_pdf({"folder": "//evil/share/drop"}, {})
     head = sent["body"]["code"].lstrip()
     folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
-    base = __import__("os").path.join(__import__("os").path.expanduser("~"), "Documents", "ArchHub", "pdf")
-    assert folder.startswith(base) and "evil" not in folder and __import__("os").path.basename(folder).startswith("drop-")
+    assert Path(folder).parent == base
+    assert Path(folder).name.startswith("drop-")
 
 
 def test_a_model_call_cannot_hold_the_canvas_for_a_minute(monkeypatch, tmp_path):

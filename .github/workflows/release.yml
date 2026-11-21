@@ -765,7 +765,10 @@ jobs:
         with:
           ref: 9d03226d4b06f52bd4db9ce0f5854351e6ee6899
           path: stable-witness
-          sparse-checkout: 03.TOOLS/tools/real_app_check
+          sparse-checkout: |
+            /03.TOOLS/tools/real_app_check/
+            /04.DOCS/SPEC.md
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Run the pinned actual-window checks on the final installed build
         shell: pwsh

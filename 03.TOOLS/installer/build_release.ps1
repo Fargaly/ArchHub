@@ -818,7 +818,6 @@ if ($BrokerReviewPath) { $bridgeArgs.BrokerReviewPath = $BrokerReviewPath }
 # shipped Revit / AutoCAD year and the Max script must carry it.
 $hostBrokersReviewed = $false
 if ($BrokerReviewPath) {
-    $LASTEXITCODE = 0
     & $PythonPath -E -s $reviewCheck 'check' --index (Join-Path $hostPayload 'HOST_ARTIFACTS.json') `
         --review $BrokerReviewPath --revision $revision --bridges (Join-Path $selectedRoot 'bridges')
     if ($LASTEXITCODE -ne 0) { throw 'Release refused: a shipped host broker is unreviewed or the review does not decide this source.' }
@@ -878,9 +877,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Installed source manifest generation failed.' 
 $installedManifestSha = (Get-FileHash -LiteralPath $installedManifest -Algorithm SHA256).Hash.ToLowerInvariant()
 if (-not $candidate) {
     $hostChecker = Join-Path $selectedRoot 'packaging/windows/check_update_offer.py'
-    $checkHostCoverage = 'import runpy,sys; from pathlib import Path; runpy.run_path(sys.argv[1])["check_host_payloads"](Path(sys.argv[2]),sys.argv[3])'
-    & $PythonPath -E -s -B -c $checkHostCoverage $hostChecker $installedManifest $BuildId
-    if ($LASTEXITCODE -ne 0) { throw 'Stable release native host coverage failed; no installer was compiled.' }
+    $checkHostCoverage = 'import runpy,sys; from pathlib import Path; runpy.run_path(sys.argv[1])[sys.argv[4]](Path(sys.argv[2]),sys.argv[3])'
+    & $PythonPath -E -s -B -c $checkHostCoverage $hostChecker $installedManifest $BuildId check_host_payloads
+    if ($global:LASTEXITCODE -ne 0) { throw 'Stable release native host coverage failed; no installer was compiled.' }
 }
 & $compiler "/DInstalledManifestPath=$installedManifest" "/DInstalledManifestSha256=$installedManifestSha" "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/DPreflightFilesPath=$(Join-Path $preflightOutput 'preflight-files.iss')" "/DPreflightCodePath=$(Join-Path $preflightOutput 'preflight-code.iss')" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }

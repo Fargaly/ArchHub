@@ -7,13 +7,17 @@ import sys
 from types import SimpleNamespace
 
 
-def snapshot(seed, run, workspace, document_path, state):
-    from nodelang import session_files
-    from nodelang.nograph_server import JsonFile, NoGraphServer, r_workspace_roots
-    from nodelang.settings_owner import PreferenceScope
+THEME = 'Appearance.Theme'
+THEME_VALUES = {'User': 'Light', 'Workspace': 'Dark', 'Session': 'System'}
 
-    setting = 'Appearance.Theme'
-    expected = {'User': 'Light', 'Workspace': 'Dark', 'Session': 'System'}
+
+def snapshot(seed, run, workspace, document_path, state):
+    from nodelang import session_files, settings_owner
+    from nodelang.nograph_server import JsonFile, NoGraphServer, r_workspace_roots
+
+    scope_owner = getattr(settings_owner, 'PreferenceScope', None)
+    if not seed and scope_owner is None:
+        raise ValueError('The upgraded Settings owner must support full scope readback.')
     files = {'settings': JsonFile(state / 'settings/settings.json', {}),
              'workspaces': JsonFile(state / 'settings/workspaces.json', {'roots': []})}
     owner = SimpleNamespace(files=files, workspace_built_in=NoGraphServer.workspace_built_in)
@@ -34,9 +38,12 @@ def snapshot(seed, run, workspace, document_path, state):
         session_files.write_document(document_path, doc)
         sessions.dispatch({'action': 'open', 'path': str(document_path)})
         owners = (files['settings'], files['workspaces'], str(document_path))
-        for scope, value in expected.items():
-            PreferenceScope(*owners).select(scope, registered['root_id'], doc['id'])
-            PreferenceScope(*owners).change({setting: value})
+        if scope_owner is None:
+            settings_owner.appearance_settings('setAppearance', [THEME, THEME_VALUES['User']], settings=files['settings'])
+        else:
+            for scope, value in THEME_VALUES.items():
+                scope_owner(*owners).select(scope, registered['root_id'], doc['id'])
+                scope_owner(*owners).change({THEME: value})
 
     doc = session_files.read_document(document_path)
     matches = [row for row in roots('list')['roots'] if Path(row['path']) == workspace]
@@ -44,12 +51,17 @@ def snapshot(seed, run, workspace, document_path, state):
         raise ValueError('The saved workflow and registered workspace no longer match.')
     if not any(node['type'] == 'note' and node['params'].get('text') == run for node in doc['nodes']):
         raise ValueError('The user-created workflow note was lost.')
-    maps = PreferenceScope(files['settings'], files['workspaces'], str(document_path)).maps()
-    values = {scope: maps[scope].get(setting) for scope in expected}
+    if scope_owner is None:
+        rows = settings_owner.appearance_settings(settings=files['settings'])['appearanceSettings']
+        theme = next(row for row in rows if row['id'] == THEME)
+        values = {'User': theme['value'] if theme['overridden'] else None, 'Workspace': None, 'Session': None}
+    else:
+        maps = scope_owner(files['settings'], files['workspaces'], str(document_path)).maps()
+        values = {scope: maps[scope].get(THEME) for scope in THEME_VALUES}
     return {'document': str(document_path), 'document_id': doc['id'],
             'document_sha256': hashlib.sha256(document_path.read_bytes()).hexdigest(),
             'workspace': str(workspace), 'workspace_id': matches[0]['root_id'],
-            'privacy': matches[0]['privacy'], 'setting': setting, 'values': values, 'state': str(state)}
+            'privacy': matches[0]['privacy'], 'setting': THEME, 'values': values, 'state': str(state)}, scope_owner is not None
 
 
 def main():
@@ -74,14 +86,20 @@ def main():
     receipt = evidence / ('upgrade-' + phase + '.json')
     record = {'phase': phase, 'build': expected_build, 'result': 'FAIL'}
     try:
-        data = snapshot(phase == 'seed', run, workspace, document, state)
+        data, scoped = snapshot(phase == 'seed', run, workspace, document, state)
         record['snapshot'] = data
-        if data['values'] != {'User':'Light','Workspace':'Dark','Session':'System'} or data['privacy'] != 'private':
-            raise ValueError('The registered privacy or one of the three persisted overrides differs.')
-        if phase == 'verify':
+        if data['privacy'] != 'private':
+            raise ValueError('The registered workspace privacy differs.')
+        if phase == 'seed':
+            expected = THEME_VALUES if scoped else {'User': 'Light', 'Workspace': None, 'Session': None}
+            if data['values'] != expected:
+                raise ValueError('The installed Settings owner did not seed the expected overrides.')
+        else:
             before = json.loads((evidence / 'upgrade-seed.json').read_text(encoding='utf-8'))
             if before['result'] != 'PASS' or before['snapshot'] != data:
                 raise ValueError('Installed owner readback differs from the pre-upgrade evidence.')
+        record['preference_checks'] = {scope: 'PASS' if value is not None else 'NOT EXERCISED'
+                                       for scope, value in data['values'].items()}
         record['result'] = 'PASS'
     except Exception as exc:
         record['error'] = str(exc)

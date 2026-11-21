@@ -585,7 +585,8 @@ jobs:
           ref: ${{ github.sha }}
           path: selected
           persist-credentials: false
-      - name: Prepare failure evidence for all six Settings cases
+      - name: Prepare the pinned release contract and Settings evidence
+        id: pins
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -623,6 +624,28 @@ jobs:
               return @{build=$build.GetString(); sha256=$sha.GetString(); bytes=$length}
             } finally { $candidate.Dispose() }
           }
+          function Read-PublishedBuildTime($pin) {
+            $url = 'https://github.com/' + $env:PUBLISHED_REPOSITORY + '/releases/download/build-' + $pin.build + '/release.json'
+            $response = Invoke-WebRequest -Uri $url
+            $json = if ($response.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($response.Content) } else { [string]$response.Content }
+            $document = [System.Text.Json.JsonDocument]::Parse($json)
+            try {
+              $release = $document.RootElement
+              $revision = $release.GetProperty('source_revision').GetString()
+              $suffix = ($pin.build -split '-')[-1]
+              if ($release.GetProperty('format').GetInt32() -ne 1 -or
+                  $release.GetProperty('build_id').GetString() -cne $pin.build -or
+                  $release.GetProperty('asset_name').GetString() -cne 'ArchHub-Setup-0.exe' -or
+                  $release.GetProperty('asset_bytes').GetInt64() -ne $pin.bytes -or
+                  $release.GetProperty('asset_sha256').GetString() -cne $pin.sha256 -or
+                  $revision -cnotmatch '\A[0-9a-f]{40}\z' -or $suffix -cnotmatch '\A[0-9a-f]{7,40}\z' -or
+                  !$revision.StartsWith($suffix, [StringComparison]::Ordinal)) {
+                throw 'Published release metadata differs from the pinned Setup identity.'
+              }
+              return [DateTimeOffset]::ParseExact($release.GetProperty('built_at').GetString(), "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+            } finally { $document.Dispose() }
+          }
           try {
             if (-not [string]::IsNullOrWhiteSpace($env:PUBLISHED_CANDIDATE)) {
               $pin = Read-Pin $env:PUBLISHED_CANDIDATE
@@ -635,12 +658,25 @@ jobs:
               $state.build = $env:PUBLISHED_BUILD
               $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
             }
+            # Only this published Setup has the optional-sign-in contract.
+            $stable = $env:PUBLISHED_BUILD -ceq '20261120-190757-44799181046-1-9d03226d4b06f52bd4db9ce0f5854351e6ee6899' -and
+                      $env:PUBLISHED_SHA256 -ceq '796135faadb2d5f432bf6951508d5c997f04e735371e2028bfe989c1d139d037' -and
+                      $env:PUBLISHED_BYTES -ceq '435230903'
+            $contract = if ($stable) { 'stable-optional-sign-in' } else { 'gated' }
+            $scenarioRevision = if ($stable) { '9d03226d4b06f52bd4db9ce0f5854351e6ee6899' } else { $env:GITHUB_SHA }
+            "ui_contract=$contract" >> $env:GITHUB_OUTPUT
+            "VERIFY_UI_CONTRACT=$contract" >> $env:GITHUB_ENV
+            @{contract=$contract;scenario_revision=$scenarioRevision;build=$env:PUBLISHED_BUILD;setup_sha256=$env:PUBLISHED_SHA256;setup_bytes=[long]$env:PUBLISHED_BYTES} |
+              ConvertTo-Json | Set-Content (Join-Path $evidence 'ui-contract.json') -Encoding utf8
             if (-not [string]::IsNullOrWhiteSpace($env:PREVIOUS_INSTALLER)) {
               $prior = Read-Pin $env:PREVIOUS_INSTALLER
-              $timestamp = '\A[0-9]{8}-[0-9]{6}(?=-)'
-              $old = [regex]::Match($prior.build,$timestamp).Value
-              $new = [regex]::Match($env:PUBLISHED_BUILD,$timestamp).Value
-              if (!$old -or !$new -or [string]::CompareOrdinal($old,$new) -ge 0 -or $prior.sha256 -ceq $env:PUBLISHED_SHA256) { throw 'An upgrade requires distinct Setup bytes and an earlier previous build timestamp.' }
+              $next = @{build=$env:PUBLISHED_BUILD; bytes=[long]$env:PUBLISHED_BYTES; sha256=$env:PUBLISHED_SHA256}
+              if ($prior.build -ceq $next.build -or $prior.sha256 -ceq $next.sha256) { throw 'An upgrade requires distinct Setup identities.' }
+              $old = Read-PublishedBuildTime $prior
+              $new = Read-PublishedBuildTime $next
+              if ($old -ge $new) { throw 'An upgrade requires an earlier previous published build time.' }
+              $prior.built_at = $old.ToString('O')
+              $prior.target_built_at = $new.ToString('O')
               $prior | ConvertTo-Json | Set-Content (Join-Path $evidence 'upgrade-previous-pin.json') -Encoding utf8
             }
           } catch {
@@ -723,7 +759,15 @@ jobs:
               throw
             }
           }
-      - name: Run the actual-window Settings checks on the final installed build
+      - name: Check out the pinned optional-sign-in release witness
+        if: steps.pins.outputs.ui_contract == 'stable-optional-sign-in'
+        uses: actions/checkout@v7
+        with:
+          ref: 9d03226d4b06f52bd4db9ce0f5854351e6ee6899
+          path: stable-witness
+          sparse-checkout: 03.TOOLS/tools/real_app_check
+          persist-credentials: false
+      - name: Run the pinned actual-window checks on the final installed build
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -731,7 +775,14 @@ jobs:
           $state = Get-Content -Raw $receipt | ConvertFrom-Json
           $app = Join-Path $env:LOCALAPPDATA 'ArchHub'
           $env:PATH = (Join-Path $app 'runtime') + [IO.Path]::PathSeparator + $env:PATH
-          & (Join-Path $app '.venv/Scripts/python.exe') -B selected/03.TOOLS/tools/real_app_check/real_app_check.py --app $app --scenario selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
+          $witness = 'selected/03.TOOLS/tools/real_app_check'
+          if ($env:VERIFY_UI_CONTRACT -ceq 'stable-optional-sign-in') {
+            $contract = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'ui-contract.json') | ConvertFrom-Json
+            $revision = git -C stable-witness rev-parse HEAD
+            if ($LASTEXITCODE -ne 0 -or $revision -cne $contract.scenario_revision) { throw 'The stable witness source does not match the pinned release.' }
+            $witness = 'stable-witness/03.TOOLS/tools/real_app_check'
+          }
+          & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario (Join-Path $witness 'scenarios/settings.mjs') --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
           $state.ui_exit = $LASTEXITCODE
           $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
           if ($state.ui_exit -ne 0) { throw 'Installed Settings actual-window acceptance failed; inspect the retained report.' }
@@ -757,26 +808,23 @@ jobs:
           $found = @($actual | Where-Object { $_.asked -ceq $startup })
           $startupResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$startup;result='NOT EXERCISED';did='The actual-window check did not reach the startup witness; no pass claimed.'} }
           $startupResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'startup-result.json') -Encoding utf8
-          $projects = Get-Content -Raw (Join-Path $evidence 'declared-projects.json') | ConvertFrom-Json
-          $found = @($actual | Where-Object { $_.asked -ceq $projects })
-          $projectsResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$projects;result='NOT EXERCISED';did='The actual-window check did not reach the Projects case; no pass claimed.'} }
-          $projectsResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'projects-result.json') -Encoding utf8
-          $scope = Get-Content -Raw (Join-Path $evidence 'declared-scope.json') | ConvertFrom-Json
-          $found = @($actual | Where-Object { $_.asked -ceq $scope })
-          $scopeResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$scope;result='NOT EXERCISED';did='The actual-window check did not reach scope recovery; no pass claimed.'} }
-          $scopeResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'scope-result.json') -Encoding utf8
-          $office = Get-Content -Raw (Join-Path $evidence 'declared-office.json') | ConvertFrom-Json
-          $found = @($actual | Where-Object { $_.asked -ceq $office })
-          $officeResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$office;result='NOT EXERCISED';did='The actual-window check did not reach Office creation; native picker unverified.'} }
-          $officeResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'office-result.json') -Encoding utf8
-          $folderCase = Get-Content -Raw (Join-Path $evidence 'declared-session-folder.json') | ConvertFrom-Json
-          $found = @($actual | Where-Object { $_.asked -ceq $folderCase })
-          $folderResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$folderCase;result='NOT EXERCISED';did='The installed window did not reach the signed-in Session folder picker.'} }
-          $folderResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'session-folder-result.json') -Encoding utf8
-          $admission = Get-Content -Raw (Join-Path $evidence 'declared-admission.json') | ConvertFrom-Json
-          $found = @($actual | Where-Object { $_.asked -ceq $admission })
-          $admissionResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$admission;result='NOT EXERCISED';did='The actual installed sign-in window was not reached; no admission pass claimed.'} }
-          $admissionResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'admission-result.json') -Encoding utf8
+          $extendedCases = [ordered]@{
+            projects = 'The actual-window check did not reach the Projects case.'
+            scope = 'The actual-window check did not reach scope recovery.'
+            office = 'The actual-window check did not reach Office creation.'
+            'session-folder' = 'The installed window did not reach the signed-in Session folder picker.'
+            admission = 'The actual installed sign-in window was not reached.'
+          }
+          $optional = $env:VERIFY_UI_CONTRACT -ceq 'stable-optional-sign-in'
+          foreach ($case in $extendedCases.Keys) {
+            $asked = Get-Content -Raw (Join-Path $evidence "declared-$case.json") | ConvertFrom-Json
+            $found = @($actual | Where-Object { $_.asked -ceq $asked })
+            $row = if ($optional) {
+              @{asked=$asked;result='NOT EXERCISED';did='This case is outside the pinned optional-sign-in release witness.'}
+            } elseif ($found.Count -eq 1) { $found[0] }
+            else { @{asked=$asked;result='NOT EXERCISED';did=$extendedCases[$case]} }
+            $row | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence "$case-result.json") -Encoding utf8
+          }
       - name: Retain install identity, actual window and all six outcomes
         if: always()
         uses: actions/upload-artifact@v7
@@ -787,6 +835,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/previous-*
             ${{ runner.temp }}/archhub-verify-published/upgrade-*.json
             ${{ runner.temp }}/archhub-verify-published/install.json
+            ${{ runner.temp }}/archhub-verify-published/ui-contract.json
             ${{ runner.temp }}/archhub-verify-published/setup.log
             ${{ runner.temp }}/archhub-verify-published/first-run.log
             ${{ runner.temp }}/archhub-verify-published/settings-results.json

@@ -25,6 +25,7 @@ _REVIT_WRITE_OPS = {
     "revit.set_parameter_by_name",
     "revit.create_sheets",
     "revit.export_ifc",
+    "revit.export_dwg",
     "revit.renumber_rename",
 }
 
@@ -1396,13 +1397,14 @@ def _require_write_grant(op_id: str, arguments: Mapping[str, object]) -> Mapping
         arguments, operation=op_id, scope="revit.write",
         input_digest=nodeslib._digest_payload(_effect_arguments(arguments)),
     )
-    if op_id == "revit.export_ifc":
+    if op_id in ("revit.export_ifc", "revit.export_dwg"):
+        dwg = op_id == "revit.export_dwg"
         pending = arguments.get("pending_write")
-        if not isinstance(pending, Mapping) or pending.get("kind") != "ifc-export":
-            raise PermissionError("IFC export requires a typed pending export")
-        _source, _destination, target, _digest = _ifc_scoped_paths(arguments)
+        if not isinstance(pending, Mapping) or pending.get("kind") != ("dwg-export" if dwg else "ifc-export"):
+            raise PermissionError("Export requires a typed pending export")
+        _source, _destination, target, _digest = _export_scoped_paths(arguments, "" if dwg else ".ifc")
         if pending.get("target") != target:
-            raise PermissionError("IFC export requires a typed pending export bound to the approved path")
+            raise PermissionError("Export requires a typed pending export bound to the approved path")
     # This hook compares pending content to the actual arguments and runs Enforce before host dispatch.
     from .domains.selfext import before_write_hooks
     annotations = before_write_hooks(arguments.get("mods_store"), op_id, arguments)
@@ -1423,33 +1425,39 @@ _IFC_SCHEMAS = {
 
 
 def _ifc_scoped_paths(arguments):
+    return _export_scoped_paths(arguments, ".ifc")
+
+
+def _export_scoped_paths(arguments, suffix_required):
     from .workspace_roots_catalogue import read_registered_roots, root_bound_registration
 
     project = arguments.get("project_id")
     roots, _pin = read_registered_roots()
     if not isinstance(project, str) or project not in roots:
-        raise ValueError("IFC export requires a registered project")
+        raise ValueError("Export requires a registered project")
     root = Path(roots[project]["path"]).resolve()
     paths = []
-    for name, suffix in (("document", ".rvt"), ("path", ".ifc")):
+    for name, suffix in (("document", ".rvt"), ("path", suffix_required)):
         value = arguments.get(name)
         if not isinstance(value, str) or value.startswith(("\\\\", "//")):
-            raise ValueError("IFC %s must be an absolute local %s path" % (name, suffix))
+            raise ValueError("Export %s must be an absolute local %s path" % (name, suffix))
         path = Path(value)
-        if (not path.is_absolute() or path.suffix.casefold() != suffix
+        if (not path.is_absolute() or (suffix and path.suffix.casefold() != suffix)
                 or any(":" in part for part in path.parts[1:]) or path != path.resolve()
                 or not path.is_relative_to(root)):
-            raise ValueError("IFC %s must be a canonical %s path in the registered project" % (name, suffix))
+            raise ValueError("Export %s must be a canonical %s path in the registered project" % (name, suffix))
         paths.append(path)
     source, destination = paths
+    if not suffix_required and (destination == root or destination.suffix.lower() == ".dwg"):
+        raise ValueError("Choose a new DWG export folder inside the registered project.")
     logical = "workspace-roots/%s/%s" % (project, destination.relative_to(root).as_posix())
     _container, digest, current = root_bound_registration(logical)
     if current.get("privacy") != "private" or Path(current["path"]).resolve() != root:
-        raise ValueError("IFC export requires the current private project workspace")
+        raise ValueError("Export requires the current private project workspace")
     if not source.is_file() or not destination.parent.is_dir():
-        raise ValueError("IFC export needs a saved RVT and an existing output folder")
+        raise ValueError("Export needs a saved RVT and an existing output folder")
     if destination.exists():
-        raise ValueError("IFC output already exists")
+        raise ValueError("Export output already exists")
     return source, destination, logical, digest
 
 
@@ -1630,6 +1638,104 @@ def _ifc_step_digest(path, schema_family):
     if phase != len(markers) or depth or quoted or comment or prefix:
         raise RevitUnreachable(error)
     return digest.hexdigest()
+
+
+def _dwg_script(source, stage, setup, version, views):
+    return """
+if (Doc == null || Doc.IsFamilyDocument || Doc.IsLinked || !String.Equals(Doc.PathName, %s, StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException("The active document differs from the approved model.");
+var views = new List<ElementId>();
+foreach (long id in new long[] { %s }) {
+    var view = Doc.GetElement(global::RevitMCPCore.RevitIds.Id(id)) as View;
+    if (view == null || view.IsTemplate || !view.CanBePrinted)
+        throw new InvalidOperationException("An approved view is missing or cannot be exported.");
+    views.Add(view.Id);
+}
+string setup = %s;
+using (var options = setup.Length == 0 ? new DWGExportOptions() : DWGExportOptions.GetPredefinedOptions(Doc, setup)) {
+    if (options == null) throw new InvalidOperationException("The named DWG setup is unavailable.");
+    options.FileVersion = ACADVersion.%s;
+    string folder = %s;
+    if (!Doc.Export(folder, "Export", views, options)) throw new InvalidOperationException("Revit declined DWG export.");
+    var outputs = new List<string>();
+    foreach (string file in System.IO.Directory.GetFiles(folder, "*", System.IO.SearchOption.AllDirectories))
+        outputs.Add(file.Substring(folder.Length + 1).Replace(System.IO.Path.DirectorySeparatorChar, '/'));
+    result = outputs;
+}
+""" % (_cs_string(str(source)), ", ".join(str(view) + "L" for view in views), _cs_string(setup),
+       {"2013": "R2013", "2018": "R2018"}[version], _cs_string(str(stage)))
+
+
+def _dwg_files(folder):
+    for path in folder.iterdir():
+        if path.is_symlink() or path.is_junction() or path.resolve() != path:
+            raise RevitUnreachable("The export contains a redirected path.")
+        if path.is_dir():
+            yield from _dwg_files(path)
+        else:
+            yield path
+
+
+def _dwg_manifest(folder, reported, version, *, decode=True):
+    if not isinstance(reported, list) or not reported or any(not isinstance(name, str) for name in reported):
+        raise RevitUnreachable("The DWG exporter returned no file manifest.")
+    if folder.is_symlink() or folder.is_junction() or not folder.is_dir():
+        raise RevitUnreachable("The export folder changed.")
+    files = {}
+    drawings = 0
+    for path in _dwg_files(folder):
+        if not path.is_file() or path.stat().st_nlink != 1:
+            raise RevitUnreachable("The export contains an unexpected file.")
+        # CAD references, plot tables and raster images may accompany the drawings.
+        if path.suffix.lower() not in {".dwg", ".pcp", ".ctb", ".stb", ".pat", ".lin", ".shx",
+                                     ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".gif", ".pdf"}:
+            raise RevitUnreachable("The DWG exporter produced an unrecognised sidecar.")
+        with path.open("rb") as stream:
+            if path.suffix.lower() == ".dwg":
+                if stream.read(6) != {"2013": b"AC1027", "2018": b"AC1032"}[version]:
+                    raise RevitUnreachable("DWG header differs from the approved version.")
+                if decode:
+                    try:
+                        import ezdwg
+                        drawing = ezdwg.read(str(path))
+                        drawing.header_variables()
+                        if not drawing.layouts():
+                            raise ValueError("No readable DWG layout table.")
+                    except Exception as exc:
+                        raise RevitUnreachable("Could not decode exported DWG: " + path.name) from exc
+                drawings += 1
+                stream.seek(0)
+            files[path.relative_to(folder).as_posix()] = hashlib.file_digest(stream, "sha256").hexdigest()
+    if not drawings or len(files) != len(reported) or set(files) != set(reported):
+        raise RevitUnreachable("The staged DWG file set differs from the exporter manifest.")
+    return files
+
+
+def _dwg_export(arguments):
+    from .host_brokers import EXEC_WAIT_LIMIT
+    from .nodeslib_v2_engines import validate_dwg_options
+    validate_dwg_options(arguments)
+    scope = _export_scoped_paths(arguments, "")
+    source, destination, _, _ = scope
+    session = _session_for(arguments["session"], live_sessions())
+    if os.name != "nt":
+        raise RevitUnreachable("DWG set publication requires Windows no-replace directory rename.")
+    with tempfile.TemporaryDirectory(prefix=".archhub-dwg-", dir=destination.parent) as temporary:
+        stage = Path(temporary) / "files"
+        stage.mkdir()
+        script = _dwg_script(source, stage, arguments["setup"], arguments["version"], arguments["views"])
+        answer = _execute(session, script, "ArchHub DWG export", timeout=EXEC_WAIT_LIMIT, transaction_mode=False)
+        if answer.get("status") != "ok":
+            raise RevitUnreachable("Revit refused DWG export: %s" % answer.get("error"))
+        reported = answer.get("result")
+        manifest = _dwg_manifest(stage, reported, arguments["version"])
+        if _export_scoped_paths(arguments, "") != scope:
+            raise RevitUnreachable("Registered DWG workspace changed before publication.")
+        os.rename(stage, destination)
+    if _dwg_manifest(destination, reported, arguments["version"], decode=False) != manifest:
+        raise RevitUnreachable("Published DWG set requires reconciliation.")
+    return session, {"status": "ok", "result": [str(destination / name) for name in sorted(manifest)],
+                     "dwg_manifest": manifest}
 
 
 def _ifc_export(arguments):
@@ -1957,7 +2063,9 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
         else:
             arguments.pop("title_block", None)
     write_grant = _require_write_grant(op_id, arguments) if op_id in _REVIT_WRITE_OPS else None
-    if op_id == "revit.export_ifc":
+    if op_id == "revit.export_dwg":
+        session, answer = _dwg_export(arguments)
+    elif op_id == "revit.export_ifc":
         session, answer = _ifc_export(arguments)
     else:
         # Arguments are checked into the script before any host is asked.
@@ -1996,6 +2104,8 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
             "grant_digest": write_grant.get("digest"),
             "result_digest": nodeslib._digest_payload(answer.get("result")),
         }
+        if "dwg_manifest" in answer:
+            result["receipt"]["dwg_manifest"] = answer["dwg_manifest"]
         if "ifc_sha256" in answer:
             result["receipt"]["ifc_sha256"] = answer["ifc_sha256"]
         if write_grant.get("mods_before_write"):

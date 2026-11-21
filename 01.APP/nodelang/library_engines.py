@@ -1787,6 +1787,7 @@ ENGINE_SOCKETS = {
     "library.rule_check": {"source": ("pass", "fail", "report", "out"), "target": ("in",)},
     "revit.set_parameter_by_name": {"source": ("elements", "out"), "target": ("elements", "parameter", "value", "grant")},
     "excel.write_range": {"source": ("file", "out"), "target": ("rows", "grant")},
+    "revit.export_dwg": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "setup_source", "setup_name", "views")},
     "revit.export_ifc": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "setup_source", "setup_name", "views")},
     "library.publish_pdf": {"source": ("out",), "target": ("in", "sheets", "folder", "sheet_size")},
     "library.place_on_sheet": {"source": ("out",), "target": ("in", "sheet", "views", "title_block")},
@@ -1965,6 +1966,12 @@ LIBRARY_ITEM_ENGINES.update({
                       "params": {"changes": "[]"}},
     "g_host_health": {"engine": "host.health", "params": {"host": ""}},
     "g_evidence_attach": {"engine": "evidence.attach", "params": {"path": ""}},
+    "file_export_dwg": {"engine": "revit.export_dwg", "params": {"project_id": "", "session": "", "document": "", "path": "", "version": "From Projects", "setup_source": "From Projects", "setup_name": "", "views": []},
+                        "paramDefs": [{"id": "setup_source", "type": "choice", "name": "DWG setup source", "options": ["From Projects", "Revit default", "Named setup"]},
+                                    {"id": "setup_name", "type": "text", "name": "Named DWG setup"},{"id": "document", "type": "file", "name": "Revit document"},
+                                      {"id": "path", "type": "text", "name": "New DWG export folder"},
+                                      {"id": "views", "type": "list", "name": "Revit view IDs"},
+                                      {"id": "version", "type": "choice", "name": "DWG version", "options": ["From Projects", "2018", "2013"]}]},
     "file_export_ifc": {"engine": "revit.export_ifc", "params": {"project_id": "", "session": "", "document": "", "path": "", "version": "From Projects", "setup_source": "From Projects", "setup_name": "", "views": []},
                         "paramDefs": [{"id": "setup_source", "type": "choice", "name": "IFC setup source", "options": ["From Projects", "Revit default", "Named setup"]},
                                     {"id": "setup_name", "type": "text", "name": "Named IFC setup"},{"id": "document", "type": "file", "name": "Revit document"},
@@ -2067,6 +2074,7 @@ LIBRARY_PRESENTATION = (
     )),
     ("file", (
         ("f_write_table", "Write Excel / CSV", "Write rows to an Excel or CSV file"),
+        ("file_export_dwg", "DWG export", "Export approved views to a new DWG folder"),
         ("file_export_ifc", "IFC export", "Export the selected Revit document after approval"),
     )),
     ("text", (

@@ -96,6 +96,9 @@ def test_every_revit_script_compiles_against_the_installed_revit_api_and_core(tm
     for op in sorted(set(revit._READS) | {"revit.elements_of_category", "revit.get_parameter",
                                           "revit.set_parameter_by_name", "revit.create_sheets", "revit.renumber_rename"}):
         scripts.append((op, revit._script_for(op, rows)))
+    for version in ("2013", "2018"):
+        scripts.append(("dwg-export-" + version, revit._dwg_script(Path(r"C:\Model.rvt"), Path(r"C:\Output"),
+                                                               "Office DWG export", version, [101, 202])))
     # The library authoring cards send their scripts through the same broker.
     scripts += [("tag-rooms", library_engines._TAG_ROOMS),
                 ("place-tags", library_engines._PLACE_TAGS % (json.dumps("Doors"), "true")),

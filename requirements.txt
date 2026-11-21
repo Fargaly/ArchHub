@@ -32,6 +32,8 @@ PyQt6-WebEngine>=6.11,<6.12
 # Pipeline effect engine: DXF drafting. Its import is guarded, so a machine
 # without it still boots and reports the engine as absent.
 ezdxf>=1.4,<2
+# Decode exported DWG database tables before publishing the reviewed directory.
+ezdwg==0.21.3
 numpy>=2.4,<3
 # Decision nodes (decision_engines.py): Optimize and Schedule both run on HiGHS (MIT, 3.2 MB wheel, needs only numpy).
 # The import is guarded: without it the two cards refuse with a plain reason and the app still boots.

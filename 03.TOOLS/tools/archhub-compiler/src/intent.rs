@@ -169,11 +169,12 @@ fn in_scope(file: &str, scope: &str) -> bool {
         && valid_scope(scope)
         && (file == scope || (scope.ends_with('/') && file.starts_with(scope)))
 }
-pub fn valid_ifc_target(file: &str) -> bool {
+pub fn valid_ifc_target(file: &str) -> bool { valid_export_target(file, ".ifc") }
+pub fn valid_export_target(file: &str, suffix: &str) -> bool {
     let Some((project, relative)) = file.strip_prefix("workspace-roots/").and_then(|s| s.split_once('/')) else { return false; };
     !project.is_empty() && project.len() <= 128 && project.as_bytes()[0].is_ascii_alphanumeric()
         && project.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-        && relative.to_ascii_lowercase().ends_with(".ifc")
+        && relative.to_ascii_lowercase().ends_with(suffix)
         && relative.split('/').all(|p| !p.is_empty() && p != "." && p != ".."
             && !p.ends_with([' ', '.']) && !p.contains(['\\', ':', '*', '?', '"', '<', '>', '|'])
             && !p.chars().any(char::is_control))
@@ -215,7 +216,9 @@ pub fn check_with_authority(
     for file in &files {
         let local_ifc = intent == "IFCEXPORT" && context["artifact_kind"] == "ifc-export"
             && scopes.contains(&"workspace-roots/") && valid_ifc_target(file);
-        if !local_ifc && !scopes.iter().any(|scope| in_scope(file, scope)) {
+        let local_dwg = intent == "DWGEXPORT" && context["artifact_kind"] == "dwg-export"
+            && scopes.contains(&"workspace-roots/") && valid_export_target(file, "");
+        if !local_ifc && !local_dwg && !scopes.iter().any(|scope| in_scope(file, scope)) {
             diagnostics.push(error(
                 "E0101",
                 file,

@@ -122,7 +122,7 @@ def _verified_write_grant(
     if path is not None and Path(str(grant.get("path"))).resolve() != path.resolve():
         raise ValueError("approval grant path does not match")
     verifier = _WRITE_GRANT_VERIFIER
-    if verifier is None and operation in ("revit.create_sheets", "revit.export_ifc"):
+    if verifier is None and operation in ("revit.create_sheets", "revit.export_ifc", "revit.export_dwg"):
         from .hook_decision import verify_canvas_ifc_grant
         verifier = verify_canvas_ifc_grant
     if verifier is None:
@@ -584,7 +584,74 @@ def ifc_export_request(params, feeds, document):
     return {**request, 'pending_write': pending}
 
 
+DWG_VERSIONS = ("2018", "2013")
+DWG_PROJECT_SETUPS = ("Office DWG export", "Revit default")
+
+
+def validate_dwg_options(request):
+    from .clean_revit_adapter import BROKER_PORTS
+    if request.get("version") not in DWG_VERSIONS:
+        raise ValueError("Choose DWG 2018 or 2013.")
+    setup = request.get("setup")
+    if not isinstance(setup, str) or any(ord(char) < 32 for char in setup):
+        raise ValueError("Use the exact DWG setup name.")
+    views = request.get("views")
+    if (not isinstance(views, list) or not views or any(type(v) is not int or not 0 < v < 2**63 for v in views)
+            or len(set(views)) != len(views)):
+        raise ValueError("Choose distinct positive Revit view IDs.")
+    if request.get("session") not in {str(port) for port in BROKER_PORTS}:
+        raise ValueError("Choose the registered Revit session port.")
+
+
+def dwg_export_request(params, feeds, document):
+    from .session_files import resolve_setting
+    from .clean_revit_adapter import _export_scoped_paths
+    values = {**params, **feeds}
+    request = {key: values.get(key, "") for key in ("project_id", "session", "document", "path")}
+    request["views"] = feeds.get("views", feeds.get("in", params.get("views", [])))
+    version = values.get("version", "From Projects")
+    request["version"] = resolve_setting(document, "Projects.DWG version")["value"] if version == "From Projects" else version
+    if "setup" in values:
+        setup = values["setup"]
+    else:
+        source = values.get("setup_source", "Revit default")
+        if source == "From Projects":
+            name = resolve_setting(document, "Projects.DWG export setup")["value"]
+            setup = "" if name == "Revit default" else name
+        elif source == "Named setup" and values.get("setup_name"):
+            setup = values["setup_name"]
+        elif source == "Revit default":
+            setup = ""
+        else:
+            raise ValueError("Choose a DWG setup source or enter its name.")
+    request["setup"] = setup
+    if isinstance(request["views"], list):
+        request["views"] = [row.get("id") if isinstance(row, Mapping) else row for row in request["views"]]
+    validate_dwg_options(request)
+    if not request["project_id"]:
+        from .session_files import _project_of, _registered_roots
+        request["project_id"] = _project_of(document.get("properties", {}), _registered_roots())["id"]
+    if not request["document"]:
+        from .clean_revit_adapter import sheet_target
+        request["document"] = sheet_target(request["session"])["path"]
+    _, _, target, registration = _export_scoped_paths(request, "")
+    return {**request, "pending_write": {"kind": "dwg-export", "operation": "revit.export_dwg", "target": target,
+            "content": request, "intent": "DWGEXPORT", "author": "archhub/canvas",
+            "why": "Export reviewed DWG view set in registered workspace " + str(registration)}}
+
+
 def revit_export(params: Mapping[str, object], feeds: Mapping[str, object]):
+    if "_dwg_effect" in params:
+        from .hook_decision import canvas_revit_grant
+        effect = params["_dwg_effect"]
+        grant = canvas_revit_grant("revit.export_dwg", effect)
+        answer = _confirmed_write(_revit("revit.export_dwg", {**effect, "grant": grant,
+                                  "mods_store": params.get("mods_store")}), "revit.export_dwg")
+        files = answer.get("result")
+        manifest = answer["receipt"].get("dwg_manifest")
+        if not manifest or files != [str(Path(effect["path"]) / name) for name in sorted(manifest)]:
+            raise ValueError("The DWG broker did not confirm the complete approved export set.")
+        return {"out": files, "files": files, "receipt": answer["receipt"]}, "Exported DWG set"
     if params.get('_ifc_effect') is not None or params.get('format') == 'ifc':
         from .hook_decision import canvas_ifc_grant
         effect = params.get('_ifc_effect')
@@ -602,23 +669,7 @@ def revit_export(params: Mapping[str, object], feeds: Mapping[str, object]):
         if not isinstance(files, list) or len(files) != 1 or files[0] != effect['path'] or not answer['receipt'].get('ifc_sha256'):
             raise ValueError('IFC export did not confirm its exact output and digest.')
         return {'files': files, 'receipt': answer['receipt'], 'out': files}, 'Exported IFC'
-    fmt = _text(params, "format", "dwg").casefold()
-    if fmt not in ("dwg", "ifc"):
-        raise ValueError("format must be dwg or ifc")
-    path = _local_output_path(params.get("path"), label="path")
-    operation = "revit.export_%s" % fmt
-    request = {
-        "views": _rows(_wired(feeds, "views", "in")) or _rows(params.get("views")),
-        "path": str(path),
-        "setup": _text(params, "setup"), "session": _text(params, "session"),
-    }
-    grant = _require_grant(
-        params, operation=operation, scope="revit.write",
-        input_digest=_digest_payload(request),
-    )
-    answer = _confirmed_write(_revit(operation, {"grant": grant, "mods_store": params.get("mods_store"), **request}), operation)
-    files = answer.get("result") or answer.get("files") or []
-    return {"files": files, "out": files}, "exported %d %s file(s)" % (len(files), fmt.upper())
+    raise ValueError("Run the export through its reviewed Canvas action.")
 
 
 def text_ops(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -768,6 +819,7 @@ def evidence_attach(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 
 ENGINES = {
+    "revit.export_dwg": revit_export,
     "revit.export_ifc": revit_export,
     "revit.elements_of_category": revit_elements_of_category,
     "revit.get_parameter": revit_get_parameter,

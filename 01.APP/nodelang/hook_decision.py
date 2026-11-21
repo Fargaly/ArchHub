@@ -1673,6 +1673,13 @@ def _ask_text(action, data):
             return '\n'.join(['Model: ' + str(target.get('path') or target.get('document') or ''),
                               'Title block: ' + (request.get('title_block') or 'None'),
                               *[str(row.get('number', '')) + '  ' + str(row.get('name', '')) for row in rows]]), 'Create sheets'
+        if data['node'].get('type') == 'revit.export_dwg':
+            request = data['node'].get('params', {}).get('_dwg_effect') or {}
+            return '\n'.join(('Source: ' + str(request.get('document', '')),
+                               'New folder: ' + str(request.get('path', '')),
+                               'DWG version: ' + str(request.get('version', '')),
+                               'Setup: ' + (request.get('setup') or 'Revit default'),
+                               'Views: ' + ', '.join(map(str, request.get('views', []))))), 'DWG export'
         if data['node'].get('type') == 'revit.export_ifc':
             request = data['node'].get('params', {}).get('_ifc_effect') or {}
             versions = {'IFC4RV': 'IFC4 (Reference View)', 'IFC2x3CV2': 'IFC2x3 (Coordination View 2)',
@@ -2150,7 +2157,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
             permit = True
         else:
             outcome = _release_ask(replay)
-            if (replay.get('kind') == 'canvas' and replay.get('payload', {}).get('node', {}).get('type') in ('revit.export_ifc', 'revit.create_sheets')
+            if (replay.get('kind') == 'canvas' and replay.get('payload', {}).get('node', {}).get('type') in ('revit.export_ifc', 'revit.export_dwg', 'revit.create_sheets')
                     and isinstance(outcome, dict)):
                 result = outcome.get('results', {}).get(replay['payload']['node']['id'], {})
                 if result.get('status') in ('Error', 'Blocked', 'Stopped', 'Unconfirmed', 'Declined'):
@@ -2191,7 +2198,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
 
 
 def _current_revit_card(operation):
-    if operation not in ("revit.create_sheets", "revit.export_ifc"):
+    if operation not in ("revit.create_sheets", "revit.export_ifc", "revit.export_dwg"):
         raise ValueError("Unsupported Canvas approval operation.")
     active = _CLAIMED_ASK.get()
     if not active or active['used']:
@@ -2208,7 +2215,7 @@ def _current_revit_card(operation):
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     if digest != row['input_digest']:
         raise ValueError('The reviewed Revit payload changed.')
-    effect = node.get('params', {}).get('_ifc_effect' if operation == 'revit.export_ifc' else '_sheet_effect')
+    effect = node.get('params', {}).get({'revit.export_ifc':'_ifc_effect', 'revit.export_dwg':'_dwg_effect', 'revit.create_sheets':'_sheet_effect'}[operation])
     if not isinstance(effect, dict) or effect.get('pending_write', {}).get('author') != 'archhub/canvas':
         raise ValueError('The reviewed Revit request has no Canvas service origin.')
     return active, row, node, effect

@@ -32,3 +32,10 @@ Replaces: nothing exists (adds bounded MIT-licensed HiGHS wheel for pure Optimiz
 Request: F20
 Prior art: Goose 1.54 layout -> data/sessions/sessions.db; scoped header scrubber -> strip only archhub-hosts non-exact-reference headers while preserving unrelated MCP headers and exact ${ARCHHUB_HOSTS_TOKEN} references
 Replaces: D-021 legacy-only sessions.sqlite3 path and substring check (opens existing Goose DB via contextlib.closing; no new store)
+
+## D-024 Decode DWG database tables before publishing reviewed exports (2026-11-21, Codex)
+
+Request: F20. Apply the selected Projects export setup and DWG version to the reviewed Revit export. A matching six-byte version header alone previously allowed a truncated drawing to be published.
+Prior art: ezdwg 0.21.3 -> decodes header variables and layouts in the Python process. GNU LibreDWG 0.14 dwgread -> independently opened the same 2013 and 2018 drawings on Windows, reporting some unsupported fields. Use ezdwg through the existing offline Python installer. Its MIT-licensed CPython 3.10+ ABI Windows x64 wheel is 1,854,853 bytes. The alternative Windows x64 CLI distribution is 12,084,779 bytes and requires a separate executable.
+Replaces: six-byte-only DWG validation. Check each staged drawing's version, decode its header variables and require a readable layout table before publishing. Compare the complete file inventory and SHA-256 digests after moving the directory.
+Evidence: LibreDWG's 30,782-byte 2013 Polyline and Autodesk's 65,888-byte 2018 Structural - Metric sample passed. Header-only and half-truncated fixtures were refused. These checks establish table readability and file-set integrity. Native Revit export, embedded reference resolution after relocation and installed execution require separate evidence.

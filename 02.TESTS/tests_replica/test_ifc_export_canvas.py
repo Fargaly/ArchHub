@@ -184,6 +184,8 @@ def test_two_exports_report_each_approved_node_independently(project,monkeypatch
     assert calls==['IFC4RV','IFC4RV']
 
 @pytest.mark.parametrize('identity,default,global_value,workspace_value,session_value,invalid', [
+    ('Projects.DWG version','2018','2013','2018','2013','2010'),
+    ('Projects.DWG export setup','Office DWG export','Revit default','Office DWG export','Revit default','Unknown'),
     ('Projects.Sheet size','Use Sheet Size','A0','A1','A3','A2'),
     ('Projects.Title block','Not set','Office A1 title block','Office A0 title block','Office A3 title block','missing'),
     ('Projects.IFC version','IFC4','IFC2x3','IFC4.3','IFC4','IFC9'),
@@ -483,3 +485,160 @@ def test_pdf_paper_format_at_export_transport(project, monkeypatch, global_size,
         expected_pages = ['ISO_A1','ISO_A3'] if expected == 'Default' else [expected, expected]
         assert submitted == [(['A101','A102'], expected, expected_pages)]
         assert output['out'] == ['A101.pdf','A102.pdf']
+
+@pytest.mark.parametrize('mode', ['settings', 'wired', 'legacy', 'stale', 'wrong-header', 'header-only', 'truncated', 'extra-file', 'missing-file', 'collision', 'host-refusal', 'duplicate-view', 'unexpected-sidecar', 'existing', 'reject', 'compiler-refusal', 'changed-view'])
+def test_registered_dwg_export_review_and_file_set(project, monkeypatch, mode):
+    from pathlib import Path
+    from nodelang import clean_revit_adapter as adapter, session_files as files, settings_owner
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    root, source = project
+    import os
+    import ezdwg
+    fixture2013 = os.environ.get('ARCHHUB_QA_DWG_2013')
+    default_version = '2013' if fixture2013 else '2018'
+    destination = root / 'CAD package'
+    settings_owner.preference_settings('setAppearance', ['Projects.DWG version', default_version])
+    settings_owner.preference_settings('setAppearance', ['Projects.DWG export setup', 'Office DWG export'])
+    item = next(row for row in files.catalogue() if row['id'] == 'file_export_dwg')
+    document = files.new_document('Issue DWG set')
+    params = {**item['params'], 'project_id':'court', 'session':'48884', 'document':str(source),
+              'path':str(destination), 'views':[41, 52]}
+    if mode == 'legacy':
+        params.pop('setup_source')
+        params.pop('project_id')
+        params.pop('document')
+        document['properties']['project'] = 'court'
+        params.update(setup='Legacy CAD', version='2018', views=[{'id':41}, {'id':52}])
+    if mode == 'duplicate-view':
+        params['views'] = [41, 41]
+    document['nodes'] = [{'id':'dwg','item':item['id'],'type':item['engine'],'paramDefs':item['paramDefs'],
+                          'params':params,'position':{'x':0,'y':0}}]
+    path = root/'dwg.archhub'
+    if mode == 'wired':
+        from nodelang import canvas_tools
+        api = {}
+        class Registry:
+            def tool(self, name):
+                def register(fn):
+                    api[name] = fn
+                    return fn
+                return register
+        canvas_tools.register_canvas_tools(Registry())
+        document['nodes'] = []
+        files.write_document(path, document)
+        held = api['canvas.add_node'](str(path), item['id'], None, params={'project_id':'court',
+                                   'session':'48884', 'document':str(source), 'views':[41, 52]})
+        node = held['node']
+        defs = next(n['param_types'] for n in held['nodes'] if n['id'] == node)
+        assert defs['path'] == defs['setup_name'] == 'text'
+        for key, value in [('path', str(destination)), ('setup_source', 'Named setup'), ('setup_name', 'Literal setup')]:
+            api['canvas.set_param'](str(path), node, key, value, None)
+        upstream = api['canvas.add_node'](str(path), 'thing.setting', None, params={'value':'Office DWG export'})
+        api['canvas.wire'](str(path), upstream['node']+'.value', node+'.setup_name', None)
+    else:
+        files.write_document(path, document)
+    owner = files.SessionFiles(root/'sessions')
+    calls = []
+    expected_setup = {'legacy':'Legacy CAD'}.get(mode,'Office DWG export')
+    expected_version = '2018' if mode == 'legacy' else default_version
+    monkeypatch.setattr(adapter, 'live_sessions', lambda:[{'port':48884,'pid':8,'document':'Model','revit_version':'2025'}])
+    def broker(port, route, body, *, timeout=None):
+        if body['transaction_name'] == 'ArchHub read':
+            assert mode == 'legacy' and body['transaction'] is False
+            return {'status':'ok', 'result':['Model',str(source),'fixture-project']}
+        assert (port,route,body['transaction_name'],body['transaction']) == (48884,'/exec','ArchHub DWG export',False)
+        script = body['code']
+        assert 'new long[] { 41L, 52L }' in script
+        assert 'string setup = ' + json.dumps(expected_setup) in script
+        assert 'FileVersion = ACADVersion.R' + expected_version in script
+        stage = Path(json.loads(re.search(r'string folder = (.*?);',script)[1]))
+        assert stage.is_dir() and not list(stage.iterdir()) and not destination.exists()
+        calls.append(stage)
+        if mode == 'host-refusal':
+            return {'status':'error', 'error':'Unknown named DWG setup'}
+        (stage/'XRefs').mkdir()
+        if expected_version == '2013':
+            data = Path(fixture2013).read_bytes()
+            # LibreDWG test/test-data/2013/Polyline.dwg, Git blob 82e97619b17e2c325875054d88e90c4d966ee379.
+            assert hashlib.sha256(data).hexdigest() == '9dd9152a053fceca8b339c2a6a892cef22505a4fbd3bf312dbbdd75f2f766f0f'
+        elif os.environ.get('ARCHHUB_QA_DWG_2018'):
+            data = Path(os.environ['ARCHHUB_QA_DWG_2018']).read_bytes()
+        else:
+            drawing = ezdwg.new('AC1032')
+            drawing.modelspace().add_line((0, 0), (2, 1))
+            drawing.save(str(root/'fixture.dwg'))
+            data = (root/'fixture.dwg').read_bytes()
+        (stage/'sheet.dwg').write_bytes(data)
+        (stage/'XRefs/detail.dwg').write_bytes({'wrong-header': b'broken', 'header-only': data[:6],
+                                                 'truncated': data[:len(data)//2]}.get(mode, data))
+        (stage/'layers.pcp').write_bytes(b'pen table')
+        if mode == 'collision':
+            destination.mkdir()
+            (destination/'personal.txt').write_text('preserve')
+        listing = ['sheet.dwg','XRefs/detail.dwg','layers.pcp']
+        if mode == 'unexpected-sidecar':
+            (stage/'unrelated.bin').write_bytes(b'unexpected')
+            listing.append('unrelated.bin')
+        if mode == 'extra-file':
+            (stage/'extra.pcp').write_bytes(b'extra')
+        if mode == 'missing-file':
+            listing.append('absent.dwg')
+        return {'status':'ok','result':listing}
+    monkeypatch.setattr(adapter,'_call',broker)
+    if mode == 'existing':
+        destination.mkdir()
+        (destination/'existing.dwg').write_bytes(b'original')
+    run = owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    if mode == 'existing':
+        assert not run.get('approvalId') and not calls and (destination/'existing.dwg').read_bytes() == b'original'
+        return
+    if mode == 'duplicate-view':
+        assert not run.get('approvalId') and not calls and not destination.exists()
+        return
+    assert run.get('approvalId'), [n.get('result', {}).get('error') for n in run['document']['nodes']]
+    card = next(row for row in ask_reviews() if row['id'] == run['approvalId'])
+    assert all(term in card['text'] for term in (str(source),str(destination),expected_setup,expected_version,'41, 52'))
+    assert not calls and not destination.exists()
+    if mode == 'reject':
+        assert ask_apply(card['id'], card['input_digest'], 'deny')['status'] == 'declined'
+        assert not calls and not destination.exists()
+    elif mode == 'compiler-refusal':
+        from nodelang import enforce
+        rules = json.loads(enforce.defaults()['rules'])
+        rules.pop('dwg-export')
+        monkeypatch.setattr(enforce, 'graph_parameters', lambda store: {'rules': rules})
+        with pytest.raises(ValueError, match='E0010'):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        assert not calls and not destination.exists()
+    elif mode == 'changed-view':
+        changed = files.read_document(path)
+        changed['nodes'][0]['params']['views'] = [99]
+        files.write_document(path, changed)
+        with pytest.raises(ValueError, match='changed'):
+            ask_apply(card['id'], card['input_digest'], 'approve')
+        assert not calls and not destination.exists()
+    elif mode == 'stale':
+        settings_owner.preference_settings('setAppearance',['Projects.DWG version','2018' if default_version == '2013' else '2013'])
+        with pytest.raises(ValueError,match='changed'):
+            ask_apply(card['id'],card['input_digest'],'approve')
+        assert not calls and not destination.exists()
+    elif mode in ('wrong-header','header-only','truncated','extra-file','missing-file','collision','host-refusal','unexpected-sidecar'):
+        with pytest.raises(ValueError):
+            ask_apply(card['id'],card['input_digest'],'approve')
+        assert len(calls) == 1
+        if mode == 'collision':
+            assert [p.name for p in destination.iterdir()] == ['personal.txt']
+            assert (destination/'personal.txt').read_text() == 'preserve'
+        else:
+            assert not destination.exists()
+    else:
+        assert ask_apply(card['id'],card['input_digest'],'approve')['status'] == 'approved'
+        ask_apply(card['id'],card['input_digest'],'approve')
+        assert len(calls) == 1
+        result = files.read_document(path)['nodes'][0]['result']['output']
+        expected = {p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in destination.rglob('*') if p.is_file()}
+        assert set(expected) == {'sheet.dwg','XRefs/detail.dwg','layers.pcp'}
+        assert result['receipt']['dwg_manifest'] == expected
+        assert result['files'] == [str(destination / name) for name in sorted(expected)]
+    assert not list(root.glob('.archhub-dwg-*'))

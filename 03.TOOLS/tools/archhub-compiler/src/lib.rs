@@ -2883,14 +2883,16 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
                     emit("E0009", "sheet creation must bind the reviewed model, sheet rows and selected title block");
                 }
             }
-            Some("ifc-export") => {
-                if rules["ifc-export"]["operation"] != "revit.export_ifc" {
-                    emit("E0010", "IFC export requires its selected typed export rule");
+            Some(kind @ ("ifc-export" | "dwg-export")) => {
+                let dwg = kind == "dwg-export";
+                let operation = if dwg { "revit.export_dwg" } else { "revit.export_ifc" };
+                if rules[kind]["operation"] != operation || (dwg && (pending["intent"] != "DWGEXPORT" || pending["author"] != "archhub/canvas")) {
+                    emit("E0010", "CAD/BIM export requires its selected typed export rule");
                 }
                 let fields = ["project_id", "session", "document", "path", "version", "setup", "views"];
                 if !content.as_object().is_some_and(|c| c.len() == fields.len() && fields.iter().all(|k| c.contains_key(*k)))
-                    || pending["operation"] != "revit.export_ifc" {
-                    emit("E0009", "IFC export requires the exact operation and seven request fields");
+                    || pending["operation"] != operation {
+                    emit("E0009", "CAD/BIM export requires the exact operation and seven request fields");
                 }
                 let local_path = |value: &Value, suffix: &str| {
                     value.as_str().is_some_and(|s| {
@@ -2904,16 +2906,16 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
                 let project = content["project_id"].as_str().unwrap_or("");
                 let relative = target.strip_prefix(&format!("workspace-roots/{project}/")).unwrap_or("");
                 let path = content["path"].as_str().unwrap_or("");
-                let logical = intent::valid_ifc_target(target) && !relative.is_empty()
+                let logical = intent::valid_export_target(target, if dwg { "" } else { ".ifc" }) && !relative.is_empty()
                     && path.ends_with(&format!("\\{}", relative.replace('/', "\\")));
-                if !local_path(&content["document"], ".rvt") || !local_path(&content["path"], ".ifc") || !logical {
-                    emit("E0009", "IFC export requires canonical local RVT/IFC paths and the matching registered logical destination");
+                if !local_path(&content["document"], ".rvt") || !local_path(&content["path"], if dwg { "" } else { ".ifc" }) || !logical {
+                    emit("E0009", "Export requires a canonical local RVT source and the matching registered output destination");
                 }
                 if !content["session"].as_str().is_some_and(|s| s.parse::<u16>().is_ok_and(|p| (48884..=48899).contains(&p) && s == p.to_string()))
                     || !content["setup"].is_string()
-                    || !rules["ifc-export"]["versions"].as_array().is_some_and(|a| a.contains(&content["version"]) && content["version"].is_string())
-                    || !content["views"].as_array().is_some_and(|a| a.len() <= 1 && a.iter().all(|v| v.as_i64().is_some_and(|n| n > 0))) {
-                    emit("E0009", "IFC export requires the exact Revit session, supported native version, setup text and at most one positive view id");
+                    || !rules[kind]["versions"].as_array().is_some_and(|a| a.contains(&content["version"]) && content["version"].is_string())
+                    || !content["views"].as_array().is_some_and(|a| (if dwg { !a.is_empty() && a.iter().filter_map(Value::as_i64).collect::<BTreeSet<_>>().len() == a.len() } else { a.len() <= 1 }) && a.iter().all(|v| v.as_i64().is_some_and(|n| n > 0))) {
+                    emit("E0009", "CAD/BIM export requires the exact Revit session, supported native version, setup text and supported positive view IDs");
                 }
             }
             Some("model") if pending["format"] == "archhub-graph-v1" => {

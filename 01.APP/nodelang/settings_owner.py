@@ -851,6 +851,17 @@ def preference_settings(function='readControls', args=(), settings=None):
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
     from .library_engines import PDF_NATIVE_SHEET_SIZE, PDF_PAPER_FORMATS
+    from .nodeslib_v2_engines import DWG_PROJECT_SETUPS, DWG_VERSIONS
+    cad = [("DWG export setup", "dwgSetup", DWG_PROJECT_SETUPS), ("DWG version", "dwgVer", DWG_VERSIONS)]
+    for label, storage_key, options in cad:
+        if args and args[0] == "Projects." + label and function in ("setAppearance", "resetAppearance"):
+            if function == "setAppearance":
+                if args[1] not in options:
+                    raise ValueError("Choose a listed DWG export value.")
+                settings.update({storage_key: args[1]})
+            else:
+                settings.update({}, remove=[storage_key])
+            function, args = "readControls", ()
     title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']
     if args and args[0] == 'Projects.Sheet size' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
@@ -928,7 +939,10 @@ def preference_settings(function='readControls', args=(), settings=None):
                   'label': 'Sheet size', 'description': 'Paper size for PDF sets. Use Sheet Size follows each Revit sheet.',
                   'type': 'choice', 'options': list(PDF_PAPER_FORMATS), 'default': PDF_NATIVE_SHEET_SIZE,
                   'value': settings.read().get('sheetSize', PDF_NATIVE_SHEET_SIZE)}
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size]}
+    cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
+                 "type": "choice", "label": label, "options": list(options), "default": options[0],
+                 "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, *cad_rows]}
 
 
 def preference_setting(identity):

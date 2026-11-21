@@ -49,11 +49,10 @@ def test_palette_uses_one_engine_set_and_hides_engine_less_speckle_cards():
     assert "h_speckle_receive" not in served
     assert "s_speckle_diff" not in served
     assert "h_write" not in served
-    for item in ("b_override_colour", "file_write_excel", "file_write_csv", "file_schedule_excel",
-                 "file_export_dwg"):
+    for item in ("b_override_colour", "file_write_excel", "file_write_csv", "file_schedule_excel"):
         assert item not in served
     for item in ("b_all_category", "b_get_parameter", "r_xl_range", "b_set_parameter",
-                 "b_create_sheets", "b_renumber", "g_approval_gate", "file_export_ifc"):
+                 "b_create_sheets", "b_renumber", "g_approval_gate", "file_export_ifc", "file_export_dwg"):
         assert item in served
     assert served["s_sort"]["engine"] == "shape.sort"
     assert served["l_if_handoff"]["engine"] == "control.if"

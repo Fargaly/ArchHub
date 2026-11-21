@@ -225,16 +225,19 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         if _RELEASING.get(False) and params.get('_sheet_effect') != effect:
             raise ValueError('Sheet inputs or the target model changed after approval. Run again.')
         params = {**params, '_sheet_effect': effect}
-    ifc_write = engine == 'revit.export_ifc'
-    if ifc_write:
-        from .nodeslib_v2_engines import ifc_export_request
-        effect = ifc_export_request(params, feeds, document)
+    exports = {'revit.export_ifc': 'ifc', 'revit.export_dwg': 'dwg'}
+    export = exports.get(engine)
+    if export:
+        from .nodeslib_v2_engines import ifc_export_request, dwg_export_request
+        request = dwg_export_request if export == 'dwg' else ifc_export_request
+        effect = request(params, feeds, document)
+        binding_key, effect_key = export + '_binding', '_' + export + '_effect'
         if continuation and not _RELEASING.get(False):
-            continuation = {**continuation, 'ifc_binding': {'params': copy.deepcopy(params),
+            continuation = {**continuation, binding_key: {'params': copy.deepcopy(params),
                             'feeds': copy.deepcopy(feeds), 'effect': effect}}
-        if _RELEASING.get(False) and params.get('_ifc_effect') != effect:
-            raise ValueError('IFC inputs or workspace changed after approval. Run again.')
-        params = {**params, **{key: value for key, value in effect.items() if key != 'pending_write'}, '_ifc_effect': effect}
+        if _RELEASING.get(False) and params.get(effect_key) != effect:
+            raise ValueError(export.upper() + ' inputs or workspace changed after approval. Run again.')
+        params = {**params, **{key: value for key, value in effect.items() if key != 'pending_write'}, effect_key: effect}
     bcf_write = False
     if engine == 'daily.ifc_check_bcf':
         from .daily_work_nodes import bcf_request, BCF_VERSIONS
@@ -248,7 +251,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
             continuation = {**continuation, 'bcf_binding': {'node': node['id'], 'source': source,
                             'digest': digest, 'version': params['bcf_version'], 'output': params['bcf_path'],
                             'version_input': version_input}}
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or ifc_write or sheet_write or engine in ('thing.file.write', 'script.python'))):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or export or sheet_write or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
@@ -1448,11 +1451,12 @@ def approval_current(document, continuation, identity):
         from .nodeslib_v2_engines import sheet_title_block
         if sheet_title_block(binding['params'], binding['feeds'], document) != binding['selected']:
             return False
-    binding = continuation.get('ifc_binding')
+    binding = continuation.get('ifc_binding') or continuation.get('dwg_binding')
     if binding:
-        from .nodeslib_v2_engines import ifc_export_request
+        from .nodeslib_v2_engines import ifc_export_request, dwg_export_request
+        request = dwg_export_request if 'dwg_binding' in continuation else ifc_export_request
         try:
-            if ifc_export_request(binding['params'], binding['feeds'], document) != binding['effect']:
+            if request(binding['params'], binding['feeds'], document) != binding['effect']:
                 return False
         except (OSError, ValueError, KeyError):
             return False

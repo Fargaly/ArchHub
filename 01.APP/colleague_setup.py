@@ -43,6 +43,7 @@ PACKAGES = (
     ("joserfc", "joserfc"),
     ("rpds-py", "rpds"),
     ("ezdxf", "ezdxf"),
+    ("ezdwg", "ezdwg"),
     ("numpy", "numpy"),
     # The Optimize and Schedule nodes' solver (imported when a card solves, not at boot).
     ("highspy", "highspy"),

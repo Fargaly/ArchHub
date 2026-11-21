@@ -196,6 +196,7 @@ def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_
     code = sent["body"]["code"]
     assert "PDFExportOptions" in code and "Doc.Export(folder, sheets, options)" in code
     assert 'new List<string>{"A101", "A102"}' in code
+    assert code.index("if (!wanted.Contains(vs.SheetNumber)) continue;") < code.index("if (!vs.CanBePrinted) throw") < code.index("Directory.CreateDirectory(folder)")
     head = code.lstrip()
     folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
     assert Path(folder).parent == Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "pdf"
@@ -401,6 +402,39 @@ def test_publish_pdf_never_lets_a_graph_name_a_share(monkeypatch, tmp_path, isol
     folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
     assert Path(folder).parent == base
     assert Path(folder).name.startswith("drop-")
+
+
+def test_publish_pdf_same_second_keeps_each_cards_files(monkeypatch):
+    import json
+    import re
+    import time
+    from nodelang import clean_revit_adapter as adapter
+
+    monkeypatch.setattr(time, "strftime", lambda *_: "20261121-220000")
+    monkeypatch.setattr(adapter, "sole_session", lambda: ({"port": 1}, ""))
+    base = Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "pdf"
+
+    def export(session, script, *args, **kwargs):
+        folder = Path(json.loads(re.search(r"var folder = (.*?);", script)[1]))
+        numbers = json.loads("[" + re.search(r"var wanted = new List<string>\{(.*?)\};", script)[1] + "]")
+        folder.mkdir(parents=True, exist_ok=True)
+        for number in numbers:
+            (folder / (number + ".pdf")).write_text(number)
+        return {"status": "ok", "result": {"files": [str(path) for path in folder.glob("*.pdf")]}}
+
+    monkeypatch.setattr(adapter, "_execute", export)
+    paths = []
+    for item_id, number in (("o_pdf", "A101"), ("o_pdf_handoff", "A102")):
+        item = L.LIBRARY_ITEM_ENGINES[item_id]
+        out, status = L.LIBRARY_ENGINES[item["engine"]]({**item["params"], "folder": "//outside/share/Issue"}, {"sheets": [number]})
+        assert "folder" in out, status
+        folder = Path(out["folder"])
+        assert folder.parent == base and folder.name.startswith("Issue-20261121-220000-")
+        path = folder / (number + ".pdf")
+        assert out["out"] == [str(path)]
+        paths.append(path)
+    assert paths[0].parent != paths[1].parent
+    assert [p.read_text() for p in paths] == ["A101", "A102"]
 
 
 def test_a_model_call_cannot_hold_the_canvas_for_a_minute(monkeypatch, tmp_path):

@@ -1354,12 +1354,14 @@ if (projectSet == "Current sheet only") {
         if (vs.IsPlaceholder) continue;
         if (!allSheets) {
             if (!wanted.Contains(vs.SheetNumber)) continue;
+            if (!vs.CanBePrinted) throw new Exception("selected sheet cannot be printed");
             if (!matched.Add(vs.SheetNumber)) throw new Exception("ambiguous sheet number");
         }
         sheets.Add(vs.Id);
     }
 }
 if (sheets.Count == 0 || (!allSheets && matched.Count != wanted.Count)) throw new Exception("no sheet to publish or incomplete sheet selection");
+if (System.IO.Directory.Exists(folder)) throw new Exception("PDF export folder already exists");
 System.IO.Directory.CreateDirectory(folder);
 var options = new PDFExportOptions();
 options.Combine = false;
@@ -1376,6 +1378,7 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     import json
     import os
     import time
+    from uuid import uuid4
     from .clean_revit_adapter import _execute, sole_session
     selection_inputs = [name for name in ("sheets", "in") if name in feeds]
     if len(selection_inputs) > 1:
@@ -1422,7 +1425,8 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     asked = os.path.basename(_text(feeds, "folder", _text(params, "folder")).replace(chr(92), "/").rstrip("/"))
     safe = "".join(ch for ch in asked if ch.isalnum() or ch in "-_ ").strip()
-    folder = os.path.join(base, (safe + "-" + stamp) if safe else stamp)
+    run_name = "-".join(part for part in (safe, stamp, uuid4().hex) if part)
+    folder = os.path.join(base, run_name)
     script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in dict.fromkeys(wanted)),
                             str(all_sheets).lower(), json.dumps(project_set), PDF_PAPER_FORMATS[size])
     try:

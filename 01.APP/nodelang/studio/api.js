@@ -1350,9 +1350,21 @@ function capabilityOwner(id){
  return owners.length===1?owners[0]:null;
 }
 api.getCapabilityState=id=>{const owner=capabilityOwner(id),capability=state.capabilities.find(c=>c.id===id);return owner?{...capability,name:capability?.name||owner.title,params:owner.params}:null;};
-api.getCapabilityParameters=id=>copy(capabilityOwner(id)?.parameterSchema||[]);
-api.setCapabilityParameter=(id,key,value)=>{const owner=capabilityOwner(id);if(!owner)throw Error('Open the capability node on its canvas and select one exact instance before editing its parameters.');return nodeProperty(owner.id,key,value);};
-api.pickCapabilityFolder=async(id,key)=>{const result=await request('/api/universal/workspace-roots',{action:'browse'});if(!result.path)return {cancelled:true,message:'Folder selection cancelled'};return api.setCapabilityParameter(id,key,result.path);};
+api.getCapabilityParameters=id=>copy((capabilityOwner(id)?.parameterSchema||[]).map(p=>
+ p.dataType==='folder'||p.dataType==='path'?{...p,type:'path'}:p));
+api.setCapabilityParameter=(id,key,value)=>{
+ requireDesktop();
+ const owner=capabilityOwner(id);
+ if(!owner)throw Error('Open the capability node on its canvas and select one exact instance before editing its parameters.');
+ return sessionDocument&&state.graph.id===sessionDocument.id?api.setNodeParam(owner.id,key,value):nodeProperty(owner.id,key,value);
+};
+api.pickCapabilityFolder=async(id,key)=>{
+ const navigation=fileNavigation,ownerId=capabilityOwner(id)?.id;
+ const result=await request('/api/universal/workspace-roots',{action:'browse'});
+ if(!result.path)return {cancelled:true,message:'Folder selection cancelled'};
+ if(navigation!==fileNavigation||!ownerId||capabilityOwner(id)?.id!==ownerId)throw Error('The selected capability changed. Select one exact instance and retry.');
+ return api.setCapabilityParameter(id,key,result.path);
+};
 const settingsExport=api.exportData;
 api.exportData=async(name,nodeId)=>{
  if(name==='Dependency logs')return {name:'Dependency-logs.json',type:'application/json',content:JSON.stringify(state.dependencies.map(({id,logs})=>({id,logs})),null,2)};

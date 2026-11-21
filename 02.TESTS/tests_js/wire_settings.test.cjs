@@ -10,7 +10,7 @@ function harness(){
  dependencies:[{id:'codex',name:'Codex',group:'Agents',version:'1',availableVersion:'2',state:'Update ready',diskMb:2,ramMb:3,description:'Managed CLI',usedBy:['BABOOM'],logs:['Inventory read'],integrity:'npm inventory'},{id:'opencode',name:'OpenCode',group:'Agents',version:'',state:'Not installed',diskMb:0,ramMb:0,usedBy:[],logs:[]}],
  workspaces:[{id:'one',name:'First root',folder:'C:/FIRST'},{id:'two',name:'Second root',folder:'C:/SECOND'}],graph:{workspaceIds:[]},files:[],backups:[{id:'copy',name:'Cloud copy'}],
  people:[{id:'person',name:'Person',accessRole:'Member'}],devices:[{id:'device',name:'Office device',status:'Online'}],activeDevice:'device',connections:[{id:'revit',name:'Revit',connected:false},{id:'notion',name:'Notion',connected:true}],
- secrets:[],pages:['Account','Connections','Brain','Advanced'],settings:[],capabilities:[],providers:[],tasks:[],brain:[],receipts:[],update:{state:'idle',detail:'Up to date'}};
+ secrets:[],pages:['Account','Connections','Brain','Advanced'],settings:[],capabilities:[],providers:[],templates:[],tasks:[],brain:[],receipts:[],update:{state:'idle',detail:'Up to date'}};
  const api=new Proxy({subscribe(){},getSnapshot:()=>state,getUsageSummary:()=>({'Remaining messages':7}),getCapabilityParameters:()=>[],getCapabilityState:()=>null},{get:(target,key)=>target[key]||((...args)=>{calls.push(['api',key,...args]);return Promise.resolve({ok:true,message:'Owner confirmed'});})});
  const app={advanced:false,setAdvanced(){},act:fn=>fn(),go:r=>calls.push(['go',r]),show:(...args)=>calls.push(['show',...args]),pickWorkspace:()=>calls.push(['pickWorkspace']),confirm:(...args)=>calls.push(['confirm',...args]),download:(...args)=>calls.push(['download',...args]),schedule:id=>calls.push(['schedule',id]),setTask:id=>calls.push(['setTask',id])};
  const React={Fragment:'fragment',createContext:()=>({}),useContext:()=>app,useSyncExternalStore:()=>state,
@@ -21,7 +21,7 @@ function harness(){
  React.forwardRef=render=>render;
  const components=window.AH_DS;vm.runInContext(compile('ds/index.jsx'),context);window.AH_DS=components;
  vm.runInContext(compile('ui.jsx'),context);
- for(const f of ['ds_settings3.jsx','account-tools.jsx','access.jsx','ds_firstrun.jsx','dependencies.jsx'])vm.runInContext(compile(f),context);
+ for(const f of ['answer-widgets.jsx','ds_settings3.jsx','account-tools.jsx','access.jsx','ds_firstrun.jsx','dependencies.jsx'])vm.runInContext(compile(f),context);
  return {state,api,app,calls,window,reset(){slots=[];cursor=0;},render(name,props={}){cursor=0;return window.UI[name](props);},setSlot(i,v){slots[i]=v;}};
 }
 function elements(tree){if(!tree||typeof tree!=='object')return [];if(Array.isArray(tree))return tree.flatMap(elements);return [tree,...(tree.children||[]).flatMap(elements)];}
@@ -29,7 +29,7 @@ function label(tree){if(typeof tree==='string'||typeof tree==='number')return St
 function button(h,tree,text){const found=elements(tree).find(e=>(e.type==='button'||e.type===h.window.UI.Btn)&&(label(e)===text||e.props['aria-label']===text));assert.ok(found,'rendered control '+text);return found;}
 
 test('registered callbacks preserve the selected row, office and package identities',async()=>{
- const h=harness();let tree=h.render('WorkspaceRows');const opens=elements(tree).filter(e=>e.type===h.window.UI.Btn&&label(e)==='Open');await opens[1].props.onClick({});assert.deepEqual(h.calls.slice(-2),[['api','selectWorkspace','two'],['go','canvas']]);
+ const h=harness();let tree=h.render('WorkspaceRows');const opens=elements(tree).filter(e=>e.type===h.window.UI.Btn&&label(e)==='Open');await opens[1].props.onClick({});assert.deepEqual(h.calls.slice(-2),[['api','selectWorkspace','two'],['go','home']]);
  h.reset();tree=h.render('AccountIdentity');await button(h,tree,'Accept invitation').props.onClick({});assert.deepEqual(h.calls.at(-1),['api','acceptOfficeInvitation','invitation']);
  h.reset();tree=h.render('Dependencies');await button(h,tree,'Install').props.onClick({});assert.deepEqual(h.calls.at(-1),['api','manageDependency','opencode','Install']);
 });
@@ -56,19 +56,44 @@ test('approved account, storage, plan and billing controls remain present',()=>{
  h.reset();const tree=h.render(component);for(const control of controls)button(h,tree,control);
  }
 });
-async function apiHarness(answer, account={signed_in:false,email:''}, extra={}){
- const calls=[],window={structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'transport-only',csrf:'csrf'},crypto:require('node:crypto'),AH:{},addEventListener(){},dispatchEvent(){},open(){}};
- window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
+async function apiHarness(answer, account={signed_in:true,user_id:'fixture-account',email:'fixture@example.test'}, extra={}){
+ const calls=[],window={structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'transport-only',csrf:'csrf'},crypto:require('node:crypto'),AH:{},addEventListener(){},dispatchEvent(){},open(){},requestAnimationFrame:fn=>setTimeout(fn,0),cancelAnimationFrame:clearTimeout};
+ const file=extra.file||{format:'archhub',version:1,id:'fixture-session',title:'Fixture',properties:{},nodes:[],wires:[],groups:[],notes:[]};
+ const filePath='C:/fixture/workflow.archhub';
  const context=vm.createContext({window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},URL,URLSearchParams,AbortSignal:globalThis.AbortSignal,CustomEvent:class {},sessionStorage:{getItem:()=>null},
- fetch:async(url,options)=>{const body=options.body&&JSON.parse(options.body);calls.push([url,body]);if(url==='/api/universal/set-property'&&extra.canvas)extra.canvas.nodes[0].params[0].value=body.value;return {ok:true,status:200,json:async()=>url==='/api/universal/canvas'?(extra.canvas||{root:'graph',nodes:[],wires:[]}):url==='/api/universal/workspace-roots'&&body?.action==='browse'?{ok:true,path:extra.path||''}:url==='/api/universal/cloud-session'?account:url==='/api/universal/settings-action'?{ok:true,result:await answer(body)}:{ok:true}};}});
- vm.runInContext(read('api.js'),context);await window.ArchHubAPI.ready;return {api:window.ArchHubAPI,calls};
+ fetch:async(url,options)=>{
+  const body=options.body&&JSON.parse(options.body);calls.push([url,body]);
+  let data={ok:true};
+  if(url==='/api/universal/desktop-access')data=account.signed_in
+   ?{ok:true,admitted:true,state:'admitted',subject:account.user_id,email:account.email}
+   :{ok:true,admitted:false,state:'signed_out'};
+  if(url==='/api/commands')data={commands:[]};
+  if(url==='/api/session-files'){
+   if(body.action==='param-op'&&body.op==='set'){
+    const [id,key,value]=body.args;
+    file.nodes.find(node=>node.id===id).params[key]=value;
+    data={document:file,changed:[id]};
+   }else data=body.action==='catalogue'?{items:[],sessions:[]}:{document:file,path:filePath};
+  }
+  if(url==='/api/universal/workspace-roots')data=body?.action==='browse'?{ok:true,path:extra.path||''}:{ok:true,roots:[]};
+  if(url==='/api/universal/cloud-session')data=account;
+  if(url==='/api/universal/settings-action')data={ok:true,result:await answer(body)};
+  return {ok:true,status:200,json:async()=>data};
+ }});
+ vm.runInContext(read('studio-authority.js'),context);
+ vm.runInContext(read('api.js'),context);
+ let timer;
+ try{await Promise.race([window.ArchHubAPI.ready,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Desktop fixture did not become ready')),3000);})]);}
+ finally{clearTimeout(timer);}
+ return {api:window.ArchHubAPI,calls};
 }
 
 test('profile adapter posts the exact owner command and cannot overwrite account or transport identity',async()=>{
  const h=await apiHarness(()=>({profile:{name:'Saved User',firm:'Saved Firm',id:'forged-account',signedIn:true,isFounder:true}}));
+ await h.api.syncAccount();
  await h.api.updateProfile({name:'Saved User',firm:'Saved Firm'});
- const p=h.api.getSnapshot().profile;assert.equal(p.name,'Saved User');assert.equal(p.signedIn,false);assert.equal(p.id,'');assert.equal(p.isFounder,false);
- assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url,body])=>url==='/api/universal/settings-action'&&body.function==='updateProfile'))),['/api/universal/settings-action',{function:'updateProfile',args:[{name:'Saved User',firm:'Saved Firm'}]}]);
+ const p=h.api.getSnapshot().profile;assert.equal(p.name,'Saved User');assert.equal(p.signedIn,true);assert.equal(p.id,'fixture-account');assert.equal(p.isFounder,false);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url,body])=>url==='/api/universal/settings-action'&&body.function==='updateProfile'))),['/api/universal/settings-action',{function:'updateProfile',args:[{name:'Saved User',firm:'Saved Firm'}],context:{session:'fixture-session',surface:'home'}}]);
 });
 
 test('rejected profile changes preserve the confirmed snapshot',async()=>{
@@ -79,7 +104,7 @@ test('rejected profile changes preserve the confirmed snapshot',async()=>{
 test('billing refresh only publishes a real owner response',async()=>{
  const h=await apiHarness(body=>({billing:{status:'studio',requestedPlan:'Office',cycle:'Annual',invoices:[],remainingMessages:42}}));
  await h.api.refreshBilling();assert.equal(h.api.getSnapshot().billing.status,'studio');assert.equal(h.api.getUsageSummary()['Remaining messages'],42);
- assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url,body])=>url==='/api/universal/settings-action'&&body.function==='refreshBilling'))),['/api/universal/settings-action',{function:'refreshBilling',args:[]}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url,body])=>url==='/api/universal/settings-action'&&body.function==='refreshBilling'))),['/api/universal/settings-action',{function:'refreshBilling',args:[],context:{session:'fixture-session',surface:'home'}}]);
 });
 
 test('account refresh preserves saved display fields and clears them on account change',async()=>{
@@ -88,17 +113,23 @@ test('account refresh preserves saved display fields and clears them on account 
  const h=await apiHarness(()=>({profile:{...saved},billing:{status:'solo',invoices:[]},people:[],firms:[]}),account);
  await h.api.syncAccount();await h.api.updateProfile({name:'Saved display'});await h.api.syncAccount();
  assert.equal(h.api.getSnapshot().profile.name,'Saved display');assert.equal(h.api.getSnapshot().profile.firm,'First firm');
- saved={name:'Second display',firm:'Second firm',plan:'Personal'};Object.assign(account,{email:'second@example.test',user_id:'second'});await h.api.syncAccount();
+ saved={name:'Second display',firm:'Second firm',plan:'Personal'};Object.assign(account,{email:'second@example.test',user_id:'second'});await h.api.refreshDesktopAccess(true);await h.api.syncAccount();
  assert.equal(h.api.getSnapshot().profile.id,'second');assert.equal(h.api.getSnapshot().profile.name,'Second display');assert.equal(h.api.getSnapshot().profile.firm,'Second firm');
- Object.assign(account,{signed_in:false,email:''});await h.api.syncAccount();assert.equal(h.api.getSnapshot().profile.firm,'');assert.equal(h.api.getSnapshot().profile.id,'');
+ Object.assign(account,{signed_in:false,email:''});await h.api.refreshDesktopAccess(true);assert.equal(h.api.getSnapshot().desktopAccess.admitted,false);assert.equal(h.api.getSnapshot().profile.firm,'');assert.equal(h.api.getSnapshot().profile.id,'');
 });
 
 test('capability folder selection uses the full native path and the real property owner',async()=>{
- const canvas={root:'graph',catalog:[{id:'cap',name:'Tool',descriptor:{engine:'library.tool'}}],nodes:[{id:'node',engine:'library.tool',params:[{label:'folder',value:'C:/OLD',editor:'path',editable:true,relation:'folder-relation'}]}],wires:[]};
- const h=await apiHarness(()=>({}),undefined,{canvas,path:'C:/FULL/NATIVE/FOLDER'});
- assert.equal(h.api.getCapabilityState('cap').params.folder,'C:/OLD');assert.equal(h.api.getCapabilityParameters('cap')[0].type,'path');
- await h.api.pickCapabilityFolder('cap','folder');assert.equal(h.api.getCapabilityState('cap').params.folder,'C:/FULL/NATIVE/FOLDER');
- assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url])=>url==='/api/universal/set-property'))),['/api/universal/set-property',{relation:'folder-relation',value:'C:/FULL/NATIVE/FOLDER'}]);
- canvas.nodes.push({...canvas.nodes[0],id:'other-node'});await h.api.selectGraph('graph');
- assert.throws(()=>h.api.setCapabilityParameter('cap','folder','C:/OTHER'),/exact instance/);
+ const node={id:'fixture-node',type:'thing.session',position:{x:0,y:0},params:{project_folder:'C:/OLD'},paramDefs:[{id:'project_folder',name:'Project folder',type:'folder',group:'Context',value:''}]};
+ const file={format:'archhub',version:1,id:'fixture-session',title:'Fixture',properties:{},nodes:[node],wires:[],groups:[],notes:[]};
+ const h=await apiHarness(()=>({}),undefined,{file,path:'C:/FULL/NATIVE/FOLDER'});
+ const id=node.type;
+ assert.equal(h.api.getCapabilityState(id).params.project_folder,'C:/OLD');
+ assert.equal(h.api.getCapabilityParameters(id)[0].type,'path');
+ await h.api.pickCapabilityFolder(id,'project_folder');
+ const edit=h.calls.find(([url,body])=>url==='/api/session-files'&&body?.action==='param-op');
+ assert.ok(edit,'the session file owner received the folder edit');
+ assert.deepEqual(JSON.parse(JSON.stringify(edit[1].args)),[node.id,'project_folder','C:/FULL/NATIVE/FOLDER']);
+ assert.equal(h.api.getCapabilityState(id).params.project_folder,'C:/FULL/NATIVE/FOLDER');
+ file.nodes.push({...node,id:'second-node'});await h.api.openSession('C:/fixture/second.archhub');
+ assert.throws(()=>h.api.setCapabilityParameter(id,'project_folder','C:/OTHER'),/exact instance/);
 });

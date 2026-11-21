@@ -6,11 +6,11 @@ FastAPI service that powers the **Solo / Studio / Firm** paid tiers
 of ArchHub. The desktop client (in `../app/cloud_client.py`) talks
 to this; this talks to Anthropic / OpenAI / Google + Stripe + Resend.
 
-Open question for the maintainer: **proprietary vs open-source.** This
-folder ships as part of the public repo today (under the parent
-LICENSE = MIT) because it makes deployment trivially reproducible.
-If you want to keep the cloud backend closed, move this folder to a
-private repo and reference it via `docs/BACKEND_SPEC.md`.
+The [ArchHub Proprietary License](../../LICENSE.md) applies to ArchHub-owned
+material in this revision of the public backend source, except where a separate
+license applies. Third-party components retain their own licenses. Previously
+granted rights for material distributed under the MIT License or another
+license remain in effect.
 
 ---
 

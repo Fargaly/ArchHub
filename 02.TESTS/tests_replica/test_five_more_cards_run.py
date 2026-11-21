@@ -225,6 +225,41 @@ def _revit(monkeypatch, result):
     return sent
 
 
+def test_publish_pdf_sheet_scope(monkeypatch, tmp_path):
+    from nodelang.session_files import _params_and_feeds
+
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    engine = "library.publish_pdf"
+    node = {"params": {"sheets": "", "sheet_size": "Use Sheet Size"}}
+    from unittest.mock import Mock
+    from nodelang import clean_revit_adapter as adapter
+    discovery = Mock(side_effect=AssertionError("invalid selection reached host discovery"))
+    with monkeypatch.context() as isolated:
+        isolated.setattr(adapter, "sole_session", discovery)
+        for raw in ([], None, "", " ", {}, 17, [False], "[]", "[null]", "[not JSON", ["A101", {}], ["A101", ""]):
+            for socket in ("in", "sheets", "param:sheets"):
+                sent = _revit(isolated, {})
+                params, feeds = _params_and_feeds(node, engine, {socket: raw})
+                out, _ = L.publish_pdf(params, feeds)
+                assert out == {"out": []} and not sent, (socket, raw)
+        discovery.assert_not_called()
+    assert not (tmp_path / "pdf").exists()
+
+    for wire, expected in (({}, []), ({"sheets": [{"number": "A101"}]}, ["A101"]),
+                           ({"in": '["A101","A102"]'}, ["A101", "A102"]),
+                           ({"sheets": '[{"number":"A101"},{"number":"A102"}]'}, ["A101", "A102"]),
+                           ({"sheets": ["001", "002"]}, ["001", "002"]),
+                           ({"param:sheets": "A101, A102"}, ["A101", "A102"])):
+        sent = _revit(monkeypatch, {"files": ["selected.pdf"]})
+        params, feeds = _params_and_feeds(node, engine, wire.copy())
+        out, _ = L.publish_pdf(params, feeds)
+        assert out["out"] == ["selected.pdf"]
+        code = sent["body"]["code"]
+        assert ("var allSheets = true;" in code) == (not wire)
+        numbers = ", ".join(__import__("json").dumps(n) for n in expected)
+        assert "var wanted = new List<string>{%s};" % numbers in code
+
+
 def test_tag_rooms_tags_the_untagged_rooms_of_the_active_view(monkeypatch):
     sent = _revit(monkeypatch, {"tagged": 6, "skipped": 2, "view": "Level 1"})
     out, said = L.tag_rooms({}, {})

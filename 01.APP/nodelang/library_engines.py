@@ -1321,13 +1321,18 @@ def pdf_sheet_size(value, document=None):
 _EXPORT_PDF = """
 var folder = %s;
 var wanted = new List<string>{%s};
+var allSheets = %s;
+var matched = new HashSet<string>();
 var sheets = new List<ElementId>();
 foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) {
     if (vs.IsPlaceholder) continue;
-    if (wanted.Count > 0 && !wanted.Contains(vs.SheetNumber)) continue;
+    if (!allSheets) {
+        if (!wanted.Contains(vs.SheetNumber)) continue;
+        if (!matched.Add(vs.SheetNumber)) throw new Exception("ambiguous sheet number");
+    }
     sheets.Add(vs.Id);
 }
-if (sheets.Count == 0) throw new Exception("no sheet to publish");
+if (sheets.Count == 0 || (!allSheets && matched.Count != wanted.Count)) throw new Exception("no sheet to publish or incomplete sheet selection");
 System.IO.Directory.CreateDirectory(folder);
 var options = new PDFExportOptions();
 options.Combine = false;
@@ -1345,13 +1350,35 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     import os
     import time
     from .clean_revit_adapter import _execute, sole_session
+    selection_inputs = [name for name in ("sheets", "in") if name in feeds]
+    if len(selection_inputs) > 1:
+        return {"out": []}, "Choose one sheet selection input."
+    selection = feeds[selection_inputs[0]] if selection_inputs else params.get("sheets", "")
+    # Both legacy PDF cards save an empty text parameter for the unwired all-sheets default.
+    all_sheets = not selection_inputs and selection == ""
+    wanted = []
+    if not all_sheets:
+        if isinstance(selection, str):
+            text = selection.strip()
+            if text.startswith(("[", "{")):
+                try:
+                    selection = json.loads(text)
+                except ValueError:
+                    return {"out": []}, "No valid sheet selection to publish."
+            else:
+                selection = text.split(",")
+        rows = selection if isinstance(selection, list) else [selection]
+        for row in rows:
+            number = row.get("number") if isinstance(row, Mapping) else row
+            if not isinstance(number, str) or not number.strip():
+                return {"out": []}, "No valid sheet selection to publish."
+            wanted.append(number.strip())
+        if not wanted:
+            return {"out": []}, "No sheets selected to publish."
     session, why = sole_session()
     if session is None:
         return {"out": []}, why
     size = pdf_sheet_size(feeds.get("sheet_size", params.get("sheet_size", "From Projects")))
-    held = _wired(feeds, "sheets", "in")
-    wanted = [str(item_field(row, "number") or row) for row in as_list(held)] if held is not None else [
-        piece.strip() for piece in _text(params, "sheets").split(",") if piece.strip()]
     # Always a fresh, dated folder under Documents/ArchHub/pdf: a graph is
     # data anyone can hand you, so a folder it names is only a NAME inside
     # that base (never a share, never a path of its own), and the listing
@@ -1362,7 +1389,8 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     asked = os.path.basename(_text(feeds, "folder", _text(params, "folder")).replace(chr(92), "/").rstrip("/"))
     safe = "".join(ch for ch in asked if ch.isalnum() or ch in "-_ ").strip()
     folder = os.path.join(base, (safe + "-" + stamp) if safe else stamp)
-    script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted), PDF_PAPER_FORMATS[size])
+    script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in dict.fromkeys(wanted)),
+                            str(all_sheets).lower(), PDF_PAPER_FORMATS[size])
     try:
         # A sheet set takes longer than a read: three minutes before "did not answer".
         answer = _execute(session, script, "ArchHub publish pdf", timeout=180.0)

@@ -597,3 +597,9 @@ Prior art: Same-user Inno Setup upgrade -> seeds and reopens the saved Canvas an
 Replaces: The Canvas- and Settings-only upgrade evidence is extended with task, reply and attached-file persistence checks.
 
 Verification: Seed two synthetic tasks, a question and reply from distinct authors, and one message on the other task. After Setup, check the two original bindings through a read-only connection to the existing guest database before an owner can recover them. Reopen both tasks through the installed owners and compare message membership, authors, reply IDs, document identities, paths and file hashes. The check uses the same two Setups, guest and receipt files. It adds verification coverage only and opens no second store.
+
+## D-044 Keep Publish PDF within the selected sheets (2026-11-21)
+
+A connected Sheets input selects the sheets to publish. It accepts sheet numbers, records with a `number` field, a comma-separated list or a JSON array. This applies to both the node input and a wire attached to the Sheets parameter.
+
+An empty or malformed selection stops before Revit discovery. If Revit cannot match every requested sheet number to one printable sheet, the export stops before it creates a folder. Older canvases with an unwired, blank Sheets parameter keep their all-sheets behavior. The selected paper size still applies.

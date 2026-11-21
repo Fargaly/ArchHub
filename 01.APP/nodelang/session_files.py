@@ -175,6 +175,8 @@ def _params_and_feeds(node, engine, feeds):
             extra[definition['id']] = feeds[definition['id']]
     for socket in [s for s in list(feeds) if str(s).startswith('param:')]:
         extra[socket[6:]] = feeds.pop(socket)
+        if engine == 'library.publish_pdf' and socket == 'param:sheets':
+            feeds['sheets'] = extra['sheets']
     if engine == 'thing.file.write':
         # Imported file-write nodes may have base sockets without parameter definitions.
         for name in ('path', 'content'):

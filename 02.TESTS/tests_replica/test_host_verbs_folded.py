@@ -105,8 +105,10 @@ def test_every_revit_script_compiles_against_the_installed_revit_api_and_core(tm
                 ("place-on-existing-or-new-sheet", library_engines._PLACE_ON_SHEET % (json.dumps("A101"), json.dumps("Plan"), revit.title_block_lookup("", first_if_unset=True), "")),
                 ("place-on-new-sheet-with-title-block", library_engines._PLACE_ON_SHEET % (json.dumps("A102"), json.dumps("Plan"), revit.title_block_lookup("Office A1 title block"), revit.TITLE_BLOCK_READBACK)),
                 ("create-sheet-with-title-block", revit._script_for("revit.create_sheets", {**rows, "title_block": "Office A1 title block"})),
-                *[("export-pdf-" + fmt, library_engines._EXPORT_PDF % (json.dumps(r"C:\out"), json.dumps("A101"), fmt))
-                  for fmt in library_engines.PDF_PAPER_FORMATS.values()]]
+                *[("export-pdf-" + fmt + "-" + mode,
+                   library_engines._EXPORT_PDF % (json.dumps(r"C:\out"), wanted, mode, fmt))
+                  for fmt in library_engines.PDF_PAPER_FORMATS.values()
+                  for wanted, mode in ((json.dumps("A101"), "false"), ("", "true"))]]
     _compile(tmp_path, "", ["System", "System.Collections.Generic", "System.Linq", "Autodesk.Revit.DB",
                             "Autodesk.Revit.UI"], scripts, [folder / "RevitAPI.dll", folder / "RevitAPIUI.dll", core],
              "global::RevitMCPCore.ScriptContext")

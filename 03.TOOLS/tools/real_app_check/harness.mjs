@@ -64,14 +64,22 @@ const session = {
 const failed = [], fileActions = new Map(), fileFailures = [];
 const observe = m => {
   if (m.method === 'Network.requestWillBeSent' && new URL(m.params.request.url).pathname === '/api/session-files') {
-    try {
-      const action = JSON.parse(m.params.request.postData || '{}').action;
-      if (typeof action === 'string' && /^[a-z-]{1,32}$/.test(action)) fileActions.set(m.params.requestId, action);
-    } catch {}
+    const {requestId, request} = m.params;
+    const entry = {method:request.method, route:new URL(request.url).pathname, action:'unknown'};
+    fileActions.set(requestId, entry);
+    const actionOf = raw => {
+      try {
+        const {action} = JSON.parse(raw);
+        if (typeof action === 'string' && /^[a-z][a-z_-]{0,31}$/.test(action)) entry.action = action;
+      } catch { entry.error = 'invalid request JSON'; }
+    };
+    if (request.postData) actionOf(request.postData);
+    else if (request.method === 'POST') session.send('Network.getRequestPostData', {requestId})
+      .then(body => actionOf(body.postData), () => { entry.error = 'request body unavailable'; });
   }
   if (m.method === 'Network.responseReceived' && m.params.response.status >= 400) {
     failed.push(m.params.response.status + ' ' + m.params.response.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 90));
-    if (fileActions.has(m.params.requestId)) fileFailures.push({status:m.params.response.status,action:fileActions.get(m.params.requestId)});
+    if (fileActions.has(m.params.requestId)) fileFailures.push({status:m.params.response.status,...fileActions.get(m.params.requestId)});
   }
   if (m.method === 'Network.loadingFinished' || m.method === 'Network.loadingFailed') fileActions.delete(m.params.requestId);
 };
@@ -125,7 +133,7 @@ const step = async (asked, fn) => {
   return row;
 };
 
-const ctx = { input: setup.input, label: setup.label, out, cdp, js, sleep, until, rectOf, mouse, clickText, native, step, shot };
+const ctx = { on: session.on, input: setup.input, label: setup.label, out, cdp, js, sleep, until, rectOf, mouse, clickText, native, step, shot };
 try {
   const scenario = await import(pathToFileURL(process.argv[2]).href);
   // Every scenario declares the steps it will run; real_app_check.py fails the run unless exactly

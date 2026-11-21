@@ -619,3 +619,13 @@ Replaces: Upgrade evidence that checked reply linkage alone now has an opt-in ch
 The previous installer seeds ten synthetic messages on the disposable guest, one question and one reply in each of five pairs. After upgrade, the asker and an unrelated viewer read the public mailbox and Studio listing. Only the intended recipient's public reply to the asker marks the question answered and identifies that reply. The asker's own follow-up, a reply addressed to a third person, and a third person's reply to the asker each leave the question pending. The fifth reply is private. Its addressee can retrieve it through the owner, the unrelated viewer cannot, and the public views keep the question pending.
 
 The receipts bind the observations to both installed build IDs. This check exercises persisted attribution. Native injection and delivery acknowledgements require separate evidence.
+
+## D-046 Install the product license and preserve existing grants (2026-11-22)
+
+Request: PUBLICLICENSE, F6 and F20. Each Windows Setup ships the repository's product terms at LICENSE.md and preserves component notices and user-modified files.
+
+Prior art: Inno Setup release snapshot -> install the selected root license alongside the component notices. Installed source manifest and prune owner -> verify the replacement bytes before removing an exact historical product license.
+
+Replaces: Installers that omitted LICENSE.md and left the extensionless MIT notice at the app root. The migration recognizes both historical line endings. An unrecognized LICENSE stays in place. Setup refuses to overwrite a modified or redirected LICENSE.md.
+
+Verification: A small real Setup exercises fresh installation, both historical hashes, modified files and junctions on a disposable Windows profile. The published-installer check records the installed license digest for builds declaring it in the manifest.

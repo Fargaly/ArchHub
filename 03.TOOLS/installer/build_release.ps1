@@ -78,6 +78,7 @@ $acompilerInputs = @(
     'tools/archhub-compiler/licenses/tree-sitter-typescript-0.23.2-LICENSE.txt'
 )
 $selectedInputs = @(
+    'LICENSE.md',
     'nodelang', 'nodelang/outlook_graph.ps1', 'colleague_setup.py', 'docs/SPEC.md',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
@@ -197,7 +198,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         if ($Path -cin @(
             'nodelang/legacy_cleanup_identities.json',
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'nodelang/studio/design-tokens.json', 'colleague_setup.py', 'requirements.txt',
-            'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
+            'LICENSE.md', 'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'packaging/windows/build_goose.py', 'packaging/windows/goose/Cargo.lock',
             'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',
             'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
@@ -320,7 +321,7 @@ function Read-CandidateManifest([string]$Path) {
         })
     }
     $required = @(
-        'selected/nodelang/launcher.py', 'selected/colleague_setup.py', 'selected/requirements.txt', 'selected/docs/SPEC.md',
+        'selected/LICENSE.md', 'selected/nodelang/launcher.py', 'selected/colleague_setup.py', 'selected/requirements.txt', 'selected/docs/SPEC.md',
         'selected/nodelang/agent_onboard.py', 'selected/nodelang/hook_decision.py',
         'selected/nodelang/native_stop_hook.py', 'selected/nodelang/workshop_config.py',
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',

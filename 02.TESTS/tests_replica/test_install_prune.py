@@ -368,7 +368,7 @@ end;
 
 def test_manifest_covers_generated_studio_and_gated_hosts_only(tmp_path):
     source, hosts = tmp_path / "source", tmp_path / "hosts"
-    included = ["nodelang/host_addin_retarget.py", "nodelang/studio/compiled/main.js",
+    included = ["LICENSE.md", "nodelang/host_addin_retarget.py", "nodelang/studio/compiled/main.js",
                 "app/__init__.py", "app/credential_lock.py", "app/secrets_store.py",
                 "bridges/rhino/archhub_mcp.py", "bridges/blender/archhub_mcp/__init__.py",
                 "bridges/sources/max_mcp/max_mcp_startup.py",

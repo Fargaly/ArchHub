@@ -123,6 +123,7 @@ Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recurses
 Source: "{#BetterleaksPayloadPath}\betterleaks.exe"; DestDir: "{app}\runtime\betterleaks"; DestName: "betterleaks.exe"; Flags: ignoreversion
 Source: "{#BetterleaksPayloadPath}\manifest.json"; DestDir: "{app}\runtime\betterleaks"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Betterleaks-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\SPEC.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Goose-Apache-2.0.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion

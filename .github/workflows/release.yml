@@ -747,6 +747,16 @@ jobs:
               $state.installed_build = (Get-Content -Raw (Join-Path $app 'BUILD_ID')).Trim()
               $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
               if ($state.installed_build -cne $pin.build) { throw 'The default installed build differs from the pinned release.' }
+              $manifest = Get-Content -LiteralPath (Join-Path $app 'source-manifest.tsv')
+              $licenseRow = @($manifest | Where-Object { $_ -cmatch '^LICENSE\.md\t' })
+              if ($licenseRow) {
+                $licenseHash = (Get-FileHash -LiteralPath (Join-Path $app 'LICENSE.md') -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($licenseRow.Count -ne 1 -or $licenseRow[0] -cne ("LICENSE.md" + [char]9 + $licenseHash)) {
+                  throw 'Installed product license differs from the Setup manifest.'
+                }
+                $state | Add-Member -NotePropertyName product_license_sha256 -NotePropertyValue $licenseHash
+                $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
+              }
               if (!$previous -and $env:VERIFY_CONNECTORS -eq 'true') {
                 $seed = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'upgrade-seed.json') | ConvertFrom-Json
                 $runtime = Join-Path $env:LOCALAPPDATA 'ArchHub-Runtime/mcp_supervisor.py'

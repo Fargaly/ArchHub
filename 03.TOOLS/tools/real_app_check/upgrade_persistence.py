@@ -64,6 +64,127 @@ def snapshot(seed, run, workspace, document_path, state):
             'privacy': matches[0]['privacy'], 'setting': THEME, 'values': values, 'state': str(state)}, scope_owner is not None
 
 
+
+STALE_CONNECTOR = b'# Synthetic hosted upgrade witness. No connector is started.\n'
+
+
+def connector_guest(app, evidence):
+    import ctypes
+    from ctypes import wintypes
+    name = ctypes.create_unicode_buffer(257)
+    size = wintypes.DWORD(len(name))
+    if not ctypes.windll.advapi32.GetUserNameW(name, ctypes.byref(size)) or name.value.lower() != 'runneradmin':
+        raise RuntimeError('Connector fixtures require the disposable Windows runner account.')
+    home = Path(r'C:\Users\runneradmin')
+    if (os.environ.get('GITHUB_REPOSITORY', '').lower() != 'fargaly/archhub'
+            or os.environ.get('RUNNER_OS') != 'Windows' or not sys.flags.isolated or not sys.dont_write_bytecode
+            or Path.home() != home or app != home / 'AppData/Local/ArchHub'
+            or evidence.resolve() != Path(os.environ['RUNNER_TEMP']).resolve() / 'archhub-verify-published'
+            or any(os.environ.get(key) for key in ('CODEX_HOME', 'GEMINI_CLI_HOME', 'ARCHHUB_TEST_STATE_DIR', 'ARCHHUB_STATE_DIR'))):
+        raise RuntimeError('Unexpected hosted guest profile or upgrade evidence location.')
+
+
+def connector_snapshot(seed, app, run, before=None):
+    import tempfile
+    from nodelang import assistant_registration as registration
+    from nodelang.client_mcp_installation import RUNTIME_FOLDER, _require_plain, base_python
+    from nodelang.workshop_config import settings_target
+
+    root, state = registration.install_roots()
+    if root != app or state != app or not Path(registration.__file__).resolve().is_relative_to(app):
+        raise RuntimeError('Connector evidence requires the installed registration owner.')
+    home = Path.home()
+    configs = {'codex': home / '.codex/config.toml', 'gemini': settings_target('gemini-cli', home=home)}
+    if configs['gemini'] != home / '.gemini/settings.json':
+        raise RuntimeError('Unexpected Gemini profile target.')
+    runtime = state.parent / RUNTIME_FOLDER / 'mcp_supervisor.py'
+    source = app / 'nodelang/mcp_supervisor.py'
+    _require_plain(source, 'file')
+    _require_plain(runtime, 'file', may_be_absent=seed)
+    for path in configs.values():
+        _require_plain(path, 'file', may_be_absent=seed)
+    shipped = source.read_bytes()
+    def digest(data):
+        return hashlib.sha256(data).hexdigest()
+    if seed:
+        if any(p.exists() for p in configs.values()) or (runtime.exists() and runtime.read_bytes() != shipped):
+            raise RuntimeError('Refusing to replace any pre-existing client config or unmanaged supervisor.')
+        # The previous installed owner supplies its exact registered entries.
+        # No credentials, actual vendor process, or network session are involved.
+        codex = registration.codex_entry(root, state)
+        gemini = registration.mcp_server_spec('gemini-cli')['add']
+        texts = {'codex': registration._codex_block(codex),
+                 'gemini': json.dumps({'mcpServers': gemini}, indent=2)}
+        if str(runtime) not in codex['args'] or not any(str(runtime) in e['args'] for e in gemini.values()):
+            raise RuntimeError('Previous Setup does not support the managed supervisor entry.')
+        for vendor, path in configs.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('x', encoding='utf-8') as stream:
+                stream.write(texts[vendor])
+        runtime.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=runtime.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(STALE_CONNECTOR)
+        try:
+            os.replace(temporary, runtime)
+        finally:
+            temporary.unlink(missing_ok=True)
+    observed = runtime.read_bytes()
+    records = {key: {'sha256': digest(path.read_bytes()), 'mtime_ns': path.stat().st_mtime_ns}
+               for key, path in configs.items()}
+    result = {'fixture': 'Synthetic enrolled Codex and Gemini records on a hosted Windows guest', 'run': run,
+              'config_files': records, 'shipped_sha256': digest(shipped), 'runtime_sha256': digest(observed)}
+    if seed:
+        if observed != STALE_CONNECTOR or shipped == observed:
+            raise ValueError('Missing distinct stale connector witness before upgrade.')
+        return result
+    if (not before or before['run'] != run or before['config_files'] != records
+            or before['runtime_sha256'] != digest(STALE_CONNECTOR) or observed != shipped or observed == STALE_CONNECTOR):
+        raise ValueError('Installed Setup or first-run failed to refresh the supervisor and preserve both client records.')
+
+    # Exercise the installed readiness entry in a separate disposable profile,
+    # leaving the upgraded runtime and its two client registrations in place.
+    with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as temp:
+        profile = Path(temp)
+        scratch = profile / 'local/ArchHub'
+        env = dict(USERPROFILE=temp, LOCALAPPDATA=str(scratch.parent), APPDATA=str(profile / 'roaming'),
+                   CODEX_HOME=str(profile / '.codex'), ARCHHUB_TEST_STATE_DIR=str(scratch), PATH='')
+        if registration.install_roots(env) != (app, scratch):
+            raise RuntimeError('Readiness did not select the isolated state owner.')
+        probe = scratch.parent / RUNTIME_FOLDER / runtime.name
+        base = base_python(app)
+        if base is None or not base.is_absolute() or base.resolve().is_relative_to(app):
+            raise ValueError('Installed venv has no external base interpreter for the managed launch.')
+        def inspect():
+            clients = {row['client']: row for row in registration.readiness(environment=env)['clients']}
+            for vendor in ('claude-code', 'codex'):
+                row = clients[vendor]
+                entry = row.get('entry') or {}
+                if (row['state'] == 'install_incomplete' or entry.get('command') != str(base)
+                        or entry.get('args') != ['-I', '-B', str(probe), str(app)]):
+                    raise ValueError('Installed readiness did not return the usable ' + vendor + ' launch specification.')
+        inspect()
+        if probe.parent.exists():
+            raise ValueError('Installed readiness created an absent supervisor directory.')
+        probe.parent.mkdir(parents=True)
+        probe.write_bytes(STALE_CONNECTOR)
+        stamp = probe.stat().st_mtime_ns
+        inspect()
+        if probe.read_bytes() != STALE_CONNECTOR or probe.stat().st_mtime_ns != stamp:
+            raise ValueError('Installed readiness replaced or touched the stale supervisor.')
+    result['readiness'] = {'absent_remains_absent': True, 'stale_bytes_and_mtime_preserved': True,
+                           'launch_specs_verified_in_both_states': ['claude-code', 'codex'], 'base_python': str(base)}
+    return result
+
+
+def verify_setup_observation(post, run, build, seeded, shipped):
+    if (post['stage'] != 'after_native_setup_before_launcher_setup' or post['run'] != run
+            or post['build'] != build or post['seeded_sha256'] != seeded
+            or post['result'] != 'PASS' or post['runtime_sha256'] != shipped
+            or post['shipped_sha256'] != shipped):
+        raise ValueError('Native Setup refresh was not proved before the separate launcher setup call.')
+
+
 def main():
     phase, expected_build = sys.argv[1:]
     if (phase not in ('seed', 'verify') or os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'
@@ -86,6 +207,21 @@ def main():
     receipt = evidence / ('upgrade-' + phase + '.json')
     record = {'phase': phase, 'build': expected_build, 'result': 'FAIL'}
     try:
+        if os.environ.get('VERIFY_CONNECTORS', '').lower() == 'true':
+            connector_guest(app, evidence)
+            previous = None
+            if phase == 'verify':
+                seed = json.loads((evidence / 'upgrade-seed.json').read_text(encoding='utf-8'))
+                if seed['result'] != 'PASS' or 'connectors' not in seed:
+                    raise ValueError('Missing successful pre-upgrade connector evidence.')
+                previous = seed['connectors']
+            record['connectors'] = connector_snapshot(phase == 'seed', app, run, previous)
+            if phase == 'verify':
+                post = json.loads((evidence / 'upgrade-post-setup.json').read_text(encoding='utf-8-sig'))
+                record['connectors']['after_native_setup'] = post
+                record['connectors']['after_launcher_setup_sha256'] = record['connectors']['runtime_sha256']
+                verify_setup_observation(post, run, expected_build, previous['runtime_sha256'],
+                                         record['connectors']['shipped_sha256'])
         data, scoped = snapshot(phase == 'seed', run, workspace, document, state)
         record['snapshot'] = data
         if data['privacy'] != 'private':

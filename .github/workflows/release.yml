@@ -595,12 +595,13 @@ jobs:
           $source = Get-Content -Raw selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
           $block = [regex]::Match($source, '(?s)export const steps=\[(.*?)\];').Groups[1].Value
           $names = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-          if ($names.Count -ne 11) { throw 'Declare desktop admission, six Settings cases, startup, Projects, scope recovery and Office.' }
+          if ($names.Count -ne 12) { throw 'Declare desktop admission, six Settings cases, startup, Projects, scope recovery, Office and Session folder.' }
           $names[0] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-admission.json') -Encoding utf8
           $names[1..6] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
           $names[7] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-startup.json') -Encoding utf8
           $names[8] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-projects.json') -Encoding utf8
           $names[9] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-scope.json') -Encoding utf8
+          $names[11] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-session-folder.json') -Encoding utf8
           $names[10] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-office.json') -Encoding utf8
           @{repository=$env:PUBLISHED_REPOSITORY;build=$env:PUBLISHED_BUILD;workflow_source=$env:GITHUB_SHA;setup_verified=$false;setup_sha256=$null;setup_bytes=$null;install_exit=$null;installed_root=$null;installed_build=$null;first_run_python=$null;first_run_python_version=$null;first_run_exit=$null;ui_exit=$null} |
             ConvertTo-Json | Set-Content (Join-Path $evidence 'install.json') -Encoding utf8
@@ -768,6 +769,10 @@ jobs:
           $found = @($actual | Where-Object { $_.asked -ceq $office })
           $officeResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$office;result='NOT EXERCISED';did='The actual-window check did not reach Office creation; native picker unverified.'} }
           $officeResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'office-result.json') -Encoding utf8
+          $folderCase = Get-Content -Raw (Join-Path $evidence 'declared-session-folder.json') | ConvertFrom-Json
+          $found = @($actual | Where-Object { $_.asked -ceq $folderCase })
+          $folderResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$folderCase;result='NOT EXERCISED';did='The installed window did not reach the signed-in Session folder picker.'} }
+          $folderResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'session-folder-result.json') -Encoding utf8
           $admission = Get-Content -Raw (Join-Path $evidence 'declared-admission.json') | ConvertFrom-Json
           $found = @($actual | Where-Object { $_.asked -ceq $admission })
           $admissionResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$admission;result='NOT EXERCISED';did='The actual installed sign-in window was not reached; no admission pass claimed.'} }
@@ -789,6 +794,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/projects-result.json
             ${{ runner.temp }}/archhub-verify-published/scope-result.json
             ${{ runner.temp }}/archhub-verify-published/office-result.json
+            ${{ runner.temp }}/archhub-verify-published/session-folder-result.json
             ${{ runner.temp }}/archhub-verify-published/admission-result.json
             ${{ runner.temp }}/archhub-verify-published/settings/report.json
             ${{ runner.temp }}/archhub-verify-published/settings/steps.json

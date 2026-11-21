@@ -37,6 +37,7 @@ export const steps=[
  'Installed Projects preserves workspace selection, files and registrations',
  'Installed Settings recovers a stale scope without replaying a write',
  'Installed Projects creates the selected Office folder tree through its native picker',
+ 'Installed Canvas saves the selected Session Project folder from its native picker',
 ];
 const declaredSteps=steps;
 export default async function({input,label,shot,step:recordStep,js,until,clickText,cdp,out,native}){
@@ -402,5 +403,42 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    for(const row of json(workspaceFile).roots.filter(row=>!initialIds.has(row.root_id)))await call('removeWorkspace',[row.root_id]);
    if(before.workspace)await call('selectWorkspace',[before.workspace]);assert.deepEqual(new Set(json(workspaceFile).roots.map(row=>row.root_id)),initialIds);for(const saved of savedFiles)assert.deepEqual(fs.readFileSync(saved.path),saved.bytes);
   }
+ });
+ await step(steps[10],async()=>{
+  const call=(name,...args)=>js('window.ArchHubAPI['+JSON.stringify(name)+'](...'+JSON.stringify(args)+')');
+  const previous=await call('getSessionPath'),previousBytes=fs.readFileSync(previous);
+  const destination=path.join(folder,'Session documents','Picker.archhub'),chosen=path.join(folder,'Session project (QA)');
+  fs.mkdirSync(path.dirname(destination),{recursive:true});fs.mkdirSync(chosen,{recursive:true});
+  try{
+   await call('newSession','Session folder acceptance');await call('refreshLibraryPorts');
+   const target=await call('addNode','thing:session',{x:80,y:80});
+   const other=await call('addNode','thing:session',{x:580,y:80});
+   await call('saveSession',destination);await call('newSession','Prepare Session card fixture');
+   const fixture=json(destination);
+   fixture.nodes.find(n=>n.id===target.id).fixed=true;
+   fs.writeFileSync(destination,JSON.stringify(fixture));
+   await call('openSession',destination);await call('getSettings');
+   const preference=()=>js("window.ArchHubAPI.getSnapshot().settings.find(r=>r.id==='Projects.Working subfolder')?.value");
+   const relative=await preference(),registration=json(workspaceFile).roots;
+   assert.equal(typeof relative,'string');
+   assert.equal(await js("(()=>{const button=[...document.querySelectorAll('nav button')].find(e=>e.getAttribute('aria-label')==='Canvas'||e.textContent.trim()==='Canvas');if(!button)return false;button.click();return true;})()"),true);
+   const card='[data-graph-node="'+target.id+'"] [data-design="session.node"]';
+   const context=card+' [data-design="session.panel.context"]';
+   assert.equal(await until(()=>js('Boolean(document.querySelector('+JSON.stringify(context)+')?.getClientRects().length)'),Boolean),true);
+   await js('(()=>{const b=document.querySelector('+JSON.stringify(context)+');if(b.getAttribute("aria-expanded")!=="true")b.click();})()');
+   const widget='[...document.querySelectorAll('+JSON.stringify(card+' label')+')].find(e=>e.querySelector("span")?.textContent==="Project folder")';
+   assert.equal(await js('(()=>{const b='+widget+'?.querySelector("button");if(b?.textContent.trim()!=="Browse"||!b.getClientRects().length)return false;b.click();return true;})()'),true);
+   const dialog=await native({kind:'pick-folder',title:'Choose a workspace folder',folder:chosen});
+   assert.equal(dialog.closed,true,dialog.error);assert.equal(path.normalize(dialog.folder),path.normalize(chosen));
+   assert.equal(await until(()=>js('('+widget+')?.querySelector("input")?.title'),v=>v===chosen),chosen);
+   assert.equal(path.normalize(await call('getSessionPath')),path.normalize(destination));
+   await call('saveSession');await call('newSession','Reopen Session folder');await call('openSession',destination);
+   for(const doc of [json(destination),await call('getSessionDocument')]){
+    assert.equal(doc.id,fixture.id);assert.equal(path.normalize(doc.nodes.find(n=>n.id===target.id).params.project_folder),path.normalize(chosen));
+    assert.deepEqual(doc.nodes.find(n=>n.id===other.id).params,fixture.nodes.find(n=>n.id===other.id).params);
+   }
+   assert.equal(await preference(),relative);assert.deepEqual(json(workspaceFile).roots,registration);
+   return {pass:true,got:{node:target.id,file:destination,projectFolder:chosen,nativePicker:dialog,savedAndReopened:true}};
+  }finally{await call('openSession',previous);assert.deepEqual(fs.readFileSync(previous),previousBytes);}
  });
 }

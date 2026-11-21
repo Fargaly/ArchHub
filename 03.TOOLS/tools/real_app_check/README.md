@@ -29,7 +29,7 @@ Options:
   python -B 03.TOOLS/tools/real_app_check/real_app_check.py --scenario 03.TOOLS/tools/real_app_check/scenarios/settings.mjs --input qa-signin.json --out qa-signin-evidence
   ```
 
-  Complete normal browser sign-in with the approved QA account within five minutes. If sign-in never finishes, the ten authenticated checks report `NOT EXERCISED` and the run is `INCOMPLETE`.
+  Complete normal browser sign-in with the approved QA account within five minutes. If sign-in never finishes, the eleven authenticated checks report `NOT EXERCISED` and the run is `INCOMPLETE`.
   To also exercise a real account-service outage, use `{"waitForSignIn":true,"verifyAccountOutage":true}` on the dedicated Windows QA machine. Watch `account-outage.json` in the evidence directory. When it asks you to disconnect, isolate that machine's outbound network while keeping loopback available. Reconnect only when the file reports that Studio locked and asks you to reconnect. Each operator window has a 150-second monotonic deadline. While waiting, the verifier reads local Studio state. It checks the protected backend once before disconnect and once at each transition or deadline.
 
   The Projects check uses its saved workflow and pending edit. A pass requires a successful protected read, a data-free 503 during the outage, the locked Studio screen, and a successful read with the same account and intact dirty document after reconnection. A missing sign-in or operator transition leaves the outage evidence `NOT EXERCISED`. A backend/UI disagreement fails the check. The outage result records the observed HTTP statuses, locked screenshot filename and recovery checks. Check both the outage evidence and the runner verdict.

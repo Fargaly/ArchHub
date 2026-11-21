@@ -771,3 +771,60 @@ def test_dwg_inspector_rejects_invalid_view_ids(views):
     from nodelang.nodeslib_v2_engines import dwg_export_request
     with pytest.raises(ValueError, match='distinct positive Revit view IDs'):
         dwg_export_request({'views':views,'version':'2018','setup_source':'Revit default','session':'48884'}, {}, {})
+
+@pytest.mark.parametrize("item_id", ["o_pdf", "o_pdf_handoff"])
+def test_pdf_set_after_canvas_reopen(project, tmp_path, monkeypatch, item_id):
+    from nodelang import clean_revit_adapter as adapter, library_engines as library, session_files as files, settings_owner
+    from nodelang.enforce import guard_effect
+
+    row = settings_owner.preference_setting("Projects.Sheet set")
+    assert row["value"] == "Office issue set" and row["disabledOptions"][library.PDF_SHEET_SETS[-1]]
+    with pytest.raises(ValueError, match="baseline"):
+        settings_owner.preference_settings("setAppearance", [row["id"], library.PDF_SHEET_SETS[-1]])
+    item = next(r for r in files.catalogue() if r["id"] == item_id)
+    assert item["params"]["sheet_set"] == "From Projects"
+    doc = files.new_document("Sheet set")
+    node = {"id": "pdf", "type": item["engine"], "item": item_id, "title": "PDF",
+            "position": {"x": 0, "y": 0}, "params": dict(item["params"])}
+    doc["nodes"] = [node]
+    calls = []
+    monkeypatch.setattr(adapter, "sole_session", lambda: ({"port": 1}, ""))
+    def broker(session, script, *args, **kwargs):
+        calls.append(script)
+        return {"status": "ok", "result": {"files": ["proof.pdf"]}}
+    monkeypatch.setattr(adapter, "_execute", broker)
+    path = tmp_path / "pdf.archhub"
+    def run():
+        files.write_document(path, doc)
+        result = files.run_document(files.read_document(path), invoke=guard_effect)
+        return result["results"]["pdf"]
+    assert run()["output"]["out"] == ["proof.pdf"]
+    assert 'var projectSet = "Office issue set";' in calls.pop()
+    doc["properties"]["settings"] = {row["id"]: "Current sheet only"}
+    assert run()["output"]["out"] == ["proof.pdf"]
+    assert 'var projectSet = "Current sheet only";' in calls.pop()
+    del node["params"]["sheet_set"]
+    assert run()["output"]["out"] == ["proof.pdf"]
+    assert 'var projectSet = "";' in calls.pop()
+    node["params"]["sheet_set"] = "From Projects"
+    doc["properties"]["settings"][row["id"]] = library.PDF_SHEET_SETS[-1]
+    with monkeypatch.context() as isolated:
+        isolated.setattr(adapter, "sole_session", lambda: pytest.fail("host discovery for unavailable option"))
+        assert "baseline" in run()["display"]
+    node["params"]["sheets"] = "A101"
+    assert run()["output"]["out"] == ["proof.pdf"]
+    assert 'var wanted = new List<string>{"A101"};' in calls.pop()
+
+    node["params"]["sheets"] = ""
+    doc["nodes"].append({"id": "source", "type": "data.constant", "item": "n_text", "title": "Source",
+                         "position": {"x": 0, "y": 100}, "params": {"value": library.PDF_SHEET_SETS[-1]}})
+    wire = {"id": "select", "from": {"node": "source", "socket": "value"},
+            "to": {"node": "pdf", "socket": "sheet_set"}}
+    doc["wires"] = [wire]
+    with monkeypatch.context() as isolated:
+        isolated.setattr(adapter, "sole_session", lambda: pytest.fail("wired unavailable set reached discovery"))
+        assert "baseline" in run()["display"]
+    wire["to"]["socket"] = "sheets"
+    doc["nodes"][-1]["params"]["value"] = "A102"
+    assert run()["output"]["out"] == ["proof.pdf"]
+    assert 'var wanted = new List<string>{"A102"};' in calls.pop()

@@ -203,7 +203,10 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
     if engine == 'library.publish_pdf':
-        from .library_engines import pdf_sheet_size
+        from .library_engines import pdf_sheet_set, pdf_sheet_size
+        if feeds.get('sheet_set', params.get('sheet_set')) == 'From Projects' and not (
+                'sheets' in feeds or 'in' in feeds or params.get('sheets', '') != ''):
+            feeds = {**feeds, 'sheet_set': pdf_sheet_set('From Projects', document)}
         selected_size = pdf_sheet_size(feeds.get('sheet_size', params.get('sheet_size', 'From Projects')), document)
         params = {**params, 'sheet_size': selected_size}
         feeds = {**feeds, 'sheet_size': selected_size}
@@ -2454,6 +2457,8 @@ def _setting_value(identity, value):
             raise ValueError('Choose a registered keyboard action and a text shortcut.')
         return value
     row = preference_setting(identity)
+    if isinstance(value, str) and value in row.get('disabledOptions', {}):
+        raise ValueError(row['disabledOptions'][value])
     default = row['default']
     kind = bool if type(default) is bool else int if type(default) is int else str
     if type(value) is not kind or (row.get('options') and value not in row['options']) or (

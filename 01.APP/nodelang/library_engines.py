@@ -1318,19 +1318,46 @@ def pdf_sheet_size(value, document=None):
     return value
 
 
+PDF_SHEET_SETS = ("Office issue set", "Current sheet only", "Sheets changed since the last issue")
+PDF_BASELINE_MISSING = "No verified last-issue baseline for this project. Select sheets explicitly."
+
+
+def pdf_sheet_set(value, document=None):
+    if value == "From Projects":
+        from .session_files import resolve_setting
+        return resolve_setting(document or {}, "Projects.Sheet set")["value"]
+    return value
+
+
 _EXPORT_PDF = """
 var folder = %s;
 var wanted = new List<string>{%s};
 var allSheets = %s;
 var matched = new HashSet<string>();
 var sheets = new List<ElementId>();
-foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) {
-    if (vs.IsPlaceholder) continue;
-    if (!allSheets) {
-        if (!wanted.Contains(vs.SheetNumber)) continue;
-        if (!matched.Add(vs.SheetNumber)) throw new Exception("ambiguous sheet number");
+var projectSet = %s;
+if (projectSet == "Current sheet only") {
+    var active = Doc.ActiveView as ViewSheet;
+    if (active == null || active.IsPlaceholder || !active.CanBePrinted)
+        throw new Exception("Open a printable sheet to publish.");
+    sheets.Add(active.Id);
+} else if (projectSet == "Office issue set") {
+    var sets = new FilteredElementCollector(Doc).OfClass(typeof(ViewSheetSet))
+        .Cast<ViewSheetSet>().Where(set => set.Name == projectSet).ToList();
+    if (sets.Count != 1) throw new Exception("Choose one saved Office issue set.");
+    foreach (View view in sets[0].OrderedViewList) {
+        var sheet = view as ViewSheet;
+        if (sheet != null && !sheet.IsPlaceholder && sheet.CanBePrinted) sheets.Add(sheet.Id);
     }
-    sheets.Add(vs.Id);
+} else {
+    foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) {
+        if (vs.IsPlaceholder) continue;
+        if (!allSheets) {
+            if (!wanted.Contains(vs.SheetNumber)) continue;
+            if (!matched.Add(vs.SheetNumber)) throw new Exception("ambiguous sheet number");
+        }
+        sheets.Add(vs.Id);
+    }
 }
 if (sheets.Count == 0 || (!allSheets && matched.Count != wanted.Count)) throw new Exception("no sheet to publish or incomplete sheet selection");
 System.IO.Directory.CreateDirectory(folder);
@@ -1375,6 +1402,13 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
             wanted.append(number.strip())
         if not wanted:
             return {"out": []}, "No sheets selected to publish."
+    project_set = ""
+    if all_sheets and ("sheet_set" in feeds or "sheet_set" in params):
+        project_set = pdf_sheet_set(feeds.get("sheet_set", params.get("sheet_set")))
+        if project_set == PDF_SHEET_SETS[-1]:
+            return {"out": []}, PDF_BASELINE_MISSING
+        if project_set not in PDF_SHEET_SETS:
+            return {"out": []}, "Choose a valid project sheet set."
     session, why = sole_session()
     if session is None:
         return {"out": []}, why
@@ -1390,7 +1424,7 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     safe = "".join(ch for ch in asked if ch.isalnum() or ch in "-_ ").strip()
     folder = os.path.join(base, (safe + "-" + stamp) if safe else stamp)
     script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in dict.fromkeys(wanted)),
-                            str(all_sheets).lower(), PDF_PAPER_FORMATS[size])
+                            str(all_sheets).lower(), json.dumps(project_set), PDF_PAPER_FORMATS[size])
     try:
         # A sheet set takes longer than a read: three minutes before "did not answer".
         answer = _execute(session, script, "ArchHub publish pdf", timeout=180.0)
@@ -1406,8 +1440,9 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 LIBRARY_ENGINES["library.publish_pdf"] = publish_pdf
 LIBRARY_ITEM_ENGINES["o_pdf"] = {"engine": "library.publish_pdf",
-                                 "params": {"sheets": "", "folder": "", "sheet_size": "From Projects"},
-                                 "paramDefs": [{"id": "sheet_size", "type": "enum", "options": ["From Projects", *PDF_PAPER_FORMATS]}]}
+                                 "params": {"sheets": "", "folder": "", "sheet_size": "From Projects", "sheet_set": "From Projects"},
+                                 "paramDefs": [{"id": "sheet_size", "type": "enum", "options": ["From Projects", *PDF_PAPER_FORMATS]},
+                                    {"id": "sheet_set", "type": "enum", "options": ["From Projects", *PDF_SHEET_SETS[:2]]}]}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
 
 
@@ -1817,7 +1852,7 @@ ENGINE_SOCKETS = {
     "excel.write_range": {"source": ("file", "out"), "target": ("rows", "grant")},
     "revit.export_dwg": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "setup_source", "setup_name", "views")},
     "revit.export_ifc": {"source": ("files", "receipt", "out"), "target": ("project_id", "session", "document", "path", "version", "setup", "setup_source", "setup_name", "views")},
-    "library.publish_pdf": {"source": ("out",), "target": ("in", "sheets", "folder", "sheet_size")},
+    "library.publish_pdf": {"source": ("out",), "target": ("in", "sheets", "folder", "sheet_size", "sheet_set")},
     "library.place_on_sheet": {"source": ("out",), "target": ("in", "sheet", "views", "title_block")},
     "revit.create_sheets": {"source": ("sheets", "out"), "target": ("rows", "title_block", "grant")},
     "revit.renumber_rename": {"source": ("elements", "out"), "target": ("elements", "number_format", "name_format", "grant")},
@@ -2022,8 +2057,9 @@ LIBRARY_ITEM_ENGINES.update({
     "o_skill_handoff": {"engine": "library.save_skill",
                         "params": {"name": "", "path": "", "description": ""}},
     "o_pdf_handoff": {"engine": "library.publish_pdf",
-                      "params": {"sheets": "", "folder": "", "sheet_size": "From Projects"},
-                      "paramDefs": [{"id": "sheet_size", "type": "enum", "options": ["From Projects", *PDF_PAPER_FORMATS]}]},
+                      "params": {"sheets": "", "folder": "", "sheet_size": "From Projects", "sheet_set": "From Projects"},
+                      "paramDefs": [{"id": "sheet_size", "type": "enum", "options": ["From Projects", *PDF_PAPER_FORMATS]},
+                                    {"id": "sheet_set", "type": "enum", "options": ["From Projects", *PDF_SHEET_SETS[:2]]}]},
     "o_email_handoff": {"engine": "library.draft_email",
                         "params": {"to": "", "subject": ""}},
     "o_notify_handoff": {"engine": "library.notify",
@@ -2828,7 +2864,7 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
     if engine in DECISION_INTERFACES:
         interfaces = DECISION_INTERFACES[engine]
     if engine == "library.publish_pdf":
-        interfaces = {**interfaces, "sheet_size": {"type": "string", "direction": "input"}}
+        interfaces = {**interfaces, "sheet_set": {"type": "string", "direction": "input"}, "sheet_size": {"type": "string", "direction": "input"}}
     if engine == "library.place_on_sheet":
         interfaces = {**interfaces, "sheet": {"type": "string", "direction": "input"},
                       "views": {"type": "list", "direction": "input"}}

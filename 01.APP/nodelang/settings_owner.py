@@ -850,7 +850,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
-    from .library_engines import PDF_NATIVE_SHEET_SIZE, PDF_PAPER_FORMATS
+    from .library_engines import PDF_BASELINE_MISSING, PDF_NATIVE_SHEET_SIZE, PDF_PAPER_FORMATS, PDF_SHEET_SETS
     from .nodeslib_v2_engines import DWG_PROJECT_SETUPS, DWG_VERSIONS
     cad = [("DWG export setup", "dwgSetup", DWG_PROJECT_SETUPS), ("DWG version", "dwgVer", DWG_VERSIONS)]
     for label, storage_key, options in cad:
@@ -863,6 +863,16 @@ def preference_settings(function='readControls', args=(), settings=None):
                 settings.update({}, remove=[storage_key])
             function, args = "readControls", ()
     title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']
+    if args and args[0] == 'Projects.Sheet set' and function in ('setAppearance', 'resetAppearance'):
+        if function == 'setAppearance':
+            if args[1] == PDF_SHEET_SETS[-1]:
+                raise ValueError(PDF_BASELINE_MISSING)
+            if args[1] not in PDF_SHEET_SETS:
+                raise ValueError('Choose a listed PDF sheet set.')
+            settings.update({'pdfSet': args[1]})
+        else:
+            settings.update({}, remove=['pdfSet'])
+        function, args = 'readControls', ()
     if args and args[0] == 'Projects.Sheet size' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
             if not isinstance(args[1], str) or args[1] not in PDF_PAPER_FORMATS:
@@ -935,6 +945,11 @@ def preference_settings(function='readControls', args=(), settings=None):
     title_block = {'id': 'Projects.Title block', 'storageKey': 'titleBlock', 'page': 'Projects', 'group': 'Templates',
                    'label': 'Title block', 'description': 'Used when agents create sheets.', 'type': 'choice',
                    'options': title_blocks, 'default': title_blocks[0], 'value': settings.read().get('titleBlock', title_blocks[0])}
+    sheet_set = {'id': 'Projects.Sheet set', 'storageKey': 'pdfSet', 'page': 'Projects', 'group': 'Print and PDF',
+                 'label': 'Sheet set', 'type': 'choice', 'options': list(PDF_SHEET_SETS), 'default': PDF_SHEET_SETS[0],
+                 'disabledOptions': {PDF_SHEET_SETS[-1]: PDF_BASELINE_MISSING},
+                 'description': 'What Publish PDF prints by default. ' + PDF_BASELINE_MISSING,
+                 'value': settings.read().get('pdfSet', PDF_SHEET_SETS[0])}
     sheet_size = {'id': 'Projects.Sheet size', 'storageKey': 'sheetSize', 'page': 'Projects', 'group': 'Templates',
                   'label': 'Sheet size', 'description': 'Paper size for PDF sets. Use Sheet Size follows each Revit sheet.',
                   'type': 'choice', 'options': list(PDF_PAPER_FORMATS), 'default': PDF_NATIVE_SHEET_SIZE,
@@ -942,7 +957,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, *cad_rows]}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows]}
 
 
 def preference_setting(identity):

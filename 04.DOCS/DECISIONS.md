@@ -603,3 +603,7 @@ Verification: Seed two synthetic tasks, a question and reply from distinct autho
 A connected Sheets input selects the sheets to publish. It accepts sheet numbers, records with a `number` field, a comma-separated list or a JSON array. This applies to both the node input and a wire attached to the Sheets parameter.
 
 An empty or malformed selection stops before Revit discovery. If Revit cannot match every requested sheet number to one printable sheet, the export stops before it creates a folder. Older canvases with an unwired, blank Sheets parameter keep their all-sheets behavior. The selected paper size still applies.
+
+In Settings, open Projects and choose **Sheet set** under **Print and PDF**. New Publish PDF nodes, including the handoff card, follow the session, workspace or user preference. **Current sheet only** requires an active printable Revit sheet. **Office issue set** uses the saved Revit print set named `Office issue set` and keeps its sheet order. An explicit list or sheet wire takes precedence. Older saved nodes without this setting keep their original export scope.
+
+**Sheets changed since the last issue** requires a verified record of the issued sheets and their contents. Until that record is available, Settings explains the missing baseline and the node stops before it contacts Revit if a saved value or wire requests this mode.

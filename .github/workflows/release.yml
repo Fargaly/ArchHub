@@ -26,6 +26,9 @@ on:
       verify_connectors:
         description: 'Verify-published upgrade only. Seed disposable Codex and Gemini records and verify installed connector refresh and passive readiness.'
         type: boolean
+      verify_workshop_replies:
+        description: 'Verify persisted Workshop reply attribution and private reply visibility across two installed builds'
+        type: boolean
       verify_dwg:
         description: 'Verify the installed DWG reader and Projects export settings using public linked drawings'
         type: boolean
@@ -585,6 +588,7 @@ jobs:
       PUBLISHED_SHA256: 62772163849761374db264a247e21bf3a50b7b170986f224cfff5f0f421bfeb6
       PUBLISHED_BYTES: '416586952'
       VERIFY_MINUTES: ${{ inputs.verify_minutes }}
+      VERIFY_WORKSHOP_REPLIES: ${{ inputs.verify_workshop_replies }}
       VERIFY_CONNECTORS: ${{ inputs.verify_connectors }}
       PREVIOUS_INSTALLER: ${{ inputs.previous_installer }}
       PUBLISHED_CANDIDATE: ${{ inputs.published_candidate }}
@@ -700,6 +704,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $previousPin = Join-Path $env:VERIFY_EVIDENCE 'upgrade-previous-pin.json'
           $upgrade = Test-Path -LiteralPath $previousPin
+          if ($env:VERIFY_WORKSHOP_REPLIES -eq 'true' -and !$upgrade) { throw 'Workshop reply verification requires a pinned previous installer.' }
           if ($env:VERIFY_CONNECTORS -eq 'true' -and !$upgrade) { throw 'Connector verification requires a pinned previous installer.' }
           $pins = @()
           if ($upgrade) { $pins += Get-Content -Raw $previousPin | ConvertFrom-Json }

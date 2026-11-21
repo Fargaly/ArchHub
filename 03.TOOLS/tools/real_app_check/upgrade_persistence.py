@@ -277,6 +277,66 @@ def workshop_snapshot(app, run, previous=None):
     return observed
 
 
+def workshop_reply_snapshot(app, run, previous=None):
+    from nodelang import workshop_api, workshop_mailbox as mailbox
+    from nodelang.nograph_server import WORKSHOP_PATH
+
+    if (mailbox.profile_database().resolve() != app / 'workshop/messages.sqlite3'
+            or any(Path(module.__file__).resolve() != app / 'nodelang' / (name + '.py')
+                   for module, name in ((mailbox, 'workshop_mailbox'), (workshop_api, 'workshop_api')))):
+        raise RuntimeError('Workshop reply check requires the selected guest installation.')
+    contexts = [{'threadId': 'upgrade-' + run + '-' + role} for role in ('asker', 'recipient', 'outsider')]
+    actors = [mailbox._identity(ctx, None)[0] for ctx in contexts]
+    bindings = [dict(session=actor['sender_key'], agent=actor['sender_label'], runtime='codex',
+                     native_session_id=ctx['threadId']) for ctx, actor in zip(contexts, actors)]
+    # Each question has just one reply, so a correct answer cannot mask a false positive.
+    cases = [('addressed', 1, 0), ('self', 0, 1), ('third', 1, 2),
+             ('wrong_author', 2, 0), ('private', 1, 0)]
+    with mailbox.application_history() as history:
+        if previous is None:
+            def append(author, target, text, parent=None, private=False):
+                route = {'sender': bindings[author], 'recipients': [bindings[target]], 'project': ''}
+                return history.append(mailbox.ROOM, author=actors[author]['sender'], category=mailbox.CATEGORY,
+                                      content='To ' + bindings[target]['agent'] + ':\n' + text,
+                                      evidence=[mailbox.ROUTING_EVIDENCE, json.dumps(route)],
+                                      reply_to=parent, reply_principal=actors[author]['sender'],
+                                      recipients=(bindings[target]['session'],) if private else (),
+                                      idempotency_key=run + '-' + text)['id']
+            pairs = {}
+            for case, author, target in cases:
+                question = append(0, 1, case + ' question')
+                pairs[case] = [question, append(author, target, case + ' reply', question, case == 'private')]
+            return pairs
+        private_id = previous['private'][1]
+        private = history.get(mailbox.ROOM, private_id, principal=bindings[0]['session'])
+        if (not private or private['reply_to'] != previous['private'][0]
+                or history.get(mailbox.ROOM, private_id, principal=bindings[2]['session']) is not None):
+            raise ValueError('Private reply missing or visible to the unrelated guest.')
+    observations = {}
+    for viewer in (0, 2):
+        studio = workshop_api.WorkshopAPI(None, SimpleNamespace(subject_root=bindings[viewer]['session']), mailbox.ROOM, mailbox.ROOM,
+                                          guard=lambda: None, request_id='', route=WORKSHOP_PATH)
+        for surface, page in (('mailbox', mailbox.call('read', {'since': 0}, contexts[viewer])),
+                              ('studio', studio.listWorkshopMessages())):
+            rows = {row['id']: row for row in page['messages']}
+            states = {}
+            for case, _, _ in cases:
+                parent, child = previous[case]
+                note = rows[parent]
+                expected = 'answered' if case == 'addressed' else 'pending'
+                if ((case != 'private' and rows[child]['reply_to'] != parent)
+                        or (case == 'private' and child in rows) or note['state'] != expected):
+                    raise ValueError(f'{surface} {case}: expected {expected}, observed {note["state"]}')
+                if surface == 'studio':
+                    delivery = note['delivery']
+                    if (len(delivery) != 1 or delivery[0]['recipient'] != bindings[1]['session']
+                            or delivery[0].get('reply_message_id') != (child if case == 'addressed' else None)):
+                        raise ValueError(f'Unexpected Studio reply attribution for {case}.')
+                states[case] = note['state']
+            observations[contexts[viewer]['threadId'] + '/' + surface] = states
+    return observations
+
+
 def main():
     phase, expected_build = sys.argv[1:]
     if (phase not in ('seed', 'verify') or os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'
@@ -352,6 +412,18 @@ def main():
             if before['result'] != 'PASS' or before['snapshot'] != data:
                 raise ValueError('Installed owner readback differs from the pre-upgrade evidence.')
         record['workshop'] = workshop_snapshot(app, run, None if phase == 'seed' else before['workshop'])
+        if os.environ.get('VERIFY_WORKSHOP_REPLIES', '').lower() == 'true':
+            if phase == 'seed':
+                record['workshop_reply_messages'] = workshop_reply_snapshot(app, run)
+            else:
+                prior_install = json.loads(plain_path(evidence / 'previous-install.json').read_text(encoding='utf-8-sig'))
+                if seed['build'] != prior_install['installed_build'] or seed['build'] == expected_build:
+                    raise ValueError('Workshop verification requires two distinct installed builds.')
+                record['workshop_replies'] = {
+                    'from_build': seed['build'], 'to_build': expected_build,
+                    'messages': seed['workshop_reply_messages'], 'native_injection': 'not exercised',
+                    'observations': workshop_reply_snapshot(app, run, seed['workshop_reply_messages']),
+                }
         record['preference_checks'] = {scope: 'PASS' if value is not None else 'NOT EXERCISED'
                                        for scope, value in data['values'].items()}
         record['result'] = 'PASS'

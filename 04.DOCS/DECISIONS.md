@@ -607,3 +607,15 @@ An empty or malformed selection stops before Revit discovery. If Revit cannot ma
 In Settings, open Projects and choose **Sheet set** under **Print and PDF**. New Publish PDF nodes, including the handoff card, follow the session, workspace or user preference. **Current sheet only** requires an active printable Revit sheet. **Office issue set** uses the saved Revit print set named `Office issue set` and keeps its sheet order. An explicit list or sheet wire takes precedence. Older saved nodes without this setting keep their original export scope.
 
 **Sheets changed since the last issue** requires a verified record of the issued sheets and their contents. Until that record is available, Settings explains the missing baseline and the node stops before it contacts Revit if a saved value or wire requests this mode.
+
+## D-045 Verify Workshop reply attribution across a Windows upgrade (2026-11-22)
+
+Request: F320 and F6. Under VERIFYRELEASE, verify reply attribution and privacy through the installed application across a same-user Windows upgrade.
+
+Prior art: D-043 same-user upgrade -> retain guest data and reopen it after Setup. Workshop sender/recipient evidence -> identify which visible reply answers each question through the same Workshop owner and its existing workshop/messages.sqlite3 database.
+
+Replaces: Upgrade evidence that checked reply linkage alone now has an opt-in check of attribution and audience.
+
+The previous installer seeds ten synthetic messages on the disposable guest, one question and one reply in each of five pairs. After upgrade, the asker and an unrelated viewer read the public mailbox and Studio listing. Only the intended recipient's public reply to the asker marks the question answered and identifies that reply. The asker's own follow-up, a reply addressed to a third person, and a third person's reply to the asker each leave the question pending. The fifth reply is private. Its addressee can retrieve it through the owner, the unrelated viewer cannot, and the public views keep the question pending.
+
+The receipts bind the observations to both installed build IDs. This check exercises persisted attribution. Native injection and delivery acknowledgements require separate evidence.

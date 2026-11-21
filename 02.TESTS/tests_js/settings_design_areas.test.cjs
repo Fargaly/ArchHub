@@ -16,11 +16,16 @@ async function mount(page,profile,extra){
  await page.addStyleTag({content:'html,body,#root{height:100%;margin:0}'});
  for(const name of ['react.js','react-dom.js'])await page.addScriptTag({path:path.join(studio,'vendor',name)});
  await page.evaluate(({profile,extra})=>{
-  window.fixture={profile,settings:[],hosts:[],agents:[],providers:[],workspaces:[{id:'example',name:'Example workspace',folder:'C:\\Example',path:'C:\\Example',available:true}],activeWorkspace:'example',workspaceHealth:{state:'ready'},graph:{workspaceIds:[]},connections:[],capabilities:[],pages:['Account','Appearance','Workshop','Privacy'],settingsScope:'User',sessionsFolder:'Sessions',runtimeParameters:{},...extra};
+  window.fixture={profile,settings:[],hosts:[],agents:[],providers:[],workspaces:[{id:'example',name:'Example workspace',folder:'C:\\Example',path:'C:\\Example',available:true}],activeWorkspace:'example',workspaceHealth:{state:'ready'},graph:{workspaceIds:[]},connections:[],capabilities:[],pages:['Account','Appearance','Workshop','Privacy'],settingsScope:'User',settingsDestination:{scope:'User',workspace:'example',session:'fixture'},keyboardCommands:[{id:'keyboard.save',label:'Save workflow',contexts:['canvas'],value:'Ctrl S'}],sessionsFolder:'Sessions',runtimeParameters:{},...extra};
   window.writes=[];const listeners=new Set();
   window.ArchHubAPI={subscribe:f=>{listeners.add(f);return()=>listeners.delete(f);},getSnapshot:()=>window.fixture,supportsAction:()=>true,
    refreshRouter:async()=>({default_model:'free',models:[],fallback_models:[],requests:[],free_first:true}),readHostAvailability:async()=>[],listAgentsWorking:async()=>[],refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
    setSetting:async(id,value)=>{window.writes.push({id,value});window.fixture={...window.fixture,settings:window.fixture.settings.map(r=>r.id===id?{...r,value}:r)};listeners.forEach(f=>f());return {ok:true};},
+  };
+  window.ArchHubAPI.setKeybinding=async(id,value,destination)=>{
+   const keyboardCommands=window.fixture.keyboardCommands.map(row=>row.id===id?{...row,value,changed:true}:row);
+   window.writes.push({id,value,destination});window.fixture={...window.fixture,keyboardCommands};listeners.forEach(f=>f());
+   return {keyboardCommands};
   };
   window.ArchHubAPI.resetSetting=async id=>window.ArchHubAPI.setSetting(id,window.fixture.settings.find(row=>row.id===id).default);
   window.ArchHubAPI.setSettingsScope=async scope=>{window.writes.push({scope});return {ok:true};};
@@ -81,6 +86,10 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'Light'});
    await page.getByRole('button',{name:'Reset Theme',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'Dark'});
+   const shortcut=page.getByRole('button',{name:'Change shortcut for Save workflow'});
+   await shortcut.click();
+   await shortcut.press('Control+Shift+K');
+   assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'keyboard.save',value:'Ctrl Shift K',destination:{scope:'User',workspace:'example',session:'fixture'}});
    await page.getByRole('navigation',{name:'On this page'}).getByRole('button').first().click();
    await page.getByRole('button',{name:'Hide advanced',exact:true}).click();
    assert.equal(await page.locator('[data-setting="Appearance.Node radius"]').count(),0);
@@ -124,7 +133,7 @@ test('Look uses the five design families and passes the actual workflow to the e
  for(const row of settings)assert.equal(html.split('data-setting="'+row.id+'"').length-1,1,row.id+' has one editor');
  assert.equal(calls.length,1);assert.equal(calls[0].preview,graph);assert.equal(calls[0].embedded,true);assert.equal(calls[0].externalInspector,true);
  assert.ok(html.includes('inert=""'),'the live preview cannot edit or run the workflow');
- assert.ok(html.includes('Keyboard shortcuts apply everywhere.'),'the real keybinding editor is visible');
+ assert.ok(html.includes('sheet-keybindings'),'the keyboard editor is mounted in Look');
  data.graph={workspaceIds:[]};
  const empty=renderToStaticMarkup(React.createElement(window.UI.Settings,{page:'Appearance'}));
  assert.ok(empty.includes('Open a workflow to preview its real nodes here.'));

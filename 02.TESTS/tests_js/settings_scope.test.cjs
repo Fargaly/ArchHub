@@ -87,16 +87,50 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   assert.equal(staleScope,'Settings destination changed');
   assert.deepEqual(await page.evaluate(()=>window.scopeCalls.at(-1)),{scope:'Workspace',destination:{scope:'User',workspace:'example',session:'fixture'}});
   assert.equal(await page.evaluate(()=>window.fixture.settingsScope),'Session');
-  await page.evaluate(()=>{window.queueSettingAct=false;window.update({settings:[{id:'Projects.Folder',page:'Projects',group:'Project register',label:'Project folder',type:'text',value:'Example',default:''}]});});
-  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Projects',exact:true}).click();
-  for(const family of ['Units and precision','Office standard','Templates','Location','Revit worksharing','IFC version','IFC export setup','BCF version','Print and PDF','CAD','File naming','CDE folders'])await page.getByRole('group',{name:family+'. Coming soon: not built yet',exact:true}).waitFor();
-  assert.equal(await page.getByRole('group',{name:'Project register. Coming soon: not built yet',exact:true}).count(),0,'only the backed family leaves Coming soon');
-  assert.equal(await page.locator('[data-setting="Projects.Folder"]').count(),1,'the backed setting keeps one editor');
-  await page.evaluate(()=>window.update({settings:['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].flatMap((group,i)=>group==='IFC and BCF'?['IFC version','IFC export setup','BCF version'].map((label,j)=>({id:'Projects.Test'+i+'-'+j,page:'Projects',group,label,type:'text',value:'',default:''})):[{id:'Projects.Test'+i,page:'Projects',group,label:'Project preference '+i,type:'text',value:'',default:''}])}));
-  await page.locator('[data-setting="Projects.Test10"]').waitFor();
-  assert.equal(await page.getByRole('heading',{name:'Project preferences',exact:true}).count(),0,'all-backed Projects has no empty placeholder section');
-  assert.equal(await page.getByRole('navigation',{name:'On this page'}).getByRole('button',{name:'Project preferences',exact:true}).count(),0,'the empty placeholder has no outline target');
-  assert.equal(await page.locator('[data-setting^="Projects.Test"]').count(),13,'every backed editor remains single');
+  // The UI fixture owns these values; the Python scoped-owner courts cover disk persistence.
+  await page.evaluate(()=>{
+   window.queueSettingAct=false;
+   window.update({settings:[{id:'Projects.Sheet set',page:'Projects',group:'Print and PDF',label:'Sheet set',
+    type:'choice',default:'Office issue set',value:'Office issue set',
+    options:['Office issue set','Current sheet only','Sheets changed since the last issue'],
+    disabledOptions:{'Sheets changed since the last issue':'No verified last-issue baseline for this project. Select sheets explicitly.'}}]});
+  });
+  const nav=page.getByRole('navigation',{name:'Settings categories'});
+  await nav.getByRole('button',{name:'Projects',exact:true}).click();
+  const sheetSet=page.getByLabel('Sheet set',{exact:true});
+  await sheetSet.click();
+  const unavailable=sheetSet.getByRole('option',{name:'Sheets changed since the last issue'});
+  assert.ok(await unavailable.isDisabled());
+  assert.match(await unavailable.getAttribute('title'),/no verified last-issue baseline/i);
+  await sheetSet.selectOption('Current sheet only');
+  assert.deepEqual(await page.evaluate(()=>window.settingCalls.at(-1)),{id:'Projects.Sheet set',value:'Current sheet only',destination:{scope:'Session',workspace:'example',session:'other-file'}});
+  await nav.getByRole('button',{name:'Look',exact:true}).click();
+  await nav.getByRole('button',{name:'Projects',exact:true}).click();
+  assert.equal(await sheetSet.inputValue(),'Current sheet only');
+  for(const label of ['Pen table','Default scale','Revit template','Layer standard'])
+   await page.getByRole('group',{name:label+'. Coming soon: not built yet',exact:true}).waitFor();
+  // Conditional layout fixture: model a fully backed Projects page.
+  const completeIds=await page.evaluate(()=>{
+   const families={
+    'Project register':['Project folder'],'Units and precision':['Units'],'Office standard':['Office standard'],
+    'Templates':['Revit template','AutoCAD template','Title block','Sheet size','New project folders'],
+    'Location':['Location'],'Revit worksharing':['Revit worksharing'],
+    'IFC and BCF':['IFC version','IFC export setup','BCF version'],
+    'Print and PDF':['Pen table','Sheet set','Default scale'],
+    'CAD':['Layer standard','Colour to lineweight','DWG export setup','DWG version'],
+    'File naming':['File naming'],'CDE folders':['CDE folders']
+   };
+   const settings=Object.entries(families).flatMap(([group,labels])=>labels.map(label=>
+    window.fixture.settings.find(row=>row.page==='Projects'&&row.group===group&&row.label===label)||
+    {id:'Projects.'+label,page:'Projects',group,label,type:'text',value:'',default:''}));
+   window.update({settings});
+   return settings.map(row=>row.id);
+  });
+  await page.getByLabel('DWG version',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('heading',{name:'Project preferences',exact:true}).count(),0);
+  assert.equal(await page.getByRole('navigation',{name:'On this page'}).getByRole('button',{name:'Project preferences',exact:true}).count(),0);
+  const editors=await page.locator('[data-setting^="Projects."]').evaluateAll(nodes=>nodes.map(node=>node.dataset.setting));
+  assert.deepEqual(editors.sort(),completeIds.sort(),'each backed Projects row has exactly one editor');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({result:'PASS',actual:'Settings sheet, controls and action registry',workspaceSelector:true,sessionSelector:true,exportSelectedAndAll:true,upload:'fixture JSON bytes',refusalAndRetry:true,resetDestination:'Workspace',pageErrors:errors,boundary:'fixture owner; real owner tested separately; not installed'}));
  }finally{await browser.close();}

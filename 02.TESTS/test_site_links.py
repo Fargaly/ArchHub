@@ -143,7 +143,7 @@ const pinned=latest.replace('/latest/download/', '/download/build-'+id+'/');
 const offer={build_id:id,asset_sha256:sha,asset_bytes:64,asset_name:name};
 const release={draft:false,prerelease:false,tag_name:'build-'+id,assets:[
  {name,size:64,digest:'sha256:'+sha,browser_download_url:pinned}]};
-async function check(first,second,verified,expectedCalls){
+async function check(github,manifest,verified,expectedCalls){
  const dom=new JSDOM(markup,{url:'https://archhub.io/download/',runScripts:'outside-only'});
  const w=dom.window, field=k=>w.document.querySelector('[data-rel="'+k+'"]'),calls=[];
  try{
@@ -151,26 +151,28 @@ async function check(first,second,verified,expectedCalls){
   assert.equal(field('sha').textContent,'Checksum unavailable');
   w.fetch=async url=>{
    if(url==='https://api.github.com/repos/Fargaly/ArchHub')return {ok:false};
-   calls.push(url);const value=url==='/download.json'?first:second;
+   calls.push(url);const value=url==='/download.json'?manifest:github;
    if(value instanceof Error)throw value;
-   return {ok:value!==null,json:async()=>{if(value==='invalid JSON')throw SyntaxError();return value;}};
+   return {ok:value!==null&&value!==429,status:value===429?429:200,json:async()=>{if(value==='invalid JSON')throw SyntaxError();return value;}};
   };
   w.eval(loader);await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(calls,['/download.json','https://api.github.com/repos/Fargaly/ArchHub/releases/latest'].slice(0,expectedCalls));
+  assert.deepEqual(calls,['https://api.github.com/repos/Fargaly/ArchHub/releases/latest','/download.json'].slice(0,expectedCalls));
   assert.equal(field('url').href,verified?pinned:latest);
   assert.equal(field('sha').textContent,verified?sha:'Checksum unavailable');
   assert.equal(field('tag').textContent,verified?id:'Latest stable release');
  }finally{w.close();}
 }
 (async()=>{
- await check(offer,null,true,1);
- for(const bad of [new TypeError('CORS'),null,'invalid JSON',{...offer,asset_sha256:'bad'}])
-  await check(bad,release,true,2);
- await check(null,{...release,assets:[{...release.assets[0],digest:null}],body:'BUILD_ID: '+id+'\nSHA256 ArchHub-Setup-0.exe: '+sha+' (64 bytes)'},true,2);
+ await check(release,null,true,1);
+ for(const bad of [new TypeError('unavailable'),null,429,'invalid JSON',{...release,prerelease:true}])
+  await check(bad,offer,true,2);
+ await check({...release,assets:[{...release.assets[0],digest:null}],body:'BUILD_ID: '+id+'\nSHA256 ArchHub-Setup-0.exe: '+sha+' (64 bytes)'},null,true,1);
  for(const bad of [null,new TypeError('unavailable'),{...release,assets:[]},
   {...release,body:'SHA256 ArchHub-Setup-0.exe: '+'c'.repeat(64)},
   {...release,assets:[{...release.assets[0],browser_download_url:latest}]}])
-  await check(null,bad,false,2);
+  await check(bad,null,false,2);
+ for(const bad of [new TypeError('CORS'),'invalid JSON',{...offer,asset_sha256:'bad'}])
+  await check(429,bad,false,2);
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
         subprocess.run(["node", "-e", script], cwd=ROOT, check=True, timeout=20,

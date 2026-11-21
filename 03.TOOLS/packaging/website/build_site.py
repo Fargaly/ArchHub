@@ -225,7 +225,7 @@ async function readRelease(url,parse){
 }
 if(document.querySelector('[data-rel]')){
  (async()=>{
-  const facts=await readRelease('/download.json',fromOffer)||await readRelease('https://api.github.com/repos/Fargaly/ArchHub/releases/latest',fromGitHub);
+  const facts=await readRelease('https://api.github.com/repos/Fargaly/ArchHub/releases/latest',fromGitHub)||await readRelease('/download.json',fromOffer);
   if(facts)paintRel(facts);
   else{const note=document.querySelector('[data-rel-note]');if(note)note.hidden=false;}
  })();

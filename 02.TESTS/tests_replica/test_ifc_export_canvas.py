@@ -527,7 +527,7 @@ def test_registered_dwg_export_review_and_file_set(project, monkeypatch, mode):
         document['nodes'] = []
         files.write_document(path, document)
         held = api['canvas.add_node'](str(path), item['id'], None, params={'project_id':'court',
-                                   'session':'48884', 'document':str(source), 'views':[41, 52]})
+                                   'session':'48884', 'document':str(source), 'views':['41', '52']})
         node = held['node']
         defs = next(n['param_types'] for n in held['nodes'] if n['id'] == node)
         assert defs['path'] == defs['setup_name'] == 'text'
@@ -763,3 +763,11 @@ def test_reviewed_dwg_references(project, monkeypatch, version, signature, kind,
         assert failed['status'] == 'failed' and reason in failed['error']
         assert before and not destination.exists()
     assert sentinel.read_text() == 'preserve' and not list(root.glob('.archhub-dwg-*'))
+
+
+@pytest.mark.parametrize('views', [['41', 41], ['0'], ['-1'], ['1.5'], ['2e3'], ['9223372036854775808'],
+                                   [''], ['041'], [' 41 '], [True], ['1' * 100]])
+def test_dwg_inspector_rejects_invalid_view_ids(views):
+    from nodelang.nodeslib_v2_engines import dwg_export_request
+    with pytest.raises(ValueError, match='distinct positive Revit view IDs'):
+        dwg_export_request({'views':views,'version':'2018','setup_source':'Revit default','session':'48884'}, {}, {})

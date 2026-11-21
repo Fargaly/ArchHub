@@ -626,7 +626,14 @@ def dwg_export_request(params, feeds, document):
             raise ValueError("Choose a DWG setup source or enter its name.")
     request["setup"] = setup
     if isinstance(request["views"], list):
-        request["views"] = [row.get("id") if isinstance(row, Mapping) else row for row in request["views"]]
+        ids = []
+        for row in request["views"]:
+            value = row.get("id") if isinstance(row, Mapping) else row
+            if (isinstance(value, str) and len(value) <= 19 and value.isascii()
+                    and value.isdecimal() and not value.startswith("0")):
+                value = int(value)
+            ids.append(value)
+        request["views"] = ids
     validate_dwg_options(request)
     if not request["project_id"]:
         from .session_files import _project_of, _registered_roots

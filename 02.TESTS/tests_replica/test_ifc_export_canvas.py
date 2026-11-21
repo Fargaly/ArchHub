@@ -17,12 +17,18 @@ def project(tmp_path,monkeypatch):
     JsonFile(state/'settings/workspaces.json',{'roots':[]}).write({'roots':[{'root_id':'court','path':str(root),'privacy':'private','name':'Court'}]})
     return root,source
 
-def start(project,folder='Issued',version='From Projects',properties=None):
+def start(project,folder='Issued',version='From Projects',properties=None, node_params=None, wired=False):
     from nodelang import session_files as files
     root,source=project;out=root/folder;out.mkdir();target=out/'Reviewed.ifc'
     item=next(row for row in files.catalogue() if row['id']=='file_export_ifc')
     document=files.new_document('IFC approval');document['properties'].update(properties or {})
     document['nodes']=[{'id':'export','item':item['id'],'type':item['engine'],'params':{**copy.deepcopy(item['params']),'project_id':'court','document':str(source),'path':str(target),'session':'48884','version':version},'paramDefs':copy.deepcopy(item.get('paramDefs',[])),'position':{'x':0,'y':0}}]
+    if node_params is not None:
+        document['nodes'][0]['params'] = {**node_params, 'project_id':'court', 'document':str(source),
+                                         'path':str(target), 'session':'48884', 'version':version}
+    if wired:
+        document['nodes'].append({'id':'setting','type':'thing.setting','params':{'setting':'Projects.Working subfolder'},'position':{'x':0,'y':120}})
+        document['wires'] = [{'id':'setup-wire','from':{'node':'setting','socket':'value'},'to':{'node':'export','socket':'setup'}}]
     path=root/'export.archhub';files.write_document(path,document);owner=files.SessionFiles(root/'sessions')
     result=owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
     from nodelang.hook_decision import ask_reviews
@@ -33,13 +39,15 @@ def start(project,folder='Issued',version='From Projects',properties=None):
     assert not target.exists()
     return path,target,card
 
-def transport(monkeypatch,target,*,malformed=False):
+def transport(monkeypatch,target,*,malformed=False,expected_setup=None):
     from nodelang import clean_revit_adapter as adapter
     calls=[]
     monkeypatch.setattr(adapter,'live_sessions',lambda:[{'port':48884,'pid':7,'revit_version':'2027','document':'Disposable fixture'}])
     def broker(port,route,body,*,timeout):
         assert (port,route,body['transaction_name'],body['transaction'])==(48884,'/exec','ArchHub IFC export',False)
         version=json.loads(re.search(r'requestedVersion = ("[^"]+")',body['code']).group(1));calls.append(version)
+        if expected_setup is not None:
+            assert json.loads(re.search(r'setup = ("[^"]*")',body['code']).group(1)) == expected_setup
         schema=adapter._IFC_SCHEMAS[version].decode('ascii')
         data=("ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [ReferenceView]'),'2;1');\nFILE_NAME('Reviewed.ifc','2026-11-20T14:30:00',(''),(''),'Revit','Revit','');\nFILE_SCHEMA(('%s'));\nENDSEC;\nDATA;\n#42=IFCCARTESIANPOINT((0.,0.,0.));\nENDSEC;\nEND-ISO-10303-21;\n"%schema).encode()
         if malformed:data=data.replace(b'DATA;',b'/* DATA; */')
@@ -175,7 +183,11 @@ def test_two_exports_report_each_approved_node_independently(project,monkeypatch
     ask_apply(card['id'],card['input_digest'],'approve');ask_apply(next_card['id'],next_card['input_digest'],'approve')
     assert calls==['IFC4RV','IFC4RV']
 
-def test_settings_three_scope_roundtrip_import_reset_and_node_binding(project):
+@pytest.mark.parametrize('identity,default,global_value,workspace_value,session_value,invalid', [
+    ('Projects.IFC version','IFC4','IFC2x3','IFC4.3','IFC4','IFC9'),
+    ('Projects.IFC export setup','','Global exchange','Workspace exchange','Session exchange','invalid\nname'),
+])
+def test_settings_three_scope_roundtrip_import_reset_and_node_binding(project, identity, default, global_value, workspace_value, session_value, invalid):
     from types import SimpleNamespace
     from nodelang import session_files as files,canvas_documents as canvas
     from nodelang.nograph_server import JsonFile,Refused,r_settings_action
@@ -188,18 +200,84 @@ def test_settings_three_scope_roundtrip_import_reset_and_node_binding(project):
         result=r_settings_action(owner,SimpleNamespace(body={'function':function,'args':list(args),'context':{'session':doc['id'],'settingsDestination':view.get('settingsDestination')}}))['result']
         if 'settingsDestination' in result:view.update(result)
         return result
-    def value(result):return next(row['value'] for row in result['appearanceSettings'] if row['id']=='Projects.IFC version')
-    assert value(call('readPreferences'))=='IFC4';call('setAppearance','Projects.IFC version','IFC2x3')
-    call('setSettingsScope','Workspace','court',doc['id']);before=prefs.path.read_bytes();assert value(call('setAppearance','Projects.IFC version','IFC4.3'))=='IFC4.3';assert prefs.path.read_bytes()==before
-    call('setSettingsScope','Session','court',doc['id']);before=roots.path.read_bytes();assert value(call('setAppearance','Projects.IFC version','IFC4'))=='IFC4';assert roots.path.read_bytes()==before
-    node={'id':'ifc-setting','type':'thing.setting','params':{'setting':'Projects.IFC version'}}
-    assert canvas.run_thing('thing.setting',node['params'],{},files.read_document(path))[0]['value']=='IFC4'
-    def edit(document):canvas.write_through(node,'value','IFC2x3',document=document);return []
-    canvas.edit(path,'Court','IFC setting edit',edit,solve_changed=False);assert value(call('readPreferences'))=='IFC2x3'
+    def value(result):return next(row['value'] for row in result['appearanceSettings'] if row['id']==identity)
+    assert value(call('readPreferences'))==default;call('setAppearance',identity,global_value)
+    call('setSettingsScope','Workspace','court',doc['id']);before=prefs.path.read_bytes();assert value(call('setAppearance',identity,workspace_value))==workspace_value;assert prefs.path.read_bytes()==before
+    call('setSettingsScope','Session','court',doc['id']);before=roots.path.read_bytes();assert value(call('setAppearance',identity,session_value))==session_value;assert roots.path.read_bytes()==before
+    node={'id':'ifc-setting','type':'thing.setting','params':{'setting':identity}}
+    assert canvas.run_thing('thing.setting',node['params'],{},files.read_document(path))[0]['value']==session_value
+    def edit(document):canvas.write_through(node,'value',global_value,document=document);return []
+    canvas.edit(path,'Court','IFC setting edit',edit,solve_changed=False);assert value(call('readPreferences'))==global_value
     snapshot={p:p.read_bytes() for p in (prefs.path,roots.path,path)}
-    with pytest.raises(Refused):call('setAppearance','Projects.IFC version','IFC9')
-    with pytest.raises(Refused):call('importPreferences',{'format':'archhub.settings','version':1,'scopes':{'Session':{'Projects.IFC version':'IFC9'}}})
+    with pytest.raises(Refused):call('setAppearance',identity,invalid)
+    with pytest.raises(Refused):call('importPreferences',{'format':'archhub.settings','version':1,'scopes':{'Session':{identity:invalid}}})
     assert all(p.read_bytes()==data for p,data in snapshot.items())
-    assert value(call('resetAppearance','Projects.IFC version'))=='IFC4.3'
-    exported=call('exportPreferences','All')['settingsExport'];assert exported['scopes']['Workspace']['Projects.IFC version']=='IFC4.3'
-    call('importPreferences',{'format':'archhub.settings','version':1,'scopes':{'Session':{'Projects.IFC version':'IFC4'}}});assert value(call('readPreferences'))=='IFC4'
+    assert value(call('resetAppearance',identity))==workspace_value
+    exported=call('exportPreferences','All')['settingsExport'];assert exported['scopes']['Workspace'][identity]==workspace_value
+    call('importPreferences',{'format':'archhub.settings','version':1,'scopes':{'Session':{identity:session_value}}});assert value(call('readPreferences'))==session_value
+
+
+def test_setup_settings_run_ask_and_stale_approval(project, monkeypatch):
+    from nodelang import settings_owner, session_files as files
+    from nodelang.hook_decision import ask_apply
+    identity = 'Projects.IFC export setup'
+    settings_owner.preference_settings('setAppearance', [identity, 'From Projects'])
+    path, target, card = start(project)
+    assert 'Setup: Named: From Projects' in card['text']
+    calls = transport(monkeypatch, target)
+    settings_owner.preference_settings('resetAppearance', [identity])
+    try:
+        ask_apply(card['id'], card['input_digest'], 'approve')
+    except ValueError:
+        pass
+    assert not calls and not target.exists()
+    assert files.read_document(path)['nodes'][0]['result']['status'] != 'Done'
+    owner = files.SessionFiles(project[0]/'sessions')
+    result = owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+    from nodelang.hook_decision import ask_reviews
+    fresh = next(row for row in ask_reviews() if row['id'] == result['approvalId'])
+    assert 'Setup: Revit default' in fresh['text'] and fresh['input_digest'] != card['input_digest']
+    assert ask_apply(fresh['id'],fresh['input_digest'],'approve')['status'] == 'approved'
+    assert calls == ['IFC4RV'] and target.is_file()
+
+
+def test_ifc_setup_old_and_new_values_and_wire(project):
+    from nodelang import nodeslib_v2_engines as nodes
+    root, source = project
+    base = {'project_id':'court','session':'48884','document':str(source),'path':str(root/'out.ifc')}
+    doc = {'properties':{'settings':{'Projects.IFC export setup':'Scoped exchange'}}}
+    def setup(params, wires=None):
+        return nodes.ifc_export_request({**base,**params}, wires or {}, doc)['pending_write']['content']['setup']
+    inherit = {'setup_source':'From Projects'}
+    assert setup(inherit) == 'Scoped exchange'
+    assert setup({}) == setup({'setup':''}) == setup({'setup_source':'Revit default'}) == ''
+    for literal in ('From Projects','Revit default','Named setup','Office exchange'):
+        assert setup({'setup':literal}) == setup({'setup_source':'Named setup','setup_name':literal}) == literal
+        assert setup(inherit, {'setup':literal}) == literal
+    assert setup(inherit, {'setup':''}) == ''
+    assert setup(inherit, {'setup_source':'Named setup','setup_name':'Wire name'}) == 'Wire name'
+    with pytest.raises(ValueError): setup({'setup_source':'Named setup','setup_name':''})
+
+
+@pytest.mark.parametrize('stored,wired,expected', [
+    ({},False,'Revit default'), ({'setup':''},False,'Revit default'),
+    ({'setup':'From Projects'},False,'Named: From Projects'),
+    ({'setup':'Revit default'},False,'Named: Revit default'),
+    ({'setup_source':'From Projects'},True,'Named: Wire exchange'),
+])
+def test_saved_node_and_wired_setup_reach_ask(project, stored, wired, expected):
+    from nodelang import settings_owner
+    settings_owner.preference_settings('setAppearance',['Projects.Working subfolder','Wire exchange'])
+    _,_,card = start(project,properties={'settings':{'Projects.IFC export setup':'Different scoped setup'}},
+                     node_params=stored,wired=wired)
+    assert 'Setup: '+expected in card['text']
+
+
+@pytest.mark.parametrize('setup,label',[('Revit default','Named: Revit default'),('','Revit default')])
+def test_inherited_setup_approved_to_adapter(project,monkeypatch,setup,label):
+    from nodelang.hook_decision import ask_apply
+    _,target,card=start(project,properties={'settings':{'Projects.IFC export setup':setup}})
+    assert 'Setup: '+label in card['text']
+    calls=transport(monkeypatch,target,expected_setup=setup)
+    assert ask_apply(card['id'],card['input_digest'],'approve')['status']=='approved'
+    assert calls==['IFC4RV'] and target.is_file()

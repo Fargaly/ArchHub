@@ -850,6 +850,14 @@ def preference_settings(function='readControls', args=(), settings=None):
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
+    if args and args[0] == 'Projects.IFC export setup' and function in ('setAppearance', 'resetAppearance'):
+        if function == 'setAppearance':
+            if not isinstance(args[1], str) or any(ord(c) < 32 for c in args[1]):
+                raise ValueError('Use one IFC setup name, or leave it empty for the Revit default.')
+            settings.update({'ifcSetup': args[1]})
+        else:
+            settings.update({}, remove=['ifcSetup'])
+        function, args = 'readControls', ()
     if args and args[0] == 'Projects.IFC version' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
             if args[1] not in IFC_PROJECT_VERSIONS:
@@ -890,7 +898,12 @@ def preference_settings(function='readControls', args=(), settings=None):
            'label': 'IFC version', 'type': 'choice', 'options': list(IFC_PROJECT_VERSIONS), 'default': IFC_PROJECT_VERSIONS[0],
            'value': settings.read().get('ifcVersion', IFC_PROJECT_VERSIONS[0]),
            'description': 'Version used by IFC export unless its node or wire selects another version.'}
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc]}
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    default_setup = LIBRARY_ITEM_ENGINES['file_export_ifc']['params']['setup_name']
+    setup = {'id': 'Projects.IFC export setup', 'storageKey': 'ifcSetup', 'page': 'Projects', 'group': 'IFC and BCF',
+             'label': 'IFC export setup', 'type': 'text', 'default': default_setup, 'value': settings.read().get('ifcSetup', default_setup),
+             'description': 'Exact Revit IFC setup name. Leave empty to use the Revit default.'}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup]}
 
 
 def preference_setting(identity):

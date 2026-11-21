@@ -1675,7 +1675,7 @@ def _ask_text(action, data):
             return '\n'.join(('Source: ' + str(request.get('document', '')),
                               'Destination: ' + str(request.get('path', '')),
                               'Format: ' + versions.get(request.get('version'), str(request.get('version', ''))),
-                              'Setup: ' + str(request.get('setup') or 'Revit default'),
+                              'Setup: ' + ('Named: ' + request['setup'] if request.get('setup') else 'Revit default'),
                               'Views: ' + (', '.join(str(view) for view in views) if views else 'Entire model'))), 'IFC export'
         return json.dumps({'parameters': data['node'].get('params'), 'inputs': data['feeds']}, ensure_ascii=False, indent=2), 'Parameters to run'
     if action not in ("send", "publish") or not isinstance(data, dict):

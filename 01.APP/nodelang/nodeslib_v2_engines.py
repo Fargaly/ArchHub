@@ -502,6 +502,28 @@ IFC_PROJECT_VERSIONS = ('IFC4', 'IFC2x3', 'IFC4.3')
 _IFC_DEFAULT_VERSIONS = {'IFC4': 'IFC4RV', 'IFC2x3': 'IFC2x3CV2', 'IFC4.3': 'IFC4x3RV'}
 
 
+def _ifc_setup(params, feeds, document):
+    from .session_files import resolve_setting
+    # Existing names, including a wired empty string for Revit's default, are always explicit.
+    if 'setup' in feeds or 'setup' in params:
+        name = feeds.get('setup', params.get('setup'))
+    else:
+        source = feeds.get('setup_source', params.get('setup_source', 'Revit default'))
+        if source == 'From Projects':
+            name = resolve_setting(document, 'Projects.IFC export setup')['value']
+        elif source == 'Named setup':
+            name = feeds.get('setup_name', params.get('setup_name'))
+            if not name:
+                raise ValueError('Enter the exact Revit IFC setup name.')
+        elif source == 'Revit default':
+            name = ''
+        else:
+            raise ValueError('Choose an IFC setup source.')
+    if not isinstance(name, str) or any(ord(c) < 32 for c in name):
+        raise ValueError('Use one IFC setup name, or leave it empty for the Revit default.')
+    return name
+
+
 def ifc_export_request(params, feeds, document):
     from .session_files import resolve_setting
     from .clean_revit_adapter import _ifc_scoped_paths, _IFC_SCHEMAS
@@ -513,6 +535,7 @@ def ifc_export_request(params, feeds, document):
     if version not in _IFC_SCHEMAS:
         raise ValueError('Choose a supported IFC version.')
     request = {k: values.get(k, [] if k == 'views' else '') for k in ('project_id', 'session', 'document', 'path', 'setup', 'views')}
+    request['setup'] = _ifc_setup(params, feeds, document)
     request['version'] = version
     _source, _destination, target, registration = _ifc_scoped_paths(request)
     pending = {'kind': 'ifc-export', 'operation': 'revit.export_ifc', 'target': target, 'content': request,
@@ -529,7 +552,7 @@ def revit_export(params: Mapping[str, object], feeds: Mapping[str, object]):
             raise ValueError('Run IFC export through its Canvas approval.')
         request = {'project_id': params.get('project_id'), 'session': params.get('session'),
                    'document': params.get('document'), 'path': params.get('path'),
-                   'version': params.get('version'), 'setup': params.get('setup'), 'views': params.get('views')}
+                   'version': params.get('version'), 'setup': _ifc_setup(params, feeds, {}), 'views': params.get('views')}
         if {**request, 'pending_write': effect.get('pending_write')} != effect:
             raise ValueError('IFC node parameters differ from the reviewed request.')
         grant = canvas_ifc_grant(effect)

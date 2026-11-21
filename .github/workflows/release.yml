@@ -480,6 +480,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          python -B selected/03.TOOLS/tools/real_app_check/profile_guard.py --profile "$env:RUNNER_TEMP/archhub-offer-check" selected/03.TOOLS/packaging/windows/check_update_offer.py release-output --expected-revision '${{ steps.source.outputs.revision }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Build-only Setup failed the stable release check. Use goose mode for a runtime-only artifact.' }
           Copy-Item -LiteralPath (Join-Path $env:GOOSE_BUILD_PATH 'goose.exe'), (Join-Path $env:GOOSE_BUILD_PATH 'receipt.json') -Destination release-output
           Copy-Item -LiteralPath (Join-Path $env:GOOSE_BUILD_PATH 'LICENSE') -Destination release-output/goose-LICENSE.txt
           foreach ($name in @('ArchHub-Setup-0.exe', 'goose.exe', 'receipt.json')) {

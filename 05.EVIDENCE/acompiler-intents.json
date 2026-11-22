@@ -250,7 +250,9 @@
         "02.TESTS/tests_replica/test_baboom_site_fit.py",
         "03.TOOLS/packaging/website/build_site.py",
         "03.TOOLS/tools/prepare_baboom_site.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "04.DOCS/BABOOM.md",
+        "05.EVIDENCE/acompiler-intents.json",
+        "README.md"
       ]
     },
     "BABOOMSITEFIT": {

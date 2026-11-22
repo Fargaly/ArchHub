@@ -1,13 +1,37 @@
 # BABOOM Assistant Boundary
 
-Status: WIP capability boundary, not a release claim.
+## BABOOM on the desktop
 
-BABOOM is ArchHub's founder-facing projection of the same Universal Cell
-application that holds Work, Workshop, attention, device custody, consent,
-delegations, grants, and receipts. It is not a separate chat history, task
-queue, supervisor, or model control plane.
+The Windows companion opens ArchHub’s existing composer for BABOOM requests.
+The composer handles the request in ArchHub, where you can review Canvas drafts
+and open Workshop conversations. The companion keeps no separate conversation
+or task store. Canvas workflows are saved as `.archhub` files. Private settings
+and Workshop history live in the ArchHub profile. [Canvas and composer guide](https://archhub.io/docs/composer-canvas/) ·
+[Workshop guide](https://archhub.io/docs/workshop/).
 
-## Current graph authority
+The current storage and execution boundary is documented in the
+[ArchHub Node Specification](SPEC.md). The October 28, 2026 NOGRAPH decision
+retired Universal Cell as the application store. [Architecture authority](AUTHORITY.md#superseded-sources).
+
+## The standards site
+
+The live [BABOOM BIM Standard site](https://baboom.archhub.io/) publishes the
+standards, libraries and tools, and offers Ask BABOOM. Desktop standards lookup
+uses the site’s chat endpoint. [Desktop standards lookup source](../01.APP/nodelang/baboom_standard.py).
+
+On November 22, 2026, the live standards chat asked visitors to sign in for
+‘What is ArchHub?’ in both English and Arabic. Read the public
+[Getting started guide](https://archhub.io/docs/getting-started/) for that
+answer. The prepared site update answers these public overview questions in
+both languages and cites the guide.
+[Site preparation source](../03.TOOLS/tools/prepare_baboom_site.py).
+
+## Historical Universal Cell design and WIP (September–October 2026)
+
+The following records describe the earlier Universal Cell design, dated
+patches and their recorded verification.
+
+### Graph authority in the earlier design
 
 - One Workshop root and Workbench scope hold research, planning, priority,
   approval, review, and validation evidence.
@@ -20,7 +44,7 @@ queue, supervisor, or model control plane.
   excludes titles, paths, documents, pixels, audio, clipboard, keystrokes, and
   process metadata.
 
-## Workshop Council Contract
+### Workshop Council contract
 
 Every admitted provider receives the same sealed, bounded coordination brief
 for the same planned Work. The brief is a Cell-held snapshot of the applicable
@@ -37,13 +61,13 @@ and improve the work rather than restart from an isolated prompt. Each provider
 still needs its own approved invocation, and every external effect remains
 separately consented, granted, and receipted.
 
-## Native companion
+### Native companion
 
 The Windows companion is a disposable projection. It uses the packaged
 transparent BABOOM sprite atlas, derives placement from the graph frame, avoids
 the foreground window, and has no local task or conversation store.
 
-### Presence requirements before native release
+#### Presence requirements before native release
 
 - One graph identity projects as at most one BABOOM presence on an allowed
   surface. A duplicate window, bubble-only remnant, or a local companion state
@@ -76,7 +100,7 @@ the foreground window, and has no local task or conversation store.
 Creating the companion assembly alone does not connect a device, start a
 heartbeat, show a window, activate voice, or replace an existing runtime.
 
-### Warnings on real events (lane baboom-settings patch 2026-09-24; not landed, not installed)
+#### Warnings on real events (2026-09-24 WIP checkpoint, neither landed nor installed)
 
 BABOOM's directive (`project_universal_baboom_companion_directive`) warns,
 after blocked Work and a silent brain and before every count, when:
@@ -95,7 +119,7 @@ text. The directive carries the `status` action so the companion panel shows
 the message; the next clean Run or a renewed lease clears it. No new top-level
 context key: the machine transport reads the same seventeen keys.
 
-### Stop that ends the run (same patch)
+#### Stop that ends the run (same patch)
 
 A Workshop Stop (`stop_native`) first sends interrupt and closes the agent's
 input. When the child ignores both past its stop budget, the owned process
@@ -106,13 +130,13 @@ killed and the status reads `error_code: forced_stop`, `drained: true`,
 this patch such a child kept running with `cooperative_stop_timeout`.
 BABOOM's own Stop remains session-only (no new requests; see below).
 
-### Persistent startup control (approved 2026-09-16 as designed; landed and installed, not released)
+#### Persistent startup control (2026-09-16 checkpoint, installed and awaiting release)
 
 Approved design (717 record line 32): one persistent on/off control held on
 the BABOOM agent-body composition, owner-only, effective at the next launch,
 fail-closed, relay reads allowed while it is off. Landed in source at commit
 `f61ac9b` (2026-09-16 17:34; four commits below HEAD `b914892`), first
-installed as build `20260916-1740-f61ac9b` (17:47, "boot 72s") and now
+installed as build `20260916-1740-f61ac9b` (17:47, "boot 72s") and later
 installed as `20260916-2105-b914892` (`%LOCALAPPDATA%\ArchHub\BUILD_ID`
 written 20:53; `%LOCALAPPDATA%\ArchHub-Test\boot-profile.log` "boot 67s";
 `launcher.log` "BABOOM : attached (signed agent session)"). Publicly released
@@ -170,7 +194,7 @@ does, read from the working tree on 2026-09-16 (line numbers as of HEAD
   BABOOM for this launch" (`01.APP/nodelang/launcher.py:912`) remain session-only
   and do not write the setting.
 
-## External capability boundary
+### External capability boundary
 
 - GPT, Claude, Gemini, OpenRouter, and local models are admitted only through
   the graph-held model execution protocol. Physical CLI discovery or a
@@ -184,14 +208,14 @@ does, read from the working tree on 2026-09-16 (line numbers as of HEAD
   sessions and an available remote gateway. They are not implied by a local
   desktop companion.
 
-## Handoff rule
+### Handoff rule
 
 The canonical Node Language runtime may be started only through the controlled
 handoff gate. A copied or legacy holder must never be restarted, replaced, or
 described as canonical merely because a newer companion projection exists.
 
 
-### F278 / F279 / F280: shared persona, standard and reactions (candidate)
+## F278 / F279 / F280: shared persona, standard and reactions (November 2026 candidate)
 
 Founder request: "personality is data and can never change permissions or outcomes"; "ONE standard index shared with the baboom.archhub.io site chat"; "agent-event -> pose map for EVERY agent". Research: res-020 (2026-11-05) and res-021 (2026-11-06), read in full. Fit the existing site BM25 owner and Workshop activity log; no new brain, message channel, index source, agent runtime or permission owner.
 

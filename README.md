@@ -12,7 +12,7 @@
 
 ArchHub is a provider-agnostic visual node application where you can wire parametric workflows that coordinate desktop software, data, and leading AI models. Instead of typing into a chatbox, you drop agents (Claude Code, Codex, Cursor, OpenCode, Gemini CLI, Copilot, Goose/BABOOM) onto a canvas, wire them to desktop files or applications, and orchestrate complex tasks with human-in-the-loop Approve cards.
 
-> **Local-first**: Everything is saved as `.archhub` files that you own, share, and run locally.
+> **Local-first**. Save and share Canvas workflows as `.archhub` files. Private settings and Workshop conversation history live in your ArchHub profile.
 
 <img src="01.APP/nodelang/data/website/og.png" alt="ArchHub Canvas Preview" width="100%" />
 
@@ -26,11 +26,11 @@ ArchHub is a provider-agnostic visual node application where you can wire parame
 
 ## Download & Install
 
-Download the latest version for Windows from our releases page:
+Install the latest stable release for Windows. [Download the Windows installer](https://github.com/Fargaly/ArchHub/releases/latest).
 
-👉 **[Download Latest Installer](https://github.com/Fargaly/ArchHub/releases/latest)**
+On stable, sign-in is optional for local Canvas work. ArchHub cloud model routes require sign-in. Previews marked **account-required** require an internet connection and a verified ArchHub account to open the desktop. [Getting started](https://archhub.io/docs/getting-started/) · [Your account](https://archhub.io/docs/account-web/).
 
-For documentation and starter guides, visit [archhub.io](https://archhub.io).
+Use the composer to draft changes on the same Canvas you edit by hand. The Canvas and composer share the node catalogue. Review a draft on the Canvas before running it. [Canvas and composer guide](https://archhub.io/docs/composer-canvas/).
 
 ## Quick start from source
 

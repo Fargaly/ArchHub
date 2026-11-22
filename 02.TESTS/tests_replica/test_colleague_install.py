@@ -210,6 +210,43 @@ def test_readiness_requires_private_interpreter_and_current_build(tmp_path, monk
     assert not colleague_setup.ready_for_build(tmp_path)
 
 
+def test_readiness_admits_only_the_verified_historical_light_origin(tmp_path, monkeypatch):
+    _private_environment(tmp_path, monkeypatch)
+    origin = "20261119-0904-665c785+light-f10-b598855b"
+    record = (b'{"format":1,"build_id":"20261119-0904-665c785+light-f10-b598855b",'
+              b'"base_build":"20261119-0904-665c785","built_at":"2026-11-20T12:32:32Z",'
+              b'"source_revision":"b598855b","stage":"light-f10-studio",'
+              b'"note":"tip context-menus.jsx+api.js + compile_studio; not a new MSIX/Setup; '
+              b'Goose receipt still required for full release"}\r\n')
+    build = tmp_path / "BUILD_ID"
+    metadata = tmp_path / "BUILD_METADATA.json"
+    build.write_text(origin, encoding="ascii")
+    with pytest.raises(ValueError, match="invalid installed build identity"):
+        colleague_setup.readiness_identity(tmp_path)
+    metadata.write_bytes(record)
+    identity = colleague_setup.readiness_identity(tmp_path)
+    assert identity.split(":")[0] == origin
+    assert not colleague_setup.ready_for_build(tmp_path)
+    colleague_setup._write_ready(tmp_path, identity)
+    assert colleague_setup.ready_for_build(tmp_path)
+
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("example==2", encoding="ascii")
+    assert not colleague_setup.ready_for_build(tmp_path)
+    requirements.write_text("example==1", encoding="ascii")
+    assert colleague_setup.ready_for_build(tmp_path)
+
+    metadata.write_bytes(record.replace(b"12:32:32Z", b"12:32:31Z"))
+    with pytest.raises(ValueError, match="invalid installed build identity"):
+        colleague_setup.readiness_identity(tmp_path)
+    assert not colleague_setup.ready_for_build(tmp_path)
+    metadata.write_bytes(record)
+    for rejected in (origin + "x", "unrelated+build", "a" * 129):
+        build.write_text(rejected, encoding="ascii")
+        with pytest.raises(ValueError, match="invalid installed build identity"):
+            colleague_setup.readiness_identity(tmp_path)
+
+
 def test_bootstrap_creation_failure_propagates_without_ready(tmp_path, monkeypatch):
     from types import SimpleNamespace
     calls = []

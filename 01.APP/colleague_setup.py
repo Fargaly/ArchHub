@@ -72,7 +72,10 @@ def readiness_identity(root: Path) -> str:
         raise ValueError("invalid installed build identity")
     build_id = raw_build_id.strip()
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", build_id):
-        raise ValueError("invalid installed build identity")
+        from nodelang.quiet_update import _LIGHT_ORIGIN, installed_build_id
+
+        if build_id != _LIGHT_ORIGIN or installed_build_id(root) != build_id:
+            raise ValueError("invalid installed build identity")
     with (root / "requirements.txt").open("rb") as stream:
         requirements = stream.read(65537)
     if not requirements or len(requirements) > 65536:

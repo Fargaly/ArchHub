@@ -6,6 +6,9 @@ No real git, cargo or network: the build's commands are replaced by a fake that 
 import hashlib
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -323,30 +326,56 @@ def test_check_mode_prepares_the_same_source_and_runs_only_cargo_check(tmp_path,
     assert not (tmp_path / "out").exists() and not list(tmp_path.glob("*/receipt.json"))   # no output, no receipt
 
 
-def _evaluate(expression, context):
-    """The subset of GitHub expressions this workflow uses: ${{ }}, ==, !=, &&, ||, quoted strings, inputs/github
-    context values and failure()."""
+def _evaluate(expression, context, status):
+    """The subset of GitHub expressions used here, including the implicit success guard."""
     if expression is None:
-        return True                                          # no if: always runs (given its needs)
+        return status == "success"
     text = str(expression).strip()
     if text.startswith("${{") and text.endswith("}}"):
         text = text[3:-2]
-    for name, value in context.items():
-        text = text.replace(name, repr(value))
-    text = text.replace("failure()", "False").replace("&&", " and ").replace("||", " or ")
-    return bool(eval(text, {"__builtins__": {}}, {}))   # only literals remain; any unknown name fails the test
+    checks = {"success": status == "success", "failure": status == "failure", "cancelled": status == "cancelled", "always": True}
+    if not any(f"{name}()" in text for name in checks) and status != "success":
+        return False
+    for name, value in checks.items():
+        text = text.replace(f"{name}()", repr(value))
+    def reference(match):
+        name = match[0]
+        step, output, _key = name.partition(".outputs.")
+        if output and f"{step}.outcome" in context:
+            return repr(context.get(name, ""))
+        return repr(context[name])
+
+    text = re.sub(r"\b(?:github|inputs|steps)(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)+", reference, text)
+    text = re.sub(r"!(?!=)", " not ", text).replace("&&", " and ").replace("||", " or ")
+    return bool(eval(text.strip(), {"__builtins__": {}}, {}))
 
 
-def _ran(workflow, event, mode):
-    """Which jobs and steps run for one dispatch, by the workflow's own if: guards (a skipped need skips its job)."""
-    context = {"github.event_name": event, "inputs.mode": mode}
-    ran = {}
+def _ran(workflow, event, mode, results=None):
+    """Run step guards in source order, exposing only already-completed step outputs."""
+    results = results or {}
+    ran, statuses = {}, {}
+    triggers = workflow.get("on", workflow.get(True))
+    defaults = {f"inputs.{name}": spec.get("default", False if spec["type"] == "boolean" else "")
+                for name, spec in triggers["workflow_dispatch"]["inputs"].items()}
     for name, job in workflow["jobs"].items():
         needs = job.get("needs", [])
         needs = [needs] if isinstance(needs, str) else needs
-        if all(need in ran for need in needs) and _evaluate(job.get("if"), context):
-            ran[name] = [step.get("name", step.get("uses", "")) for step in job["steps"]
-                         if _evaluate(step.get("if"), context)]
+        context = {**defaults, "github.event_name": event, "inputs.mode": mode}
+        if not all(statuses.get(need) == "success" for need in needs) or not _evaluate(job.get("if"), context, "success"):
+            continue
+        ran[name], status = [], "success"
+        for step in job["steps"]:
+            step_id = step.get("id")
+            outcome, outputs = "skipped", {}
+            if _evaluate(step.get("if"), context, status):
+                ran[name].append(step.get("name", step.get("uses", "")))
+                outcome, outputs = results.get(step_id, ("success", {}))
+                if outcome in ("failure", "cancelled"):
+                    status = outcome
+            if step_id:
+                context[f"steps.{step_id}.outcome"] = outcome
+                context.update({f"steps.{step_id}.outputs.{key}": value for key, value in outputs.items()})
+        statuses[name] = status
     return ran
 
 
@@ -354,7 +383,7 @@ def test_check_dispatch_reaches_no_write_permission_upload_or_publish_step():
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     triggers = workflow.get("on", workflow.get(True))
-    assert triggers["workflow_dispatch"]["inputs"]["mode"]["options"] == ["release", "check", "build"]
+    assert triggers["workflow_dispatch"]["inputs"]["mode"]["options"] == ["release", "check", "build", "goose", "verify-published"]
     assert triggers["workflow_dispatch"]["inputs"]["mode"]["default"] == "release"
     assert workflow["permissions"] == {"contents": "read"}
     check = _ran(workflow, "workflow_dispatch", "check")
@@ -396,13 +425,108 @@ def test_build_dispatch_reuses_packaging_with_read_only_permissions_and_no_publi
 def test_release_dispatches_keep_the_existing_build_and_publish_path():
     yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
-    every = {name: [step.get("name", step.get("uses", "")) for step in job["steps"]
-                    if "failure()" not in step.get("if", "") and "inputs.mode == 'build'" not in step.get("if", "")]
-             for name, job in workflow["jobs"].items() if not name.startswith("goose-check")}
+    other_paths = {"Prepare standalone Goose runtime checksums", "Retain standalone Goose runtime, receipt and license",
+                   "Prepare build-only artifact checksums", "Retain build-only installer, Goose and receipt",
+                   "Retain failed snapshot and partial build for inspection"}
+    every = {name: [step.get("name", step.get("uses", "")) for step in workflow["jobs"][name]["steps"]
+                    if step.get("name") not in other_paths]
+             for name in ("build", "publish")}
     for event, mode in (("workflow_dispatch", "release"), ("repository_dispatch", None)):
         ran = _ran(workflow, event, mode)
         assert set(ran) == {"build", "publish"}, (event, ran)
         assert {name: [s for s in steps] for name, steps in ran.items()} == every, event
+
+
+def test_goose_only_build_dispatch_uses_the_standalone_artifact():
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    ran = _ran(workflow, "workflow_dispatch", "goose")
+    assert set(ran) == {"build"}
+    assert workflow["jobs"]["build"]["permissions"] == {"contents": "read"}
+    steps = _uploads(workflow, ran["build"])
+    [artifact] = steps
+    assert artifact["with"]["name"].startswith("archhub-goose-")
+    assert {item.rsplit("/", 1)[-1] for item in artifact["with"]["path"].splitlines()} == {
+        "goose.exe", "goose.exe.sha256", "receipt.json", "receipt.json.sha256", "LICENSE", "LICENSE.sha256"
+    }
+    assert "Compile Studio and installer from verified source snapshots" not in ran["build"]
+    assert set(_ran(workflow, "workflow_dispatch", "verify-published")) == {"verify-published"}
+
+
+def _uploads(workflow, ran):
+    return [step for step in workflow["jobs"]["build"]["steps"]
+            if step.get("name") in ran and step.get("uses", "").startswith("actions/upload-artifact@")]
+
+
+def test_installer_dispatch_retains_goose_only_after_missing_native_hosts(tmp_path, monkeypatch):
+    yaml = pytest.importorskip("yaml")
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("PowerShell runs the isolated installer step fixture")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    steps = {step.get("id"): step for step in workflow["jobs"]["build"]["steps"]}
+    installer = steps["installer"]
+    assert not installer.get("continue-on-error", False)
+    script = (ROOT / "03.TOOLS/installer/build_release.ps1").read_text(encoding="utf-8")
+    coverage_error = re.search(r"throw '(Stable release native host coverage failed;[^']+)'", script)[1]
+    stub = tmp_path / "selected/03.TOOLS/installer/build_release.ps1"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("param($BuildId,$GooseBuildPath,$BrokerReviewPath,$OutputDirectory)\n"
+                    "if ($env:FIXTURE_INSTALLER_ERROR) { throw $env:FIXTURE_INSTALLER_ERROR }\n", encoding="utf-8")
+    call = tmp_path / "installer-call.ps1"
+    call.write_text("$ErrorActionPreference = 'Stop'\ntry {\n"
+                    + installer["run"].split("\ntry {\n", 1)[1], encoding="utf-8")
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("BUILD_ID", "fixture")
+    monkeypatch.setenv("BROKER_REVIEW_PATH", "fixture")
+    payload = tmp_path / "goose-build"
+    payload.mkdir()
+    monkeypatch.setenv("GOOSE_BUILD_PATH", str(payload))
+
+    def run_installer(error):
+        output.write_text("", encoding="utf-8")
+        monkeypatch.setenv("FIXTURE_INSTALLER_ERROR", error)
+        result = subprocess.run([pwsh, "-NoProfile", "-File", str(call)], cwd=tmp_path, capture_output=True, text=True)
+        assert (result.returncode != 0) == bool(error), result.stderr
+        if error:
+            assert error in result.stderr
+        return dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+
+    assert run_installer("") == {}
+    unrelated = run_installer("Independent review invalid.")
+    assert unrelated == {}
+    missing = run_installer(coverage_error)
+    assert missing == {"missing_host_payloads": "true"}
+
+    fixture = {"goose.exe": b"sample runtime", "receipt.json": b'{"pinned": true}', "LICENSE": b"sample license"}
+    for name, contents in fixture.items():
+        (payload / name).write_bytes(contents)
+    checksums = tmp_path / "checksums.ps1"
+    checksums.write_text(steps["goose_checksums"]["run"], encoding="utf-8")
+    subprocess.run([pwsh, "-NoProfile", "-File", str(checksums)], cwd=tmp_path, check=True)
+    for name, contents in fixture.items():
+        assert (payload / name).read_bytes() == contents
+        assert (payload / (name + ".sha256")).read_text(encoding="ascii").strip() == (
+            hashlib.sha256(contents).hexdigest() + "  " + name
+        )
+
+    def assets(event, mode, results):
+        ran = _ran(workflow, event, mode, results)
+        assert "publish" not in ran
+        return [step["with"] for step in _uploads(workflow, ran["build"]) if step["with"]["name"].startswith("archhub-goose-")]
+
+    [expected] = [step["with"] for step in _uploads(
+        workflow, _ran(workflow, "workflow_dispatch", "goose")["build"])]
+    for event, mode in (("workflow_dispatch", "release"), ("workflow_dispatch", "build"), ("repository_dispatch", None)):
+        successful = _ran(workflow, event, mode)
+        [normal] = _uploads(workflow, successful["build"])
+        assert not normal["with"]["name"].startswith("archhub-goose-")
+        assert assets(event, mode, {"installer": ("failure", missing)}) == [expected]
+        assert assets(event, mode, {"installer": ("failure", unrelated)}) == []
+        assert assets(event, mode, {"installer": ("cancelled", missing)}) == []
+        assert assets(event, mode, {"installer": ("failure", missing), "goose_checksums": ("failure", {})}) == []
 
 
 @pytest.mark.parametrize("event,mode,office_required", [

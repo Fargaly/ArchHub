@@ -416,31 +416,8 @@ jobs:
           python selected/03.TOOLS/packaging/windows/build_goose.py --source (Join-Path $env:RUNNER_TEMP 'goose-src') --output $build --archhub-rev $env:SOURCE_REVISION
           if ($LASTEXITCODE -ne 0) { throw 'Goose did not build from its pinned source.' }
           "GOOSE_BUILD_PATH=$build" >> $env:GITHUB_ENV
-      - name: Prepare Goose-only runtime checksums
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'goose' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($name in @('goose.exe', 'receipt.json', 'LICENSE')) {
-            $path = Join-Path $env:GOOSE_BUILD_PATH $name
-            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $name" | Set-Content -LiteralPath "$path.sha256" -Encoding ascii
-          }
-      - name: Retain Goose-only runtime, receipt and license
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'goose' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: archhub-goose-${{ steps.identity.outputs.build_id }}
-          path: |
-            ${{ runner.temp }}/goose-build/goose.exe
-            ${{ runner.temp }}/goose-build/goose.exe.sha256
-            ${{ runner.temp }}/goose-build/receipt.json
-            ${{ runner.temp }}/goose-build/receipt.json.sha256
-            ${{ runner.temp }}/goose-build/LICENSE
-            ${{ runner.temp }}/goose-build/LICENSE.sha256
-          if-no-files-found: error
-          compression-level: 0
       - name: Compile Studio and installer from verified source snapshots
+        id: installer
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'goose' }}
         shell: pwsh
         env:
@@ -457,10 +434,42 @@ jobs:
           $msvc = Join-Path $env:GITHUB_WORKSPACE 'selected/03.TOOLS/tools/archhub-compiler/target/msvc'
           New-Item -ItemType Directory -Force -Path $msvc | Out-Null
           Set-Content -LiteralPath (Join-Path $msvc 'setup_x64.bat') -Encoding ascii -Value @('@echo off', ('call "{0}"' -f $vcvars))
-          ./selected/03.TOOLS/installer/build_release.ps1 `
-            -BuildId $env:BUILD_ID `
-            -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
-            -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
+          try {
+            ./selected/03.TOOLS/installer/build_release.ps1 `
+              -BuildId $env:BUILD_ID `
+              -GooseBuildPath $env:GOOSE_BUILD_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
+              -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
+          } catch {
+            if ($_.Exception.Message -ceq 'Stable release native host coverage failed; no installer was compiled.') {
+              'missing_host_payloads=true' >> $env:GITHUB_OUTPUT
+            }
+            throw
+          }
+      - name: Prepare standalone Goose runtime checksums
+        id: goose_checksums
+        if: ${{ !cancelled() && ((success() && github.event_name == 'workflow_dispatch' && inputs.mode == 'goose') || (failure() && steps.installer.outputs.missing_host_payloads == 'true')) }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('goose.exe', 'receipt.json', 'LICENSE')) {
+            $path = Join-Path $env:GOOSE_BUILD_PATH $name
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name" | Set-Content -LiteralPath "$path.sha256" -Encoding ascii
+          }
+      - name: Retain standalone Goose runtime, receipt and license
+        if: ${{ !cancelled() && steps.goose_checksums.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: archhub-goose-${{ steps.identity.outputs.build_id }}
+          path: |
+            ${{ runner.temp }}/goose-build/goose.exe
+            ${{ runner.temp }}/goose-build/goose.exe.sha256
+            ${{ runner.temp }}/goose-build/receipt.json
+            ${{ runner.temp }}/goose-build/receipt.json.sha256
+            ${{ runner.temp }}/goose-build/LICENSE
+            ${{ runner.temp }}/goose-build/LICENSE.sha256
+          if-no-files-found: error
+          compression-level: 0
       - name: Prove Office round-trips in the built Goose
         if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') }}
         working-directory: selected

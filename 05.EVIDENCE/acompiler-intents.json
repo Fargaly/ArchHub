@@ -72,12 +72,19 @@
         "01.APP/nodelang/host_exec.py",
         "01.APP/nodelang/native_agent_mcp.py",
         "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/session_files.py",
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/app.jsx",
         "01.APP/nodelang/studio/context-menus.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
         "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/workshop_tasks.py",
+        "02.TESTS/tests/test_agentcanvas.py",
         "02.TESTS/tests_replica/test_command_registry.py",
+        "02.TESTS/tests_js/agentcanvas.cjs",
         "02.TESTS/tests_js/command_registry.test.cjs",
+        "02.TESTS/tests_js/home_map.test.cjs",
+        "03.TOOLS/tools/real_app_check/scenarios/settings_right_click.mjs",
         "04.DOCS/DECISIONS.md",
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/acompiler-intents.json"
@@ -12423,11 +12430,12 @@
       ]
     },
     "SETTINGSAREAS": {
-      "source": "Founder 2026-11-20: the installed Settings must match the approved design. Restore its eleven areas, make search and Changed navigate the real owner controls, and preserve honest scope behavior. Build 19 Settings assignment 542e.",
+      "source": "The founder requires at most five top-level Settings pages. The approved design groups all 43 sections under Account, Projects, Agents, Connections and This PC. Keep existing deep links, search, Changed and the User, Workspace and Session preference owners. Verify the same destinations through the installed application.",
       "scope": [
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/studio/style.css",
-        "02.TESTS/tests_js/settings_design_areas.test.cjs"
+        "02.TESTS/tests_js/settings_design_areas.test.cjs",
+        "03.TOOLS/tools/real_app_check/scenarios/settings.mjs"
       ]
     },
     "SETTINGSSCOPE": {

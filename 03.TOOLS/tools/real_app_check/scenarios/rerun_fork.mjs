@@ -30,8 +30,42 @@ export default async function ({step, js, until, clickText, cdp, on, rectOf, mou
       throw Error('Installed file owner did not open the synthetic document');
   };
   const exchange = [], byId = new Map();
+  const settingsRequests = new Set(), settingsFailures = [];
+  const knownFunctions = new Set([
+    'readPreferences', 'readEffectivePreferences', 'setAppearance', 'resetAppearance', 'setSettingsScope',
+    'exportPreferences', 'importPreferences', 'resetPreferences', 'setKeybinding', 'resetKeybindings',
+    'readControls', 'readKeybindings', 'readCanvasTabs', 'setCanvasTabs', 'readDockLayout', 'setDockLayout',
+    'readLibraryCollapsed', 'setLibraryCollapsed', 'readOperations', 'readSessionsFolder', 'readApplicationSettings',
+  ]);
+  const checkedStep = async (label, check) => {
+    const first = settingsFailures.length;
+    const row = await step(label, check);
+    const failures = settingsFailures.slice(first);
+    if (!failures.length) return;
+    row.settings_errors = await Promise.all(failures.map(async ({requestId, status}) => {
+      const diagnostic = {function:'unknown', status, reason:'unknown'};
+      try {
+        const {result} = await cdp('Network.getRequestPostData', {requestId});
+        const name = JSON.parse(result.postData).function;
+        if (knownFunctions.has(name)) diagnostic.function = name;
+      } catch (error) {
+        diagnostic.function = error instanceof SyntaxError ? 'request_invalid_json' : 'request_unavailable';
+      }
+      try {
+        const {result} = await cdp('Network.getResponseBody', {requestId});
+        const body = JSON.parse(result.base64Encoded ? Buffer.from(result.body, 'base64').toString() : result.body);
+        if (body.code === 'settings_destination_changed') diagnostic.reason = body.code;
+      } catch (error) {
+        diagnostic.reason = error instanceof SyntaxError ? 'response_invalid_json' : 'response_unavailable';
+      }
+      return diagnostic;
+    }));
+  };
   on('Network.requestWillBeSent', async ({requestId, request}) => {
-    if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/session-files') return;
+    if (request.method !== 'POST') return;
+    const route = new URL(request.url).pathname;
+    if (route === '/api/universal/settings-action') settingsRequests.add(requestId);
+    if (route !== '/api/session-files') return;
     const row = {requestId};
     exchange.push(row);
     byId.set(requestId, row);
@@ -44,8 +78,11 @@ export default async function ({step, js, until, clickText, cdp, on, rectOf, mou
     } catch { row.error = 'request body unavailable or invalid'; }
   });
   on('Network.responseReceived', ({requestId, response}) => {
+    if (settingsRequests.delete(requestId) && response.status >= 400)
+      settingsFailures.push({requestId, status:response.status});
     if (byId.has(requestId)) byId.get(requestId).http = response.status;
   });
+  on('Network.loadingFailed', ({requestId}) => settingsRequests.delete(requestId));
   on('Network.loadingFinished', ({requestId}) => {
     if (byId.has(requestId)) byId.get(requestId).finished = true;
   });
@@ -74,7 +111,7 @@ export default async function ({step, js, until, clickText, cdp, on, rectOf, mou
       && actual.output?.value === 31 && visible?.status === actual.status && JSON.stringify(visible.output) === JSON.stringify(actual.output);
     return {pass, got:{interaction_pass:pass, request, actual, visible}, why:pass ? '' : 'Rerun request, owner result or Canvas result differs'};
   };
-  await step(steps[0], async () => {
+  await checkedStep(steps[0], async () => {
     await openFixture();
     const point = await at(title());
     if (!point?.w) throw Error('Number card is missing on the installed Canvas');
@@ -92,11 +129,11 @@ export default async function ({step, js, until, clickText, cdp, on, rectOf, mou
     await clickText('Close dialog', '[role="dialog"] button');
     await clickText('Open Inspector');
   };
-  await step(steps[1], async () => {
+  await checkedStep(steps[1], async () => {
     await openInspector();
     return rerun(inspector() + ' [data-command="menu.rerun"]');
   });
-  await step(steps[2], async () => {
+  await checkedStep(steps[2], async () => {
     await openInspector();
     const ids = () => js('window.ArchHubAPI.getSessionDocument().nodes.map(n=>n.id).sort()');
     const before = await ids();

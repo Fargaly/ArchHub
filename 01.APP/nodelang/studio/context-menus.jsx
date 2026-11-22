@@ -251,7 +251,7 @@
     const target = event.target;
     if (event.defaultPrevented || u.modal || !target.closest ||
         target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],a[href]')) return false;
-    const choice = (id, action, label = null, disabled = false) => ({id, action: () => {u.close();action();}, label, disabled});
+    const choice = (id, action, label = null, disabled = false) => ({id, action: () => {u.close();return action();}, label, disabled});
     const click = (id, button, label = null) => button && choice(id, () => button.click(), label, button.disabled);
     const search = (surface, selector) => {
       const input = surface.querySelector(selector);
@@ -272,8 +272,50 @@
         context = 'session';
         label = 'Home session menu';
         const task = s.tasks.find(row => row.id === id);
-        rows = [choice('menu.item', () => id ? u.openTaskFile(id) : u.openSavedSession(path)),
-          task && choice('menu.rename', () => u.show('Rename task', {id, text: task.title}))];
+        const open = (face = 'canvas') => id ? u.openTaskFile(id, face) : u.openSavedSession(path);
+        const onDocument = (openTarget, matches, action) => u.act(async () => {
+          const opened = await openTarget();
+          if (opened && !opened.cancelled && matches()) return action();
+          return {cancelled:true};
+        });
+        const onCard = action => onDocument(open, () => id
+          ? api.getSessionDocument()?.properties?.taskContext?.task === id : api.sameSessionPath(api.getSessionPath(),path), action);
+        const source = path || task?.sessionPath;
+        const destinations = s.tasks.filter(t => !t.direct && t.id !== id && t.status !== 'ARCHIVED' && (!source || !api.sameSessionPath(t.sessionPath,source)));
+        const addTo = () => u.show('Surface menu', {anchor: {x:event.clientX,y:event.clientY}, restoreFocus:session,
+          surface:{label:'Add to another task', groups:commandGroups('session',[destinations.map(t =>
+            choice('menu.home.add', () => onDocument(() => u.openTaskFile(t.id,'canvas'),
+              () => api.getSessionDocument()?.properties?.taskContext?.task === t.id && !api.sameSessionPath(api.getSessionPath(),source),
+              () => api.insertSession(source)), t.title))])}});
+        const sessionTask = task && !task.direct;
+        const isStep = n => !n.fixed && !n.type?.startsWith('trigger.') && n.type !== 'thing.session' && !['fixed-agent','fixed-workshop','fixed-you','start'].includes(n.id);
+        const emptyWorkflow = Array.isArray(task?.workflow) && !task.workflow.some(isStep);
+        rows = [choice('menu.item', () => open()),
+          task && choice('menu.home.thread', () => open('split')),
+          choice('menu.home.run', () => onCard(async () => {
+            const result = await api.runNode();
+            if (result?.approvalId) u.show('Approve', {id: result.approvalId});
+          })),
+          choice('menu.home.add', addTo, null, !source ? 'Save this session first.' : !destinations.length && 'There is no other task to add it to.'),
+          sessionTask && choice('menu.home.watch', null, null, 'Read-only watcher invitations are unavailable.'),
+          sessionTask && choice('menu.home.automate', () => onCard(async () => {
+            const result = await api.addAutomation({trigger:'schedule',armed:false});
+            if (!result?.cancelled && api.getSessionDocument()?.properties?.taskContext?.task === id) u.setHomeInspector({id,tab:'Automate'});
+          })),
+          sessionTask && choice('menu.home.settings', () => onCard(() => u.setHomeInspector({id,tab:'Task'}))),
+          task && choice('menu.rename', () => u.show('Rename task', {id, text: task.title})),
+          choice('menu.home.duplicate', () => u.act(async () => {
+            const created = await api.duplicateHomeTask(id, source);
+            return u.openTaskFile(created.taskId, 'canvas');
+          }), null, emptyWorkflow && 'It has no steps to copy yet.'),
+          task && choice('menu.home.keep', () => u.act(() => api.setTaskSession(id,{homePinned:!task.homePinned})),
+            task.homePinned ? 'Stop keeping at the top' : 'Keep at the top'),
+          task && choice('menu.home.archive', () => u.confirm('Archive ' + task.title + '? Its file stays on disk.', () => u.act(async () => {
+            const result = await api.archiveTask(id);
+            if (result?.ok === false) throw Error(result.error);
+            if (u.canvasTabs.tabs.some(tab => tab.id === id)) await u.closeTaskTab(id);
+            return result;
+          })))];
       } else if (project && surface.contains(project)) {
         owner = project;
         context = 'project';

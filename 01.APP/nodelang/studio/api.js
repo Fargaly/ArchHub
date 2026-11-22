@@ -1705,8 +1705,20 @@ api.leaveSession=async()=>{
  const parent=sessionBreadcrumbs.at(-1);if(!parent)return;
  await api.openSession(parent.path,true);sessionBreadcrumbs.pop();publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});
 };
+api.sameSessionPath = (a, b) => !!a && !!b &&
+    String(a).replaceAll('\\', '/').toLowerCase() === String(b).replaceAll('\\', '/').toLowerCase();
+api.duplicateHomeTask=async(task,path)=>{
+ const openSource=api.sameSessionPath(path,sessionPath) || (task && sessionDocument?.properties?.taskContext?.task===task);
+ if(openSource && currentEditState().unsaved)throw Error('Save your edits before duplicating this task.');
+ const created=await sessionRequest('duplicate-home-task',{task,path});
+ await refreshTasks(false);
+ return created;
+};
 api.insertSession=async(path,position={})=>{
- const result=await sessionRequest('insert-session',{document:portableDocument(),session:path,...position});
+ const navigation=fileNavigation, original=portableDocument();
+ const result=await sessionRequest('insert-session',{document:original,session:path,...position});
+ if(navigation!==fileNavigation)return {cancelled:true};
+ if(JSON.stringify(original)!==JSON.stringify(portableDocument()))throw Error('The destination changed. Try again.');
  fileEdit(d=>{d.nodes=result.document.nodes;},[result.node]);
  return state.graph.nodes.find(n=>n.id===result.node);
 };
@@ -1714,10 +1726,14 @@ api.detachSession=async node=>{
  const result=await sessionRequest('detach-session',{document:portableDocument(),node});
  fileEdit(d=>{d.nodes=result.document.nodes;});return result;
 };
-api.addAutomation=async()=>{
+api.addAutomation=async(options={})=>{
+ const path=sessionPath,navigation=fileNavigation;
  await flushAutosave();
- const result=await sessionRequest('add-automation',{path:sessionPath});
- await adoptFile(result.document,sessionPath);return result;
+ if(navigation!==fileNavigation)return {cancelled:true};
+ const schedule=options?.trigger==='schedule'&&options.armed===false;
+ const result=await sessionRequest('add-automation',{path,...(schedule?{trigger:'schedule',armed:false}:{})});
+ if(navigation!==fileNavigation)return {cancelled:true};
+ await adoptFile(result.document,path);return result;
 };
 const sessionRequest=(action,extra={})=>request('/api/session-files',{action,...extra});
 // node_params.py, mirrored for display only: every value change goes through the server's one implementation.

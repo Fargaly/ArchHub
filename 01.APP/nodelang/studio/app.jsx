@@ -295,6 +295,7 @@
         return null;
       }
     };
+    const [homeInspector,setHomeInspector] = React.useState(null);
     const openTaskFile = async (id, face = taskFace) => {
       const opened = await act(() => api.openTaskGraph(id));
       if (!opened || opened.cancelled) return;
@@ -304,6 +305,7 @@
       setTask(id);
       setTaskFace(face === 'workshop' ? 'split' : face);
       go('task-file');
+      return opened;
     };
     const keepTaskTab = id => saveCanvasTabs({...tabsRef.current, tabs: tabsRef.current.tabs.map(tab => tab.id === id ? {...tab, kept: true} : tab)});
     React.useEffect(()=>{
@@ -398,6 +400,7 @@
       keepTaskTab,
       openTaskBeside,
       closeTaskTab,
+      homeInspector, setHomeInspector,
       settingsOrigin: settingsOrigin.current,
       openTaskFile,
       openSavedSession,

@@ -287,7 +287,7 @@ def rename(history, task, title, revision=None):
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 
-def create(history, title, creator, *, agent='', workspace='', zoom=1, parent=''):
+def create(history, title, creator, *, agent='', workspace='', zoom=1, parent='', fork=None):
     task = uuid4().hex
     title = _text(title, "title", 2000)
     above = None
@@ -302,13 +302,13 @@ def create(history, title, creator, *, agent='', workspace='', zoom=1, parent=''
         if not workspace and above.get('project'):
             roots, _ = read_registered_roots()
             workspace = next((key for key, value in roots.items() if value.get('label') == above['project']), '')
-    path = _start_session(task, title, zoom, agent=agent, workspace=workspace)
+    path = _start_session(task, title, zoom, agent=agent, workspace=workspace, fork=fork)
     project = ''
     if workspace:
         roots, _ = read_registered_roots()
         project = (roots.get(workspace) or {}).get('label') or workspace
     # A subtask sits in its parent's project unless its own workspace names one.
-    project = project or (above or {}).get('project') or ''
+    project = project or (above or {}).get('project') or (fork or {}).get('project') or ''
     _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,project,parent_id) "
            "VALUES(?,?,'open',?,?,?,?,?,?)", (task, title, creator, _now(), _now(), path, project or None, above and above['id']))
     return get(history, task)
@@ -1293,13 +1293,13 @@ def session_filename(task):
     return (task if safe else 'task-' + sha256(task.encode()).hexdigest()) + '.archhub'
 
 
-def _start_session(task, title, zoom=1, *, purpose='', generation='', agent='', workspace=''):
+def _start_session(task, title, zoom=1, *, purpose='', generation='', agent='', workspace='', fork=None):
     from . import canvas_documents
     from .session_files import document_path, sessions_directory
     directory = sessions_directory()
     identity = 'task-' + sha256((task + ('\0' + purpose + '\0' + generation if purpose else '')).encode()).hexdigest()
     path = directory / session_filename(identity if purpose else task)
-    if not path.exists():
+    if fork is None and not path.exists():
         path = document_path(directory, {'id': identity, 'title': title})
     creating = not path.exists()
     def start(document):
@@ -1331,6 +1331,10 @@ def _start_session(task, title, zoom=1, *, purpose='', generation='', agent='', 
             for node_id, socket in [('fixed-agent', 'agent'), ('fixed-you', 'profile'), ('fixed-workshop', 'rules')]:
                 document['wires'].append({'id': 'fixed-' + socket, 'from': {'node': node_id, 'socket': socket},
                                           'to': {'node': 'start', 'socket': socket}})
+            if fork is not None:
+                document['nodes'].extend(fork['nodes'])
+                document['wires'].extend(fork['wires'])
+                document['groups'].extend(fork['groups'])
         return []
     canvas_documents.edit(path, 'Workshop', 'create task workflow', start,
                           create_title=title, solve_changed=False)
@@ -1432,6 +1436,95 @@ def pin_message(history, task, message, pinned):
         return []
     canvas_documents.edit(path, 'You', 'pin task message' if pinned else 'unpin task message', change, solve_changed=False)
     return _show(task, path, read_document(path), select=False)
+
+
+def duplicate_home_task(history, task, path, files):
+    from pathlib import Path
+    from . import canvas_documents
+    from .agent_work import redact
+    from .session_files import (_project_of, _registered_roots, file_parameters, local_path,
+                                read_document, resolve_file_parameter, resolve_sample_input)
+
+    row = None
+    if task:
+        row = get(history, task)
+        if not row or not row.get('session_path'):
+            raise ValueError('This task has no saved session.')
+        bound = local_path(row['session_path'])
+        if path and local_path(path) != bound:
+            raise ValueError('The selected task file changed. Open Home again.')
+        path = bound
+    else:
+        path = local_path(path)
+        if path.parent != Path(files.directory).resolve() and path not in {Path(r['path']).resolve() for r in files.recent()}:
+            raise ValueError('Choose a saved Home session.')
+    source = read_document(path)
+    fixed = {'start', 'fixed-agent', 'fixed-workshop', 'fixed-you'}
+    steps = {n['id']: n for n in source['nodes'] if n['id'] not in fixed and not n.get('fixed')
+             and n['type'] != 'thing.session' and not n['type'].startswith('trigger.')}
+    if not steps:
+        raise ValueError('It has no steps to copy yet.')
+    first = next(iter(steps))
+    successors = {key: list(n.get('children', [])) + list(n.get('frameMembers', [])) for key, n in steps.items()}
+    for wire in source['wires']:
+        if wire['from']['node'] in steps:
+            successors[wire['from']['node']].append(wire['to']['node'])
+    selected, pending = set(), [first]
+    while pending:
+        key = pending.pop()
+        if key in steps and key not in selected:
+            selected.add(key)
+            pending.extend(successors[key])
+
+    # File-local node and socket ids preserve group aliases, typed wires and parameters.
+    # New task ownership, fixed nodes, execution results and authority come from the destination.
+    fields = ('id', 'type', 'item', 'title', 'params', 'paramDefs', 'ports', 'position', 'children',
+              'frameMembers', 'parent', 'budget', 'loop', 'frozen', 'bypassed', 'approvalRequired',
+              'collapsed', 'parameterPresentation', 'portVisibility')
+    authority = {'authorization','credentialref','apikey','permissions','permission','grants','grant',
+                 'approved','approvalid','lease','leaseuntil','claims','capabilityhandle',
+                 'read_only_agents','native_session_id'}
+    authority_keys = {k.replace('_', '') for k in authority}
+    nodes = []
+    for key, original in steps.items():
+        if key not in selected:
+            continue
+        node = redact({k: original[k] for k in fields if k in original})
+        # Only parameter bindings confer execution authority. Nested records are user data.
+        node['params'] = {k:v for k,v in node['params'].items()
+                          if k.casefold().replace('-', '').replace('_', '') not in authority_keys}
+        for name in file_parameters(node):
+            if name in node['params'] and not resolve_sample_input(node['params'][name]):
+                node['params'][name] = resolve_file_parameter(node['params'][name], str(path))
+        if 'paramDefs' in node:
+            node['paramDefs'] = [p for p in node['paramDefs'] if p.get('id') in node['params']]
+        if node.get('parent') not in selected:
+            node.pop('parent', None)
+        for field in ('children', 'frameMembers'):
+            if field in node:
+                node[field] = [child for child in node[field] if child in selected]
+        if not canvas_documents.is_pure(node['type'], node['params']):
+            node.update(frozen=True, approvalRequired=True)
+        nodes.append(node)
+    wires = [redact({k:v for k,v in w.items() if k in ('id','from','to','rule','enabled','label','color','style','matching','order','missing','units','conversion','route')})
+             for w in source['wires'] if w['to']['node'] in selected and (w['from']['node'] in selected
+             or (w['from']['node'] == 'start' and w['to']['node'] == first and task))]
+    # Join a detached entry step to the fresh Start only through a declared compatible input.
+    from .node_params import compatible
+    entry = steps[first]
+    targets = entry.get('ports', {}).get('target', [])
+    if targets and not any(w['to']['node'] == first for w in wires):
+        port = targets[0]
+        if compatible('string', port.get('type', 'any'), port['id']):
+            wires.append({'id':uuid4().hex, 'from':{'node':'start','socket':'value'},
+                          'to':{'node':first,'socket':port['id']}})
+    groups = [{'id':g['id'], 'nodes':[key for key in g['nodes'] if key in selected]}
+              for g in source['groups'] if g['id'] in selected]
+    title = (row['title'] if task else source['title'])[:1993] + ' (fork)'
+    project = _project_of(source.get('properties') or {}, _registered_roots(), row)
+    created = create(history, title, 'founder', workspace=project['id'],
+                     fork={'nodes':nodes, 'wires':wires, 'groups':groups, 'project':project['label']})
+    return {'ok':True, 'taskId':created['id'], 'path':created['session_path']}
 
 
 def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace='', parent=''):

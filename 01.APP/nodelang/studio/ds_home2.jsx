@@ -128,8 +128,7 @@
   // A session label is "agent / project folder / session id": people read the first two; the id stays in Workshop Inspect.
   const humanLabel = label => String(label || '').split(' / ').slice(0, 2).join(' · ');
   // One owner for the Home list and the header's count: every session row and the section it sits in.
-  const sameHomePath = (a, b) => !!a && !!b &&
-    String(a).replaceAll('\\', '/').toLowerCase() === String(b).replaceAll('\\', '/').toLowerCase();
+  const sameHomePath = api.sameSessionPath;
   const providerTitle = /^[^/\n]{1,40} \/ [^/\n]+ \/ /;
   const registration = row => row.declaration === true || (String(row.id).startsWith('declared-') &&
     providerTitle.test(String(row.description || row.title || '')) &&
@@ -483,6 +482,14 @@
     };
     const focus = u.task || homeLayout.resume || listing.recentTask || '';  // the session he came up from (its card is selected) before Home's saved selection
     const task = fileWorkspace ? tasks.find(t => t.id === u.task) : resumed(focus);
+    React.useEffect(() => {
+      if (!fileWorkspace || !layoutReady || !dockRef.current || !u.homeInspector) return;
+      if (task?.id === u.homeInspector.id) {
+        setPropertyTab(u.homeInspector.tab);
+        dockRef.current.show('insp');
+      }
+      u.setHomeInspector(null);
+    }, [fileWorkspace,layoutReady,task?.id,u.homeInspector]);
     const taskMembers = rows.sessionRows.find(row => row.id === task?.id)?.members || task?.members || [];
     React.useEffect(()=>{
       if(!fileWorkspace&&request!=='waiting'&&request!=='error')setRequest(tasks.length?'loaded':'empty');

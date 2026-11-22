@@ -8,7 +8,13 @@ const vm = require('node:vm');
 const {transformSync} = require('esbuild');
 
 const source = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/ds_home2.jsx'), 'utf8');
-const context = vm.createContext({window: {ArchHubAPI: {executeAction() {}}, AHIcon() {}, UI: {useData() {}, useApp() {}, Btn() {}, taskRowReason: () => ''}}});
+const context = vm.createContext({
+  window: {structuredClone:globalThis.structuredClone, crypto: require('node:crypto').webcrypto, addEventListener() {}, dispatchEvent() {},
+    AHIcon() {}, UI: {useData() {}, useApp() {}, Btn() {}, taskRowReason: () => ''}},
+  document: {hidden:true, addEventListener() {}}, fetch: () => new Promise(() => {}),
+  setTimeout, clearTimeout, CustomEvent:class {}
+});
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/api.js'), 'utf8'), context);
 vm.runInContext(transformSync(source, {loader: 'jsx'}).code, context);
 const homeRows = context.window.UI.homeRows;
 const today = new Date().toISOString();

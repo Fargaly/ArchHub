@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import settings, {steps as settingsSteps} from './settings.mjs';
 
@@ -51,19 +53,45 @@ export async function rightClicks({step, js, until, rectOf, mouse, cdp, clickTex
   await check(home, async () => {
     if (!await visible('[data-home-page] [data-home-ready]')) assert.ok(await clickText('Home'), 'Home navigation missing');
     assert.ok(await until(() => visible('[data-home-page] [data-home-ready]'), Boolean));
-    const id = await js(`(async()=>{const api=window.ArchHubAPI;const task=await api.createTask(${JSON.stringify(title)});await api.listTasks();return task.taskId;})()`);
-    assert.ok(id);
+    const fixture = await js(`(async()=>{
+      const api=window.ArchHubAPI, task=await api.createTask(${JSON.stringify(title)});
+      await api.openTaskGraph(task.taskId);
+      const node=await api.addNode('n_number',{x:80,y:120});
+      await api.saveSession();
+      const selected=await api.createTask(${JSON.stringify(title+' selected')});
+      await api.openTaskGraph(selected.taskId);
+      await api.listTasks();
+      return {id:task.taskId,path:task.path,node:node.id,selected:selected.taskId};
+    })()`);
+    const {id}=fixture, before=readFileSync(fixture.path);
+    assert.ok(JSON.parse(before).nodes.some(node=>node.id===fixture.node));
+    assert.equal(await js('window.ArchHubAPI.getSessionDocument().properties.taskContext.task'),fixture.selected);
     const target = `[data-design="home.card"][data-home-task=${JSON.stringify(id)}] .home-card-head b`;
     if (!await visible(target)) await clickText('Show every session');
-    const {menu, actions} = await inspectMenu(target, 'Home session menu', ['Open session','Rename'], ['Fork','Rerun']);
+    const {menu, actions} = await inspectMenu(target, 'Home session menu', ['Open session','Open the thread','Run','Add to another task','Make this an automation',
+      'Settings for this session','Rename','Duplicate','Keep at the top','Archive'], ['Fork','Rerun','Invite to watch…']);
     await press(target, 'right');
+    const watch=await js(`(()=>{const button=[...document.querySelectorAll(${JSON.stringify(menu+' button')})]
+      .find(b=>b.querySelector('span')?.textContent.trim()==='Invite to watch…');
+      return button && {disabled:button.disabled,reason:button.title};})()`);
+    assert.deepEqual(watch,{disabled:true,reason:'Read-only watcher invitations are unavailable.'});
     await press(menu + ' [data-design="menu.rename"]');
     const input = '[role="dialog"] input[aria-label="Task name"]';
     assert.ok(await until(() => visible(input), Boolean));
     assert.equal(await js(`document.querySelector(${JSON.stringify(input)}).value`), title);
     await shot('Home rename dialog for disposable task');
     await escape(input);
-    return {actions, escapeDismissed:true, renameDialogShowedFixture:true};
+    await press(target,'right');
+    await press(menu+' [data-design="menu.duplicate"]');
+    const copied=await until(()=>js(`(()=>{const api=window.ArchHubAPI, doc=api.getSessionDocument();
+      return doc?.title===${JSON.stringify(title+' (fork)')} && {id:doc.properties.taskContext.task,path:api.getSessionPath()};})()`),Boolean);
+    assert.ok(copied?.id && copied.id!==id && copied.id!==fixture.selected);
+    assert.notEqual(path.resolve(copied.path).toLowerCase(),path.resolve(fixture.path).toLowerCase());
+    const fork=JSON.parse(readFileSync(copied.path));
+    assert.equal(fork.properties.taskContext.task,copied.id);
+    assert.ok(fork.nodes.some(n=>n.id===fixture.node));
+    assert.deepEqual(readFileSync(fixture.path),before,'Duplicate changed the original file');
+    return {actions,watch,escapeDismissed:true,renameDialogShowedFixture:true,distinctFork:true,originalBytesPreserved:true};
   });
   await check(canvas, async () => {
     assert.ok(await clickText('Canvas'), 'Canvas navigation missing');

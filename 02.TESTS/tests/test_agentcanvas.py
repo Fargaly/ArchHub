@@ -369,3 +369,96 @@ def test_agents_on_different_requests_get_separate_rows_and_cannot_finish_each_o
     for task, agent in ((first, 'Agent A'), (second, 'Agent B')):
         steps = [n for n in read_document(tasks.get(history, task)['session_path'])['nodes'] if n.get('params', {}).get('workshop_step')]
         assert [(s['params']['agent'], s['params']['status']) for s in steps] == [(agent, 'working')]
+
+
+def test_home_duplicate_copies_clicked_task_downstream_without_authority(history):
+    from pathlib import Path
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import SessionFiles, read_document, write_document
+    files = SessionFiles()
+    a, b = [tasks.create(history, title, 'founder') for title in ('Selected A', 'Clicked B')]
+    tasks.open_session(history, a['id'])
+    target = Path(b['session_path'])
+    source = read_document(target)
+    def step(identity, engine, params):
+        return {'id':identity, 'type':engine, 'title':identity, 'params':params, 'position':{'x':20,'y':40}}
+    source['nodes'] += [
+        step('active', 'trigger.schedule', {'armed':True}),
+        step('first', 'note', {'label':'keep', 'rows':[{'Owner':'Architect','Width':900}], 'headers':{'Authorization':'private'}}),
+        {**step('second', 'thing.file.write', {'content':'answer', 'permissions':['write']}),
+         'result':{'status':'Done'}, 'agentWork':{'role':'step','owner':'held'},
+         'ports':{'source':[],'target':[{'id':'content','type':'string'}]}},
+        step('other', 'note', {'value':'unrelated'})]
+    wire = {'id':'typed','from':{'node':'first','socket':'value'},
+            'to':{'node':'second','socket':'content'},'matching':'Longest','rule':'value > 1'}
+    source['wires'] += [wire, {'id':'live','from':{'node':'active','socket':'fire'},
+                               'to':{'node':'start','socket':'value'}}]
+    write_document(target, source)
+    before = target.read_bytes()
+    with pytest.raises(ValueError, match='changed'):
+        tasks.duplicate_home_task(history, b['id'], a['session_path'], files)
+    made = tasks.duplicate_home_task(history, b['id'], str(target), files)
+    row = tasks.get(history, made['taskId'])
+    assert row['id'] not in (a['id'], b['id']) and row['title'] == 'Clicked B (fork)'
+    assert row['session_path'] == made['path'] and Path(made['path']) != target
+    assert not row['owner'] and not row['members']
+    dest = read_document(made['path'])
+    assert dest['properties']['taskContext']['task'] == row['id']
+    steps = {n['id']: n for n in dest['nodes'] if not n.get('fixed')}
+    assert steps.keys() == {'first','second'} and wire in dest['wires']
+    assert steps['first']['params'] == {'label':'keep','rows':[{'Owner':'Architect','Width':900}],'headers':{}}
+    assert steps['second']['params'] == {'content':'answer'}
+    assert steps['second']['frozen'] and steps['second']['approvalRequired']
+    assert not {'agentWork','result'} & steps['second'].keys()
+    assert steps['second']['ports'] == source['nodes'][-2]['ports']
+    assert target.read_bytes() == before and files.current_path() == a['session_path']
+
+
+def test_home_paused_schedule_preserves_existing_start_trigger(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import SessionFiles, read_document
+    task = tasks.create(history, 'Existing schedule', 'founder')
+    files = SessionFiles()
+    args = {'action':'add-automation','trigger':'schedule','path':task['session_path']}
+    original = files.dispatch(args)['node']
+    before = read_document(args['path'])
+    added = files.dispatch({**args, 'armed':False})['node']
+    after = read_document(args['path'])
+    assert before['wires'] == after['wires']
+    assert any(w['from']['node'] == original and w['to'] == {'node':'start','socket':'value'}
+               for w in after['wires'])
+    assert next(n for n in after['nodes'] if n['id']==added)['params']['armed'] is False
+    assert next(n for n in after['nodes'] if n['id']==original)['params'].get('armed', True)
+
+
+def test_home_fork_retains_registered_project_and_relative_file(history, tmp_path, monkeypatch):
+    from pathlib import Path
+    from nodelang import workshop_tasks as tasks, workspace_roots_catalogue
+    from nodelang.session_files import SessionFiles, new_document, read_document, resolve_file_parameter, write_document
+
+    ws = tmp_path / 'registered'
+    ws.mkdir()
+    roots = {'project-fixture':{'label':'Registered fixture', 'path':str(ws)}}
+    monkeypatch.setattr(workspace_roots_catalogue, 'read_registered_roots', lambda: (roots, None))
+    files = SessionFiles()
+    task = tasks.create(history, 'Assigned work', 'founder', workspace='project-fixture')
+    doc = read_document(task['session_path'])
+    node = {'id':'file', 'type':'thing.file', 'params':{'path':'attachment.txt'}, 'position':{'x':0,'y':0}}
+    doc['nodes'].append(node)
+    write_document(task['session_path'], doc)
+    created = tasks.duplicate_home_task(history, task['id'], task['session_path'], files)
+    fork = read_document(created['path'])
+    assert tasks.get(history, created['taskId'])['project'] == 'Registered fixture'
+    assert fork['properties']['taskContext']['workspace'] == 'project-fixture'
+
+    source = tmp_path / 'external' / 'Source.archhub'
+    source.parent.mkdir()
+    target = source.with_name('attachment.txt')
+    target.write_text('attachment', encoding='utf-8')
+    original = new_document('External')
+    original['nodes'].append(node)
+    write_document(source, original)
+    files.remember(str(source), original)
+    made = tasks.duplicate_home_task(history, None, str(source), files)
+    copied = read_document(made['path'])['nodes'][-1]
+    assert Path(resolve_file_parameter(copied['params']['path'], made['path'])) == target

@@ -438,6 +438,15 @@ STUDIO_COMMANDS += tuple(
      'agent_callable': False, 'read_only': not writes, 'operation': 'write' if writes else 'read', 'enabled_when': {},
      'icon': icon, 'shortcut': '', 'danger': False, 'order': 220 + index}
     for index, (id, label, icon, contexts, writes) in enumerate((
+        ('menu.home.thread', 'Open the thread', 'workshop', ['session'], False),
+        ('menu.home.run', 'Run', 'play', ['session'], True),
+        ('menu.home.add', 'Add to another task', 'group', ['session'], True),
+        ('menu.home.watch', 'Invite to watch…', 'eye', ['session'], False),
+        ('menu.home.automate', 'Make this an automation', 'clock', ['session'], True),
+        ('menu.home.settings', 'Settings for this session', 'settings', ['session'], False),
+        ('menu.home.duplicate', 'Duplicate', 'group', ['session'], True),
+        ('menu.home.keep', 'Keep at the top', 'pin', ['session'], True),
+        ('menu.home.archive', 'Archive', 'tray', ['session'], True),
         ('menu.home.new.task', 'New task', 'plus', ['home'], False),
         ('menu.project.toggle', 'Expand project', 'group', ['project'], True),
         ('menu.library.add', 'Add to canvas', 'plus', ['library-card'], True),

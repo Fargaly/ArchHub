@@ -8,7 +8,13 @@ const vm = require('node:vm');
 const {transformSync} = require('esbuild');
 
 const source = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/ds_home2.jsx'), 'utf8');
-const context = vm.createContext({window: {ArchHubAPI: {executeAction() {}}, AHIcon() {}, UI: {useData() {}, useApp() {}, Btn() {}, taskRowReason: () => ''}}});
+const context = vm.createContext({
+  window: {structuredClone:globalThis.structuredClone, crypto: require('node:crypto').webcrypto, addEventListener() {}, dispatchEvent() {},
+    AHIcon() {}, UI: {useData() {}, useApp() {}, Btn() {}, taskRowReason: () => ''}},
+  document: {hidden:true, addEventListener() {}}, fetch: () => new Promise(() => {}),
+  setTimeout, clearTimeout, CustomEvent:class {}
+});
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/api.js'), 'utf8'), context);
 vm.runInContext(transformSync(source, {loader: 'jsx'}).code, context);
 const {homeRows, homeMap} = context.window.UI;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -194,4 +200,122 @@ test('projects > tasks > subtasks: a subtask sits in its parent task group, one 
   assert.equal(at(folded, 'drawings').subtasksFolded, true);
   const middle = view({collapsed: ['task:t-plan']});
   assert.deepEqual(cards(middle).map(card => card.id).sort(), ['drawings', 'plan']);
+});
+
+test('the clicked Home file resolves across Windows path spellings in the command menu', async () => {
+  const {chromium} = require('playwright');
+  const browser = await chromium.launch({headless:true, channel:process.platform==='win32'?'chrome':undefined, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
+  try {
+    const page = await browser.newPage();
+    await page.route('https://home.test/**', route => route.fulfill({contentType:'text/html',
+      body:'<main data-home-page><button data-home-session-path="C:/Sessions/B.archhub">B</button></main>'}));
+    await page.goto('https://home.test/');
+    await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
+    const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
+    await page.addScriptTag({path:path.join(studio,'api.js')});
+    await page.evaluate(() => {
+      const winPath = name => ['c:','SESSIONS',name+'.ARCHHUB'].join(String.fromCharCode(92));
+      let current = winPath('A');
+      window.calls = [];
+      window.UI = {api:{...window.ArchHubAPI, getSessionPath:()=>current,
+        duplicateHomeTask:async(id,path)=>{window.calls.push(['duplicate',path]);return {taskId:'copy'};},
+        runNode:()=>window.calls.push(current)}};
+      window.ArchHubCommandRegistry = {commands:[{id:'menu.home.run',contexts:['session'],label:'Run'},{id:'menu.home.duplicate',contexts:['session'],label:'Duplicate'}]};
+      const u = {close(){document.querySelectorAll('[role=menuitem]').forEach(e=>e.remove());}, openTaskFile:id=>window.calls.push(['open',id]), act:fn=>fn(), openSavedSession:async()=>{current=winPath('B');return {ok:true};},
+        show:(_,props)=>{
+          for(const [label,,,action] of props.surface.groups.flat()){
+          const item=document.createElement('button');
+          item.setAttribute('role','menuitem');item.textContent=label;item.onclick=action;
+          document.body.append(item);
+          }
+        }};
+      document.addEventListener('contextmenu',event=>window.UI.openSurfaceMenu(event,{tasks:[]},u));
+    });
+    await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'context-menus.jsx'),'utf8'),{loader:'jsx'}).code});
+    await page.getByRole('button',{name:'B',exact:true}).click({button:'right'});
+    await page.getByRole('menuitem',{name:'Run'}).click();
+    await page.getByRole('button',{name:'B',exact:true}).click({button:'right'});
+    await page.getByRole('menuitem',{name:'Duplicate'}).click();
+    assert.deepEqual(await page.evaluate(()=>window.calls),[['c:','SESSIONS','B.ARCHHUB'].join(path.win32.sep),
+      ['duplicate','C:/Sessions/B.archhub'],['open','copy']]);
+  } finally { await browser.close(); }
+});
+
+test('Duplicate on card B creates a distinct task and file while A is selected', async t => {
+  const {chromium} = require('playwright');
+  const {execFileSync} = require('node:child_process');
+  const os = require('node:os');
+  const root = path.resolve(__dirname, '../..');
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'home-duplicate-'));
+  t.after(() => {
+    if (path.dirname(profile) !== path.resolve(os.tmpdir())) throw Error('Unexpected fixture directory');
+    fs.rmSync(profile, {recursive:true,force:true});
+  });
+  const env = {...process.env, PYTHONPATH:path.join(root,'01.APP'), PYTHONDONTWRITEBYTECODE:'1',
+    USERPROFILE:profile, HOME:profile, LOCALAPPDATA:profile, APPDATA:profile, TEMP:profile, TMP:profile,
+    ARCHHUB_TEST_STATE_DIR:path.join(profile,'state'), ARCHHUB_TEST_SECRET_STORE:'memory'};
+  const owner = (script, input) => JSON.parse(execFileSync(process.env.ARCHHUB_TEST_PYTHON || process.env.ARCHHUB_COURT_PYTHON || 'python',
+    ['-c',script], {cwd:root, env, input:JSON.stringify(input || {}), encoding:'utf8', timeout:20000, windowsHide:true}));
+  const fixture = owner(`
+import json
+from nodelang import workshop_tasks as tasks
+from nodelang.session_files import read_document, write_document
+from nodelang.workshop_mailbox import application_history
+with application_history() as history:
+    a,b = [tasks.create(history,title,'founder') for title in ('Selected A','Clicked B')]
+    doc = read_document(b['session_path'])
+    doc['nodes'].append({'id':'clicked-step','title':'Clicked step','type':'note','params':{'text':'from B'},'position':{'x':0,'y':0}})
+    write_document(b['session_path'],doc)
+    tasks.open_session(history,a['id'])
+    print(json.dumps({'a':a['id'],'b':b['id'],'path':b['session_path']}))
+`, {});
+  const before = fs.readFileSync(fixture.path);
+  const browser = await chromium.launch({headless:true, channel:process.platform==='win32'?'chrome':undefined,
+    executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route('https://home.test/**',route=>route.fulfill({contentType:'text/html',
+    body:'<main data-home-page><button>B</button></main><div id="menu"></div>'}));
+  await page.goto('https://home.test/');
+  await page.evaluate(()=>{window.fetch=()=>new Promise(()=>{});});
+  const studio = path.join(root,'01.APP/nodelang/studio');
+  await page.addScriptTag({path:path.join(studio,'api.js')});
+  for(const file of ['react.js','react-dom.js'])await page.addScriptTag({path:path.join(studio,'vendor',file)});
+  let created;
+  await page.exposeFunction('duplicateFixture',(task,file)=>{
+    assert.equal(task,fixture.b);
+    created=owner(`
+import json,sys
+from nodelang.session_files import SessionFiles
+print(json.dumps(SessionFiles().dispatch(json.load(sys.stdin))))
+`,{action:'duplicate-home-task',task,path:file});
+    return created;
+  });
+  await page.evaluate(f=>{
+    const button=document.querySelector('main button');
+    button.dataset.homeTask=f.b;
+    button.dataset.homeSessionPath=f.path;
+    const s={tasks:[{id:f.a,title:'A'},{id:f.b,title:'B',sessionPath:f.path}]};
+    const root=window.ReactDOM.createRoot(document.getElementById('menu'));
+    const u={task:f.a,close:()=>root.render(null),act:fn=>fn(),
+      openTaskFile:id=>document.body.dataset.opened=id,
+      show:(kind,props)=>root.render(React.createElement(window.UI.ContextMenu,{...props,kind,close:u.close}))};
+    window.AHIcon=()=>null;
+    window.UI={api:{...window.ArchHubAPI,duplicateHomeTask:window.duplicateFixture},
+      useData:()=>s,useApp:()=>u,useAction:()=>null,ActionStatus:()=>null,
+      bindActions:(names,handlers)=>(id,...args)=>handlers[names[id]](...args)};
+    window.ArchHubCommandRegistry={commands:[{id:'menu.home.duplicate',contexts:['session'],label:'Duplicate'}]};
+    document.addEventListener('contextmenu',event=>window.UI.openSurfaceMenu(event,s,u));
+  },fixture);
+  await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'context-menus.jsx'),'utf8'),{loader:'jsx'}).code});
+  await page.getByRole('button',{name:'B',exact:true}).click({button:'right'});
+  await page.getByRole('menuitem',{name:'Duplicate',exact:true}).click();
+  await page.waitForFunction(()=>document.body.dataset.opened);
+  assert.equal(await page.locator('body').getAttribute('data-opened'),created.taskId);
+  assert.ok(![fixture.a,fixture.b].includes(created.taskId));
+  assert.notEqual(path.resolve(created.path),path.resolve(fixture.path));
+  const copy=JSON.parse(fs.readFileSync(created.path));
+  assert.equal(copy.properties.taskContext.task,created.taskId);
+  assert.equal(copy.nodes.find(n=>n.id==='clicked-step').params.text,'from B');
+  assert.deepEqual(fs.readFileSync(fixture.path),before);
 });

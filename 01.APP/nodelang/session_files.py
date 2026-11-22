@@ -2045,6 +2045,11 @@ class SessionFiles:
             return {'ok': True, 'document': validate(document), 'node': node['id']}
         if action == 'split-sessions':
             return {'ok': True, 'sessions': split_sessions(body.get('path'))}
+        if action == 'duplicate-home-task':
+            from .workshop_mailbox import application_history
+            from .workshop_tasks import duplicate_home_task
+            with application_history() as history:
+                return duplicate_home_task(history, body.get('task'), body.get('path'), self)
         if action == 'add-automation':
             identity = str(uuid4())
             trigger = body.get('trigger', 'manual')
@@ -2052,12 +2057,19 @@ class SessionFiles:
                 raise ValueError('Choose a supported trigger')
             item_id = {'manual': 'tr_manual', 'schedule': 'tr_schedule', 'file-change': 'tr_file', 'host-event': 'tr_host'}[trigger]
             item = next(i for i in catalogue() if i['id'] == item_id)
+            params = dict(item['params'])
+            if trigger == 'schedule' and body.get('armed') is False:
+                params['armed'] = False
             def automate(document):
                 target = next((n for n in document['nodes'] if n['id'] == 'start'), None)
                 if target is None:
                     raise ValueError('Choose a task session with a Start input')
                 document['nodes'].append({'id': identity, 'type': item['engine'], 'item': item['id'], 'title': item['title'],
-                    'params': dict(item['params']), 'position': {'x': target['position']['x'] - 300, 'y': target['position']['y']}})
+                    'params': params, 'position': {'x': target['position']['x'] - 300, 'y': target['position']['y']}})
+                occupied = any(w['to'] == {'node': target['id'], 'socket': 'value'} for w in document['wires'])
+                if occupied and trigger == 'schedule' and params.get('armed') is False:
+                    # A paused alternative stays unwired until the user chooses its destination.
+                    return [identity]
                 document['wires'] = [w for w in document['wires'] if w['to'] != {'node': target['id'], 'socket': 'value'}]
                 document['wires'].append({'id': 'trigger-' + identity, 'from': {'node': identity, 'socket': 'fire'},
                                           'to': {'node': target['id'], 'socket': 'value'}})

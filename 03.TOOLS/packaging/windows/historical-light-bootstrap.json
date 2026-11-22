@@ -1,0 +1,19 @@
+{
+  "schema": "archhub-local-light-bootstrap-proof/v1",
+  "source_main": "5468557dccf357ba110bb0e7fcfecc12545356e0",
+  "build_id": "20261119-0904-665c785+light-f10-b598855b",
+  "verified_base_ready_build": "20261119-0904-665c785",
+  "required_input_sha256": {
+    "BUILD_ID": "6381b9838991df3f9afbff4a52dab57e331e7f5e977b9d00986eee408f7574e1",
+    "BUILD_METADATA.json": "cb5e86dcea424ecf57d57785749f7933f50a76542c55cac5154839c69c0adac8",
+    "requirements.txt": "fcde5ba885628e9f42bc820501ed739c12ba318baceadcbb5eac5d4ebd7dfc95",
+    ".archhub-ready": "9870ac4211f2789acbf567bdbe22c0da6535b91c550abb1090cb8bdc497512af",
+    "colleague_setup.py": "75675c7484f2d03491244ea2394e980db51ad3f7eb777833bc7fcf1739ee8644",
+    "nodelang/quiet_update.py": "d0a7b24535d5d3b4f5fde2528bd9ac45ed132608edacde7aeb16d4b9b4a12c9d",
+    "ArchHub.vbs": "74827d44276c728abac78eb8ee55d17993ee58e0a8e7c210c3b709af1207cba5"
+  },
+  "replacement_sha256": {
+    "colleague_setup.py": "dc01cb4c788322525082bc7c48dadae1e4ee0d415f14de66bbc821db09f358a3"
+  },
+  "patch_sha256": "6b50f80de4a40014a87ddf5fc4df9e1745f8956d35b93b5c81f678503eb9be97"
+}

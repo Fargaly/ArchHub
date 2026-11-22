@@ -1,0 +1,55 @@
+diff --git a/colleague_setup.py b/colleague_setup.py
+--- a/colleague_setup.py
++++ b/colleague_setup.py
+@@ -61,20 +61,48 @@
+         return False
+ 
+ 
++# One released Studio-only origin used its base build's already verified environment.
++_LIGHT_ORIGIN = "20261119-0904-665c785+light-f10-b598855b"
++_LIGHT_BUILD_ID_SHA256 = "6381b9838991df3f9afbff4a52dab57e331e7f5e977b9d00986eee408f7574e1"
++_LIGHT_METADATA_SHA256 = "cb5e86dcea424ecf57d57785749f7933f50a76542c55cac5154839c69c0adac8"
++_LIGHT_REQUIREMENTS_SHA256 = "fcde5ba885628e9f42bc820501ed739c12ba318baceadcbb5eac5d4ebd7dfc95"
++_LIGHT_BASE_READY_SHA256 = "9870ac4211f2789acbf567bdbe22c0da6535b91c550abb1090cb8bdc497512af"
++
+ def readiness_identity(root: Path) -> str:
+     """Bind successful setup to the installed build and dependency manifest."""
+-    with (root / "BUILD_ID").open("r", encoding="ascii") as stream:
++    with (root / "BUILD_ID").open("r", encoding="ascii", newline="") as stream:
+         raw_build_id = stream.read(257)
+     if len(raw_build_id) > 256:
+         raise ValueError("invalid installed build identity")
+     build_id = raw_build_id.strip()
+-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", build_id):
++    if build_id == _LIGHT_ORIGIN:
++        from nodelang.quiet_update import _plain
++
++        metadata_path = root / "BUILD_METADATA.json"
++        _plain(root / "BUILD_ID")
++        _plain(metadata_path)
++        _plain(root / "requirements.txt")
++        marker_path = root / ".archhub-ready"
++        _plain(marker_path)
++        with metadata_path.open("rb") as metadata:
++            record = metadata.read(4097)
++        with marker_path.open("rb") as base_ready:
++            receipt = base_ready.read(257)
++        if (hashlib.sha256(raw_build_id.encode("ascii")).hexdigest() != _LIGHT_BUILD_ID_SHA256
++                or hashlib.sha256(record).hexdigest() != _LIGHT_METADATA_SHA256
++                or hashlib.sha256(receipt).hexdigest() != _LIGHT_BASE_READY_SHA256):
++            raise ValueError("invalid installed build identity or base readiness receipt")
++    elif not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", build_id):
+         raise ValueError("invalid installed build identity")
+     with (root / "requirements.txt").open("rb") as stream:
+         requirements = stream.read(65537)
+     if not requirements or len(requirements) > 65536:
+         raise ValueError("invalid installed requirements manifest")
+-    return build_id + ":" + hashlib.sha256(requirements).hexdigest()
++    digest = hashlib.sha256(requirements).hexdigest()
++    if build_id == _LIGHT_ORIGIN and digest != _LIGHT_REQUIREMENTS_SHA256:
++        raise ValueError("invalid installed requirements manifest")
++    receipt_build = _LIGHT_ORIGIN.partition("+")[0] if build_id == _LIGHT_ORIGIN else build_id
++    return receipt_build + ":" + digest
+ 
+ 
+ def ready_for_build(root: Path) -> bool:

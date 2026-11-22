@@ -11,6 +11,10 @@ param(
     # Edit prose on an existing opt-in release without publishing binaries or changing latest.
     [string]$PreviewTag,
     [string]$PreviewNotesFile,
+    [switch]$CreatePreview,
+    [switch]$PromotePreview,
+    [long]$StableReleaseId,
+    [long]$PreviewReleaseId,
     # Reconcile and print the exact publish plan; upload nothing.
     [switch]$DryRun
 )
@@ -35,6 +39,15 @@ $appRoot = @($toolsRoot, (Join-Path (Split-Path -Parent $toolsRoot) '01.APP')) |
     Where-Object { Test-Path -LiteralPath (Join-Path $_ 'nodelang/quiet_update.py') -PathType Leaf } | Select-Object -First 1
 if (-not $appRoot) { throw 'The installed updater parser (nodelang/quiet_update.py) is not beside this script; nothing was published.' }
 $checkProfile = Join-Path $release 'CHECK-PROFILE'
+$mode = if ($CreatePreview) { 'create' } elseif ($PromotePreview) { 'promote' }
+if (($CreatePreview -and $PromotePreview) -or
+    ($mode -and ($PreviewTag -or $PreviewNotesFile -or -not $ExpectedSourceRevision -or
+        $StableReleaseId -le 0 -or $Repository -cne 'Fargaly/ArchHub')) -or
+    ($PromotePreview -and ($PreviewReleaseId -le 0 -or $PreviewReleaseId -eq $StableReleaseId)) -or
+    ($CreatePreview -and $PreviewReleaseId) -or
+    (-not $mode -and ($StableReleaseId -or $PreviewReleaseId))) {
+    throw 'Choose one release operation. Preview publication requires the expected revision and stable ID; promotion also requires the approved preview ID.'
+}
 if ($PSBoundParameters.ContainsKey('PreviewTag') -or $PSBoundParameters.ContainsKey('PreviewNotesFile')) {
     if ($PreviewTag -cnotmatch '^build-[A-Za-z0-9._-]{1,128}$' -or -not $PreviewNotesFile -or
         $Repository -cnotmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$') { throw 'Specify a build tag, repository and prose file.' }
@@ -48,6 +61,9 @@ if ($PSBoundParameters.ContainsKey('PreviewTag') -or $PSBoundParameters.Contains
             if ($global:LASTEXITCODE -ne 0) { throw "Could not read $($pair[0]) release." }
             [IO.File]::WriteAllText((Join-Path $scratch "$phase-$($pair[0]).json"), $json, $utf8)
         }
+        $revision = & gh api "repos/$Repository/commits/tags/$PreviewTag" --jq .sha
+        if ($global:LASTEXITCODE -ne 0 -or $revision -cnotmatch '^[a-f0-9]{40}$') { throw 'Cannot resolve preview tag.' }
+        [IO.File]::WriteAllText((Join-Path $scratch "$phase-revision"), $revision, $utf8)
     }
     function Get-PreviewBinding($phase) {
         $preview = Get-Content -LiteralPath (Join-Path $scratch "$phase-preview.json") -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -83,7 +99,7 @@ if ($PSBoundParameters.ContainsKey('PreviewTag') -or $PSBoundParameters.Contains
             if ($verdict.ok -isnot [bool] -or -not $verdict.ok -or $verdict.changed -isnot [bool] -or
                 ($verdict.id -isnot [int] -and $verdict.id -isnot [long]) -or $verdict.id -ne $binding.previewId -or
                 $verdict.stable_tag -isnot [string] -or $verdict.stable_tag -cne $binding.stableTag -or
-                ($phase -eq 'after' -and $verdict.changed)) {
+                ($phase -ne 'before' -and $verdict.changed)) {
                 throw "Preview $phase verdict refused or mismatched."
             }
             return $verdict
@@ -99,6 +115,8 @@ if ($PSBoundParameters.ContainsKey('PreviewTag') -or $PSBoundParameters.Contains
         $plan = Test-PreviewSnapshot 'before' $binding
         if ($DryRun) { Write-Output "DRY RUN: $PreviewTag verified; changed=$($plan.changed)"; return }
         if ($plan.changed) {
+            Read-PreviewSnapshot 'recheck'
+            $null = Test-PreviewSnapshot 'recheck' $binding
             $bodyFile = Join-Path $scratch 'body.md'
             & gh api "$base/$($binding.previewId)" --method PATCH --field "body=@$bodyFile" --silent
             if ($global:LASTEXITCODE -ne 0) { throw 'Preview edit failed; inspect the published tag before retrying.' }
@@ -116,7 +134,9 @@ if ($PSBoundParameters.ContainsKey('PreviewTag') -or $PSBoundParameters.Contains
     }
     return
 }
-$arguments = @($checker, $release, '--live', '--repository', $Repository)
+$arguments = @($checker, $release, '--repository', $Repository)
+if (-not $PromotePreview) { $arguments += '--live' }
+if ($mode) { $arguments += @('--publication', $mode, '--stable-id', $StableReleaseId, '--preview-id', $PreviewReleaseId) }
 if ($ExpectedSourceRevision) { $arguments += @('--expected-revision', $ExpectedSourceRevision) }
 $report = (& $PythonPath $profileGuard --profile $checkProfile @arguments) -join "`n"
 # A build caller's local LASTEXITCODE can shadow the global native status.
@@ -168,6 +188,66 @@ if (-not $buildHeading.Success -or
 $create = @('release', 'create', $tag) + $assets + @(
     '--repo', $Repository, '--draft', '--target', $offer.source_revision,
     '--title', "ArchHub $($offer.build_id)", '--notes-file', (Join-Path $release 'release-notes.md'))
+if ($mode) {
+    $state = $checked.publication
+    function Assert-PublicationBinding($result, [long]$id) {
+        if ($null -eq $result -or $result.stable_binding -isnot [string] -or
+            $result.stable_binding -cnotmatch '^[a-f0-9]{64}$' -or
+            ($result.id -isnot [long] -and $result.id -isnot [int]) -or $result.id -ne $id -or
+            ($id -gt 0 -and ($result.preview_binding -isnot [string] -or
+                              $result.preview_binding -cnotmatch '^[a-f0-9]{64}$'))) {
+            throw 'Publication checker returned an invalid release binding.'
+        }
+    }
+    Assert-PublicationBinding $state $PreviewReleaseId
+    function Read-PublicationState($phase) {
+        $check = @($checker, $release, '--repository', $Repository, '--expected-revision', $ExpectedSourceRevision,
+            '--publication', $mode, '--publication-phase', $phase, '--stable-id', $StableReleaseId,
+            '--preview-id', $PreviewReleaseId, '--stable-binding', $state.stable_binding)
+        if ($state.preview_binding) { $check += @('--preview-binding', $state.preview_binding) }
+        if ($CreatePreview -and $phase -eq 'ready') {
+            $draft = (& gh api "repos/$Repository/releases/$PreviewReleaseId") -join [Environment]::NewLine
+            if ($global:LASTEXITCODE -ne 0) { throw 'Cannot verify uploaded draft.' }
+            $draftFile = [IO.Path]::GetTempFileName()
+            [IO.File]::WriteAllText($draftFile, $draft, [Text.UTF8Encoding]::new($false))
+            $check += @('--draft-snapshot', $draftFile, '--live')
+        }
+        try {
+            $raw = (& $PythonPath $profileGuard --profile $checkProfile @check) -join [Environment]::NewLine
+            if ($global:LASTEXITCODE -ne 0) { throw "Publication $phase refused: $raw" }
+            $result = $raw | ConvertFrom-Json
+            if ($result.ok -isnot [bool] -or -not $result.ok) { throw "Publication $phase refused." }
+            Assert-PublicationBinding $result.publication $PreviewReleaseId
+            return $result.publication
+        } finally {
+            if ($draftFile) { Remove-Item -LiteralPath $draftFile -Force }
+        }
+    }
+    Write-Output "PLAN: $mode preview $tag at $ExpectedSourceRevision against stable release $StableReleaseId."
+    if ($DryRun) { return }
+    if ($CreatePreview) {
+        & gh @create --prerelease
+        if ($global:LASTEXITCODE -ne 0) { throw 'Preview draft upload failed.' }
+        $draftId = & gh release view $tag --repo $Repository --json databaseId --jq .databaseId
+        if ($global:LASTEXITCODE -ne 0 -or "$draftId" -notmatch '^[1-9][0-9]*$') { throw 'Cannot identify preview draft.' }
+        $PreviewReleaseId = [long]$draftId
+    }
+    $state = Read-PublicationState 'ready'
+    $endpoint = "repos/$Repository/releases/$PreviewReleaseId"
+    if ($CreatePreview) {
+        # Create-only ref: a competing tag must never silently select different bytes.
+        & gh api "repos/$Repository/git/refs" --method POST -f "ref=refs/tags/$tag" -f "sha=$ExpectedSourceRevision" --silent
+        if ($global:LASTEXITCODE -ne 0) { throw 'Could not reserve exact tag; draft retained.' }
+        & gh api $endpoint --method PATCH -F draft=false -F prerelease=true -f make_latest=false --silent
+    } else {
+        & gh api $endpoint --method PATCH -F prerelease=false -f make_latest=true --silent
+    }
+    if ($global:LASTEXITCODE -ne 0) { throw 'Publication response uncertain; inspect release IDs before retrying.' }
+    $null = Read-PublicationState 'after'
+    Write-Output "Verified $mode of release $PreviewReleaseId through the installed updater parser."
+    return
+}
+
 $promote = @('release', 'edit', $tag, '--repo', $Repository, '--draft=false', '--latest')
 Write-Output ('PLAN 1: gh ' + ($create -join ' '))
 Write-Output ('PLAN 2: gh ' + ($promote -join ' '))

@@ -38,6 +38,7 @@ from nodelang import quiet_update as qu  # noqa: E402
 from nodelang.host_addin_retarget import manifest_rows  # noqa: E402
 
 REPOSITORY = "Fargaly/ArchHub"
+RELEASE_CHECK_NODE = {"id": "release.check_update_offer", "params": {"request_seconds": 20}}
 INSTALLED_MANIFEST = "installed-source-manifest.tsv"
 FILES = ("ArchHub-Setup-0.exe", "release.json", "release-notes.md",
          "source-manifest.tsv", "studio-build.json", "BUILD_METADATA.json", INSTALLED_MANIFEST)
@@ -190,7 +191,7 @@ def _headers() -> dict:
 def _status(url: str) -> int:
     request = urllib.request.Request(url, method="GET", headers=_headers())
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=RELEASE_CHECK_NODE["params"]["request_seconds"]) as response:
             return response.status
     except urllib.error.HTTPError as exc:
         return exc.code
@@ -202,13 +203,13 @@ def _live_manifest(repository: str = REPOSITORY) -> dict | None:
     request = urllib.request.Request(
         "https://api.github.com/repos/%s/releases/latest" % repository, headers=_headers())
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=RELEASE_CHECK_NODE["params"]["request_seconds"]) as response:
             data = json.loads(response.read(qu._RELEASE_BYTES))
         url = next(a["browser_download_url"] for a in data.get("assets", [])
                    if isinstance(a, dict) and a.get("name") == "release.json")
         # Public download URL: no credential is sent to the asset host.
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ArchHub-release"}),
-                                    timeout=20) as response:
+                                    timeout=RELEASE_CHECK_NODE["params"]["request_seconds"]) as response:
             manifest = json.loads(response.read(65536).decode("utf-8-sig"))
         return {"tag": data.get("tag_name"), "build_id": manifest.get("build_id"),
                 "built_at": manifest.get("built_at")}
@@ -266,14 +267,13 @@ def check(release_dir: Path, *, expected_revision: str = "", live: bool = False,
     return result
 
 
-def preview_notes(directory, tag, prose_path, expected_revision, snapshot, phase):
-    """Validate public snapshots from the publisher; only the outer publisher can edit a release."""
-    manifest = _json(directory / "release.json")
-    if tag != "build-" + manifest["build_id"]:
-        raise Refused("preview tag does not match the verified build ID")
+def generated_build_block(directory, manifest, expected_revision):
     fields = {"BUILD_ID": manifest["build_id"], "BUILT_AT": manifest["built_at"],
               "SHA256 " + qu.ASSET_NAME: manifest["asset_sha256"], "SOURCE_REVISION": manifest["source_revision"],
               "REQUIREMENTS_SHA256": manifest["requirements_sha256"]}
+    if not re.fullmatch(r"[0-9a-f]{40}", fields["SOURCE_REVISION"]) or not re.fullmatch(
+            r"[0-9a-f]{64}", fields["REQUIREMENTS_SHA256"]):
+        raise Refused("invalid generated preview provenance")
     if expected_revision and expected_revision != fields["SOURCE_REVISION"]:
         raise Refused("unexpected preview source revision")
     block = "## Build\n" + "".join(f"{key}: {value}\n" for key, value in fields.items())
@@ -282,6 +282,15 @@ def preview_notes(directory, tag, prose_path, expected_revision, snapshot, phase
         return [line for line in text.splitlines() if reserved.match(line)]
     if machine_lines((directory / "release-notes.md").read_text(encoding="utf-8-sig")) != block.splitlines():
         raise Refused("generated Build metadata differs from release.json")
+    return block, machine_lines
+
+
+def preview_notes(directory, tag, prose_path, expected_revision, snapshot, phase):
+    """Validate public snapshots from the publisher; only the outer publisher can edit a release."""
+    manifest = _json(directory / "release.json")
+    if tag != "build-" + manifest["build_id"]:
+        raise Refused("preview tag does not match the verified build ID")
+    block, machine_lines = generated_build_block(directory, manifest, expected_revision)
     prose = prose_path.read_text(encoding="utf-8-sig").strip()
     if machine_lines(prose):
         raise Refused("human notes must not contain Build metadata")
@@ -289,15 +298,24 @@ def preview_notes(directory, tag, prose_path, expected_revision, snapshot, phase
     def identity(release):
         return (release["id"], release["tag_name"], release["draft"], release["prerelease"],
                 sorted((a["id"], a["name"], a["size"], a["digest"]) for a in release["assets"]))
-    stable = identity(_json(snapshot / "before-stable.json"))
+    original_stable = _json(snapshot / "before-stable.json")
+    stable = identity(original_stable)
     preview = _json(snapshot / "before-preview.json")
     before = identity(preview)
     if preview["tag_name"] != tag or preview["draft"] or not preview["prerelease"] or stable[0] == preview["id"]:
         raise Refused("target is not a separate published preview")
+    if (snapshot / (phase + "-revision")).read_text(encoding="ascii") != manifest["source_revision"]:
+        raise Refused("preview tag targets a different source revision")
     prior = machine_lines(preview["body"] or "")
-    if prior and prior != block.splitlines():
+    # Older previews carried only the three updater fields. Every field present
+    # must match the generated value, exactly once and in its original order.
+    lines = block.splitlines()
+    required = lines[:4]
+    if prior and prior != required + [line for line in lines[4:] if line in prior]:
         raise Refused("published Build metadata conflicts with generated metadata")
     assets = {a["name"]: a for a in preview["assets"]}
+    if len(assets) != len(preview["assets"]) or len({a["id"] for a in assets.values()}) != len(assets):
+        raise Refused("duplicate preview asset identity")
     if (assets.get("release.json", {}).get("digest") != "sha256:" + _sha(directory / "release.json")
             or assets.get(qu.ASSET_NAME, {}).get("digest") != "sha256:" + manifest["asset_sha256"]
             or assets[qu.ASSET_NAME]["size"] != manifest["asset_bytes"]):
@@ -310,11 +328,98 @@ def preview_notes(directory, tag, prose_path, expected_revision, snapshot, phase
     if phase == "before":
         (snapshot / "body.md").write_bytes(body.encode("utf-8"))
     else:
-        published = _json(snapshot / "after-preview.json")
-        if (identity(published) != before or identity(_json(snapshot / "after-stable.json")) != stable
-                or published["body"].replace("\r\n", "\n") != body or updater_reads(published, channel="preview") != expected):
+        published = _json(snapshot / (phase + "-preview.json"))
+        observed_stable = _json(snapshot / (phase + "-stable.json"))
+        expected_body = preview["body"] if phase == "recheck" else body
+        if (identity(published) != before or identity(observed_stable) != stable
+                or observed_stable["body"] != original_stable["body"]
+                or (published["body"] or "").replace("\r\n", "\n") != (expected_body or "").replace("\r\n", "\n")
+                or (phase == "after" and updater_reads(published, channel="preview") != expected)):
             raise Refused("preview readback or stable release identity changed; inspect before retrying")
     return {"ok": True, "id": preview["id"], "changed": phase == "before" and changed, "stable_tag": stable[1]}
+
+
+def _remote_json(repository, suffix):
+    request = urllib.request.Request("https://api.github.com/repos/" + repository + "/" + suffix,
+                                     headers=_headers())
+    with urllib.request.urlopen(request, timeout=RELEASE_CHECK_NODE["params"]["request_seconds"]) as response:
+        return json.load(response, object_pairs_hook=qu._unique_object)
+
+
+def _release_binding(record):
+    assets = sorted((a["id"], a["name"], a["size"], a["digest"]) for a in record["assets"])
+    identity = [record[k] for k in ("id", "tag_name", "target_commitish", "body")]
+    return hashlib.sha256(json.dumps(identity + [assets], separators=(",", ":")).encode()).hexdigest()
+
+
+def preview_publication(directory, report, mode, phase, stable_id, preview_id, previous_stable,
+                        previous_preview, repository, remote=_remote_json, feed=qu.read_latest_release,
+                        read_manifest=_live_manifest, draft_snapshot=None):
+    offer = report["offer"]
+    tag = offer["tag"]
+    if repository != REPOSITORY:
+        raise Refused("installed updater uses " + REPOSITORY)
+    manifest = _json(directory / "release.json")
+    block, machine_lines = generated_build_block(directory, manifest, offer["source_revision"])
+    if (phase != "before" and not previous_stable) or (
+            (phase == "after" or (mode == "promote" and phase == "ready")) and not previous_preview):
+        raise Refused("missing prior release binding")
+    if (mode == "promote" or phase != "before") and (preview_id is None or preview_id <= 0):
+        raise Refused("missing preview release ID")
+    stable = remote(repository, "releases/latest")
+    published = phase == "after"
+    promoted = published and mode == "promote"
+    if (stable["draft"] is not False or stable["prerelease"] is not False
+            or type(stable["id"]) is not int or stable["id"] != (preview_id if promoted else stable_id)):
+        raise Refused("unexpected stable release identity")
+    stable_binding = _release_binding(stable)
+    if not promoted:
+        if stable["tag_name"] == tag or (previous_stable and previous_stable != stable_binding):
+            raise Refused("stable changed during publication")
+        latest = updater_reads(stable) or read_manifest(repository)
+        when = qu._utc_build_time(latest.get("built_at")) if latest and latest.get("tag") == stable["tag_name"] else None
+        if when is None or when >= qu._utc_build_time(offer["built_at"]):
+            raise Refused("cannot verify candidate is newer than stable")
+    proof = {"stable_binding": stable_binding, "preview_binding": "", "id": 0}
+    if mode == "create" and phase == "before":
+        # The normal live check has already established a free tag and pushed revision.
+        return proof
+    preview = _json(draft_snapshot) if draft_snapshot else remote(repository, "releases/" + str(preview_id))
+    draft = mode == "create" and not published
+    if (preview["id"] != preview_id or preview_id <= 0 or preview_id == stable_id
+            or preview["tag_name"] != tag or preview["draft"] is not draft
+            or preview["prerelease"] is not (not promoted)):
+        raise Refused("unexpected preview release identity or channel")
+    if draft:
+        if preview["target_commitish"] != offer["source_revision"]:
+            raise Refused("draft targets a different revision")
+    elif remote(repository, "commits/tags/" + tag)["sha"] != offer["source_revision"]:
+        raise Refused("published tag targets a different revision")
+    if machine_lines(preview["body"]) != block.splitlines():
+        raise Refused("preview Build block is incomplete or conflicting; repair preview notes first")
+    assets = preview["assets"]
+    names = set(FILES) - {"release-notes.md", INSTALLED_MANIFEST}
+    if ({a["name"] for a in assets} != names or len(assets) != len(names)
+            or len({a["id"] for a in assets}) != len(assets)):
+        raise Refused("preview asset inventory differs from publisher")
+    for asset in assets:
+        path = directory / asset["name"]
+        digest = offer["asset_sha256"] if asset["name"] == qu.ASSET_NAME else _sha(path)
+        if (type(asset["id"]) is not int or asset["id"] <= 0 or asset["size"] != path.stat().st_size
+                or asset["digest"] != "sha256:" + digest):
+            raise Refused("preview bytes differ for " + asset["name"])
+    binding = _release_binding(preview)
+    if previous_preview and previous_preview != binding:
+        raise Refused("preview changed during publication")
+    if promoted and _release_binding(remote(repository, "releases/" + str(stable_id))) != previous_stable:
+        raise Refused("former stable release changed during promotion")
+    if promoted and stable_binding != binding:
+        raise Refused("latest differs from the approved preview")
+    if not draft:
+        channel = "stable" if promoted else "preview"
+        if updater_reads(preview, channel=channel) != report["updater_reads"] or feed(channel=channel) != report["updater_reads"]:
+            raise Refused("installed updater channel does not select the exact approved release")
+    return dict(proof, preview_binding=binding, id=preview_id)
 
 
 def main(argv=None) -> int:
@@ -327,7 +432,14 @@ def main(argv=None) -> int:
     parser.add_argument("--preview-tag")
     parser.add_argument("--preview-notes", type=Path)
     parser.add_argument("--snapshot", type=Path)
-    parser.add_argument("--phase", choices=("before", "after"))
+    parser.add_argument("--phase", choices=("before", "recheck", "after"))
+    parser.add_argument("--draft-snapshot", type=Path)
+    parser.add_argument("--publication", choices=("create", "promote"))
+    parser.add_argument("--publication-phase", choices=("before", "ready", "after"), default="before")
+    parser.add_argument("--stable-id", type=int)
+    parser.add_argument("--preview-id", type=int)
+    parser.add_argument("--stable-binding")
+    parser.add_argument("--preview-binding")
     args = parser.parse_args(argv)
     try:
         if any((args.preview_tag, args.preview_notes, args.snapshot, args.phase)):
@@ -337,9 +449,16 @@ def main(argv=None) -> int:
                                            args.expected_revision, args.snapshot, args.phase)))
             return 0
         result = check(args.release_dir, expected_revision=args.expected_revision,
-                       live=args.live, installed_app_dir=args.installed_app_dir,
+                       live=args.live or (args.publication == "create" and args.publication_phase != "after"),
+                       installed_app_dir=args.installed_app_dir,
                        repository=args.repository)
-    except (Refused, OSError, ValueError) as exc:
+        if args.publication:
+            if not args.expected_revision or not args.stable_id:
+                raise Refused("explicit revision and stable ID required")
+            result["publication"] = preview_publication(
+                args.release_dir, result, args.publication, args.publication_phase, args.stable_id,
+                args.preview_id, args.stable_binding, args.preview_binding, args.repository, draft_snapshot=args.draft_snapshot)
+    except (KeyError, TypeError, OSError, ValueError) as exc:
         print(json.dumps({"ok": False, "refused": str(exc)}, indent=2))
         return 1
     print(json.dumps(result, indent=2))

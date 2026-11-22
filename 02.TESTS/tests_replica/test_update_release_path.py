@@ -889,6 +889,7 @@ def test_preview_prose_edit_keeps_machine_block_assets_and_stable(tmp_path):
     original = deepcopy(stable), deepcopy(assets)
     def snap(name, value):
         (tmp_path / (name + '.json')).write_text(json.dumps(value), encoding='utf-8')
+    (tmp_path / "revision").write_text(REVISION)
     snap('stable', stable)
     snap('preview', preview)
     harness = tmp_path / 'outer.ps1'
@@ -899,6 +900,7 @@ function gh {
     if ($args[0] -ne 'api') { throw 'unexpected GitHub action' }
     if ($args[1] -ceq 'repos/Fargaly/ArchHub/releases/latest') { Get-Content -Raw -Encoding UTF8 "$root/stable.json"; return }
     if ($args[1] -ceq "repos/Fargaly/ArchHub/releases/tags/$tag") { Get-Content -Raw -Encoding UTF8 "$root/preview.json"; return }
+    if ($args[1] -ceq "repos/Fargaly/ArchHub/commits/tags/$tag") { Get-Content "$root/revision"; return }
     Add-Content "$root/attempts" ($args[1])
     if (($args -join ' ') -notmatch '^api repos/Fargaly/ArchHub/releases/42 --method PATCH --field body=@.+ --silent$') { throw 'unexpected write' }
     $release = Get-Content -Raw -Encoding UTF8 "$root/preview.json" | ConvertFrom-Json
@@ -933,7 +935,8 @@ $checker = if ($faultPhase) { 'FixtureChecker' } else { $whichPython }
         assert bad.returncode != 0 and b'verified published' not in bad.stdout.lower()
         assert b'verdict' in bad.stderr.lower(), bad.stderr
         assert not (tmp_path / 'attempts').exists()
-    snap('preview', preview)
+    minimal = "\n".join(block.splitlines()[:4]) + "\n"
+    snap('preview', dict(preview, body='Existing intro\n\n' + minimal))
     result = run()
     assert result.returncode == 0, result.stdout + result.stderr
     edited = json.loads((tmp_path / 'preview.json').read_text(encoding='utf-8'))
@@ -947,7 +950,8 @@ $checker = if ($faultPhase) { 'FixtureChecker' } else { $whichPython }
     alias = dict(edited, tag_name='build-wrong')
     snap('preview', alias)
     assert run('build-wrong').returncode != 0
-    for conflict in (block + 'BUILT_AT: bad\n', block.replace(REVISION, 'b' * 40)):
+    for conflict in (block + 'BUILT_AT: bad\n', block.replace(REVISION, 'b' * 40),
+                     minimal + 'SOURCE_REVISION: wrong\n', minimal + minimal, minimal.replace('BUILT_AT:', 'TIME:')):
         snap('preview', dict(edited, body=conflict))
         assert run().returncode != 0
     snap('preview', edited)
@@ -955,6 +959,7 @@ $checker = if ($faultPhase) { 'FixtureChecker' } else { $whichPython }
     assert run().returncode != 0
     assert (tmp_path / 'writes').read_text().splitlines() == ['body']
     prose.write_text('Updated preview instructions.', encoding='utf-8')
+    (tmp_path / "after-revision").write_text(REVISION)
     for label, release in (('stable', stable), ('preview', edited)):
         snap('before-' + label, release)
         snap('after-' + label, release)
@@ -1846,3 +1851,132 @@ def test_a_package_swapped_at_the_handoff_is_never_installed(tmp_path):
     qu.apply_staged(state, app, expect=matching, runner=lambda argv, **k: calls.append(argv) or SimpleNamespace(returncode=1),
                     stop_runtime=lambda _d: None, drain=lambda *_a: None)
     assert len(calls) == 1
+
+
+@pytest.mark.skipif(not PWSH, reason="Windows publisher requires PowerShell")
+def test_preview_creation_and_same_release_promotion(tmp_path, monkeypatch):
+    monkeypatch.delenv("PSModulePath", raising=False)
+    release = _build_output(tmp_path / "release", "next", "2026-11-22T20:31:10Z")
+    manifest = json.loads((release / "release.json").read_bytes())
+    manifest["requirements_sha256"] = "a" * 64
+    (release / "release.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with (release / "release-notes.md").open("ab") as stream:
+        stream.write(("REQUIREMENTS_SHA256: " + "a" * 64 + "\n").encode())
+    candidate = offer_check.reconcile(release)["github_release"]
+    candidate.update(id=42, draft=True, prerelease=True, target_commitish=REVISION)
+    url = candidate["assets"][0]["browser_download_url"].rsplit("/", 1)[0]
+    names = set(offer_check.FILES) - {"release-notes.md", offer_check.INSTALLED_MANIFEST}
+    candidate["assets"] = [
+        dict(id=n, name=name, size=(release / name).stat().st_size,
+             digest="sha256:" + _sha((release / name).read_bytes()), browser_download_url=url + "/" + name)
+        for n, name in enumerate(sorted(names), 1)]
+    stable = dict(candidate, id=10, tag_name="old", prerelease=False, draft=False,
+                  body=candidate["body"].replace("2026-11-22", "2026-11-21"),
+                  assets=[dict(a, browser_download_url=a["browser_download_url"].replace("build-next", "old"))
+                          for a in candidate["assets"]])
+    def save(name, record):
+        (tmp_path / name).write_text(json.dumps(record), encoding="utf-8")
+    save("stable.json", stable)
+    save("former.json", stable)
+    save("template.json", candidate)
+    # Only the HTTP transport changes: run both the release checker and the updater parser.
+    (tmp_path / "transport.py").write_text(dedent("""
+        import io, json, runpy, sys, urllib.request, urllib.error
+        from pathlib import Path
+        root = Path(__file__).parent
+        def read(name):
+            return json.loads((root / name).read_text(encoding="utf-8-sig"))
+        class Response(io.BytesIO):
+            status = 200
+        def open_fixture(request, timeout=0):
+            key = request.full_url.split('/repos/Fargaly/ArchHub/')[-1]
+            if key == "releases/latest": data = read("stable.json")
+            elif key == "releases/10": data = read("former.json")
+            elif key == "releases/42": data = read("preview.json")
+            elif key == "releases?per_page=20": data = [read("preview.json"), read("stable.json")]
+            elif key == "git/ref/tags/build-next" and not (root / "ref").exists():
+                raise urllib.error.HTTPError(request.full_url, 404, "absent", {}, None)
+            elif key in ("commits/tags/build-next", "git/ref/tags/build-next"):
+                data = {"sha": (root / "ref").read_text().strip()}
+            elif key.startswith("commits/") and key[8:] == read("template.json")["target_commitish"]:
+                data = {"sha": key[8:]}
+            else: raise AssertionError(key)
+            if (root / "fault").exists() and "ready" in sys.argv:
+                fault = (root / "fault").read_text()
+                if key == "releases/latest" and fault == "stable": data["body"] += " "
+                if key == "releases/42" and fault == "preview": data["assets"][0]["id"] += 100
+                if key == "releases?per_page=20" and fault == "feed": data = [read("stable.json")]
+            return Response(json.dumps(data).encode())
+        urllib.request.urlopen = open_fixture
+        sys.argv = sys.argv[1:]
+        runpy.run_path(sys.argv[0], run_name="__main__")
+    """), encoding="utf-8")
+    harness = tmp_path / "cmd.ps1"
+    harness.write_text(r"""param($root,$publisher,$py,$mode,[switch]$Plan)
+$ErrorActionPreference='Stop'
+function Checker {
+    $args2 = @($args[0..2]) + @("$root/transport.py") + @($args[3..($args.Count-1)])
+    & $py @args2
+}
+function gh {
+    $global:LASTEXITCODE=0
+    $command = $args -join ' '
+    if ($command -like 'release create *') {
+        if ($command -notlike '*--draft *' -or $command -notlike '*--prerelease*') { throw $command }
+        $index = [array]::IndexOf($args,'--notes-file')
+        $r = Get-Content "$root/template.json" -Raw | ConvertFrom-Json
+        $r.body = [IO.File]::ReadAllText($args[$index+1])
+    } elseif ($command -like 'release view *') { 42; return }
+    elseif ($command -eq 'api repos/Fargaly/ArchHub/releases/42') { Get-Content "$root/preview.json" -Raw; return }
+    elseif ($command -like 'api repos/Fargaly/ArchHub/git/refs --method POST *') {
+        if (Test-Path "$root/ref") { throw 'ref collision' }
+        [IO.File]::WriteAllText("$root/ref", ($args | Where-Object { $_ -like 'sha=*' }).Substring(4)); return
+    } elseif ($command -like 'api repos/Fargaly/ArchHub/releases/42 --method PATCH *') {
+        $r = Get-Content "$root/preview.json" -Raw | ConvertFrom-Json
+        if ($args -contains 'make_latest=true' -and $args -contains 'prerelease=false') {
+            $r.prerelease=$false
+            [IO.File]::WriteAllText("$root/stable.json", ($r | ConvertTo-Json -Depth 8))
+        } elseif ($args -contains 'make_latest=false' -and $args -contains 'draft=false' -and $args -contains 'prerelease=true') {
+            $r.draft=$false
+        } else { throw $command }
+    } else { throw $command }
+    [IO.File]::WriteAllText("$root/preview.json", ($r | ConvertTo-Json -Depth 8))
+    Add-Content "$root/mutations" $command
+}
+$options = @{StableReleaseId=10;ExpectedSourceRevision=(Get-Content "$root/template.json" -Raw | ConvertFrom-Json).target_commitish}
+if ($mode -eq 'create') { $options.CreatePreview=$true } else { $options.PromotePreview=$true; $options.PreviewReleaseId=42 }
+& $publisher -ReleaseDirectory "$root/release" -PythonPath Checker @options -DryRun:$Plan
+""", encoding="utf-8")
+    def run(mode, dry=False, refused=False):
+        r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness), str(tmp_path),
+                            str(ROOT / "03.TOOLS/packaging/windows/publish_release.ps1"),
+                            sys.executable, mode] + (["-Plan"] if dry else []),
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+        assert (r.returncode != 0) == refused, r.stderr.decode(errors="replace")
+    run("create", dry=True)
+    assert not (tmp_path / "mutations").exists()
+    run("create")
+    preview = json.loads((tmp_path / "preview.json").read_bytes())
+    assert preview == dict(candidate, draft=False)
+    assert json.loads((tmp_path / "stable.json").read_bytes()) == stable
+    run("create", refused=True)
+    run("promote", dry=True)
+    for fault in ("stable", "preview", "feed"):
+        (tmp_path / "fault").write_text(fault)
+        run("promote", refused=True)
+    (tmp_path / "fault").unlink()
+    for corrupted in (dict(preview, id=43), dict(preview, assets=preview["assets"][:-1]),
+                      dict(preview, assets=[dict(a, digest="sha256:" + "0" * 64) for a in preview["assets"]])):
+        save("preview.json", corrupted)
+        run("promote", refused=True)
+    save("preview.json", preview)
+    (tmp_path / "ref").write_text("f" * 40)
+    run("promote", refused=True)
+    (tmp_path / "ref").write_text(REVISION)
+    save("stable.json", dict(stable, body=stable["body"].replace("2026-11-21", "2026-11-23")))
+    run("promote", refused=True)
+    save("stable.json", stable)
+    assert len((tmp_path / "mutations").read_text().splitlines()) == 2
+    run("promote")
+    assert json.loads((tmp_path / "stable.json").read_bytes()) == dict(preview, prerelease=False)
+    assert len((tmp_path / "mutations").read_text().splitlines()) == 3

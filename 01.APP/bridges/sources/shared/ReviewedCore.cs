@@ -1,9 +1,10 @@
 // The one gate on swapping Revit's Core in a running session (/reload).
 //
-// A reload may load only the installed Core (RevitMCPCore.dll beside the shim,
-// the path setup registered) and only when its SHA-256 equals the pin in the
-// shipped, reviewed artifact manifest beside it (host-artifacts.json, written
-// by installer/build_host_bridges.ps1, activation reviewed-authenticated-broker).
+// A load (cold start and reload) may use only the installed Core (RevitMCPCore.dll
+// beside the shim, the path setup registered) and only when its SHA-256 equals the
+// pin in the shipped, reviewed artifact manifest for its folder (host-artifacts.json,
+// written by installer/build_host_bridges.ps1, activation reviewed-authenticated-broker;
+// beside Core in the legacy flat layout, one level up for <year>/<BuildId>/).
 // Every DLL in that folder must be pinned there and match too: Core's
 // dependencies are loaded with it. VerifyAndRead reads each file ONCE, hashes
 // those bytes and returns them, so the loader loads exactly the bytes that were
@@ -123,14 +124,41 @@ namespace ArchHub.Shared
             return pins == null ? null : pins[CoreFileName];
         }
 
-        /// <summary>File name to pinned SHA-256 for this year's folder, from the reviewed manifest.</summary>
+        /// <summary>
+        /// File name to pinned SHA-256 for Core's folder, from the reviewed manifest. Two layouts:
+        /// deployed, Core in bridges/revit/&lt;year&gt;/&lt;BuildId&gt;/ with the year's one manifest
+        /// one level up (installer/build_host_bridges.ps1), rows bridges/revit/&lt;year&gt;/&lt;BuildId&gt;/&lt;file&gt;;
+        /// legacy flat, Core and manifest in bridges/revit/&lt;year&gt;/, rows bridges/revit/&lt;year&gt;/&lt;file&gt;.
+        /// Only rows for exactly this folder count, so another build's rows never pin these files.
+        /// </summary>
         private static IDictionary<string, string> PinnedFiles(string directory, out string reason)
         {
             reason = null;
+            // The folder structure decides the layout, not the leaf's shape: a BuildId may be four
+            // digits (installer/build_host_bridges.ps1), so revit/2025/1200/ is deployed, not a year.
+            string leaf = Path.GetFileName(directory) ?? "", parent = Path.GetDirectoryName(directory);
+            string parentLeaf = string.IsNullOrEmpty(parent) ? "" : Path.GetFileName(parent) ?? "";
+            string grandParent = string.IsNullOrEmpty(parent) ? null : Path.GetDirectoryName(parent);
+            string grandLeaf = string.IsNullOrEmpty(grandParent) ? "" : Path.GetFileName(grandParent) ?? "";
+            string year, build, manifestDirectory;
+            if (string.Equals(parentLeaf, "revit", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(leaf, "^[0-9]{4}$"))
+            {
+                year = leaf; build = null; manifestDirectory = directory;
+            }
+            else if (string.Equals(grandLeaf, "revit", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(parentLeaf, "^[0-9]{4}$")
+                     && Regex.IsMatch(leaf, "^[A-Za-z0-9._-]{1,128}$") && leaf != "." && leaf != "..")
+            {
+                year = parentLeaf; build = leaf; manifestDirectory = parent;
+            }
+            else
+            {
+                reason = "Core is not in an installed bridges/revit/<year>/ or <year>/<BuildId>/ folder";
+                return null;
+            }
             string text;
             try
             {
-                var info = new FileInfo(Path.Combine(directory, ManifestFileName));
+                var info = new FileInfo(Path.Combine(manifestDirectory, ManifestFileName));
                 if (!info.Exists || info.Length > 1024 * 1024)
                 {
                     reason = "reviewed artifact manifest is missing or oversized";
@@ -154,13 +182,15 @@ namespace ArchHub.Shared
                 reason = "Core is not reviewed for activation";
                 return null;
             }
-            string year = Path.GetFileName(directory);
             var pins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var rows = Regex.Matches(text, "\\{[^{}]*\"path\"\\s*:\\s*\"bridges/revit/([0-9]{4})/([^\"/\\\\]+)\"[^{}]*\\}");
+            var rows = Regex.Matches(text,
+                "\\{[^{}]*\"path\"\\s*:\\s*\"bridges/revit/([0-9]{4})/(?:([^\"/\\\\]+)/)?([^\"/\\\\]+)\"[^{}]*\\}");
             foreach (Match row in rows)
             {
                 if (row.Groups[1].Value != year) continue;
-                var name = row.Groups[2].Value;
+                var rowBuild = row.Groups[2].Success ? row.Groups[2].Value : null;
+                if (!string.Equals(rowBuild, build, StringComparison.Ordinal)) continue;
+                var name = row.Groups[3].Value;
                 var pin = Regex.Match(row.Value, "\"sha256\"\\s*:\\s*\"([0-9a-f]{64})\"");
                 if (!pin.Success || pins.ContainsKey(name))
                 {

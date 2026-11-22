@@ -86,12 +86,12 @@ namespace ArchHub.Shared
                         Action<string> reloadTrigger,
                         IDictionary<string, byte[]> verified = null)
         {
-            byte[] coreBytes = null;
-            if (verified != null
-                && !verified.TryGetValue(Path.GetFileNameWithoutExtension(corePath), out coreBytes))
+            // Every load (cold start and reload) uses the reviewed closure; there is no path load.
+            byte[] coreBytes;
+            if (verified == null)
+                throw new InvalidOperationException("Core loads only from a reviewed closure: " + corePath);
+            if (!verified.TryGetValue(Path.GetFileNameWithoutExtension(corePath), out coreBytes))
                 throw new InvalidOperationException("Verified closure does not contain Core: " + corePath);
-            if (verified == null && !File.Exists(corePath))
-                throw new FileNotFoundException("Core DLL missing", corePath);
 
             // Stop + unload any in-flight Core first.
             UnloadInternal();
@@ -103,11 +103,9 @@ namespace ArchHub.Shared
                 "ArchHubCore-" + Guid.NewGuid().ToString("N"),
                 isCollectible: true);
             _alc.Resolving += (ctx, name) => AlcResolving(ctx, name, corePath, verified);
-            asm = coreBytes != null
-                ? _alc.LoadFromStream(new MemoryStream(coreBytes))
-                : _alc.LoadFromAssemblyPath(corePath);
+            asm = _alc.LoadFromStream(new MemoryStream(coreBytes));
 #else
-            asm = coreBytes != null ? Assembly.Load(coreBytes) : Assembly.LoadFrom(corePath);
+            asm = Assembly.Load(coreBytes);
 #endif
 
             // Find the *.CoreEntry type by NAME (not by interface — see
@@ -169,18 +167,9 @@ namespace ArchHub.Shared
         {
             try
             {
-                // A reviewed reload: only the hashed bytes, never the folder.
-                if (verified != null)
-                {
-                    return verified.TryGetValue(name.Name, out var bytes)
-                        ? ctx.LoadFromStream(new MemoryStream(bytes))
-                        : null;
-                }
-                var dir = Path.GetDirectoryName(corePath);
-                if (string.IsNullOrEmpty(dir)) return null;
-                var candidate = Path.Combine(dir, name.Name + ".dll");
-                if (File.Exists(candidate))
-                    return ctx.LoadFromAssemblyPath(candidate);
+                // Only the reviewed, hashed bytes; never an unreviewed file in Core's folder.
+                if (verified != null && verified.TryGetValue(name.Name, out var bytes))
+                    return ctx.LoadFromStream(new MemoryStream(bytes));
             }
             catch { }
             return null;

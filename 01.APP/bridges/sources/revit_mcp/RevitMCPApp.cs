@@ -49,9 +49,17 @@ namespace RevitMCP
                     Log("RevitMCPCore.dll missing at " + corePath);
                     return Result.Failed;
                 }
+                // Cold start goes through the same gate as /reload: the reviewed manifest for this
+                // folder (flat <year>/ or deployed <year>/<BuildId>/), loading exactly the hashed bytes.
+                var verified = ReviewedCore.VerifyAndRead(corePath, corePath, out var refused);
+                if (verified == null)
+                {
+                    Log("Core refused at startup: " + refused);
+                    return Result.Failed;
+                }
                 _loader = new CoreLoader(Log);
                 _installedCorePath = corePath;
-                LoadCoreInto(corePath);
+                LoadCoreInto(corePath, verified);
                 Log("Shim OnStartup ok; port=" + _loader.BoundPort);
                 return Result.Succeeded;
             }
@@ -143,17 +151,12 @@ namespace RevitMCP
             try
             {
                 var requested = new AssemblyName(args.Name);
-                // After a reviewed reload, Core's dependencies come from the
-                // bytes that were hashed, before any path is probed.
+                // Core's dependencies come only from the bytes that were hashed against the
+                // reviewed manifest. Unreviewed files beside the add-in are never loaded; every
+                // other name (framework, Revit API) is left to the runtime's normal resolution.
                 var verified = CoreLoader.VerifiedDependencies;
                 if (verified != null && verified.TryGetValue(requested.Name, out var hashed))
                     return Assembly.Load(hashed);
-                var addinDir = Path.GetDirectoryName(typeof(RevitMCPApp).Assembly.Location);
-                if (string.IsNullOrEmpty(addinDir)) return null;
-                var candidate = Path.Combine(addinDir, requested.Name + ".dll");
-                if (File.Exists(candidate)) return Assembly.LoadFrom(candidate);
-                candidate = Path.Combine(addinDir, requested.Name + ".resources.dll");
-                if (File.Exists(candidate)) return Assembly.LoadFrom(candidate);
             }
             catch (Exception ex)
             {

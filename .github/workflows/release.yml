@@ -907,7 +907,7 @@ jobs:
           $env:PATH = (Join-Path $app 'runtime') + [IO.Path]::PathSeparator + $env:PATH
           $witness = 'selected/03.TOOLS/tools/real_app_check'
           $out = Join-Path $env:VERIFY_EVIDENCE 'f38'
-          & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario (Join-Path $witness 'scenarios/f38_warm_close.mjs') --out $out --verify-warm-close --boot-seconds 90 --probe-seconds 90
+          & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --out $out --verify-warm-close --boot-seconds 90 --probe-seconds 90
           $status = $LASTEXITCODE
           $report = Get-Content -Raw (Join-Path $out 'report.json') | ConvertFrom-Json
           if ($report.label -cne 'INSTALLED BUILD' -or $report.build -cne $receipt.installed_build -or
@@ -1000,5 +1000,3 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/settings/steps.json
             ${{ runner.temp }}/archhub-verify-published/settings/*.png
             ${{ runner.temp }}/archhub-verify-published/f38/report.json
-            ${{ runner.temp }}/archhub-verify-published/f38/steps.json
-            ${{ runner.temp }}/archhub-verify-published/f38/*.png

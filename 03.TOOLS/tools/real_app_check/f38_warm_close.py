@@ -1,5 +1,7 @@
 """Observe, without gating, the installed NoGraph worker and Qt window lifecycle."""
 import ast
+import ctypes
+from ctypes import wintypes as w
 import hashlib
 import json
 import os
@@ -84,18 +86,62 @@ class RecentWriter:
         return self.receipt
 
 
-def watch_window_close(window, record):
+def watch_window_close(window, record, handle_changed=None):
     from PyQt6.QtCore import QEvent, QObject
 
     class CloseObserver(QObject):
         def eventFilter(self, watched, event):
             if event.type() == QEvent.Type.Close:
                 record("window_close")
+            elif handle_changed and event.type() == QEvent.Type.WinIdChange:
+                handle_changed()
             return False
 
     observer = CloseObserver(window)
     window.installEventFilter(observer)
     return observer
+
+
+def native_quit_request(trace_path):
+    return Path(trace_path).with_name("f38-native-quit")
+
+
+def watch_native_actions(window, view, trace_path, record, poll):
+    from PyQt6.QtCore import QTimer, Qt
+    from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
+
+    def hwnd_if_created():
+        if window.testAttribute(Qt.WidgetAttribute.WA_WState_Created):
+            return int(window.winId())
+        return None
+
+    def handle_changed():
+        record("native_hwnd_changed", hwnd=hwnd_if_created())
+
+    observer = watch_window_close(window, record, handle_changed)
+    actions = [action for tray in QApplication.instance().findChildren(QSystemTrayIcon)
+               if tray.contextMenu() is not None for action in tray.contextMenu().actions()
+               if tray.isVisible() and action.isEnabled() and action.text() == "Quit ArchHub"]
+    timer = QTimer(observer)
+    request = native_quit_request(trace_path)
+
+    def quit_if_requested():
+        if request.is_file():
+            timer.stop()
+            record("window_request_quit", hwnd=hwnd_if_created(), action="Quit ArchHub")
+            actions[0].trigger()
+
+    if len(actions) == 1:
+        timer.timeout.connect(quit_if_requested)
+        timer.start(round(poll * 1000))
+
+    def navigation_finished(ok):
+        if ok and view.url().path() == "/studio":
+            record("studio_navigation_finished")
+
+    view.loadFinished.connect(navigation_finished)
+    record("native_window_ready", hwnd=hwnd_if_created(), tray_quit_available=len(actions) == 1)
+    return observer, timer
 
 
 def observe_worker(trace_path):
@@ -107,9 +153,9 @@ def observe_worker(trace_path):
     resumed = False
     owner = recent_owner(receipt.parent)
 
-    def record(observed):
+    def record(observed, **facts):
         with receipt.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"event": observed, "pid": pid, "monotonic_ns": time.monotonic_ns()}) + "\n")
+            stream.write(json.dumps({"event": observed, "pid": pid, "monotonic_ns": time.monotonic_ns(), **facts}) + "\n")
 
     def trace(frame, event, callable_value):
         nonlocal contended, resumed
@@ -135,14 +181,14 @@ def observe_worker(trace_path):
             elif name == "NoGraphServer.close":
                 observed = "server_close_" + event
         elif name == "WindowCommands.__init__" and event == "return":
-            observers.append(watch_window_close(frame.f_locals["window"], record))
+            installed = Path(frame.f_code.co_filename).resolve().parents[1]
+            poll, _budget = lock_policy(installed)
+            observers.append(watch_native_actions(frame.f_locals["window"], frame.f_locals["view"], receipt, record, poll))
         elif event == "call":
             if name == "CloseToTray.__init__":
                 observed = "tray_setup"
-            elif name == "WindowCommands.perform":
-                action = frame.f_locals.get("action")
-                if action in ("close", "quit"):
-                    observed = "window_request_" + action
+            elif name == "CloseToTray.quit":
+                observed = "tray_quit_entered"
         if observed:
             record(observed)
 
@@ -159,15 +205,17 @@ def events(trace_path, listener_pid=None):
     return [row for row in map(json.loads, complete.splitlines()) if listener_pid is None or row["pid"] == listener_pid]
 
 
-def window_state(desktop, owner, probe_pid, phase, tray, deadline, settle_seconds, poll_seconds):
+def window_state(desktop, owner, phase, tray, deadline, settle_seconds, poll_seconds):
     import psutil
 
     endpoint = urlsplit(owner["endpoint"])
     address = (endpoint.hostname, endpoint.port)
     listener = owner["listener_pid"]
     while True:
-        pids = sorted(set(desktop.job.pids()) - {probe_pid})
-        windows = [pid for pid, title in desktop.windows() if pid in pids and title == "ArchHub"]
+        pids = sorted(desktop.job.pids())
+        handles = [{"pid": pid, "hwnd": hwnd} for pid, title, hwnd in desktop.windows(with_handles=True)
+                   if pid in pids and title == "ArchHub"]
+        windows = [row["pid"] for row in handles]
         owned = False
         ownership_error = None
         if listener in pids:
@@ -198,9 +246,71 @@ def window_state(desktop, owner, probe_pid, phase, tray, deadline, settle_second
             break
         time.sleep(min(remaining, poll_seconds))
     return {"phase": phase, "launch_pid": owner["pid"], "listener_pid": listener, "listener_port": endpoint.port,
-            "tray_setup": tray, "visible_window_pids": windows, "job_app_pids": pids, "port_reachable": connected,
+            "tray_setup": tray, "visible_window_pids": windows, "visible_windows": handles,
+            "job_app_pids": pids, "port_reachable": connected,
             "listener_owned": owned, "listener_http_204": healthy, "port_refused": network_error == "ConnectionRefusedError",
             "ownership_error": ownership_error, "network_error": network_error, "monotonic_ns": time.monotonic_ns()}
+
+
+def post_owned_close(desktop, pid, hwnd):
+    """Deliver the system title-bar Close command to this Job's visible, exact ArchHub HWND."""
+    if pid not in desktop.job.pids() or (pid, "ArchHub", hwnd) not in desktop.windows(with_handles=True):
+        raise RuntimeError("The installed ArchHub HWND is no longer visible on the owned hidden desktop")
+    post = desktop.u32.PostMessageW
+    post.argtypes = (w.HWND, w.UINT, w.WPARAM, w.LPARAM)
+    post.restype = w.BOOL
+    wm_syscommand, sc_close = 0x0112, 0xF060
+    requested = time.monotonic_ns()
+    if not post(hwnd, wm_syscommand, sc_close, 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return {"event": "window_request_close", "pid": pid, "hwnd": hwnd,
+            "monotonic_ns": requested, "action": "WM_SYSCOMMAND/SC_CLOSE"}
+
+
+def run_native_actions(desktop, owner, writer, deadline, settle_seconds, readbacks, commands):
+    """Run the existing Qt window and tray actions without waiting for Studio JavaScript."""
+    listener = owner["listener_pid"]
+    ready_by = min(deadline, writer.receipt["acquired_ns"] / 1_000_000_000 + writer.budget)
+    while (remaining := ready_by - time.monotonic()) > 0:
+        trace = events(writer.trace_path, listener)
+        ready = next((row for row in trace if row["event"] == "native_window_ready"), None)
+        contended = any(row["event"] == "recent_writer_contended" for row in trace)
+        window_revision = next((row for row in reversed(trace)
+                                if row["event"] in ("native_window_ready", "native_hwnd_changed")), None)
+        if ready and contended and window_revision["hwnd"]:
+            hwnd = window_revision["hwnd"]
+            if (listener, "ArchHub", hwnd) in desktop.windows(with_handles=True):
+                break
+        time.sleep(min(remaining, writer.poll))
+    else:
+        raise RuntimeError("The Job-owned native window and real warm-up contention were not both available before the writer bound")
+
+    tray = any(row["event"] == "tray_setup" for row in trace)
+    if tray and not ready["tray_quit_available"]:
+        raise RuntimeError("The installed tray does not expose one visible, enabled Quit ArchHub action")
+    before = window_state(desktop, owner, "before", tray, deadline, settle_seconds, writer.poll)
+    readbacks["before"] = before
+    if not before["listener_http_204"] or {"pid": listener, "hwnd": hwnd} not in before["visible_windows"]:
+        raise RuntimeError("The installed visible HWND and healthy listener do not share the admitted owner PID")
+
+    commands.append(post_owned_close(desktop, listener, hwnd))
+    closed = window_state(desktop, owner, "close", tray, deadline, settle_seconds, writer.poll)
+    readbacks["close"] = closed
+    if closed["visible_windows"]:
+        raise RuntimeError("The native Close request did not hide or close the owned window")
+    if tray:
+        get_pid = desktop.u32.GetWindowThreadProcessId
+        get_pid.argtypes = (w.HWND, ctypes.POINTER(w.DWORD))
+        get_pid.restype = w.DWORD
+        hidden_pid = w.DWORD()
+        get_pid(hwnd, ctypes.byref(hidden_pid))
+        closed.update(closed_hwnd=hwnd, closed_hwnd_pid=hidden_pid.value)
+        if hidden_pid.value != listener:
+            raise RuntimeError("Normal Close did not preserve the selected ArchHub HWND on the admitted PID")
+        if not closed["listener_owned"] or not closed["listener_http_204"]:
+            raise RuntimeError("Normal Close did not retain the admitted listener for the tray action")
+        native_quit_request(writer.trace_path).touch(exist_ok=False)
+        readbacks["quit"] = window_state(desktop, owner, "quit", tray, deadline, settle_seconds, writer.poll)
 
 
 def observed_overlap(by_name, event):
@@ -219,7 +329,7 @@ def verdict(trace, readbacks, marker_present, writer=None):
     ended = quit if tray else closed
     sequence = [before.get("monotonic_ns"), by_name.get("window_request_close"), by_name.get("window_close")]
     if tray:
-        sequence.extend((closed.get("monotonic_ns"), by_name.get("window_request_quit")))
+        sequence.extend((closed.get("monotonic_ns"), by_name.get("window_request_quit"), by_name.get("tray_quit_entered")))
     sequence.extend((by_name.get("server_close_call"), by_name.get("server_close_return"), ended.get("monotonic_ns")))
     ordered = None not in sequence and all(left < right for left, right in zip(sequence, sequence[1:]))
     native = (ordered and before.get("visible_window_pids") and before.get("listener_http_204")
@@ -247,6 +357,7 @@ def verdict(trace, readbacks, marker_present, writer=None):
     else:
         result, reason = "NOT EXERCISED", "Both native Close and server shutdown must overlap the actual worker."
     return {"result": result, "reason": reason, "native_close_and_shutdown": bool(native),
+            "studio_navigation_finished_ns": by_name.get("studio_navigation_finished"),
             "window_close_overlap": close_overlap, "server_shutdown_overlap": teardown_overlap,
             "tray_path_observed": tray, "state_marker_present_after_shutdown": marker_present,
             "recent_writer": writer, "recent_writer_contended_shutdown": contended_shutdown,

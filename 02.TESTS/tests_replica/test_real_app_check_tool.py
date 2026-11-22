@@ -529,7 +529,7 @@ def test_f38_distinguishes_tray_close_from_server_shutdown(warm_finished, result
     spec.loader.exec_module(witness)
     trace = [{"event": name, "monotonic_ns": stamp} for name, stamp in (
         ("warm_call", 10), ("warm_return", warm_finished), ("tray_setup", 15), ("window_request_close", 17),
-        ("window_close", 20), ("window_request_quit", 45), ("server_close_call", 50),
+        ("window_close", 20), ("window_request_quit", 45), ("tray_quit_entered", 47), ("server_close_call", 50),
         ("server_close_return", 60),
     )]
     readbacks = {
@@ -551,10 +551,38 @@ def test_f38_distinguishes_tray_close_from_server_shutdown(warm_finished, result
     assert witness.verdict(waiting, readbacks, False, {**held, "release": "rig cleanup"})["result"] == "NOT EXERCISED"
     assert witness.verdict(waiting, readbacks, False, {**held, "release_started_ns": 49})["result"] == "NOT EXERCISED"
     assert witness.verdict(trace, readbacks, True)["result"] == "FAIL"
+    no_tray_callback = [row for row in trace if row["event"] != "tray_quit_entered"]
+    assert witness.verdict(no_tray_callback, readbacks, False)["result"] == "FAIL"
     wrong_order = {**readbacks, "close": {**readbacks["close"], "monotonic_ns": 52}}
     assert witness.verdict(trace, wrong_order, False)["result"] == "FAIL"
     alive = {**readbacks, "quit": {**readbacks["quit"], "job_app_pids": [5]}}
     assert witness.verdict(trace, alive, False)["result"] == "FAIL"
+
+
+def test_f38_posts_close_only_to_the_owned_visible_hwnd():
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location("f38_warm_close", TOOL / "f38_warm_close.py")
+    witness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(witness)
+    sent = []
+
+    def post(*message):
+        sent.append(message)
+        return True
+
+    desktop = SimpleNamespace(
+        job=SimpleNamespace(pids=lambda: [5]),
+        windows=lambda **_: [(5, "ArchHub", 123), (7, "ArchHub", 876)],
+        u32=SimpleNamespace(PostMessageW=post),
+    )
+    for pid, hwnd in ((7, 876), (5, 876), (5, 999)):
+        with pytest.raises(RuntimeError, match="owned hidden desktop"):
+            witness.post_owned_close(desktop, pid, hwnd)
+    assert not sent
+    stamp = witness.post_owned_close(desktop, 5, 123)
+    assert sent == [(123, 0x0112, 0xF060, 0)]
+    assert stamp["hwnd"] == 123 and stamp["pid"] == 5
 
 
 def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, monkeypatch):

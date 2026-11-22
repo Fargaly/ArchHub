@@ -418,8 +418,9 @@ class HiddenDesktop:
             except OSError:
                 pass
 
-    def windows(self) -> list:
-        """Visible top-level windows on THIS desktop: (owning pid, title)."""
+    def windows(self, *, with_handles=False) -> list:
+        """Visible top-level windows on THIS desktop, optionally with their HWND."""
+
         found = []
         callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
@@ -429,7 +430,8 @@ class HiddenDesktop:
                 self.u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                 title = ctypes.create_unicode_buffer(length + 1)
                 self.u32.GetWindowTextW(hwnd, title, length + 1)
-                found.append((int(pid.value), title.value))
+                row = (int(pid.value), title.value)
+                found.append((*row, int(hwnd)) if with_handles else row)
             return True
         self.u32.EnumDesktopWindows(w.HANDLE(self.handle), callback(visit), 0)
         return found
@@ -605,7 +607,7 @@ def main(argv=None) -> int:
         print(json.dumps(native_folder_action(json.loads(request.read_text(encoding='utf-8')))))
         return 0
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--scenario", required=True, type=Path)
+    parser.add_argument("--scenario", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--app", type=Path, default=Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
     parser.add_argument("--overlay", type=Path)
@@ -615,8 +617,10 @@ def main(argv=None) -> int:
     parser.add_argument("--probe-seconds", type=int, default=1200)
     parser.add_argument("--verify-warm-close", action="store_true")
     args = parser.parse_args(argv)
-    if args.verify_warm_close and (args.overlay or args.scenario.resolve() != HERE / "scenarios/f38_warm_close.mjs"):
-        parser.error("--verify-warm-close requires the F38 installed-only scenario")
+    if args.verify_warm_close and (args.overlay or args.scenario or args.input):
+        parser.error("--verify-warm-close is a native installed-only check")
+    if not args.verify_warm_close and args.scenario is None:
+        parser.error("--scenario is required for the Studio check")
 
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
@@ -629,6 +633,9 @@ def main(argv=None) -> int:
     job = desktop = probe = None
     failures, lines, timed_out, exit_code = [], [], False, None
     warm_trace, readbacks, warm_close_check, recent_writer = None, {}, None, None
+    native_commands = []
+    if args.verify_warm_close:
+        report["native_f38"] = True
     try:
         job = RunJob()
         run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=out))
@@ -660,59 +667,62 @@ def main(argv=None) -> int:
         report["nograph_owner"] = owner
         env = owner_plan["env"]
         report["owner_pid"] = owner["pid"]
-        observed = wait_for_studio_target(cdp, owner["endpoint"], started + args.boot_seconds)
-        report["studio_open"] = observed is not None
-        if observed is None:
-            raise RuntimeError("The isolated Qt debugger did not list the Studio page within the boot budget")
-        report["boot_seconds"] = round(observed - started, 3)
-        ours = set(job.pids())
-        report["app_windows_on_desktop"] = [title for pid, title in desktop.windows() if pid in ours and title]
-        report["state_written_in_run_folder"] = sorted(path.name for path in (run_dir / "state").iterdir())[:20]
-        probe = subprocess.Popen(["node", str(HERE / "harness.mjs"), str(args.scenario.resolve())], cwd=str(HERE),
-                                 text=True, encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, env=env)
-        job.adopt(int(probe._handle))
-        scenario_input = json.loads(args.input.read_text(encoding="utf-8")) if args.input else None
-        probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input}) + "\n")
-        probe.stdin.flush()
-        natives, sink = [], queue.Queue()
-        report["native"] = natives
-        threading.Thread(target=_lines, args=(probe.stdout, sink), daemon=True).start()
-        deadline = time.monotonic() + args.probe_seconds
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
+        if args.verify_warm_close:
+            report["boot_observation"] = "Qt launch to native owned ArchHub window; Studio readiness is not awaited"
+            report["state_written_in_run_folder"] = sorted(path.name for path in (run_dir / "state").iterdir())[:20]
             try:
-                line = sink.get(timeout=remaining)
-            except queue.Empty:
-                timed_out = True
-                break
-            if line is None:
-                break
-            lines.append(line.rstrip())
-            if line.startswith("NATIVE "):
-                request = json.loads(line[len("NATIVE "):])
-                if request.get("kind") == "pick-folder":
-                    answer = pick_folder(desktop, str(python), request["title"], request["folder"], out, env)
-                elif request.get("kind") == "window-frame":
-                    answer = window_frame(desktop)
-                elif request.get("kind") == "reopen-rig-window":
-                    answer = reopen_rig_window(desktop, run_dir / "state", owner["listener_pid"])
-                elif warm_close_check and request.get("kind") == "f38-window-state" and request.get("phase") in ("before", "close", "quit"):
-                    phase = request["phase"]
-                    trace = warm_close_check.events(warm_trace, owner["listener_pid"])
-                    tray = any(row["event"] == "tray_setup" for row in trace)
-                    answer = warm_close_check.window_state(desktop, owner, probe.pid, phase, tray,
-                                                           deadline, JobRunner.SETTLE_SECONDS, recent_writer.poll)
-                    readbacks[phase] = answer
-                else:
-                    answer = {"error": "unknown native request"}
-                natives.append(answer)
-                probe.stdin.write(json.dumps(answer) + "\n")
-                probe.stdin.flush()
-        if not timed_out:
+                warm_close_check.run_native_actions(desktop, owner, recent_writer,
+                                                    time.monotonic() + args.probe_seconds, JobRunner.SETTLE_SECONDS,
+                                                    readbacks, native_commands)
+            finally:
+                report["app_windows_on_desktop"] = ["ArchHub" for _ in readbacks.get("before", {}).get("visible_windows", [])]
+        else:
+            observed = wait_for_studio_target(cdp, owner["endpoint"], started + args.boot_seconds)
+            report["studio_open"] = observed is not None
+            if observed is None:
+                raise RuntimeError("The isolated Qt debugger did not list the Studio page within the boot budget")
+            report["boot_seconds"] = round(observed - started, 3)
+            ours = set(job.pids())
+            report["app_windows_on_desktop"] = [title for pid, title in desktop.windows() if pid in ours and title]
+            report["state_written_in_run_folder"] = sorted(path.name for path in (run_dir / "state").iterdir())[:20]
+            probe = subprocess.Popen(["node", str(HERE / "harness.mjs"), str(args.scenario.resolve())], cwd=str(HERE),
+                                     text=True, encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, env=env)
+            job.adopt(int(probe._handle))
+            scenario_input = json.loads(args.input.read_text(encoding="utf-8")) if args.input else None
+            probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input}) + "\n")
+            probe.stdin.flush()
+            natives, sink = [], queue.Queue()
+            report["native"] = natives
+            threading.Thread(target=_lines, args=(probe.stdout, sink), daemon=True).start()
+            deadline = time.monotonic() + args.probe_seconds
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    line = sink.get(timeout=remaining)
+                except queue.Empty:
+                    timed_out = True
+                    break
+                if line is None:
+                    break
+                lines.append(line.rstrip())
+                if line.startswith("NATIVE "):
+                    request = json.loads(line[len("NATIVE "):])
+                    if request.get("kind") == "pick-folder":
+                        answer = pick_folder(desktop, str(python), request["title"], request["folder"], out, env)
+                    elif request.get("kind") == "window-frame":
+                        answer = window_frame(desktop)
+                    elif request.get("kind") == "reopen-rig-window":
+                        answer = reopen_rig_window(desktop, run_dir / "state", owner["listener_pid"])
+                    else:
+                        answer = {"error": "unknown native request"}
+                    natives.append(answer)
+                    probe.stdin.write(json.dumps(answer) + "\n")
+                    probe.stdin.flush()
+        if probe is not None and not timed_out:
             try:
                 exit_code = probe.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -728,7 +738,9 @@ def main(argv=None) -> int:
             try:
                 listener = report.get("nograph_owner", {}).get("listener_pid")
                 writer = recent_writer.close() if recent_writer is not None else {}
-                report["f38"] = warm_close_check.verdict(warm_close_check.events(warm_trace, listener), readbacks,
+                trace = sorted([*warm_close_check.events(warm_trace, listener), *native_commands],
+                               key=lambda row: row["monotonic_ns"])
+                report["f38"] = warm_close_check.verdict(trace, readbacks,
                                                          (warm_trace.parent / "nograph-http-port").exists(), writer)
                 if report["f38"]["result"] == "FAIL":
                     failures.append("FAIL: " + report["f38"]["reason"])
@@ -759,11 +771,16 @@ def finalize_report(report: dict, out: Path, installed: Path, failures: list) ->
         None if report["installed_code_after"] == report.get("installed_code_before") else "FAIL: the installed code changed",
         None if report.get("app_windows_on_desktop") else "FAIL: no window of this run's app was found on its hidden desktop",
         None if report.get("state_written_in_run_folder") else "FAIL: the app wrote no state in the run folder",
-    ) if problem], *probe_problems(report.get("probe", []), report.get("probe_exit_code"),
-                                   report.get("probe_timed_out", True), steps)]
-    report["result"] = run_result(steps, problems)
-    if report["result"] == "PASS" and report.get("f38", {}).get("result") == "NOT EXERCISED":
-        report["result"] = "INCOMPLETE: F38 natural overlap was not exercised"
+    ) if problem]]
+    if report.get("native_f38"):
+        result = report.get("f38", {}).get("result")
+        report["result"] = (problems[0] if problems else "PASS" if result == "PASS" else
+                            "INCOMPLETE: F38 overlap was not exercised" if result == "NOT EXERCISED" else
+                            "FAIL: no verified native F38 lifecycle")
+    else:
+        problems.extend(probe_problems(report.get("probe", []), report.get("probe_exit_code"),
+                                       report.get("probe_timed_out", True), steps))
+        report["result"] = run_result(steps, problems)
     (out / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({key: value for key, value in report.items() if key not in ("probe", "exception")},
                      indent=1, ensure_ascii=False)[:4000])

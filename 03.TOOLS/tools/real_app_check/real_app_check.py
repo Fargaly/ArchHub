@@ -41,6 +41,7 @@ import urllib.request
 import uuid
 from ctypes import wintypes as w
 from pathlib import Path
+from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -568,6 +569,31 @@ def _lines(stream, sink: queue.Queue) -> None:
     sink.put(None)
 
 
+def wait_for_studio_target(cdp: int, owner_endpoint: str, deadline: float) -> float | None:
+    """Timestamp the first /studio page at the admitted NoGraph origin in this run's Qt debugger."""
+    endpoint = "http://127.0.0.1:%d/json" % cdp
+    owner = urlsplit(owner_endpoint)
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            with urllib.request.urlopen(endpoint, timeout=min(1, remaining)) as response:
+                pages = json.load(response)
+        except (OSError, ValueError):
+            pages = None
+        if isinstance(pages, list):
+            for page in pages:
+                if not isinstance(page, dict) or page.get("type") != "page" or not isinstance(page.get("url"), str):
+                    continue
+                try:
+                    target = urlsplit(page["url"])
+                except ValueError:
+                    continue
+                if (target.scheme, target.netloc, target.path) == (owner.scheme, owner.netloc, "/studio"):
+                    observed = time.monotonic()
+                    return observed if observed <= deadline else None
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    return None
+
+
 def main(argv=None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -617,28 +643,19 @@ def main(argv=None) -> int:
         # The run's NoGraph listener is admitted by profile paths, marker, endpoint and Job ownership.
         owner_module = _graph_owner()
         owner_plan = owner_module.plan_graph_owner(run_dir, env)
+        report["boot_budget_seconds"] = args.boot_seconds
+        report["boot_observation"] = "Qt launch request to discovery of the /studio page in the isolated Qt CDP target list"
         owner = owner_module.launch_nograph_owner(desktop, owner_plan, str(python), app,
                                                   runner=JobRunner(job), health_seconds=args.boot_seconds)
+        started = owner.pop("launch_started_monotonic")
         report["nograph_owner"] = owner
         env = owner_plan["env"]
-        # launch_nograph_owner already started the Qt desktop.
-        # The rig observes that same process instead of opening another app.
         report["owner_pid"] = owner["pid"]
-        started = time.monotonic()
-        studio_open = False
-        while time.monotonic() - started < args.boot_seconds:
-            try:
-                pages = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % cdp, timeout=2))
-                if any("/studio" in page.get("url", "") for page in pages):
-                    studio_open = True
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
-        report["boot_seconds"] = round(time.monotonic() - started)
-        report["studio_open"] = studio_open
-        if not studio_open:
-            raise RuntimeError("The isolated NoGraph server is ready but Studio did not open")
+        observed = wait_for_studio_target(cdp, owner["endpoint"], started + args.boot_seconds)
+        report["studio_open"] = observed is not None
+        if observed is None:
+            raise RuntimeError("The isolated Qt debugger did not list the Studio page within the boot budget")
+        report["boot_seconds"] = round(observed - started, 3)
         ours = set(job.pids())
         report["app_windows_on_desktop"] = [title for pid, title in desktop.windows() if pid in ours and title]
         report["state_written_in_run_folder"] = sorted(path.name for path in (run_dir / "state").iterdir())[:20]

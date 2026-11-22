@@ -337,7 +337,8 @@ def test_the_owner_is_started_only_through_the_runs_desktop_and_job(tmp_path):
         def spawn(self, command, *, env=None, cwd=None):
             calls.append((command, env, cwd))
             return "spawned"
-    assert owner.start_graph_owner(Desktop(), plan, "python.exe", tmp_path) == "spawned"
+    process, started = owner.start_graph_owner(Desktop(), plan, "python.exe", tmp_path)
+    assert process == "spawned" and started <= time.monotonic()
     (command, env, cwd), = calls
     assert 'profile_guard.py' in command
     assert command.endswith(subprocess.list2cmdline([str(tmp_path / 'nodelang' / 'launcher.py')]))
@@ -429,6 +430,92 @@ def test_every_helper_child_joins_the_job_before_it_runs_and_is_ended_within_its
 
 
 
+
+
+def test_studio_target_observation_spends_only_the_remaining_boot_budget(monkeypatch):
+    import io
+    from types import SimpleNamespace
+    rig = _rig()
+    started = 42.125
+    now = started + 4.75
+    timeouts = []
+
+    def sleep(seconds):
+        nonlocal now
+        now += seconds
+
+    def targets(url, *, timeout):
+        assert url == "http://127.0.0.1:12345/json"
+        timeouts.append(timeout)
+        url = "http://127.0.0.1:8234/studio"
+        pages = [
+            None,
+            {"type": "page", "url": 42},
+            {"type": "page", "url": "http://[bad/studio"},
+            {"type": "page", "url": "http://127.0.0.1:8235/studio"},
+            {"type": "page", "url": "https://127.0.0.1:8234/studio"},
+            {"type": "worker", "url": url},
+            {"type": "page", "url": url + "-not-the-studio"},
+        ]
+        if len(timeouts) == 1:
+            return io.StringIO('{"state": "starting"}')
+        if len(timeouts) > 2:
+            pages.append({"type": "page", "url": url + "?view=desktop"})
+        return io.StringIO(json.dumps(pages))
+
+    monkeypatch.setattr(rig, "time", SimpleNamespace(monotonic=lambda: now, sleep=sleep))
+    monkeypatch.setattr(rig.urllib.request, "urlopen", targets)
+
+    owner = "http://127.0.0.1:8234/api/alive"
+    assert rig.wait_for_studio_target(12345, owner, started + 5) is None
+    assert timeouts == [0.25]
+    assert rig.wait_for_studio_target(12345, owner, started + 5.125) is None
+    assert timeouts == [0.25, 0.125]
+    assert now == started + 5.125
+    assert rig.wait_for_studio_target(12345, owner, started + 5.5) - started == 5.125
+    assert timeouts == [0.25, 0.125, 0.375]
+
+
+@pytest.mark.parametrize("observed", [None, 46.875])
+def test_report_uses_the_qt_launch_timestamp_and_shared_deadline(tmp_path, monkeypatch, observed):
+    from types import SimpleNamespace
+    rig = _rig()
+    installed = _installed(tmp_path)
+    out = tmp_path / "evidence"
+    started = 42.125
+    endpoint = "http://127.0.0.1:8234/api/alive"
+
+    def launch(*args, runner, health_seconds):
+        assert health_seconds == 5
+        return {"pid": 4242, "endpoint": endpoint, "launch_started_monotonic": started, "health_seconds": 4.625}
+
+    def studio(cdp, owner_endpoint, deadline):
+        assert owner_endpoint == endpoint
+        assert deadline == started + 5
+        return observed
+
+    owner = SimpleNamespace(plan_graph_owner=lambda run_dir, env: {"env": env}, launch_nograph_owner=launch)
+    monkeypatch.setattr(rig, "_graph_owner", lambda: owner)
+    monkeypatch.setattr(rig, "wait_for_studio_target", studio)
+    monkeypatch.setattr(rig, "RunJob", lambda: SimpleNamespace(pids=lambda: [], close=lambda: None))
+    def stop_before_scenario():
+        raise RuntimeError("End the simulated run before the separate scenario")
+
+    monkeypatch.setattr(rig, "HiddenDesktop", lambda job: SimpleNamespace(
+        name="rig", windows=stop_before_scenario, close=lambda: None))
+
+    assert rig.main(["--scenario", str(TOOL / "scenarios/qt_attach.mjs"), "--out", str(out),
+                     "--app", str(installed), "--boot-seconds", "5"]) == 1
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert report["boot_budget_seconds"] == 5
+    assert report["studio_open"] is (observed is not None)
+    if observed is None:
+        assert "boot_seconds" not in report
+        assert "within the boot budget" in report["result"]
+    else:
+        assert "End the simulated run before the separate scenario" in report["result"]
+        assert report["boot_seconds"] == 4.75
+        assert report["boot_seconds"] > report["nograph_owner"]["health_seconds"]
 
 
 def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, monkeypatch):
@@ -591,6 +678,7 @@ def test_nograph_readiness_uses_the_isolated_marker_and_owned_listener(tmp_path,
             return [os.getpid()] if self.started and owned else []
     runner = Runner()
     def start(*args):
+        started = time.monotonic()
         server = http.server.ThreadingHTTPServer(('127.0.0.1', plan['canvas_port']), Handler)
         servers.append(server)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -598,12 +686,13 @@ def test_nograph_readiness_uses_the_isolated_marker_and_owned_listener(tmp_path,
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(str(plan['canvas_port']), encoding='ascii')
         runner.started = True
-        return SimpleNamespace(pid=os.getpid())
+        return SimpleNamespace(pid=os.getpid()), started
     monkeypatch.setattr(owner, 'start_graph_owner', start)
     try:
         if owned:
             result = owner.launch_nograph_owner(None, plan, sys.executable, APP, runner=runner, health_seconds=1)
             assert result['listener_pid'] == os.getpid()
+            assert 0 <= result['health_seconds'] <= time.monotonic() - result['launch_started_monotonic'] + 0.001
             assert requests == ['/api/alive']
         else:
             with pytest.raises(owner.OwnerRefused, match='ready NoGraph listener'):

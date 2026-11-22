@@ -65,7 +65,8 @@ def start_graph_owner(desktop, plan: dict, python: str, code_root: Path):
     guard = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(guard)
     command = subprocess.list2cmdline(guard.command([python, "-B", str(Path(code_root) / "nodelang/launcher.py")]))
-    return desktop.spawn(command, env=plan["env"], cwd=str(code_root))
+    started = time.monotonic()
+    return desktop.spawn(command, env=plan["env"], cwd=str(code_root)), started
 
 
 class OwnerRefused(RuntimeError):
@@ -128,12 +129,13 @@ def launch_nograph_owner(desktop, plan, python, code_root, *, runner, health_sec
     problems = owner_isolation_problems(plan, python, code_root, runner=runner) + endpoint_problems(plan)
     if problems or runner.leftovers():
         raise OwnerRefused(problems or ["lifecycle: helpers are still running"])
-    pid = int(start_graph_owner(desktop, plan, python, code_root).pid)
+    process, started = start_graph_owner(desktop, plan, python, code_root)
+    pid = int(process.pid)
+    deadline = started + health_seconds
     port = plan["canvas_port"]
     marker = Path(plan["env"]["ARCHHUB_TEST_STATE_DIR"]) / "nograph-http-port"
     endpoint = "http://127.0.0.1:%d/api/alive" % port
-    started = time.monotonic()
-    while time.monotonic() - started < health_seconds:
+    while time.monotonic() < deadline:
         try:
             if int(marker.read_text(encoding="ascii")) == port:
                 root = psutil.Process(pid)
@@ -144,11 +146,16 @@ def launch_nograph_owner(desktop, plan, python, code_root, *, runner, health_sec
                         for conn in process.net_connections(kind="tcp")
                     ):
                         continue
-                    with urllib.request.urlopen(endpoint, timeout=3) as answer:
-                        if answer.status == 204:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    with urllib.request.urlopen(endpoint, timeout=min(3, remaining)) as answer:
+                        observed = time.monotonic()
+                        if answer.status == 204 and observed <= deadline:
                             return {"pid": pid, "listener_pid": process.pid, "endpoint": endpoint,
-                                    "state_marker": str(marker), "health_seconds": round(time.monotonic() - started)}
+                                    "state_marker": str(marker), "health_seconds": round(observed - started, 3),
+                                    "launch_started_monotonic": started}
         except (OSError, ValueError, psutil.Error):
             pass
-        time.sleep(1)
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
     raise OwnerRefused(["health: the isolated desktop did not own a ready NoGraph listener"])

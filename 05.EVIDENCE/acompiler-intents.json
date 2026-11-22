@@ -12327,6 +12327,9 @@
         "02.TESTS/tests_js/properties_rerun_fork_live.cjs",
         "03.TOOLS/tools/real_app_check/harness.mjs",
         "03.TOOLS/tools/real_app_check/scenarios/rerun_fork.mjs",
+        "03.TOOLS/tools/real_app_check/graph_owner.py",
+        "03.TOOLS/tools/real_app_check/real_app_check.py",
+        "02.TESTS/tests_replica/test_real_app_check_tool.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

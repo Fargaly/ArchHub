@@ -2316,7 +2316,7 @@ def r_settings_action(s, req):
 
 
 def r_workspace_roots(s, req):
-    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity
+    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity, project_register
     action, body = _action(req, 'list')
     if action == 'browse':
         window = body.get('template_window')
@@ -2374,6 +2374,27 @@ def r_workspace_roots(s, req):
                              for r in old if r.get('path')]
             held['imported_legacy'] = True
             store.write(held)
+        if action == 'update-register':
+            identity = body.get('id')
+            row = next((r for r in held['roots'] if r['root_id'] == identity), None)
+            if not row or s.files['settings'].read().get('activeWorkspace') != identity:
+                raise Refused('The selected project changed. Select it again before saving.')
+            if not Path(row['path']).is_dir() or (row.get('identity') and list(folder_identity(row['path']) or ()) != row['identity']):
+                raise Refused('The registered project folder changed or is unavailable.')
+            old = project_register(row)
+            if body.get('expected') != old:
+                raise Refused('The register changed. Refresh the project before saving.')
+            number, override = body.get('number'), body.get('override')
+            if not isinstance(number, str) or len(number) > 80 or any(not c.isprintable() for c in number) or type(override) is not bool:
+                raise Refused('Enter a project number of up to 80 printable characters and choose the override setting.')
+            if number.strip():
+                row['project_number'] = number.strip()
+            else:
+                row.pop('project_number', None)
+            if override != old['override']:
+                row['project_override'] = override
+            store.write(held)
+            return {'ok': True, 'register': project_register(row)}
         if action == 'select':
             builtin = s.workspace_built_in()
             selected = {'root_id': 'workspace:archhub', 'label': 'ArchHub', 'path': builtin} if body.get('id') == 'workspace:archhub' and builtin else next((row for row in held['roots'] if row['root_id'] == body.get('id')), None)
@@ -2419,7 +2440,7 @@ def r_workspace_roots(s, req):
             store.write(held)
             return {'ok': True}
         built_in = s.workspace_built_in()
-        roots = [{**r, 'available': Path(r['path']).is_dir(), 'project_template': project_folder_layout(r['path'], built_in)} for r in held['roots']]
+        roots = [{**r, 'register': project_register(r), 'available': Path(r['path']).is_dir(), 'project_template': project_folder_layout(r['path'], built_in)} for r in held['roots']]
         return {'ok': True, 'roots': roots, 'revision': len(roots),
                 'built_in': {'id': 'workspace:archhub', 'label': 'ArchHub', 'path': built_in, 'removable': False,
                              'available': bool(built_in) and Path(built_in).is_dir()} if built_in else None,

@@ -1293,7 +1293,11 @@ class PreferenceScope:
         values = {}
         maps = maps or self.maps()
         for name in self.SCOPES[:self.SCOPES.index(scope) + 1]:
-            values.update(maps[name])
+            if name == 'Workspace' and scope == 'Session' and self.workspace:
+                from .workspace_roots_catalogue import applied_workspace_settings
+                values.update(applied_workspace_settings({**self._workspace_row(), 'settings': maps[name]}))
+            else:
+                values.update(maps[name])
         return values
 
     def read(self, scope=None):

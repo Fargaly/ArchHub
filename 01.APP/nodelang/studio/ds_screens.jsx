@@ -602,6 +602,8 @@
     const [open, setOpen] = React.useState({});
     const task = (s.tasks || []).find(row => row.id === n.agentTask);
     const messages = window.UI.homeTaskMessages?.(task) || [];
+    const projectId = s.graph.project ?? s.graph.taskContext?.workspace;
+    const projectNumber = (s.workspaces || []).find(row => row.id === projectId)?.register?.number;
     const fixed = s.graph.nodes.filter(row => row.fixed && row.id !== n.id);
     const sessionAgents = s.graph.nodes.filter(row=>row.agentWork?.role==='session'&&!row.parent);
     const agent = fixed.find(row => row.type === 'thing.agent');
@@ -631,7 +633,7 @@
     const toolsOff = n.params.tools_off || [];
     const setToolOff = (name, off) => u.act(() => api.setNodeParam(n.id, 'tools_off', off ? [...new Set([...toolsOff, name])] : toolsOff.filter(row => row !== name)));
     return <div className={'v48-session' + (selected ? ' selected' : '')} data-design="session.node">
-      <header className="node-header"><window.UI.Av id={name} size={24}/><div><b>{name}</b><small>{agent?.params.agent ? 'Agent session' : 'Session'}</small></div><span className="v48-state-dot"/>
+      <header className="node-header"><window.UI.Av id={name} size={24}/><div><b>{name}</b>{projectNumber && <small>Project {projectNumber}</small>}<small>{agent?.params.agent ? 'Agent session' : 'Session'}</small></div><span className="v48-state-dot"/>
         {/* Folded by default as the design draws it; he can show the profile, thread and agent as their own cards and fold them again. A view, never a file write. */}
         <button type="button" className="button-reset nodrag v48-session-pins" data-design="session.pins" aria-expanded={expanded} aria-label={'On every canvas · ' + (expanded ? 'Collapse' : 'Expand')} title={expanded ? 'Fold the profile, thread and agent into this card' : 'Show the profile, thread and agent as their own cards'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs, expanded: !expanded}))},event)}><window.AHIcon name={expanded ? 'minus' : 'plus'} size={12}/></button></header>
       <div className="v48-session-body"><div><span>Task</span><b>{task?.title || s.graph.name}</b></div><div><span>Runs</span><b>{n.params.model || sessionAgents.find(row=>row.params.model)?.params.model || agent?.params.model || live?.model || 'No active agent'}</b></div>{messages.length > 0 && <p>{messages.at(-1).text}</p>}<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button></div>

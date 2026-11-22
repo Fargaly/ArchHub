@@ -285,3 +285,48 @@ def test_working_subfolder_uses_the_session_typed_parameter_source(monkeypatch):
     output, _ = canvas.run_thing('thing.session', {}, {})
     assert control['type'] == parameter['type']
     assert control['default'] == control['value'] == output['context']['project_folder'] == parameter['value']
+
+
+def test_project_register_restores_inheritance_without_modifying_session_files(tmp_path, monkeypatch):
+    import pytest
+    from nodelang import session_files
+    from nodelang.nograph_server import JsonFile, Refused, r_workspace_roots
+    from nodelang.settings_owner import PreferenceScope
+    from nodelang.user_paths import state_directory
+
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path))
+    prefs = JsonFile(state_directory() / 'settings/settings.json', {})
+    roots = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    rows = []
+    for key in ('first', 'second'):
+        path = tmp_path / key
+        path.mkdir()
+        rows.append({'root_id': key, 'path': str(path), 'label': key, 'settings': {'Projects.Length': 'Metres'}})
+    roots.write({'roots': rows, 'imported_legacy': True})
+    server = SimpleNamespace(files={'settings': prefs, 'workspaces': roots}, workspace_built_in=lambda: '')
+    def call(action, **body):
+        return r_workspace_roots(server, SimpleNamespace(body={'action': action, **body}))
+
+    doc = session_files.new_document('Existing session')
+    doc['properties']['project'] = 'first'
+    path = tmp_path / 'existing.archhub'
+    session_files.write_document(path, doc)
+    original = path.read_bytes()
+    call('select', id='first')
+    legacy = call('list')['roots'][0]['register']
+    assert legacy == {'number': '', 'override': True}
+    edited = call('update-register', id='first', expected=legacy, number='TEST-01', override=False)['register']
+    assert session_files.resolve_setting(doc, 'Projects.Length')['value'] == 'Millimetres'
+    scoped = PreferenceScope(prefs, roots, str(path), current_path=lambda: str(path))
+    assert scoped.effective('Session').get('Projects.Length') is None
+    assert scoped.effective('Workspace')['Projects.Length'] == 'Metres'
+    with pytest.raises(Refused):
+        call('update-register', id='first', expected=legacy, number='Stale', override=True)
+    call('select', id='second')
+    with pytest.raises(Refused):
+        call('update-register', id='first', expected=edited, number='Wrong root', override=False)
+    assert call('list')['roots'][1]['register'] == legacy
+    call('select', id='first')
+    assert call('update-register', id='first', expected=edited, number='', override=True)['register'] == legacy
+    assert session_files.resolve_setting(session_files.read_document(path), 'Projects.Length')['value'] == 'Metres'
+    assert original == path.read_bytes()

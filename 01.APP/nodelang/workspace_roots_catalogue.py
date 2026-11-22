@@ -187,6 +187,19 @@ def default_snapshot_path():
     return registry_dir() / 'workspace-roots.json'
 
 
+def project_register(row):
+    settings = row.get('settings', {})
+    legacy_override = any(key.startswith('Projects.') for key in settings) if isinstance(settings, dict) else False
+    return {'number': row.get('project_number', ''), 'override': row.get('project_override', legacy_override)}
+
+
+def applied_workspace_settings(row):
+    settings = row.get('settings', {})
+    if row.get('project_override') is False:
+        return {key: value for key, value in settings.items() if not key.startswith('Projects.')}
+    return settings
+
+
 def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
                           last_good_path=None, registry_state=None):
     from .nograph_server import JsonFile

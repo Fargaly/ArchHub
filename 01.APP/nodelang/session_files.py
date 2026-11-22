@@ -2486,8 +2486,10 @@ def resolve_setting(document, identity):
     held = props.get('settings') or {}
     if identity in held:
         return {'value': held[identity], 'scope': 'session'}
-    project = _project_of(props, _registered_roots())['id']
-    workspace = _registered_roots().get(project, {}).get('settings', {})
+    from .workspace_roots_catalogue import applied_workspace_settings
+    roots = _registered_roots()
+    project = _project_of(props, roots)['id']
+    workspace = applied_workspace_settings(roots.get(project, {}))
     if identity in workspace:
         return {'value': workspace[identity], 'scope': 'workspace'}
     if identity.startswith('Keyboard.'):

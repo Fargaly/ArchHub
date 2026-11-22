@@ -138,8 +138,9 @@
     const hidden = layout?.hidden || [], order = layout?.order || [];
     const workspaces = s.workspaces || [];
     const projectLabel = (id, label) => {
-      const workspace = workspaces.find(item => (id && item.id === id) || (label && (item.label || item.name) === label));
-      return workspace?.label || workspace?.name || '';
+      const workspace = workspaces.find(item => id ? item.id === id : label && (item.label || item.name) === label);
+      const name = workspace?.label || workspace?.name || '';
+      return workspace?.register?.number ? workspace.register.number + ' · ' + name : name;
     };
     // A held run names its session by task id or by the session file it runs in.
     const held = (s.approvals || []).filter(c => c.status === 'pending');

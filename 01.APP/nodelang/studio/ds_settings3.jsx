@@ -11,6 +11,7 @@
   "settings.ds_settings3.ConnectionsAction0": "ConnectionsAction0",
   "settings.ds_settings3.ConnectionsAction1": "ConnectionsAction1",
   "settings.ds_settings3.ConnectionsAction2": "ConnectionsAction2",
+  "settings.ds_settings3.SaveProjectRegister": "SaveProjectRegister",
   "settings.ds_settings3.WorkspaceRowsAction0": "WorkspaceRowsAction0",
   "settings.ds_settings3.WorkspaceRowsAction1": "WorkspaceRowsAction1",
   "settings.ds_settings3.WorkspaceRowsAction2": "WorkspaceRowsAction2",
@@ -238,6 +239,31 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
               }}>{c.host ? c.detail||c.state : c.credential ? 'Saved in Windows Credential Manager' : c.connected ? c.display_name||'Connected to your account' : c.blocker||'Connect this account to use it'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
             justifySelf: 'end'
           }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.credential ? 'Details' : c.connected ? 'Open' : c.host?'Manage':'Connect'}</Btn></div></div>)}</Card>{status==='empty'&&<Empty>Connect an account or start a program with its ArchHub bridge, then refresh Connections.</Empty>}</div></>;
+  }
+  function ProjectRegister({workspace}) {
+    const s = useData(), u = useApp();
+    const register = workspace?.register;
+    const [number, setNumber] = React.useState(register?.number || '');
+    const [override, setOverride] = React.useState(register?.override || false);
+    const [saving, setSaving] = React.useState(false);
+    const saveRegister = async () => {
+      if (saving) return;
+      setSaving(true);
+      try { await u.act(()=>api.updateProjectRegister(workspace,number,override)); } finally { setSaving(false); }
+    };
+    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {SaveProjectRegister:saveRegister});
+    return <section data-design-section="Project register"><h2>Project register</h2>
+      <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>
+      <label>Registered project<select aria-label="Registered project" value={workspace?.id || ''} onChange={event=>u.act(()=>api.selectWorkspace(event.target.value))}>
+        <option value="" disabled>Choose a project</option>{s.workspaces.filter(row=>!row.builtIn && row.available !== false).map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+      {register && <form aria-label="Edit project register" onSubmit={event=>{event.preventDefault();runAction('settings.ds_settings3.SaveProjectRegister',event);}}>
+        <label>Project number<input value={number} maxLength={80} onChange={event=>setNumber(event.target.value)}/></label>
+        <label><input type="checkbox" checked={override} onChange={event=>setOverride(event.target.checked)}/>This project overrides office defaults</label>
+        <small>Use this project’s saved Projects preferences over account defaults. A value set on the session still wins.</small>
+        <button type="submit" className="sheet-action" onClick={event=>{event.preventDefault();runAction('settings.ds_settings3.SaveProjectRegister',event);}} disabled={saving || (number===register.number && override===register.override)}>Save register</button>
+      </form>}
+      {['Client','Stage','Confidentiality'].map(label=><window.UI.Soon key={label} block label={label}><p>{label}</p></window.UI.Soon>)}
+    </section>;
   }
   function WorkspaceRows() {
     const s = useData(),
@@ -635,6 +661,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       const cards=[...(content.current?.querySelectorAll('.sheet-columns > section, .sheet-owner-card')||[])];
       setOutline(cards.map((node,index)=>{node.id='settings-section-'+index;return {id:node.id,label:node.querySelector('h2,h3')?.textContent||'Preferences'};}));
     },[page,advancedOpen,changedOnly,query,load.status,s.settings]);
+    const registerWorkspace = (s.workspaces || []).find(row=>row.id===s.activeWorkspace && !row.builtIn && row.available!==false);
     const projectFields = {
       'Units and precision': ['Length', 'Length precision', 'Area', 'Area precision', 'Angle precision', 'Dates'],
       'Print and PDF': ['Pen table', 'Sheet set', 'Default scale'],
@@ -642,7 +669,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       'Templates': ['Revit template', 'AutoCAD template', 'Title block', 'Sheet size'],
       'IFC and BCF': ['IFC version', 'IFC export setup', 'BCF version']
     };
-    const missingProjectFamilies = ['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].flatMap(group => {
+    const missingProjectFamilies = ['Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].flatMap(group => {
       const backed = s.settings.filter(row => row.page === 'Projects' && row.group === group);
       return projectFields[group] ? projectFields[group].filter(label => !backed.some(row => row.label === label)) : backed.length ? [] : [group];
     });
@@ -676,7 +703,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       {currentCategory==='Library & Mods'&&<section><h2>Library &amp; Mods</h2><window.UI.HostSkills /><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('library')},event)}>Open Library</Btn></section>}
       {currentCategory==='Dependencies'&&<section><h2>Managed tools</h2><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('dependencies')},event)}>Open dependencies</Btn></section>}
       {currentCategory==='Workshop'&&<section><h2>Workshop</h2><p>Conversation rules come from the same setting owners as your nodes.</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}>Open Workshop</Btn></section>}
-      {currentCategory==='Projects'&&<><section><h2>Project folders</h2><p>Use your registered workspaces. Folder selection and privacy use the existing workspace owner.</p><WorkspaceRows /></section><section data-design-section="New project folders"><h2>New project folders</h2><p>Templates: a new project can copy the Office project tree from its template folder. The ISO 19650 CDE tree has no approved source yet.</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:openNewProject},event)}>Open New project</Btn></section>{missingProjectFamilies.length>0&&<section><h2>Project preferences</h2>{missingProjectFamilies.map(label=><window.UI.Soon block key={label} label={label}><p>{label}</p></window.UI.Soon>)}</section>}</>}
+      {currentCategory==='Projects'&&<><section><h2>Project folders</h2><p>Use your registered workspaces. Folder selection and privacy use the existing workspace owner.</p><WorkspaceRows /></section><ProjectRegister key={JSON.stringify([registerWorkspace?.id, registerWorkspace?.register])} workspace={registerWorkspace}/><section data-design-section="New project folders"><h2>New project folders</h2><p>Templates: a new project can copy the Office project tree from its template folder. The ISO 19650 CDE tree has no approved source yet.</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:openNewProject},event)}>Open New project</Btn></section>{missingProjectFamilies.length>0&&<section><h2>Project preferences</h2>{missingProjectFamilies.map(label=><window.UI.Soon block key={label} label={label}><p>{label}</p></window.UI.Soon>)}</section>}</>}
       </div>{!needle&&<div className="sheet-owner-cards" hidden={load.status==='waiting'}>{rowGroups.map(title=><section className="sheet-owner-card" key={title}><h3>{title}</h3>{currentCategory==='Appearance'&&title!=='Keyboard'&&!visibleRows.some(row=>groupTitle(row)===title)&&<p>No settings reported for this group.</p>}{currentCategory==='Appearance'&&!changedOnly&&title==='Keyboard'&&<KeyboardSettings />}{visibleRows.filter(row=>groupTitle(row)===title).map(row=><SettingControl key={row.id} row={row} raw={advancedOpen} />)}</section>)}{changedOnly&&changedKeys.length>0&&<section className="sheet-owner-card"><h3>Look - Keyboard</h3><KeyboardSettings changedOnly /></section>}{changedOnly&&!visibleRows.length&&!changedKeys.length&&<p>No settings differ from their defaults.</p>}</div>}</div>{!needle&&!changedOnly&&(outline.length>0||currentCategory==='Appearance')&&<aside className="sheet-design-side">{currentCategory==='Appearance'&&<section className="sheet-live-preview" aria-label="Live preview"><h3>Live preview</h3>{s.graph?.nodes?.length && window.UI.Canvas ? <>
         <div className="sheet-preview-stage" inert>
           <window.UI.Ctx.Provider value={{...u, libraryOpen:false, selectedNodeId:null}}>

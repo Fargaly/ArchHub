@@ -675,22 +675,23 @@ def probe_connectors():
     # Every row says whether the product can DRIVE the host, not only see it.
     # A row with no drive is never shown green: the founder's rule is that
     # nothing appears that is not wired.
-    found.append({
-        "id": "revit", "name": "Revit", "drive": "revit.build_walls",
-        "state": "connected" if revit else "absent",
-        "detail": (
-            "%d session(s)" % len(revit) if revit
-            else "no session listening on 48884-48899"
-        ),
-    })
-    found.append({
-        "id": "autocad", "name": "AutoCAD", "drive": "cad.host_lines",
-        "state": "connected" if acad else "absent",
-        "detail": (
-            "%d session(s)" % len(acad) if acad
-            else "no session listening"
-        ),
-    })
+    from colleague_setup import _setup_host_installations
+    from .host_brokers import _running
+
+    installed = _setup_host_installations() if not (revit and acad) else {}
+    for host, name, drive, exe, sessions in (
+        ("revit", "Revit", "revit.build_walls", "Revit.exe", revit),
+        ("autocad", "AutoCAD", "cad.host_lines", "acad.exe", acad),
+    ):
+        if sessions:
+            state, detail = "connected", "%d session(s)" % len(sessions)
+        elif _running((exe,)):
+            state, detail = "running", "open - no wire connected (broker not answering)"
+        elif installed.get(host):
+            state, detail = "installed", "installed - no running host detected"
+        else:
+            state, detail = "absent", "no installation or running host detected"
+        found.append({"id": host, "name": name, "drive": drive, "state": state, "detail": detail})
     appdata = os.environ.get("APPDATA", "")
     speckle_installed = bool(appdata) and os.path.isdir(
         os.path.join(appdata, "Speckle")

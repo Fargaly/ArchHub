@@ -66,3 +66,32 @@ def test_live_autocad_lines_are_read_from_the_autocad_broker(monkeypatch):
     _fake_brokers(monkeypatch, calls)
     out, said = pipeline_engines.cad_lines_from_host({"layer": "A-WALL"}, {})
     assert out["out"] == [[0.0, 0.0, 1000.0, 0.0]] and calls == [(ACAD, "ArchHub read lines")], (said, calls)
+
+
+def test_generic_autodesk_rows_distinguish_process_install_and_absence(monkeypatch):
+    import colleague_setup
+    from nodelang import host_brokers
+
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [])
+    monkeypatch.setattr(host_brokers, "probe_host_rows", lambda: [])
+    monkeypatch.setattr(host_brokers, "probe_catalogue_rows", lambda: [])
+    installations = {"revit": ["2025"], "autocad": ["2026"]}
+    running = set()
+    monkeypatch.setattr(colleague_setup, "_setup_host_installations", lambda: installations)
+    monkeypatch.setattr(host_brokers, "_running", lambda names: bool(running.intersection(names)))
+
+    def states():
+        rows = {r["id"]: r for r in pipeline_engines.probe_connectors()}
+        assert rows["revit"]["drive"] == "revit.build_walls"
+        assert rows["autocad"]["drive"] == "cad.host_lines"
+        return rows["revit"]["state"], rows["autocad"]["state"]
+
+    assert states() == ("installed", "installed")
+    running.add("acad.exe")
+    assert states() == ("installed", "running")
+    running.clear()
+    running.add("Revit.exe")
+    installations.clear()
+    assert states() == ("running", "absent")
+    running.clear()
+    assert states() == ("absent", "absent")

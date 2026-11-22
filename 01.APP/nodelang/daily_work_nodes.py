@@ -695,7 +695,7 @@ DAILY_ENGINES = {
 
 # The budget is the node's own parameters, so the founder can raise it on the card.
 for _spec in DAILY_ENGINES.values():
-    _spec['budget'] = {'seconds': _spec['params']['budget_s'], 'pages': _spec['params'].get('max_pages')}
+    _spec['budget'] = {'seconds': _spec['params']['budget_s']}
 
 # C3 hook: HOOKGUARD binds its one decision function here (decide(payload, vendor) -> {'decision': ...}).
 # Until it does, pressing Run is the approval. Every side-effect node passes this gate before it acts.

@@ -11,7 +11,6 @@
       Card,
       Chip,
       Heading,
-      Table,
 
     } = window.UI,
     Icon = window.AHIcon;
@@ -26,31 +25,31 @@
           }} onClick={event => executeAction("projects.project-tools.AsyncAwaitUActApi.1", {api,g,u}, event)}><b>{g.pinned ? '★ ' : ''}{g.name}</b><p className="muted">{g.nodes?.length ?? '—'} nodes · {g.workspaceIds?.length || 0} workspaces</p></button><Btn sm title={'Pin ' + g.name} aria-label={'Pin ' + g.name} onClick={event => executeAction("projects.project-tools.UActApiUpdateGraphG.2", {api,g,u}, event)}><Icon name="pin" size={15} /></Btn><Btn sm title={'Rename ' + g.name} aria-label={'Rename ' + g.name} onClick={event => executeAction("projects.project-tools.UShowRenameGraphId.3", {g,u}, event)}><Icon name="edit" size={15} /></Btn><Btn sm title={'Remove ' + g.name} aria-label={'Remove ' + g.name} onClick={event => executeAction("projects.project-tools.UConfirmRemoveGName.4", {api,g,u}, event)}><Icon name="trash" size={15} /></Btn></div></Card>)}<label className="grid">New workflow<input aria-label="New workflow name" value={name} onChange={e => setName(e.target.value)} /></label><Btn p disabled={!name.trim()} onClick={event => executeAction("projects.project-tools.AddGraph.5", {api,name,u}, event)}>Add workflow</Btn><div className="row spread"><h3>{s.graph.name} · history</h3><Btn sm onClick={event => executeAction("projects.project-tools.SaveVersion.6", {api,u}, event)}>Save version</Btn></div>{s.graph.versions?.map(v => <div className="row spread" key={v.id}><span>{v.name} · {v.nodes.length} nodes</span><Btn sm onClick={event => executeAction("projects.project-tools.Restore.7", {api,u,v}, event)}>Restore</Btn></div>)}<div className="flex"><Btn sm onClick={event => executeAction("projects.project-tools.ExportGraph.8", {u}, event)}>Export workflow</Btn><Btn sm onClick={event => executeAction("projects.project-tools.Sync.9", {api,u}, event)}>Sync</Btn></div></div>;
   }
   function ModelReview() {
-    const s = useData(),
-      u = useApp(),
-      [operation, setOperation] = React.useState(s.modelReview.operation);
-    const operations = ['Startup Check', 'Naming Check', 'Model QA', 'Parameter Dictionary', 'Clash & Issues', 'Delivery Plan', 'IFC Export & Check', 'Library Admission'];
-    return <main className="page" data-screen="model-review"><Heading title="Model review" sub="A revision-linked check, with an owner for every issue."><Btn sm onClick={event => executeAction("projects.project-tools.OpenAsNode.10", {api,operation,u}, event)}>Open as node</Btn><Btn p onClick={event => executeAction("projects.project-tools.RunCheck.11", {api,operation,u}, event)}>Run check</Btn></Heading><div className="settings-health"><span className="status-dot" />{s.graph.name} · {s.modelReview.revision ?? 'Choose a source'}</div><div className="flex" style={{
-        marginBottom: 22
-      }}><label className="flex">Check<select aria-label="Model check" value={operation} onChange={e => setOperation(e.target.value)}>{operations.map(x => <option key={x}>{x}</option>)}</select></label><span className="fill" /><Btn sm onClick={event => executeAction("projects.project-tools.ExportIssues.12", {u}, event)}>Export issues</Btn></div>{s.modelReview.results.length ? <><Card><Table rows={s.modelReview.results} columns={['check', 'status', 'detail', 'revision']} /></Card><Heading title="Issues" sub="Track the finding through review and closure." />{[...s.modelReview.issues].sort((a, b) => (a.type || 'Error').localeCompare(b.type || 'Error')).map(issue => <Card key={issue.id} style={{
-          padding: 18,
-          marginBottom: 12
-        }}><div className="spread"><h3>{issue.type || (/clash|clearance/i.test(issue.title) ? 'Clash' : /missing|empty/i.test(issue.title) ? 'Missing' : 'Error')} · {issue.title}</h3><Chip c={issue.status === 'Closed' ? A.ok : A.warn}>{issue.status}</Chip></div><div className="flex" style={{
-            marginTop: 16
-          }}><label className="flex">Type<select aria-label="Issue type" value={issue.type || 'Error'} onChange={e => u.act(() => api.updateReviewIssue(issue.id, {
-                type: e.target.value
-              }))}>{['Discrepancy', 'Error', 'Clash', 'Missing'].map(x => <option key={x}>{x}</option>)}</select></label><label className="flex">Owner<select aria-label="Issue owner" value={issue.owner} onChange={e => u.act(() => api.updateReviewIssue(issue.id, {
-                owner: e.target.value
-              }))}>{s.people.map(p => <option key={p.id}>{p.name}</option>)}</select></label><label className="flex">Severity<select aria-label="Issue severity" value={issue.severity} onChange={e => u.act(() => api.updateReviewIssue(issue.id, {
-                severity: e.target.value
-              }))}>{['Low', 'Normal', 'High'].map(v => <option key={v}>{v}</option>)}</select></label><label className="flex">Status<select aria-label="Issue status" value={issue.status} onChange={e => u.act(() => api.updateReviewIssue(issue.id, {
-                status: e.target.value
-              }))}>{['Open', 'In review', 'Closed'].map(v => <option key={v}>{v}</option>)}</select></label></div></Card>)}</> : <Card style={{
-        padding: 40,
-        textAlign: 'center'
-      }}><Icon name="shield" size={32} /><h2 style={{
-          margin: '16px 0'
-        }}>Check the model before delivery</h2><p className="muted">Choose a check to inspect its results, revision and issues.</p></Card>}<window.UI.PrototypeReview /></main>;
+    const s=useData(), u=useApp();
+    const supported='Clash & Issues';
+    const operations=['Startup Check','Naming Check','Model QA','Parameter Dictionary',supported,'Delivery Plan','IFC Export & Check','Library Admission'];
+    const [operation,setOperation]=React.useState(supported);
+    const [selection,setSelection]=React.useState(null);
+    const nodes=s.graph.nodes.filter(n=>n.type==='daily.ifc_check_bcf');
+    const node=nodes.length===1?nodes[0]:nodes.find(n=>selection?.scope===s.graph.scopeKey && n.id===selection.id);
+    const source={document:s.graph.id,path:s.sessionFile,scope:s.graph.scopeKey,node:node?.id};
+    const hasInput=node && (node.params.ifc || node.params.bcf || s.graph.wires.some(w=>w.enabled!==false && w.to===node.id && ['bcf','ifc','param:bcf','param:ifc'].includes(w.toPort)));
+    const available=operation===supported;
+    const issues=node?.status==='Done' && Array.isArray(node.output?.issues)?node.output.issues:null;
+    return <main className="page" data-screen="model-review">
+      <Heading title="Model review" sub={s.graph.name}/>
+      <label>Check<select aria-label="Model check" value={operation} onChange={e=>setOperation(e.target.value)}>{operations.map(x=><option key={x}>{x}</option>)}</select></label>
+      {available ? <Card>
+        {nodes.length>1 && <label>Check node<select aria-label="Check node" value={node?.id||''} onChange={e=>setSelection({id:e.target.value,scope:s.graph.scopeKey})}>
+          <option value="">Choose a node</option>{nodes.map((n,i)=><option key={n.id} value={n.id}>{n.title} ({i+1})</option>)}</select></label>}
+        <p>{node ? (hasInput ? node.error||node.display||node.status : 'Choose an IFC model or BCF issue file in the node parameters.') : nodes.length ? 'Select the check node to review.' : 'Add an IFC/BCF check node to this workflow.'}</p>
+        <Btn sm disabled={s.graphOpening || (!node && nodes.length>0)} onClick={event=>executeAction("projects.project-tools.OpenAsNode.10",{api,operation,source,u},event)}>{node?'Edit check node':'Add check node'}</Btn>
+        <Btn p disabled={!hasInput || s.graphOpening || ['Running','Waiting for approval'].includes(node?.status)} onClick={event=>executeAction("projects.project-tools.RunCheck.11",{api,operation,source,u},event)}>Run check</Btn>
+        {issues && <><h3>Issues ({issues.length})</h3>{issues.map(issue=><div key={issue.guid}><strong>{issue.title}</strong>{issue.description && <p>{issue.description}</p>}</div>)}
+          <Btn sm onClick={event=>executeAction("projects.project-tools.ExportIssues.12",{u,source},event)}>Export issues</Btn></>}
+      </Card> : <p role="status">{operation} is unavailable in this release.</p>}
+      <window.UI.PrototypeReview/>
+    </main>;
   }
   function Community() {
     const s = useData(),
@@ -226,19 +225,19 @@ function projectsprojecttoolsjsxSync9({api,u}, event) {
   const handler = () => u.act(api.syncAccount);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsprojecttoolsjsxOpenAsNode10({api,operation,u}, event) {
+function projectsprojecttoolsjsxOpenAsNode10({api,operation,source,u}, event) {
   const handler = async () => {
-          const result = await u.act(() => api.addNode('TBP ' + operation));
-          if (result) u.go('canvas');
+          const result = await u.act(() => api.openModelReviewNode(operation,source));
+          if (result && api.getSnapshot().graph.scopeKey===source.scope && api.getSnapshot().sessionFile===source.path) { await u.go('canvas',source.path); if(api.getSnapshot().graph.id===source.document && api.getSnapshot().sessionFile===source.path)u.setSelectedNodeId(result.id); }
         };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsprojecttoolsjsxRunCheck11({api,operation,u}, event) {
-  const handler = () => u.act(() => api.reviewModel(operation));
+function projectsprojecttoolsjsxRunCheck11({api,operation,source,u}, event) {
+  const handler = () => u.act(() => api.reviewModel(operation,source));
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsprojecttoolsjsxExportIssues12({u}, event) {
-  const handler = () => u.download('Issues');
+function projectsprojecttoolsjsxExportIssues12({u,source}, event) {
+  const handler = () => u.download('Issues',source);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsprojecttoolsjsxBrain13({u}, event) {

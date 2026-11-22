@@ -55,7 +55,7 @@ def title_block(project, number, revision=None):
 
 
 def test_every_daily_node_carries_the_node_contract():
-    from nodelang.canvas_documents import THING_ENGINES, is_pure
+    from nodelang.canvas_documents import THING_ENGINES, is_pure, check_contract
     from nodelang.daily_work_nodes import DAILY_ENGINES
     from nodelang.session_files import catalogue
     cards = {row['engine']: row for row in catalogue() if row['id'].startswith('daily:')}
@@ -63,6 +63,7 @@ def test_every_daily_node_carries_the_node_contract():
     for engine, spec in DAILY_ENGINES.items():
         assert THING_ENGINES[engine] is spec and is_pure(engine) is spec['pure']
         assert spec['budget']['seconds'] > 0 and all(p['type'] != 'any' for p in spec['in'] + spec['out'])
+        check_contract({'type': engine, 'budget': cards[engine]['budget']})
         assert cards[engine]['ports']['source'] == spec['out']
         assert {row['id'] for row in cards[engine]['ports']['target']} == {row['id'] for row in spec['in']} | set(spec['params'])
         assert all(port in cards[engine]['ports']['target'] for port in spec['in'])

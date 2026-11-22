@@ -175,18 +175,18 @@ test('OPS history review community and MCP project the returned owner data',asyn
   if(body.op==='project_state')return {ok:true,result:metadata};
   if(body.op==='mcp_servers')return {ok:true,result:[{id:'server',status:'Negotiated',tools:[]}]};
   if(['community_state','subscribe_community','review_community_pattern'].includes(body.op))return {ok:true,result:community};
-  if(body.op==='review_model')return {ok:true,result:{run:{ran:1,revision:9,results:{node:'Checked'}},modelReview:metadata.modelReview}};
   if(body.op==='import_mcp_tool')return {ok:false,error:'Open this admitted tool in its Workshop work'};
   return {ok:true,result:{id:'confirmed'}};
  }});
- await api.reviewModel('Naming Check');assert.equal(api.getSnapshot().modelReview.results[0].detail,'Actual result');
+ await assert.rejects(api.reviewModel('Naming Check'),/unavailable/);
+ await assert.rejects(api.reviewModel('Clash & Issues',{document:'wrong'}),/workflow changed/);
  await api.updateReviewIssue('issue',{status:'Closed'});await api.dismissSuggestion('suggestion');
  await api.subscribeCommunity('peer');await api.reviewCommunityPattern('pattern','Accept');
  assert.equal(api.getSnapshot().community.peers[0].subscribed,true);
  await api.discoverMcpTools('server','Tools');await api.reconnectMcp('server');
  assert.equal(api.getSnapshot().mcpServers[0].id,'server');
  const operations=requests.filter(r=>r.body?.op).map(r=>r.body.op);
- for(const name of ['review_model','update_review_issue','dismiss_suggestion','subscribe_community','review_community_pattern','discover_mcp_tools','reconnect_mcp'])assert.ok(operations.includes(name),name);
+ for(const name of ['update_review_issue','dismiss_suggestion','subscribe_community','review_community_pattern','discover_mcp_tools','reconnect_mcp'])assert.ok(operations.includes(name),name);
 });
 
 test('OPS mod actions preserve the native review digest and refresh from the package owner',async()=>{
@@ -1334,7 +1334,7 @@ async function fileAdapter(open={}){
   if(body.action==='initial')return {ok:true,document:blank('Untitled'),path:''};
   if(body.action==='open')return {ok:true,document:open.document||blank('Opened'),path:body.path||'/fixture/opened.archhub'};
   if(body.action==='solve')return {ok:true,results:{},solved:body.changed||[],stale:[],ms:1};
-  if(body.action==='run')return {ok:true,results:{},revision:2};
+  if(body.action==='run')return open.run ? open.run(body) : {ok:true,results:{},revision:2};
   if(body.action==='wire-rule')return {ok:true,rule:body.rule};
   return {ok:true,document:body.document,path:body.path||'',revision:1};
  };
@@ -1385,4 +1385,25 @@ test('typed wiring on the open file refuses a mismatch with Insert Convert and c
  assert.equal(api.getSessionDocument().wires.length,0);
  await api.connectSockets({from:source.id,fromPort:'out',to:text.id,toPort:'in'});
  assert.deepEqual(api.getSessionDocument().wires.map(w=>[w.from.node,w.from.socket,w.to.node,w.to.socket]),[[source.id,'out',text.id,'in']]);
+});
+
+test('scoped Run retains another completed node while running and after the scoped response',async()=>{
+ const previous={status:'Done',output:{value:'previous'}};
+ const doc={format:'archhub',version:1,id:'scoped',title:'Scoped',properties:{revision:1},
+  nodes:['target','other'].map(id=>({id,type:'data.constant',position:{x:0,y:0},params:{value:id},result:previous})),
+  wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1}};
+ let signal,release;
+ const started=new Promise(resolve=>{signal=resolve;});
+ const pending=new Promise(resolve=>{release=resolve;});
+ const {api}=await fileAdapter({document:doc,run:async body=>{
+  assert.deepEqual(body.roots,['target']);signal();await pending;
+  return {ok:true,succeeded:true,results:{target:{status:'Done',output:{value:'new'}}}};
+ }});
+ await api.openSession('/fixture/scoped.archhub');
+ const other=()=>api.getSnapshot().graph.nodes.find(n=>n.id==='other');
+ const running=api.runNode('target');
+ try{
+  await Promise.race([started,running]);assert.equal(other().status,'Done');assert.equal(other().output.value,'previous');
+ }finally{release();await running;}
+ assert.equal(other().status,'Done');assert.equal(other().output.value,'previous');
 });

@@ -1540,7 +1540,12 @@ Object.assign(api,{
   if(name==='Settings'){const result=await settingsAction('exportPreferences',[id||state.settingsScope||'User']);return {name:'ArchHub settings.json',type:'application/json',content:JSON.stringify(result.settingsExport,null,2)};}
   if(name==='Recipe'||name==='Graph'){const doc=await api.exportRecipe();return {name:(doc.title||'Untitled').replace(/[<>:"/\\|?*\u0000-\u001f]/g,'-')+'.archhub',type:'application/json',content:JSON.stringify(doc,null,2)};}
   if(name.startsWith('Run ')){const run=state.runs.find(r=>'Run '+r.id===name);if(!run)throw Error('Open a current run before exporting.');return {name:'Run.json',type:'application/json',content:JSON.stringify(run.rows,null,2)};}
-  if(name==='Receipts'||name==='Issues')return {name:name+'.json',type:'application/json',content:JSON.stringify(name==='Receipts'?state.receipts:state.modelReview.issues,null,2)};
+  if(name==='Issues'){
+   const node=reviewNode('Clash & Issues',id);
+   if(node?.result?.status!=='Done'||!Array.isArray(node.result.output?.issues))throw Error('Run the selected check before exporting issues.');
+   return {name:'Issues.json',type:'application/json',content:JSON.stringify(node.result.output.issues,null,2)};
+  }
+  if(name==='Receipts')return {name:'Receipts.json',type:'application/json',content:JSON.stringify(state.receipts,null,2)};
   return projectExport(name,id);
  },
  
@@ -1630,9 +1635,29 @@ api.sendToBaboom=async(text,options={})=>{
 };
 api.saveGraphVersion=()=>api.saveSessionAs();
 api.restoreGraphVersion=id=>api.openSession(id);
-api.reviewModel=async operation=>{
- const result=await canvasOperation('review_model',[operation]);
- projectRunResult(result.run);publish({modelReview:result.modelReview});return result;
+function reviewNode(operation, source) {
+ if(operation!=='Clash & Issues')throw Error('This model check is unavailable in this release.');
+ if(!source || !sessionDocument || source.document!==sessionDocument.id || source.path!==sessionPath ||
+    source.scope!==state.graph.scopeKey || state.graphOpening)throw Error('The selected workflow changed. Reopen Model review.');
+ const node=sessionDocument.nodes.find(n=>n.id===source.node && n.type==='daily.ifc_check_bcf');
+ if(!node && (source.node || sessionDocument.nodes.some(n=>n.type==='daily.ifc_check_bcf')))throw Error('Choose the IFC/BCF check node in this workflow.');
+ return node;
+}
+api.openModelReviewNode=async(operation,source)=>{
+ let node=reviewNode(operation,source);
+ if(!node && !(state.libraryPorts||[]).some(item=>item.id==='daily:ifc_check_bcf')){
+  await api.refreshLibraryPorts();
+  node=reviewNode(operation,source);
+ }
+ if(node)return {id:node.id};
+ return api.addNode('daily:ifc_check_bcf');
+};
+api.reviewModel=async(operation,source)=>{
+ const node=reviewNode(operation,source);
+ if(!node)throw Error('Add the IFC/BCF check to this workflow first.');
+ if(!node.params?.bcf && !node.params?.ifc && !sessionDocument.wires.some(w=>w.enabled!==false && w.to.node===node.id && ['ifc','bcf','param:ifc','param:bcf'].includes(w.to.socket)))
+  throw Error('Open the check node and choose an IFC model or BCF issue file.');
+ return api.runNode(node.id);
 };
 api.updateReviewIssue=async(id,values)=>{const result=await canvasOperation('update_review_issue',[id,values]);await refreshProjectState();return result;};
 api.dismissSuggestion=async id=>{const result=await canvasOperation('dismiss_suggestion',[id]);await refreshProjectState();return result;};
@@ -2384,13 +2409,17 @@ api.connectSockets=async wire=>{
 api.runNode=async(id,again=false)=>{
  const navigation=fileNavigation;clearTimeout(solveTimer);await runSolve();await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
  const epoch=++runEpoch,document=portableDocument();
- for(const node of sessionDocument.nodes)node.result={status:'Running'};localDirty=true;projectFile();
  const seen=new Set(),expand=key=>{if(seen.has(key))return [];seen.add(key);const node=document.nodes.find(n=>n.id===key),members=node?.children?.length?node.children:node?.frameMembers;return members?.length?members.flatMap(expand):[key];};
  const roots=id?(Array.isArray(id)?id:[id]).flatMap(expand):null;
+ if(roots && (!roots.length || roots.some(key=>!document.nodes.some(n=>n.id===key))))throw Error('Choose an existing node to run.');
+ const targets=roots && new Set(roots);
+ const inRun=node=>!targets || targets.has(node.id);
+ publish({graph:{...state.graph,nodes:state.graph.nodes.map(node=>inRun(node)?{...node,status:'Running'}:node)}});
+
  try{const result=await sessionRequest('run',{document,path:sessionPath,again,...(roots?{roots}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
   if(result.document){sessionDocument=copy(result.document);sessionRevision=result.revision;}else if(result.run)sessionDocument.properties.canvasRun=copy(result.run);
-  for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
- }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();queueAutosave();}throw error;}
+  for(const node of sessionDocument.nodes)if(result.results[node.id])node.result=result.results[node.id];projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
+ }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)if(inRun(node))node.result={status:'Error',error:error.message};projectFile();queueAutosave();}throw error;}
 };
 api.runToHere=api.runNode;
 api.recoverRun=async(node,decision)=>{

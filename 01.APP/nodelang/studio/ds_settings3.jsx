@@ -11,6 +11,7 @@
   "settings.ds_settings3.ConnectionsAction0": "ConnectionsAction0",
   "settings.ds_settings3.ConnectionsAction1": "ConnectionsAction1",
   "settings.ds_settings3.ConnectionsAction2": "ConnectionsAction2",
+  "settings.ds_settings3.EditLocalClient": "EditLocalClient",
   "settings.ds_settings3.SaveProjectRegister": "SaveProjectRegister",
   "settings.ds_settings3.WorkspaceRowsAction0": "WorkspaceRowsAction0",
   "settings.ds_settings3.WorkspaceRowsAction1": "WorkspaceRowsAction1",
@@ -251,7 +252,7 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
       setSaving(true);
       try { await u.act(()=>api.updateProjectRegister(workspace,number,override)); } finally { setSaving(false); }
     };
-    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {SaveProjectRegister:saveRegister});
+    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {SaveProjectRegister:saveRegister, EditLocalClient:()=>u.act(()=>api.editLocalProjectClient(workspace.id))});
     return <section data-design-section="Project register"><h2>Project register</h2>
       <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>
       <label>Registered project<select aria-label="Registered project" value={workspace?.id || ''} onChange={event=>u.act(()=>api.selectWorkspace(event.target.value))}>
@@ -262,7 +263,10 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
         <small>Use this project’s saved Projects preferences over account defaults. A value set on the session still wins.</small>
         <button type="submit" className="sheet-action" onClick={event=>{event.preventDefault();runAction('settings.ds_settings3.SaveProjectRegister',event);}} disabled={saving || (number===register.number && override===register.override)}>Save register</button>
       </form>}
-      {['Client','Stage','Confidentiality'].map(label=><window.UI.Soon key={label} block label={label}><p>{label}</p></window.UI.Soon>)}
+      {workspace?.nativeClientEditor
+        ? <button type="button" className="sheet-action" aria-label="Edit local client" onClick={event=>runAction('settings.ds_settings3.EditLocalClient',event)}>Edit client on this PC</button>
+        : <window.UI.Soon block label="Client"><p>Client</p></window.UI.Soon>}
+      {['Stage','Confidentiality'].map(label=><window.UI.Soon key={label} block label={label}><p>{label}</p></window.UI.Soon>)}
     </section>;
   }
   function WorkspaceRows() {

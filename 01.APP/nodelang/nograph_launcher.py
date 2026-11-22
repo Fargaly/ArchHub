@@ -13,6 +13,30 @@ import time
 from pathlib import Path
 
 
+def edit_project_client(window, project, current, timeout_ms=600_000):
+    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtWidgets import QDialog, QInputDialog, QLabel, QLineEdit
+    dialog = QInputDialog(window)
+    dialog.setWindowTitle('Project register')
+    dialog.setLabelText('Client · ' + project)
+    dialog.findChild(QLabel).setTextFormat(Qt.TextFormat.PlainText)
+    dialog.setTextValue(current)
+    entry = dialog.findChild(QLineEdit)
+    entry.setMaxLength(160)
+    entry.setInputMethodHints(Qt.InputMethodHint.ImhSensitiveData | Qt.InputMethodHint.ImhNoPredictiveText)
+    expiry = QTimer(dialog)
+    expiry.setSingleShot(True)
+    expiry.timeout.connect(dialog.reject)
+    expiry.start(timeout_ms)
+    try:
+        result = dialog.exec()
+        if not expiry.isActive():
+            raise ValueError('Client editor expired. Reopen it to edit the client.')
+        return dialog.textValue() if result == QDialog.DialogCode.Accepted else None
+    finally:
+        dialog.deleteLater()
+
+
 def _native_boot_document():
     """The same #studio-boot card, with no script, so the window can paint before the server exists."""
     studio = Path(__file__).resolve().parent / 'studio'
@@ -264,6 +288,34 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         lambda: QFileDialog.getOpenFileName(window, title, '', name_filter or 'All files (*.*)')[0], 600) or ''
     server.native_save_file_picker = lambda title, name_filter='', default_path='': on_gui(
         lambda: QFileDialog.getSaveFileName(window, title, default_path, name_filter or 'All files (*.*)')[0], 600) or ''
+    if os.name == 'nt':
+        def edit_selected_client(identity, project, current, timeout=600):
+            # The HTTP caller can ask to open Settings, but cannot authorize a native dialog.
+            from concurrent.futures import Future
+            answer = Future()
+            def inspect():
+                def checked(allowed):
+                    if not answer.set_running_or_notify_cancel():
+                        return
+                    try:
+                        if allowed is not True or not window.isActiveWindow():
+                            raise ValueError('Open Client from the focused desktop Project register.')
+                        answer.set_result(edit_project_client(window, project, current, timeout_ms=int(timeout * 1000)))
+                    except Exception as error:
+                        answer.set_exception(error)
+                view.page().runJavaScript(
+                    "navigator.userActivation.isActive && document.activeElement?.matches("
+                    "'[data-design-section=\"Project register\"] button[aria-label=\"Edit local client\"]') && "
+                    "document.querySelector('[aria-label=\"Registered project\"]')?.value === " + json.dumps(identity),
+                    checked)
+            asker.ask.emit(inspect)
+            try:
+                return answer.result(timeout=timeout)
+            except TimeoutError:
+                if answer.cancel():
+                    raise ValueError('Client editor could not open in time.')
+                return answer.result()
+        server.native_project_client_editor = edit_selected_client
     server.native_folder_picker = lambda title: on_gui(lambda: QFileDialog.getExistingDirectory(window, title, ''), 600) or ''
     if instance_lock is not None and serve_launch_requests is not None:
         class Launch(QObject):

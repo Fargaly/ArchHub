@@ -330,3 +330,100 @@ def test_project_register_restores_inheritance_without_modifying_session_files(t
     assert call('update-register', id='first', expected=edited, number='', override=True)['register'] == legacy
     assert session_files.resolve_setting(session_files.read_document(path), 'Projects.Length')['value'] == 'Metres'
     assert original == path.read_bytes()
+
+
+def test_native_client_is_private_to_one_registered_project(tmp_path, monkeypatch):
+    import os
+    import pytest
+    if os.name != 'nt':
+        pytest.skip('the native client editor uses Windows user-bound encryption')
+    from nodelang import baboom_nograph, session_files
+    from nodelang.nograph_server import JsonFile, Refused, r_workspace_roots
+    from nodelang.settings_owner import PreferenceScope
+    from nodelang.user_paths import state_directory
+    from nodelang.workspace_roots_catalogue import read_registered_roots, root_bound_registration
+
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path))
+    surface = 'settings/Projects'
+    monkeypatch.setattr(baboom_nograph, 'studio_surface', lambda: surface)
+    settings = JsonFile(state_directory() / 'settings/settings.json', {})
+    store = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    rows = []
+    for key in ('north', 'south'):
+        folder = tmp_path / key
+        folder.mkdir()
+        rows.append({'root_id': key, 'path': str(folder), 'label': key, 'privacy':'private'})
+    store.write({'roots':rows, 'imported_legacy':True})
+    sentinel = 'Synthetic private client 4318'
+    dialogs = []
+    answer = sentinel
+    def edit(identity, name, current):
+        dialogs.append((identity, current))
+        return answer
+    server = SimpleNamespace(files={'settings':settings, 'workspaces':store}, workspace_built_in=lambda:'',
+                             ensure_current_desktop_access=lambda admission:None, native_project_client_editor=edit)
+    def call(action, **body):
+        return r_workspace_roots(server, SimpleNamespace(method='POST', body={'action':action, **body}))
+
+    call('select', id='north')
+    assert call('edit-local-client', id='north') == {'ok': True}
+    assert dialogs[-1] == ('north','')
+    raw = store.path.read_bytes()
+    assert sentinel.encode() not in raw
+    doc = session_files.new_document('Local test')
+    doc['properties']['project'] = 'north'
+    path = tmp_path / 'portable.archhub'
+    session_files.write_document(path, doc)
+    scope = PreferenceScope(settings, store, str(path), current_path=lambda:str(path))
+    public = [call('list'), call('select',id='north'), call('register',path=rows[0]['path']),
+              read_registered_roots()[0], root_bound_registration('workspace-roots/north/drawing.txt'),
+              scope.export('All'), session_files.read_document(path)]
+    assert sentinel not in json.dumps(public) and 'local_clients' not in json.dumps(public)
+    assert sentinel.encode() not in path.read_bytes()
+    surface = 'canvas'
+    with pytest.raises(Refused):
+        call('edit-local-client', id='north')
+    surface = 'settings/Projects'
+    with pytest.raises(Refused):
+        call('edit-local-client', id='north', value='browser supplied')
+    call('select', id='south')
+    answer = None
+    assert call('edit-local-client', id='south') == {'ok':True}
+    assert dialogs[-1] == ('south','')
+    call('select', id='north')
+    call('edit-local-client', id='north')
+    assert dialogs[-1] == ('north',sentinel) and store.path.read_bytes() == raw
+    def switch_while_editing(*args):
+        call('select', id='south')
+        return 'Changed too late'
+    server.native_project_client_editor = switch_while_editing
+    with pytest.raises(Refused):
+        call('edit-local-client', id='north')
+    assert store.path.read_bytes() == raw
+    call('unregister', id='north')
+    assert 'local_clients' not in store.read()
+
+def test_local_client_dialog_expires_and_cancel_is_distinct(monkeypatch):
+    import pytest
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    pytest.importorskip('PyQt6.QtWidgets')
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QApplication, QInputDialog
+    from nodelang.nograph_launcher import edit_project_client
+    app = QApplication.instance() or QApplication([])
+    if app.platformName() != 'offscreen':
+        pytest.skip('use an isolated offscreen Qt process')
+    opened = []
+    def type_without_accepting():
+        dialog = app.activeModalWidget()
+        assert isinstance(dialog, QInputDialog)
+        dialog.setTextValue('Synthetic unsaved value')
+        opened.append(True)
+    QTimer.singleShot(0, type_without_accepting)
+    with pytest.raises(ValueError, match='expired'):
+        edit_project_client(None, 'Fixture', '', timeout_ms=100)
+    assert opened and app.activeModalWidget() is None
+    QTimer.singleShot(0, lambda: app.activeModalWidget().reject())
+    assert edit_project_client(None, 'Fixture', 'Existing value') is None
+
+

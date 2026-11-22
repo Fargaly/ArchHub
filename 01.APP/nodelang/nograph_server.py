@@ -193,6 +193,7 @@ class NoGraphServer:
         self.studio_first_run = False
         # The launcher binds these exactly as it did for the old server.
         self.native_file_picker = self.native_folder_picker = self.native_save_file_picker = None
+        self.native_project_client_editor = None
         self.native_window_handle = None
         self.application_update = None
         files = lambda name, default: JsonFile(self.settings_dir / (name + '.json'), default)
@@ -2332,6 +2333,51 @@ def r_workspace_roots(s, req):
             s._project_template_picks = picks
         return {'ok': True, 'path': path}
     store = s.files['workspaces']
+    if action == 'edit-local-client':
+        import base64
+        from app.secrets_store import _dpapi
+        from .baboom_nograph import studio_surface
+        editor = getattr(s, 'native_project_client_editor', None)
+        if not callable(editor) or req.method != 'POST' or set(body) != {'action', 'id'}:
+            raise Refused('Open Client from the desktop Project register.')
+        identity = body['id']
+        admission = getattr(req, 'desktop_admission', None)
+        def selected():
+            s.ensure_current_desktop_access(admission)
+            if studio_surface() != 'settings/Projects' or s.files['settings'].read().get('activeWorkspace') != identity:
+                raise Refused('Open the selected project in desktop Settings.')
+            held = store.read()
+            row = next((item for item in held['roots'] if item['root_id'] == identity), None)
+            folder = folder_identity(row['path']) if row else None
+            if folder is None or (row.get('identity') and list(folder) != row['identity']):
+                raise Refused('The selected project folder is unavailable or changed.')
+            return held, row, folder
+        # Only native controls handle plaintext. The public root rows and browser never receive it.
+        with store.lock:
+            held, row, folder = selected()
+            previous = held.get('local_clients', {}).get(identity)
+            previous_path = row['path']
+            old = _dpapi(base64.b64decode(previous, validate=True), protect=False).decode('utf-8') if previous else ''
+        try:
+            edited = editor(identity, row.get('label') or 'Project', old)
+        except ValueError as error:
+            raise Refused(str(error)) from error
+        if edited is not None and edited != old:
+            if not isinstance(edited, str) or len(edited) > 160 or any(not char.isprintable() for char in edited):
+                raise Refused('Enter a single-line client name of up to 160 characters.')
+            with store.lock:
+                held, row, current_folder = selected()
+                clients = held.setdefault('local_clients', {})
+                if current_folder != folder or row['path'] != previous_path or clients.get(identity) != previous:
+                    raise Refused('The project or client changed. Reopen the editor.')
+                if edited.strip():
+                    clients[identity] = base64.b64encode(_dpapi(edited.strip().encode('utf-8'), protect=True)).decode('ascii')
+                else:
+                    clients.pop(identity, None)
+                if not clients:
+                    held.pop('local_clients', None)
+                store.write(held)
+        return {'ok': True}
     directories, expected_parent, parent_identity = None, None, None
     kind, source = body.get('template', ''), body.get('template_source', '')
     window = body.get('template_window', '')
@@ -2437,11 +2483,16 @@ def r_workspace_roots(s, req):
             return {'ok': True, 'root': row}
         if action == 'unregister':
             held['roots'] = [r for r in held['roots'] if r['root_id'] != body.get('id')]
+            if 'local_clients' in held:
+                held['local_clients'].pop(body.get('id'), None)
+                if not held['local_clients']:
+                    held.pop('local_clients')
             store.write(held)
             return {'ok': True}
         built_in = s.workspace_built_in()
         roots = [{**r, 'register': project_register(r), 'available': Path(r['path']).is_dir(), 'project_template': project_folder_layout(r['path'], built_in)} for r in held['roots']]
         return {'ok': True, 'roots': roots, 'revision': len(roots),
+                'native_client_editor': callable(getattr(s, 'native_project_client_editor', None)),
                 'built_in': {'id': 'workspace:archhub', 'label': 'ArchHub', 'path': built_in, 'removable': False,
                              'available': bool(built_in) and Path(built_in).is_dir()} if built_in else None,
                 'health': {'state': 'current', 'message': 'Workspaces are read from settings/workspaces.json.'}}

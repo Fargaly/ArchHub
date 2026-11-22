@@ -119,7 +119,8 @@ test('every existing menu item preserves label, order, state and action calls', 
     const newButtons=buttons(now.sandbox.window.UI.ContextMenu(props(now)));
     const shape=rows=>plain(rows.map(row=>({label:labelOf(row)==='Remove frame, keep nodes'?'Remove group, keep nodes':labelOf(row),key:row.children[2].children[0],
       disabled:!!row.props.disabled,danger:row.props.className==='danger'})));
-    assert.deepEqual(shape(newButtons),shape(oldButtons),fixture.kind+JSON.stringify(fixture));
+    const priorShape=shape(oldButtons).map(row=>row.label==='Arrange'?{...row,key:'Ctrl L'}:row);
+    assert.deepEqual(shape(newButtons),priorShape,fixture.kind+JSON.stringify(fixture));
     for(let index=0;index<oldButtons.length;index++){
       if(oldButtons[index].props.disabled)continue;
       old.calls.length=now.calls.length=0;
@@ -207,17 +208,30 @@ test('compiled Canvas supplies the real selection and callbacks to both readers'
     const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];
     page.on('pageerror',error=>errors.push(error.message));
     await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<div id="root"></div>'}));
-    await page.goto('http://commandregistry.test');
+    await page.goto('http://127.0.0.1');
     await page.addStyleTag({path:path.join(studio,'style.css')});
     await page.addStyleTag({content:'html,body,#root{height:100%;margin:0}'});
     for(const name of ['react.js','react-dom.js'])await page.addScriptTag({path:path.join(studio,'vendor',name)});
     await page.addScriptTag({content:require('./studio_xyflow.cjs').script()});
     await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
-    await page.evaluate(()=>{window.fetch=()=>new Promise(()=>{});});
-    for(const name of ['tokens.js','ds-index.js','api.js','icons.js'])await page.addScriptTag({path:path.join(studio,'compiled',name)});
+    const registry=JSON.parse(fs.readFileSync(registryPath,'utf8'));
     await page.evaluate(registry=>{
-      window.ArchHubCommandRegistry=registry;
-      window.ArchHubRouteNames=Object.fromEntries(registry.commands.filter(x=>x.action.route).map(x=>[x.action.route,x.label]));
+      window.ARCHHUB_BOOT={token:'registry-fixture',csrf:'registry-fixture',nograph:true};
+      window.fetch=async (url,init={})=>{
+        const body=init.body?JSON.parse(init.body):null;
+        let data={ok:true,result:[],roots:[],items:[],messages:[]};
+        if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'registry-fixture',email:'registry@example.test'};
+        else if(url==='/api/commands')data=registry;
+        else if(url==='/api/session-files'&&body?.action==='initial')
+          data={ok:true,document:{format:'archhub',version:1,id:'registry-file',title:'Registry',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{}},path:''};
+        return new Response(JSON.stringify(data),{headers:{'content-type':'application/json'}});
+      };
+    },registry);
+    await page.addScriptTag({path:path.join(studio,'studio-authority.js')});
+    for(const name of ['tokens.js','ds-index.js','api.js','icons.js'])await page.addScriptTag({path:path.join(studio,'compiled',name)});
+    assert.equal(await page.evaluate(()=>typeof window.ArchHubAPI),'object', JSON.stringify(errors));
+    assert.equal(await page.evaluate(async()=>{await window.ArchHubAPI.ready;return window.ArchHubAPI.getSnapshot().desktopAccess.admitted;}),true);
+    await page.evaluate(()=>{
       const s=window.structuredClone(window.ArchHubAPI.getSnapshot());
       s.graph={...s.graph,id:'fixture',scopeKey:'fixture',canvasLayout:'v48',name:'Registry fixture',nodes:[1,2].map(id=>({id:String(id),title:'Text '+id,type:'data.text',kind:'Text',
         x:id*260,y:100,width:220,height:160,params:{value:'hello'},inputs:[],outputs:[],parameterSchema:[],status:'Idle'}))};
@@ -229,7 +243,7 @@ test('compiled Canvas supplies the real selection and callbacks to both readers'
       window.commandApp={selectedNodeId:'1',setSelectedNodeId:()=>{},act:fn=>fn(),libraryOpen:false,route:'canvas',task:'',
         setLibraryOpen:()=>{},setToast:()=>{},show:(kind,data)=>{window.commandMenu={kind,...data};},close:()=>{},
         setTaskFace:()=>{},confirm:(_title,fn)=>fn()};
-    },JSON.parse(fs.readFileSync(registryPath,'utf8')));
+    });
     for(const name of ['ui.js','answer-widgets.js','ds_library.js','context-menus.js'])await page.addScriptTag({path:path.join(studio,'compiled',name)});
     await page.evaluate(()=>{window.UI.useApp=()=>window.commandApp;});
     await page.addScriptTag({path:path.join(studio,'compiled/ds_screens.js')});

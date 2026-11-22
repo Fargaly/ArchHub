@@ -551,11 +551,12 @@
     const name = agent?.params.agent || task?.agents?.[0] || 'Session';
     const live = (s.liveAgents || []).find(row=>[row.agent,row.name,row.handle].includes(name));
     const expanded = !!u.canvasTabs?.expanded;
+    const connectedCount = (s.hosts || []).filter(h => h.state === 'connected').length;
     const panels = [
       ['Agent', 'user', name, agent],
       ['You', 'user', [s.profile.name, s.profile.role].filter(Boolean).join(' · ') || 'Your profile', you],
       ['Parameters', 'settings', [n.params.run_budget, n.params.reply_in && 'Reply in ' + n.params.reply_in].filter(Boolean).join(' · ') || 'How this session runs', n],
-      ['Tools', 'code', (s.hosts || []).filter(h => /connected|running|listening/.test(h.state)).length + ' connected programs' + ((n.params.tools_off || []).length ? ' · ' + n.params.tools_off.length + ' off' : ''), n],
+      ['Tools', 'code', connectedCount + (connectedCount === 1 ? ' connected program' : ' connected programs') + ((n.params.tools_off || []).length ? ' · ' + n.params.tools_off.length + ' off' : ''), n],
       ['Context', 'folder', n.params.brief || task?.scope || 'Everything about this project', n],
       ['Thread', 'workshop', messages.length + ' messages · opens beside the canvas', thread]
     ];

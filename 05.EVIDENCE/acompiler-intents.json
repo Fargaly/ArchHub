@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "intents": {
+    "PACKEDRUNTIME": {"source": "Release coordinator\u2019s Workshop assignment (4862da6a44e348a4911ffc48b78f0e7e, 926f45995c764d1ea61ef92e4c2e2937): pack only the checked offline wheelhouse with the Python version supplied by Setup, preserve the existing fallback for another interpreter, and prove real connector imports.", "scope": [".github/workflows/release.yml", "02.TESTS/tests_replica/test_pack_runtime.py", "03.TOOLS/installer/build_release.ps1", "03.TOOLS/packaging/pack_runtime.py"]},
     "HISTORICALBOOTSTRAP": {"source": "Restore the existing Windows desktop using the recorded Studio-only build. Package the one-file setup repair and its exact original file hashes. Preserve existing agent connections, the installed updater and the staged stable installer.", "scope": ["05.EVIDENCE/acompiler-intents.json", "03.TOOLS/packaging/windows/historical-light-bootstrap.patch", "03.TOOLS/packaging/windows/historical-light-bootstrap.json"]},
     "PROJECTPDFSET": {
       "source": "Projects settings design: both Publish PDF cards honor the session, workspace or user sheet set. Keep explicit sheet selections definitive, preserve older files, and explain the missing last-issue baseline.",

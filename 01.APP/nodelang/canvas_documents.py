@@ -404,6 +404,7 @@ def run_thing(engine, params, feeds, document=None):
     if engine == 'daily.ifc_check_bcf':
         from .daily_work_nodes import resolve_bcf_version
         params = {**params, 'bcf_version': resolve_bcf_version(params, feeds, document)}
+        return THING_ENGINES[engine]['run'](params, feeds, document=document)
     if engine == 'thing.setting':
         return _run_setting(params, feeds, document)
     if engine == 'thing.session':

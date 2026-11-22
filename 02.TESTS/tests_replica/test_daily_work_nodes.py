@@ -473,3 +473,107 @@ def test_oversized_compressed_input_refuses_before_card_or_runtime(tmp_path,bcf_
     assert not result.get('approvalId') and not ask_reviews() and not daily.runtimes_root().exists()
     assert 'compressed archive' in files.read_document(path)['nodes'][0]['result']['error']
     assert not (tmp_path/'output.bcfzip').exists()
+
+@pytest.mark.parametrize('pattern', ['<project>-<type>', '<project>-<originator>-<type>-<role>-<nnn>-<YYYY-MM-DD>'])
+def test_generated_project_bcf_output(tmp_path, monkeypatch, pattern):
+    from datetime import date
+    from nodelang import daily_work_nodes as daily, session_files as files, settings_owner
+    from nodelang.nograph_server import JsonFile
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    from nodelang.user_paths import state_directory
+
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path))
+    import os
+    site = os.environ.get('ARCHHUB_IFC_TEST_SITE')
+    if site:
+        monkeypatch.syspath_prepend(site)
+        monkeypatch.setattr(daily, 'ensure_runtime', lambda name, budget_s: Path(site).parent)
+    ifc = pytest.importorskip('ifcopenshell')
+    pytest.importorskip('bcf.xml_parser')
+    store = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    roots = []
+    for key, number in [('north','N-42'), ('south','S-85'), ('missing','')]:
+        folder = tmp_path / key
+        folder.mkdir()
+        model = ifc.file(schema='IFC4')
+        model.create_entity('IfcProject', GlobalId=ifc.guid.new(), Name='Synthetic')
+        model.write(str(folder/'input.ifc'))
+        roots.append({'root_id':key,'label':key,'path':str(folder),'project_number':number,'privacy':'private'})
+    store.write({'roots':roots})
+    settings_owner.preference_settings('setAppearance',['Projects.Name pattern',pattern])
+    item = next(row for row in files.catalogue() if row['id']=='daily:ifc_check_bcf')
+    owner = files.SessionFiles(tmp_path/'sessions')
+    earlier = {}
+    for row in roots:
+        folder = Path(row['path'])
+        source = folder/'input.ifc'
+        node = {'id':'check','item':item['id'],'type':item['engine'],'position':{'x':0,'y':0},
+                'params':{**item['params'],'ifc':str(source),'role':'ARC','sequence':'005'},
+                'ports':item['ports'],'paramDefs':item['paramDefs']}
+        doc = files.new_document('Synthetic BCF check')
+        doc['properties']['project'] = row['root_id']
+        doc['nodes'] = [node]
+        path = folder/'workflow.archhub'
+        files.write_document(path, doc)
+        def run():
+            return owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+        if not row['project_number']:
+            try:
+                result=run()
+            except ValueError as error:
+                result=str(error)
+            assert 'project number' in str(result).lower()
+            assert not list(folder.glob('*.bcf'))
+            assert daily.bcf_request({**node['params'],'bcf_path':str(folder/'explicit.bcf')},{},doc)['bcf_path']==str(folder/'explicit.bcf')
+            continue
+        waiting=run()
+        card=next(x for x in ask_reviews() if x['id']==waiting['approvalId'])
+        if row['root_id']=='north':
+            store.write({'roots':[{**r, 'project_number':'Changed'} if r is row else r for r in roots]})
+            with pytest.raises(ValueError,match='changed after'):
+                ask_apply(card['id'],card['input_digest'],'approve')
+            assert not list(folder.glob('*.bcf'))
+            store.write({'roots':roots})
+            waiting=run()
+            card=next(x for x in ask_reviews() if x['id']==waiting['approvalId'])
+        decision=ask_apply(card['id'],card['input_digest'],'approve')
+        assert decision['status']=='approved', decision
+        stem=row['project_number']+('-BCF' if '<nnn>' not in pattern else '-Office-BCF-ARC-005-'+date.today().isoformat())
+        target=folder/(stem+'.bcf')
+        assert target.is_file(), (decision,files.read_document(path)['nodes'][0].get('result'))
+        with zipfile.ZipFile(target) as archive:
+            assert 'bcf.version' in archive.namelist()
+        earlier[target]=target.read_bytes()
+        if row['root_id']=='south':
+            with pytest.raises(ValueError,match='registered project'):
+                daily.bcf_request(node['params'],{}, {**doc,'properties':{'project':'north'}})
+        assert files.read_document(path)['nodes'][0]['result']['status']=='Done'
+        with pytest.raises(ValueError,match='already exists'):
+            daily.bcf_request(node['params'],{},doc)
+        assert all(p.read_bytes()==original for p,original in earlier.items())
+
+
+def test_generated_bcf_cannot_replace_a_racing_writer(tmp_path, bcf_xml_site, monkeypatch):
+    from nodelang.daily_work_worker import save_bcf_report
+    import os
+    if os.name == 'nt':
+        def no_hard_links(*args):
+            raise OSError('Hard links unavailable')
+        monkeypatch.setattr(os,'link',no_hard_links)
+    target=tmp_path/'existing.bcf'
+    class Archive:
+        def save(self, temporary):
+            make_bcf_archive(temporary, '2.1')
+            target.write_bytes(b'Existing concurrent output')
+    with pytest.raises(FileExistsError):
+        save_bcf_report(Archive(), target, create_only=True)
+    assert target.read_bytes()==b'Existing concurrent output'
+    assert not list(tmp_path.glob('.bcf-*'))
+    class OrdinaryArchive:
+        def save(self, temporary):
+            make_bcf_archive(temporary, '2.1')
+    new_target = tmp_path/'new.bcf'
+    save_bcf_report(OrdinaryArchive(), new_target, create_only=True)
+    with zipfile.ZipFile(new_target) as archive:
+        assert 'bcf.version' in archive.namelist()
+    assert target.read_bytes()==b'Existing concurrent output'

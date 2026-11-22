@@ -436,11 +436,68 @@ def resolve_bcf_version(params, feeds, document=None):
     return version
 
 
+def validate_name_component(value, *, pattern=False):
+    import ntpath
+    tokens = ('project', 'originator', 'type', 'role', 'nnn', 'YYYY-MM-DD')
+    if not isinstance(value, str) or not value.strip() or len(value) > 160:
+        raise ValueError('Enter a filename component of 1 to 160 characters.')
+    literal = value
+    if pattern:
+        for token in tokens:
+            literal = literal.replace('<' + token + '>', 'X')
+    if (any(not c.isprintable() or c in '<>:"/\\|?*' for c in literal)
+            or literal != literal.strip() or literal.endswith('.') or ntpath.isreserved(literal)):
+        raise ValueError('Use a valid Windows filename and supported name-pattern tokens.')
+    return value
+
+
+def generated_bcf_path(source, params, feeds, document):
+    from datetime import date
+    from .session_files import _registered_roots, _project_of, resolve_setting
+    from .workspace_roots_catalogue import project_register, folder_identity
+    roots = _registered_roots()
+    project = roots.get(_project_of((document or {}).get('properties') or {}, roots)['id'])
+    if not project or not source.is_relative_to(Path(project['path']).resolve()):
+        raise ValueError('Choose the registered project containing the IFC input.')
+    selected_root = Path(project['path']).resolve()
+    if project.get('identity') and list(folder_identity(selected_root) or ()) != project['identity']:
+        raise ValueError('The registered project folder changed. Select it again.')
+    for other in roots.values():
+        if other is project or not other.get('path'):
+            continue
+        other_root = Path(other['path'])
+        if other_root.is_relative_to(selected_root) and source.is_relative_to(other_root):
+            raise ValueError('Select the registered project that owns this IFC input.')
+    pattern = validate_name_component(resolve_setting(document, 'Projects.Name pattern')['value'], pattern=True)
+    values = {'project': project_register(project)['number'], 'type': 'BCF', 'YYYY-MM-DD': date.today().isoformat(),
+              'role': feeds.get('role', params.get('role')), 'nnn': feeds.get('sequence', params.get('sequence'))}
+    if '<originator>' in pattern:
+        values['originator'] = resolve_setting(document, 'Projects.Originator code')['value']
+    labels = {'project': 'the project number in Projects', 'role': 'the drawing role on the BCF node',
+              'nnn': 'a three-digit sequence on the BCF node', 'originator': 'the originator code in Projects'}
+    def substitute(match):
+        key = match.group(1)
+        value = values[key]
+        if not value or (key == 'nnn' and not re.fullmatch('[0-9]{3}', str(value))):
+            raise ValueError('Enter ' + labels[key] + ' to generate this filename.')
+        return validate_name_component(value)
+    stem = validate_name_component(re.sub(r'<([^<>]+)>', substitute, pattern))
+    target = source.with_name(stem + '.bcf')
+    if target.exists() or target.is_symlink():
+        raise ValueError('Generated BCF filename already exists. Choose another name or sequence.')
+    return target
+
+
 def bcf_request(params, feeds, document=None):
     source = feeds.get('bcf') or params.get('bcf')
     is_archive = bool(source)
     path = _local_file(source if is_archive else feeds.get('ifc') or params.get('ifc'), 'bcf' if is_archive else 'ifc', ('.bcf', '.bcfzip') if is_archive else ('.ifc',)).resolve()
-    target = params.get('bcf_path') or ('' if is_archive else path.with_suffix('.bcf'))
+    target = params.get('bcf_path')
+    generated = not target and not is_archive and params.get('name_source') == 'From Projects'
+    if generated:
+        target = generated_bcf_path(path, params, feeds, document)
+    elif not target:
+        target = '' if is_archive else path.with_suffix('.bcf')
     if target:
         target = str(_bcf_output(target, path))
     spec = DAILY_ENGINES['daily.ifc_check_bcf']['params']
@@ -449,13 +506,13 @@ def bcf_request(params, feeds, document=None):
             raise ValueError('BCF archive budgets must remain within their declared maximum.')
     if is_archive and path.stat().st_size > int(params.get('archive_bytes', spec['archive_bytes'])):
         raise ValueError('BCF input exceeds the compressed archive byte budget.')
-    return {**params, 'bcf_version': resolve_bcf_version(params, feeds, document),
+    return {**params, 'create_only': bool(generated or params.get('create_only')), 'bcf_version': resolve_bcf_version(params, feeds, document),
             'bcf': str(path) if is_archive else '', 'ifc': '' if is_archive else str(path), 'bcf_path': target}
 
 
-def ifc_check_bcf(params, feeds):
+def ifc_check_bcf(params, feeds, document=None):
     spec = DAILY_ENGINES['daily.ifc_check_bcf']
-    params = bcf_request(params, feeds)
+    params = bcf_request(params, feeds, document)
     version = params['bcf_version']
     source = params.get('bcf')
     if params['bcf_path']:
@@ -479,7 +536,7 @@ def ifc_check_bcf(params, feeds):
     budget = _budget(params, spec)
     site = ensure_runtime('ifc', budget_s=budget) / 'site'
     answer = run_worker('ifc_check', {'ifc': str(model), 'ids': ids, 'bcf': str(target), 'version': version,
-                                      'a': str(params.get('clash_a') or 'IfcWall'),
+                                      'create_only': params['create_only'], 'a': str(params.get('clash_a') or 'IfcWall'),
                                       'b': str(params.get('clash_b') or 'IfcColumn, IfcBeam, IfcSlab, IfcDuctSegment, IfcPipeSegment'),
                                       'tolerance': float(params.get('tolerance') or 0.002)}, site=site, budget_s=budget)
     summary = '%d clash(es), %d IDS failure(s), %d BCF topic(s) -> %s' % (
@@ -606,11 +663,14 @@ DAILY_ENGINES = {
         'params': {'old': '', 'new': '', 'dpi': 100, 'threshold': 48, 'max_pages': 200, 'budget_s': 120}},
     'daily.ifc_check_bcf': {
         'engine': 'daily.ifc_check_bcf', 'pure': False, 'run': ifc_check_bcf,
-        'in': [_port('ifc', 'path'), _port('ids', 'path'), _port('bcf', 'path'), _port('bcf_version', 'string')],
+        'in': [_port('ifc', 'path'), _port('ids', 'path'), _port('bcf', 'path'), _port('bcf_version', 'string'), _port('role', 'string'), _port('sequence', 'string')],
         'out': [_port('clashes', 'list'), _port('ids_failures', 'list'), _port('bcf', 'path'), _port('summary', 'string'), _port('issues', 'list'), _port('version', 'string')],
         'title': 'Clash + IDS check to BCF', 'sub': 'IfcOpenShell clash and ifctester IDS, issues written as BCF',
-        'paramDefs': [{'id': 'bcf_version', 'name': 'BCF version', 'type': 'choice', 'options': ['From Projects', *BCF_VERSIONS]}],
-        'params': {'archive_bytes': 64 * 1024 * 1024, 'archive_entries': 4096, 'ifc': '', 'ids': '', 'bcf': '', 'bcf_version': 'From Projects', 'bcf_path': '', 'clash_a': 'IfcWall',
+        'paramDefs': [{'id': 'name_source', 'name': 'Generated filename', 'type': 'choice', 'options': ['From Projects', 'IFC filename']},
+                      {'id': 'role', 'name': 'Drawing role', 'type': 'text'},
+                      {'id': 'sequence', 'name': 'Three-digit sequence', 'type': 'text'},
+                      {'id': 'bcf_version', 'name': 'BCF version', 'type': 'choice', 'options': ['From Projects', *BCF_VERSIONS]}],
+        'params': {'name_source': 'From Projects', 'role': '', 'sequence': '', 'archive_bytes': 64 * 1024 * 1024, 'archive_entries': 4096, 'ifc': '', 'ids': '', 'bcf': '', 'bcf_version': 'From Projects', 'bcf_path': '', 'clash_a': 'IfcWall',
                    'clash_b': 'IfcColumn, IfcBeam, IfcSlab, IfcDuctSegment, IfcPipeSegment', 'tolerance': 0.002,
                    'budget_s': 900}},
     'daily.arabic_ocr': {
@@ -643,12 +703,12 @@ DECIDE = None
 
 
 def _gated(engine, run):
-    def gated(params, feeds):
+    def gated(params, feeds, **context):
         if DECIDE is not None:
             verdict = DECIDE({'tool_name': engine, 'tool_input': dict(params)}, 'archhub-canvas') or {}
             if verdict.get('decision', 'allow') != 'allow':
                 raise PermissionError('%s is waiting for approval: %s' % (engine, verdict.get('reason') or verdict['decision']))
-        return run(params, feeds)
+        return run(params, feeds, **context)
     return gated
 
 

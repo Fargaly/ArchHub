@@ -667,6 +667,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     },[page,advancedOpen,changedOnly,query,load.status,s.settings]);
     const registerWorkspace = (s.workspaces || []).find(row=>row.id===s.activeWorkspace && !row.builtIn && row.available!==false);
     const projectFields = {
+      'File naming': ['Name pattern', 'Originator code', 'Revisions', 'Check names before saving'],
       'Units and precision': ['Length', 'Length precision', 'Area', 'Area precision', 'Angle precision', 'Dates'],
       'Print and PDF': ['Pen table', 'Sheet set', 'Default scale'],
       'CAD': ['Layer standard', 'Colour to lineweight', 'DWG export setup', 'DWG version'],

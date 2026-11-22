@@ -87,12 +87,12 @@ def ifc_check(args):
                                   'Hard clash, penetration %.3f m at %s' % (abs(float(clash.distance)),
                                                                            [round(v, 2) for v in point]), 'ArchHub')
             topic.add_viewpoint_from_point_and_guids(numpy.array(point) + 5.0, a.GlobalId, b.GlobalId)
-    written = save_bcf_report(bcf, args['bcf'])
+    written = save_bcf_report(bcf, args['bcf'], create_only=args.get('create_only', False))
     return {'clashes': clashes, 'ids_failures': ids_failures, 'topics': len(clashes) + len(ids_failures),
             **written}
 
 
-def save_bcf_report(archive, destination):
+def save_bcf_report(archive, destination, *, create_only=False):
     from pathlib import Path
     target = Path(destination)
     temporary = None
@@ -101,7 +101,13 @@ def save_bcf_report(archive, destination):
             temporary = Path(stream.name)
         archive.save(temporary)
         bcf_exchange({'source': str(temporary)})
-        os.replace(temporary, target)
+        if create_only:
+            if os.name == "nt":
+                os.rename(temporary, target)
+            else:
+                os.link(temporary, target)
+        else:
+            os.replace(temporary, target)
         return bcf_exchange({'source': str(target)})
     finally:
         if temporary is not None:

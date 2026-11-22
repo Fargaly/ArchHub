@@ -893,6 +893,23 @@ def preference_settings(function='readControls', args=(), settings=None):
     preferences = settings.read()
     for row in measurement_rows:
         row.update(page='Projects', group='Units and precision', value=preferences.get(row['storageKey'], row['default']))
+    naming_rows = []
+    for label, key, default in (
+        ('Name pattern', 'namePattern', '<project>-<originator>-<type>-<role>-<nnn>-<YYYY-MM-DD>'),
+        ('Originator code', 'originator', 'Office'),
+    ):
+        identity = 'Projects.' + label
+        if args and args[0] == identity and function in ('setAppearance', 'resetAppearance'):
+            if function == 'resetAppearance':
+                settings.update({}, remove=[key])
+            else:
+                from .daily_work_nodes import validate_name_component
+                validate_name_component(args[1], pattern=key == 'namePattern')
+                settings.update({key: args[1]})
+            function, args = 'readControls', ()
+        naming_rows.append({'id': identity, 'storageKey': key, 'label': label, 'type': 'text',
+                            'group': 'File naming', 'page': 'Projects', 'default': default,
+                            'value': settings.read().get(key, default)})
     title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']
     if args and args[0] == 'Projects.Sheet set' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
@@ -988,7 +1005,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows]}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows]}
 
 
 def preference_setting(identity):

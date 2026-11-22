@@ -671,11 +671,29 @@ def test_flat_installed_owner_plan_needs_only_the_shipped_specification(tmp_path
 
 def test_isolated_account_connection_cut_keeps_loopback_and_recovers(tmp_path):
     script = """
-import http.client, os, runpy, socket, sys
+import http.client, os, runpy, socket, sys, threading
 from pathlib import Path
 state = Path(sys.argv[2])
 os.environ['ARCHHUB_TEST_STATE_DIR'] = str(state)
 runpy.run_path(sys.argv[1])['install'](state / 'guard.jsonl')
+switch = state / 'account-browser-launch.observe'
+count = switch.with_suffix('.count')
+def audit_browser_open():
+    sys.audit('webbrowser.open', 'synthetic-private-url')
+def sign_in_thread():
+    thread = threading.Thread(target=audit_browser_open, name='archhub-cloud-signin-browser')
+    thread.start()
+    thread.join()
+sign_in_thread()
+assert not count.exists()
+switch.touch()
+audit_browser_open()
+assert not count.exists()
+sign_in_thread()
+assert count.read_bytes() == b'1'
+switch.unlink()
+sign_in_thread()
+assert count.read_bytes() == b'1'
 with socket.socket() as listener:
     listener.bind(('127.0.0.1', 0))
     listener.listen()

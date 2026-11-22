@@ -944,3 +944,86 @@ def test_mixed_legacy_recent_rows_keep_valid_entries_during_explicit_open(cloud,
     assert rows[1:] == [unsigned, signed]
     assert [row["path"] for row in files.recent()] == [str(opened), str(old)]
     assert all(path.read_bytes() == content for path, content in original.items())
+
+def test_simultaneous_google_presses_share_one_start_and_open(cloud, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(cloud_signin, "_CURRENT", {"attempt": None})
+    opened = []
+    browser_opened = threading.Event()
+    pressing = threading.Barrier(2)
+    first_started = threading.Event()
+    overlapping_start = threading.Event()
+    start = cloud_signin.SignIn.start
+
+    def delayed_return(attempt):
+        start(attempt)
+        if first_started.is_set():
+            overlapping_start.set()
+        first_started.set()
+        overlapping_start.wait(0.25)
+        return attempt
+
+    monkeypatch.setattr(cloud_signin.SignIn, "start", delayed_return)
+
+    def browser(url):
+        opened.append(url)
+        browser_opened.set()
+
+    def press():
+        pressing.wait(3)
+        return cloud_signin.begin("google", base_url=f"http://127.0.0.1:{cloud.server_port}",
+                                  path=tmp_path / "cloud.json", opener=browser)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        clicks = [pool.submit(press) for _ in range(2)]
+        assert all(click.result(5)["method"] == "google" for click in clicks)
+    attempt = cloud_signin._CURRENT["attempt"]
+    try:
+        assert browser_opened.wait(5)
+        assert [kind for kind, _ in cloud.seen] == ["google/start"]
+        assert len(opened) == 1
+        _browser_that_follows(opened[0])
+        assert _wait(attempt)["phase"] == "done"
+    finally:
+        attempt.cancel()
+
+
+@pytest.mark.parametrize("pause_at,sign_out", [("google/start", True), ("exchange", True), ("exchange", False)])
+def test_cancelled_google_attempt_cannot_replace_retry(cloud, tmp_path, monkeypatch, pause_at, sign_out):
+    monkeypatch.setattr(cloud_signin, "_CURRENT", {"attempt": None})
+    paused, resume = threading.Event(), threading.Event()
+    opened, completed = [], []
+    record = tmp_path / "cloud.json"
+    options = {"path": record, "base_url": f"http://127.0.0.1:{cloud.server_port}"}
+
+    def http(method, url, **kwargs):
+        response = cloud_signin.http_json(method, url, **kwargs)
+        if urlparse(url).path.endswith("/" + pause_at):
+            paused.set()
+            assert resume.wait(8)
+        return response
+
+    def browser(url):
+        opened.append(True)
+        _browser_that_follows(url)
+
+    cloud_signin.begin("google", http=http, opener=browser, on_complete=completed.append, **options)
+    old = cloud_signin._CURRENT["attempt"]
+    try:
+        assert paused.wait(5)
+        if sign_out:
+            assert not cloud_signin.sign_out(record)["signed_in"]
+            assert cloud_signin.current_status()["phase"] == "idle"
+        else:
+            old.cancel()
+        assert old.status()["phase"] == "failed" and old.status()["error"] == "cancelled"
+        cloud.exchange_token = "ah_" + "r" * 40
+        cloud_signin.begin("google", opener=_browser_that_follows, **options)
+        assert _wait(cloud_signin._CURRENT["attempt"])["phase"] == "done"
+    finally:
+        resume.set()
+        old.thread.join(5)
+    assert not old.thread.is_alive() and not completed
+    assert len(opened) == (pause_at == "exchange")
+    assert cloud_signin.read_cloud_session(record)["token"] == cloud.exchange_token

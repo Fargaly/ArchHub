@@ -335,7 +335,10 @@ class SignIn:
         return self.status()["phase"] in ("starting", "waiting", "exchanging")
 
     def cancel(self) -> None:
-        self._cancel = True
+        with _SESSION_WRITE_LOCK, self._lock:
+            if self.active:
+                self._set(phase="failed", error="cancelled", url="")
+                self._cancel = True
 
     def start(self) -> "SignIn":
         self.thread = threading.Thread(target=self._run, name="archhub-cloud-signin", daemon=True)
@@ -344,6 +347,8 @@ class SignIn:
 
     def _set(self, **patch) -> None:
         with self._lock:
+            if self._cancel:
+                return
             self._state.update(patch)
             self._lock.notify_all()
 
@@ -375,6 +380,9 @@ class SignIn:
             server.server_close()
             self._set(phase="failed", error=str(failed)[:200] or "sign-in could not start")
             return
+        if self._cancel:
+            server.server_close()
+            return
         self._set(phase="waiting", url=url)
         opener = self._opener
         if opener is None:
@@ -384,6 +392,8 @@ class SignIn:
         def _open() -> None:
             # On its own thread: the browser (or a court standing in for it)
             # may call the loopback before this thread is back in the loop.
+            if self._cancel:
+                return
             try:
                 opened = opener(url)
             except Exception:
@@ -445,20 +455,23 @@ class SignIn:
         if "@" not in email:
             self._set(phase="failed", error="the cloud did not name the account")
             return
-        try:
-            write_cloud_session(self.path, {
-                "token": token,
-                "expires_at": payload.get("expires_at"),
-                "email": email,
-                "user_id": me.get("user_id") or payload.get("user_id"),
-                "cloud_base_url": self.base_url,
-                "refused_at": None,
-            })
-        except (OSError, ValueError):
-            self._set(phase="failed", error="Secure account storage is unavailable. Retry sign-in.")
-            return
-        from .cloud_session import remember_verified_account
-        remember_verified_account({"token": token, "cloud_base_url": self.base_url}, _status, me)
+        with _SESSION_WRITE_LOCK:
+            if self._cancel:
+                return
+            try:
+                write_cloud_session(self.path, {
+                    "token": token,
+                    "expires_at": payload.get("expires_at"),
+                    "email": email,
+                    "user_id": me.get("user_id") or payload.get("user_id"),
+                    "cloud_base_url": self.base_url,
+                    "refused_at": None,
+                })
+            except (OSError, ValueError):
+                self._set(phase="failed", error="Secure account storage is unavailable. Retry sign-in.")
+                return
+            from .cloud_session import remember_verified_account
+            remember_verified_account({"token": token, "cloud_base_url": self.base_url}, _status, me)
         if self._on_complete is not None:
             try:
                 self._on_complete(email)
@@ -496,12 +509,13 @@ def wake_status_waiters() -> None:
 
 def begin(method: str, **options) -> dict:
     """Start one attempt; a second click while one waits joins it."""
-    attempt = _CURRENT.get("attempt")
-    if attempt is not None and attempt.active:
+    with _SESSION_WRITE_LOCK:
+        attempt = _CURRENT.get("attempt")
+        if attempt is not None and attempt.active:
+            return attempt.status()
+        attempt = SignIn(method, **options).start()
+        _CURRENT["attempt"] = attempt
         return attempt.status()
-    attempt = SignIn(method, **options).start()
-    _CURRENT["attempt"] = attempt
-    return attempt.status()
 
 
 def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict]] = http_json,
@@ -513,9 +527,17 @@ def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict
     before this returns; the cloud is told best-effort, off the caller's
     thread unless `wait` asks for it (courts do)."""
     record = path or cloud_session_path()
-    held = read_cloud_session(record)
-    token = str(held.get("token") or "")
-    base = pinned_base(held)
+    with _SESSION_WRITE_LOCK:
+        attempt = _CURRENT.get("attempt")
+        if attempt is not None and attempt.path == record:
+            attempt.cancel()
+            _CURRENT["attempt"] = None
+        held = read_cloud_session(record)
+        token = str(held.get("token") or "")
+        base = pinned_base(held)
+        if held:
+            write_cloud_session(record, {"token": None, "expires_at": None,
+                                         "email": None, "user_id": None, "refused_at": None}, expected_token=token)
     if token:
         def _tell_cloud() -> None:
             try:
@@ -527,12 +549,6 @@ def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict
             _tell_cloud()
         else:
             threading.Thread(target=_tell_cloud, name="archhub-cloud-signout", daemon=True).start()
-    if held:
-        write_cloud_session(record, {"token": None, "expires_at": None,
-                                     "email": None, "user_id": None, "refused_at": None}, expected_token=token)
-    attempt = _CURRENT.get("attempt")
-    if attempt is not None and not attempt.active:
-        _CURRENT["attempt"] = None
     return {"signed_in": False, "email": ""}
 
 

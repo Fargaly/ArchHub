@@ -8,6 +8,7 @@ from pathlib import Path
 import runpy
 import subprocess
 import sys
+import threading
 
 def _profile_path(path):
     target = os.path.normcase(os.path.realpath(os.fsdecode(path)))
@@ -106,7 +107,13 @@ def install(log=None, *, protected=()):
     attempts = []
     isolated_state = os.environ.get("ARCHHUB_TEST_STATE_DIR")
     outage = Path(isolated_state) / "account-outage.active" if isolated_state else None
+    browser_switch = outage.parent / "account-browser-launch.observe" if outage else None
     def deny(event, args):
+        if (event == "webbrowser.open" and browser_switch and browser_switch.is_file()
+                and threading.current_thread().name == "archhub-cloud-signin-browser"):
+            # One byte per attempt. The audit arguments contain the private URL.
+            with browser_switch.with_suffix(".count").open("ab") as stream:
+                stream.write(b"1")
         if event == "http.client.connect" and outage and outage.is_file():
             connection, host, _port = args
             # A proxy may carry TLS to the original account host.

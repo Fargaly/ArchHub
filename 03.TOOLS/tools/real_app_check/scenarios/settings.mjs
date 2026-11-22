@@ -40,7 +40,7 @@ export const steps=[
  'Installed Canvas saves the selected Session Project folder from its native picker',
 ];
 const declaredSteps=steps;
-export default async function({input,label,shot,step:recordStep,js,until,clickText,cdp,out,native}){
+export default async function({input,label,shot,step:recordStep,js,until,clickText,rectOf,mouse,cdp,out,native}){
  const outageRequested = input?.verifyAccountOutage === true;
  let stopProtected = false;
  const observation = {statuses:[], lockedScreenshot:null, sameAccount:false, savedFilePreserved:false, draftPreserved:false};
@@ -48,25 +48,72 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   fs.writeFileSync(path.join(out, 'account-outage.json'), JSON.stringify({result, instruction, observation}, null, 2));
  }
  if (outageRequested) outageEvidence('NOT EXERCISED', 'Waiting for the signed-in Projects fixture. No authenticated outage has been observed.');
+ const runs=fs.readdirSync(out,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&entry.name.startsWith('run-'));assert.equal(runs.length,1);
+ const isolated=path.join(out,runs[0].name);
  const entry=await recordStep(declaredSteps[0],async()=>{
   const access=await until(()=>js("window.ArchHubAPI?.getSnapshot()?.desktopAccess"),value=>value&&value.state!=='pending');
   assert(access&&typeof access.admitted==='boolean','The installed admission decision was not shown');
   if(access.admitted)return {not_exercised:'This profile already has a legitimate admitted account. Signed-out startup was not exercised; no signout was performed.',got:{authenticated:true}};
   assert(['signed_out','session_invalid','unavailable'].includes(access.state));
   await until(() => js("Boolean(document.querySelector('[data-desktop-admission]'))"), Boolean);
-  const hidden=await js("(()=>{const a=window.ArchHubAPI,s=a.getSnapshot();return {entry:!!document.querySelector('[data-desktop-admission]'),home:!!document.querySelector('[data-home-page]'),nodes:(s.graph?.nodes||[]).length,workspaces:(s.workspaces||[]).length,tasks:(s.tasks||[]).length,messages:(s.workshopMessages||[]).length,email:s.profile.email||'',document:a.getSessionDocument(),file:a.getSessionPath()};})()");
-  assert.deepEqual(hidden,{entry:true,home:false,nodes:0,workspaces:0,tasks:0,messages:0,email:'',document:null,file:''});
+  const privateView=()=>js("(()=>{const a=window.ArchHubAPI,s=a.getSnapshot();return {entry:!!document.querySelector('[data-desktop-admission]'),home:!!document.querySelector('[data-home-page]'),nodes:(s.graph?.nodes||[]).length,workspaces:(s.workspaces||[]).length,tasks:(s.tasks||[]).length,messages:(s.workshopMessages||[]).length,hasEmail:Boolean(s.profile.email),hasDocument:a.getSessionDocument()!==null,hasFile:Boolean(a.getSessionPath())};})()");
+  const hidden={entry:true,home:false,nodes:0,workspaces:0,tasks:0,messages:0,hasEmail:false,hasDocument:false,hasFile:false};
+  assert.deepEqual(await privateView(),hidden);
   const refusal=await js("(async()=>{const held=window.__archhubSession;const response=await fetch('/api/universal/workspace-roots',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':held?.token||'','X-ArchHub-CSRF':held?.csrf||''},body:JSON.stringify({action:'list'})});const value=await response.json();return {status:response.status,code:value.code,state:value.state,hasRoots:Array.isArray(value.roots)&&value.roots.length>0};})()");
   assert([401,503].includes(refusal.status));assert.equal(refusal.code,'desktop_access_required');assert.equal(refusal.hasRoots,false);
   assert.equal(await js("(async()=>{try{await window.ArchHubAPI.newSession('Refused anonymous document');return false;}catch{return window.ArchHubAPI.getSessionDocument()===null;}})()"),true);
-  function observeSignIn(){const browser=globalThis,original=browser.fetch;const witness=browser.__archhubAdmissionWitness={checks:0,signIns:0,phase:null,status:null,restore(){browser.fetch=original;}};browser.fetch=function(...args){const pending=Reflect.apply(original,this,args),url=new browser.URL(typeof args[0]==='string'?args[0]:args[0].url,browser.location.href);if(url.pathname==='/api/universal/desktop-access')witness.checks++;if(url.pathname==='/api/universal/cloud-signin'){if(args[1]?.method==='POST')witness.signIns++;pending.then(async response=>{witness.status=response.status;witness.phase=(await response.clone().json()).phase||null;}).catch(()=>{witness.status=0;witness.phase='failed';});}return pending;};}
+  const state=path.join(isolated,'state');
+  const cut=path.join(state,'account-outage.active'),observed=path.join(state,'account-outage.observed');
+  const launchSwitch=path.join(state,'account-browser-launch.observe'),launches=path.join(state,'account-browser-launch.count');
+  assert(!fs.existsSync(cut)&&!fs.existsSync(observed)&&!fs.existsSync(launchSwitch)&&!fs.existsSync(launches),
+   'The signed-out outage check requires fresh isolated observation markers.');
+  const launchCount=()=>fs.existsSync(launches)?fs.statSync(launches).size:0;
+  const originalPage=await js('performance.timeOrigin');
+  function observeSignIn(){
+   const browser=globalThis,original=browser.fetch;
+   const witness=browser.__archhubAdmissionWitness={signIns:0,postStatus:null,phase:null,restore(){browser.fetch=original;}};
+   browser.fetch=function(...args){
+    const pending=Reflect.apply(original,this,args);
+    const endpoint=new browser.URL(typeof args[0]==='string'?args[0]:args[0].url,browser.location.href).pathname;
+    if(endpoint!=='/api/universal/cloud-signin')return pending;
+    const post=args[1]?.method==='POST';
+    if(post)witness.signIns++;
+    pending.then(async response=>{
+     if(post)witness.postStatus=response.status;
+     const phase=(await response.clone().json()).phase;
+     if(['idle','starting','waiting','exchanging','done','failed'].includes(phase))witness.phase=phase;
+    }).catch(()=>{});
+    return pending;
+   };
+  }
+  const attempt=()=>js('(()=>{const w=globalThis.__archhubAdmissionWitness;return {calls:w.signIns,status:w.postStatus,phase:w.phase};})()');
+  const retryReady=()=>js("Boolean([...document.querySelectorAll('[data-desktop-admission] button')].find(e=>e.getClientRects().length&&e.textContent.trim()==='Retry'&&!e.disabled))");
+  const hasFailureNotice=()=>js("Boolean([...document.querySelectorAll('[data-desktop-admission] [role=status], [data-desktop-admission] [role=alert]')].find(e=>e.getClientRects().length&&/(sign.in failed|could not start sign.in|connection lost|check your connection)/i.test(e.textContent)))");
   await js('('+observeSignIn.toString()+')()');
   try{
-   assert.equal(await clickText('Retry'),true);assert.equal(await until(()=>js('globalThis.__archhubAdmissionWitness.checks'),value=>value>0)>0,true);
-   assert.equal(await until(()=>js("[...document.querySelectorAll('button')].some(e=>e.getClientRects().length&&e.textContent.trim()==='Sign in with your browser'&&!e.disabled)"),Boolean),true);
+   fs.closeSync(fs.openSync(launchSwitch,'wx'));
+   fs.closeSync(fs.openSync(cut,'wx'));
    assert.equal(await clickText('Sign in with your browser'),true);
-   const signin=await until(()=>js('(()=>{const w=globalThis.__archhubAdmissionWitness;return {calls:w.signIns,status:w.status,phase:w.phase};})()'),value=>value.status!==null&&['waiting','exchanging','done','failed'].includes(value.phase));
-   assert.equal(signin.calls,1);assert.equal(signin.status,200);assert(['waiting','exchanging','done'].includes(signin.phase),'The installed browser sign-in could not start');
+   const offline=await until(attempt,a=>a.calls===1&&((a.status===200&&a.phase==='failed')||a.status===503),80,500);
+   assert.equal(offline.calls,1);
+   assert(offline.status===503||(offline.status===200&&offline.phase==='failed'),'The offline sign-in did not report failure.');
+   assert.equal(await until(hasFailureNotice,Boolean,40,500),true,'The offline failure was not explained in the entry UI.');
+   assert.equal(await until(retryReady,Boolean),true,'Retry was unavailable after the offline failure.');
+   assert(fs.existsSync(observed),'The isolated account transport did not observe the cut.');
+   assert.equal(launchCount(),0,'Offline sign-in tried to launch a browser.');
+   assert.deepEqual(await privateView(),hidden);
+   fs.unlinkSync(cut);
+
+   await js('globalThis.__archhubAdmissionWitness.restore();true');
+   await js('('+observeSignIn.toString()+')()');
+   const retry=await rectOf("[...document.querySelectorAll('[data-desktop-admission] button')].find(e=>e.getClientRects().length&&e.textContent.trim()==='Retry'&&!e.disabled)");
+   assert(retry,'Retry was unavailable after restoring the connection.');
+   await mouse(retry);
+   await mouse(retry);
+   const signin=await until(attempt,a=>a.status===200&&['waiting','exchanging','done'].includes(a.phase),80,500);
+   assert(signin.calls>=1&&signin.calls<=2&&signin.status===200&&['waiting','exchanging','done'].includes(signin.phase),
+    'Retry did not start a real sign-in attempt after restoring the connection.');
+   assert.equal(await until(launchCount,count=>count>0),1,'Overlapping Retry presses must produce one browser-open event.');
    // Dedicated QA operators can use the full browser sign-in window.
    const waitMs = input?.waitForSignIn === true ? 300_000 : 10_000;
    const deadline = performance.now() + waitMs;
@@ -75,15 +122,25 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
     value => value.admitted === true || performance.now() >= deadline,
     waitMs / 500 + 1, 500
    );
-   if(!current.admitted)assert.equal(await js("!!document.querySelector('[data-desktop-admission]')&&!document.querySelector('[data-home-page]')&&window.ArchHubAPI.getSessionDocument()===null"),true);
-   return {pass:true,got:{authenticated:current.admitted===true,initialState:access.state,privateContentAbsent:true,protectedRouteRefused:refusal,newDocumentRefused:true,retryUsable:true,realSignInRequest:signin},expected_http:['401 /api/universal/workspace-roots','503 /api/universal/workspace-roots']};
-  }finally{await js('globalThis.__archhubAdmissionWitness?.restore();true').catch(()=>{});}
+   if(!current.admitted)assert.deepEqual(await privateView(),hidden);
+   assert.equal(await js('performance.timeOrigin'),originalPage,'Retry replaced the installed Studio page.');
+   assert.equal(launchCount(),1,'The two Retry presses produced more than one browser-open event.');
+   return {pass:true,got:{authenticated:current.admitted===true,initialState:access.state,privateContentAbsent:true,
+    protectedRouteRefused:refusal,newDocumentRefused:true,retryUsable:true,
+    offlineSignIn:offline,offlineTransportCutObserved:true,offlineBrowserOpenEvents:0,
+    realSignInRequest:signin,retryPresses:2,onlineBrowserOpenEvents:1,samePage:true},
+    expected_http:['401 /api/universal/workspace-roots','503 /api/universal/workspace-roots','503 /api/universal/cloud-signin']};
+  }finally{
+   fs.rmSync(cut,{force:true});
+   fs.rmSync(observed,{force:true});
+   fs.rmSync(launchSwitch,{force:true});
+   await js('globalThis.__archhubAdmissionWitness?.restore();true').catch(()=>{});
+  }
  });
  const steps=declaredSteps.slice(1),authenticated=entry?.got?.authenticated===true;
  const step=(asked,run)=>stopProtected?recordStep(asked,async()=>({not_exercised:'Outage exercise stopped before safe continuation.'})):authenticated?recordStep(asked,run):recordStep(asked,async()=>({not_exercised:'No legitimate QA account admitted this isolated installed window. Authenticated assertions remain unverified; no bypass or founder credentials were used.'}));
 
- const runs=fs.readdirSync(out,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&entry.name.startsWith('run-'));assert.equal(runs.length,1);
- const isolated=path.join(out,runs[0].name),folder=path.join(isolated,'settings-fixture');fs.mkdirSync(folder,{recursive:true});
+ const folder=path.join(isolated,'settings-fixture');fs.mkdirSync(folder,{recursive:true});
  const file=path.join(folder,'settings.archhub'),globalFile=path.join(isolated,'state/settings/settings.json'),workspaceFile=path.join(isolated,'state/settings/workspaces.json');
  const json=p=>JSON.parse(fs.readFileSync(p,'utf8'));
  const owners=()=>[globalFile,workspaceFile,file].map(p=>fs.existsSync(p)?fs.readFileSync(p,'utf8'):null);

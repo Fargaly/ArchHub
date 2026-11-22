@@ -13,10 +13,8 @@ import json
 import re
 
 FOREIGN = 'import.foreign'
-# The importer's owner node: its typed parameters. Every imported node carries a budget (rule 3);
-# catalogue cards declare none, so these are the default. A repeating trigger stops after loop_cap runs.
-IMPORT_NODE = {'id': 'canvas.import', 'params': {'budget_seconds': 60, 'budget_runs': 1, 'loop_cap': 100}}
-DEFAULT_BUDGET = {'seconds': IMPORT_NODE['params']['budget_seconds'], 'runs': IMPORT_NODE['params']['budget_runs']}
+# Imported repeat schedules remain metadata until explicitly run.
+IMPORT_NODE = {'id': 'canvas.import', 'params': {'loop_cap': 100}}
 LOOP_CAP = IMPORT_NODE['params']['loop_cap']
 _COMPARE = {'lt': '<', 'lte': '<=', 'gt': '>', 'gte': '>=', 'eq': '==', 'neq': '!='}
 
@@ -26,13 +24,15 @@ def _sid(prefix, value):
     return prefix + re.sub(r'[^A-Za-z0-9_-]+', '_', str(value))[:100]
 
 
-def _node(nid, engine, title, params, position, source, *, sources=(), targets=(), budget=None):
-    from .canvas_documents import is_pure
+def _node(nid, engine, title, params, position, source, *, sources=(), targets=(), loop=None):
+    from .canvas_documents import node_contract
+    contract = node_contract(engine)
     return {'id': nid, 'type': engine, 'title': str(title)[:200], 'params': params,
             'position': {'x': float(position[0]), 'y': float(position[1])},
             'ports': {'source': [{'id': s, 'type': 'any'} for s in sources],
                       'target': [{'id': t, 'type': 'any'} for t in targets]},
-            'pure': is_pure(engine), 'budget': dict(budget or DEFAULT_BUDGET), 'source': source}
+            'pure': contract['pure'], 'budget': contract['budget'], 'source': source,
+            **({'loop': loop} if loop else {})}
 
 
 def _foreign(nid, fmt, kind, title, position, source, sources, targets, why):
@@ -115,10 +115,14 @@ def _nr_node(item, nid, pos, source, outputs):
     if kind == 'comment':
         return _node(nid, 'note', name or 'Comment', {'text': str(item.get('info') or name)}, pos, source), None, []
     if kind == 'inject':
-        budget = dict(DEFAULT_BUDGET)
-        if str(item.get('repeat') or '').strip() or str(item.get('crontab') or '').strip():
-            budget = {**budget, 'runs': LOOP_CAP, 'repeat_seconds': float(item['repeat']) if str(item.get('repeat') or '').strip() else None,
-                      'crontab': str(item.get('crontab') or ''), 'stop': 'Stop, or after %d runs' % LOOP_CAP}
+        repeat = str(item.get('repeat') or '').strip()
+        cron = str(item.get('crontab') or '')
+        loop = None
+        if repeat or cron.strip():
+            from .canvas_documents import LOOP_DEFAULT
+            source = {**source, 'repeat_seconds': float(repeat) if repeat else None, 'crontab': cron}
+            loop = {**LOOP_DEFAULT, 'trigger': 'Node-RED inject', 'stop': 'Stop, or after %d runs' % LOOP_CAP,
+                    'cap': LOOP_CAP}
         ptype = item.get('payloadType', 'date')
         if ptype in ('num', 'str', 'json', 'bool'):
             try:
@@ -126,8 +130,8 @@ def _nr_node(item, nid, pos, source, outputs):
             except ValueError:
                 return foreign('payload is not valid %s' % ptype)
             return _node(nid, 'data.constant', name or 'Inject', {'value': value}, pos, source, sources=['value'],
-                         budget=budget), None, ['value']
-        return _node(nid, 'trigger.emit', name or 'Inject', {}, pos, source, sources=['out'], budget=budget), None, ['out']
+                         loop=loop), None, ['value']
+        return _node(nid, 'trigger.emit', name or 'Inject', {}, pos, source, sources=['out'], loop=loop), None, ['out']
     if kind == 'debug':
         return _node(nid, 'watch.preview', name or 'Debug', {'as': 'table'}, pos, source, sources=['out'], targets=['in']), 'in', []
     if kind == 'change':

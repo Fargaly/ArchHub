@@ -24,9 +24,10 @@ def open_and_run(name, invoke=True):
     from nodelang.session_files import SessionFiles
     files = SessionFiles()
     opened = files.dispatch({'action': 'open', 'path': str(FIXTURES / name)})
+    files.dispatch({'action': 'save', 'path': opened['path'], 'document': opened['document']})
     reopened = files.dispatch({'action': 'open', 'path': opened['path']})   # the .archhub opens like any session
     assert reopened['document']['nodes'] == opened['document']['nodes']
-    ran = files.dispatch({'action': 'run', 'document': opened['document']}, invoke=guard_effect if invoke else None)
+    ran = files.dispatch({'action': 'run', 'document': reopened['document']}, invoke=guard_effect if invoke else None)
     return opened, ran
 
 
@@ -85,7 +86,10 @@ def test_rule1_rule2_unknown_and_code_nodes_are_side_effect_and_never_run():
 def test_rule3_every_node_has_a_budget_and_repeating_inject_has_a_cap():
     opened, _ = open_and_run('nodered-repeat.json')
     inject = by_type(opened['document'], 'trigger.emit')[0]
-    assert inject['budget']['runs'] == 100 and inject['budget']['repeat_seconds'] == 5.0 and inject['budget']['stop']
+    from nodelang.canvas_documents import node_contract
+    assert inject['budget'] == node_contract(inject['type'])['budget']
+    assert inject['loop']['cap'] == 100 and inject['loop']['stop']
+    assert inject['source']['repeat_seconds'] == 5.0 and inject['source']['crontab'] == ''
     assert all(n['budget'].get('seconds') for n in opened['document']['nodes'])
 
 
@@ -125,6 +129,7 @@ def test_skills_sh_skill_becomes_a_library_skill_that_runs(monkeypatch):
     sent = []
     monkeypatch.setattr(mailbox, 'call', lambda op, args, ctx: sent.append(args) or {'message_id': 'm1'})
     opened = SessionFiles().dispatch({'action': 'open', 'path': str(FIXTURES / 'SKILL.md')})
+    assert sent == []
     assert opened['kind'] == 'skill' and opened['document']['title'] == 'frontend-design'
     card = next(i for i in catalogue() if i['id'] == 'skill:' + opened['document']['id'])
     assert {p['id'] for p in card['ports']['target']} == {'in:sk-task'}

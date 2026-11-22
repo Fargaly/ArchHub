@@ -245,6 +245,102 @@
     return groups;
   }
   window.UI.contextCommandGroups = contextCommandGroups;
+
+  // Existing local menus get first refusal. Resolve the rest from the clicked surface.
+  window.UI.openSurfaceMenu = (event, s, u) => {
+    const target = event.target;
+    if (event.defaultPrevented || u.modal || !target.closest ||
+        target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],a[href]')) return false;
+    const choice = (id, action, label = null, disabled = false) => ({id, action: () => {u.close();action();}, label, disabled});
+    const click = (id, button, label = null) => button && choice(id, () => button.click(), label, button.disabled);
+    const search = (surface, selector) => {
+      const input = surface.querySelector(selector);
+      return input && choice('menu.surface.search', () => input.focus());
+    };
+    let surface, owner, context, label, rows;
+    if ((surface = target.closest('[data-home-page]'))) {
+      const flowNode = target.closest('.react-flow__node');
+      const session = target.closest('[data-home-task],[data-home-session-path]') ||
+        flowNode?.querySelector('[data-home-task],[data-home-session-path]');
+      const project = target.closest('[data-project]') || flowNode?.querySelector('[data-project]');
+      const id = session?.dataset.homeTask;
+      const path = session?.dataset.homeSessionPath;
+      if (id || path) {
+        owner = session;
+        context = 'session';
+        label = 'Home session menu';
+        const task = s.tasks.find(row => row.id === id);
+        rows = [choice('menu.item', () => id ? u.openTaskFile(id) : u.openSavedSession(path)),
+          task && choice('menu.rename', () => u.show('Rename task', {id, text: task.title}))];
+      } else if (project && surface.contains(project)) {
+        owner = project;
+        context = 'project';
+        label = 'Home project menu';
+        const toggle = project.querySelector('button[data-design="group.collapse"],button[aria-label^="Expand "],button[aria-label^="Collapse "]');
+        rows = [click('menu.project.toggle', toggle, toggle?.getAttribute('aria-label'))];
+      } else {
+        owner = surface;
+        context = 'home';
+        label = 'Home background menu';
+        rows = [choice('menu.home.new.task', () => u.show('New task'))];
+      }
+    } else if ((surface = target.closest('[data-screen="library"]'))) {
+      const card = target.closest('[data-design="library.row"]');
+      const category = target.closest('[data-library-category]');
+      owner = card || category || surface;
+      context = card ? 'library-card' : category ? 'library-category' : 'library';
+      label = 'Library menu';
+      const toggle = category?.querySelector('button.shelf-category');
+      rows = [card ? click('menu.library.add', card.matches('button') ? card : null, card.getAttribute('aria-label')) :
+        category ? click('menu.library.toggle', toggle, toggle?.getAttribute('aria-expanded') === 'true' ? 'Collapse category' : 'Expand category') :
+        search(surface, '[data-design="library.search"]')];
+    } else if ((surface = target.closest('[data-screen^="settings/"]'))) {
+      const row = target.closest('[data-setting]');
+      const control = row?.querySelector('input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)');
+      owner = row || surface;
+      context = row ? 'settings-row' : 'settings';
+      label = 'Settings menu';
+      rows = [row ? control && choice('menu.settings.focus', () => control.focus()) : search(surface, 'input[aria-label="Search settings"]')];
+    } else if ((surface = target.closest('[data-screen="docs"]'))) {
+      const topic = target.closest('.docs-toc button');
+      const article = target.closest('.docs-article article');
+      owner = topic || article || surface;
+      context = topic || article ? 'docs-article' : 'docs';
+      label = 'Documentation menu';
+      rows = [topic ? click('menu.docs.open', topic, 'Open topic') :
+        article ? click('menu.docs.open', article.querySelector('.docs-open button')) :
+        search(surface, 'input[aria-label="Search docs"]')];
+    } else if ((surface = target.closest('[data-screen="workshop"]'))) {
+      const message = target.closest('.ws-msg');
+      owner = message || surface;
+      context = message ? 'message' : 'workshop';
+      label = 'Workshop menu';
+      const buttons = [...(message?.querySelectorAll('.ws-msg-foot button') || [])];
+      const inspect = buttons.find(button => button.hasAttribute('aria-expanded'));
+      rows = message ? [click('menu.reply', buttons.find(button => button.textContent.trim() === 'Reply')),
+        click('menu.workshop.inspect', inspect, inspect?.textContent.trim())] :
+        [search(surface, 'input[aria-label="Search work"]')];
+    }
+    if (!rows?.some(Boolean)) return false;
+    const groups = commandGroups(context, [rows.filter(Boolean)]);
+    if (!groups.some(group => group.length)) return false;
+    event.preventDefault();
+    const focus = target.closest('button:not(:disabled),summary,[tabindex]') ||
+      owner.querySelector('button:not(:disabled),input:not(:disabled),[tabindex]');
+    u.show('Surface menu', {surface: {label, groups}, anchor: {x: event.clientX, y: event.clientY}, restoreFocus: focus});
+    return true;
+  };
+
+  window.UI.keyboardContextMenu = event => {
+    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return false;
+    const target = event.target;
+    if (!target.getBoundingClientRect) return false;
+    const box = target.getBoundingClientRect();
+    if (target.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true,
+      clientX: Math.round(box.left + box.width / 2), clientY: Math.round(box.top + box.height / 2), button: 2}))) return false;
+    event.preventDefault();
+    return true;
+  };
   function ContextMenu({
     kind,
     nodeId,
@@ -259,18 +355,29 @@
     group,
     remove,
     close,
-    anchor
+    anchor,
+    surface
   }) {
     const s = useData(),
       u = useApp(),
       actionState = window.UI.useAction();
     const menuRef = React.useRef(null);
     const [more,setMore]=React.useState(false);
-    React.useLayoutEffect(()=>{menuRef.current?.querySelector('button:not(:disabled)')?.focus({preventScroll:true});},[kind,nodeId,message?.id,more]);
-    const groups = contextCommandGroups({kind,nodeId,message,taskId,port,paramKey,open,selected,wireId,canvas,group,remove,close,anchor},s,u,actionState,more,setMore);
+    React.useLayoutEffect(()=>{(menuRef.current?.querySelector('button:not(:disabled)') || menuRef.current)?.focus({preventScroll:true});},[kind,nodeId,message?.id,wireId,more,surface]);
+    const groups = surface?.groups || contextCommandGroups({kind,nodeId,message,taskId,port,paramKey,open,selected,wireId,canvas,group,remove,close,anchor},s,u,actionState,more,setMore);
+    React.useLayoutEffect(() => {
+      const menu = menuRef.current;
+      if (!menu) return;
+      const place = () => {
+        const box = menu.getBoundingClientRect();
+        menu.style.left = Math.max(8, Math.min(anchor?.x ?? 100, window.innerWidth - box.width - 8)) + 'px';
+        menu.style.top = Math.max(8, Math.min(anchor?.y ?? 58, window.innerHeight - box.height - 8)) + 'px';
+      };
+      place();
+      window.addEventListener('resize', place);
+      return () => window.removeEventListener('resize', place);
+    }, [anchor, groups?.flat().length, more]);
     if (!groups) return null;
-    const left = Math.max(8, Math.min(anchor?.x || 100, window.innerWidth - 266)),
-      top = Math.max(8, Math.min(anchor?.y || 58, window.innerHeight - 520));
     function handleContextmenusjsx1(action, event) {
       return action(event);
     }
@@ -282,18 +389,17 @@
         handleContextmenusjsx1
       })(id, ...args);
     }
-    return <><div className="context-dismiss" onMouseDown={close} /><section ref={menuRef} className="context-menu" data-design={kind === 'Open tasks' ? 'tab.picker' : undefined} role="menu" aria-label={kind} style={{
-        left,
-        top
-      }} onKeyDown={(e) => {
+    return <><div className="context-dismiss" onMouseDown={close} /><section ref={menuRef} className="context-menu" tabIndex={-1} data-design={kind === 'Open tasks' ? 'tab.picker' : undefined} role="menu" aria-label={surface?.label || kind} onKeyDown={(e) => {
         const buttons = [...e.currentTarget.querySelectorAll('button:not(:disabled)')];
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (buttons.length && ['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
           e.preventDefault();
           const at = buttons.indexOf(document.activeElement);
-          buttons[(at + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+          const next = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 :
+            e.key === 'ArrowDown' ? (at + 1) % buttons.length : (at <= 0 ? buttons.length - 1 : at - 1);
+          buttons[next].focus();
         }
-        if (e.key === 'Escape') { e.stopPropagation(); close(); }
-      }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button data-design={'menu.' + label.toLowerCase().replace(/\W+/g,'-')} key={label} disabled={!!disabled} title={typeof disabled === 'string' ? disabled : undefined} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button role={surface ? 'menuitem' : undefined} data-design={'menu.' + label.toLowerCase().replace(/\W+/g,'-')} key={label} disabled={!!disabled} title={typeof disabled === 'string' ? disabled : undefined} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
   }
   window.UI.ContextMenu = ContextMenu;
 })();

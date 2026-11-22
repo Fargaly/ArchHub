@@ -267,7 +267,7 @@
       if(kind==='Search'){
         data = {...data,commandContext: data.commandContext || (window.UI.commandContextNames?.[modal?.kind] ? modal : ['canvas','task-file'].includes(route) ? window.UI.canvasCommandContext?.({clientX:menuAnchor.current.x,clientY:menuAnchor.current.y}) : null)};
       }
-      priorFocus.current = document.activeElement;
+      priorFocus.current = data.restoreFocus || document.activeElement;
       setModal({
         kind,
         anchor: menuAnchor.current,
@@ -372,6 +372,11 @@
       return result;
     };
     const pickFile = () => act(async () => { const file = await api.addFile(); if (file) return api.addComposerAttachment(file.id); return null; });
+    const openSavedSession = async path => {
+      const opened = await act(() => api.openSession(path));
+      if (opened && !opened.cancelled) await go('canvas');
+      return opened || null;
+    };
     const value = {
       modal,
       selectedNodeId,
@@ -395,6 +400,7 @@
       closeTaskTab,
       settingsOrigin: settingsOrigin.current,
       openTaskFile,
+      openSavedSession,
       go,
       show,
       close,
@@ -411,6 +417,8 @@
       pickFile,
       setToast
     };
+    const menuApp = React.useRef(value);
+    menuApp.current = value;
     React.useEffect(() => {
       const duration = timing('toast_visible_ms');
       if (!toast || duration === null) return;
@@ -418,10 +426,16 @@
       return () => clearTimeout(t);
     }, [toast, s.runtimeParameters?.toast_visible_ms]);
     React.useEffect(() => {
+      const openSurfaceMenu = e => {
+        const current = api.getSnapshot();
+        if (current.desktopAccess?.admitted || window.ARCHHUB_NATIVE_APPROVAL)
+          window.UI.openSurfaceMenu(e, current, menuApp.current);
+      };
       const key = e => {
         if(!api.getSnapshot().desktopAccess?.admitted&&!window.ARCHHUB_NATIVE_APPROVAL)return;
         if(e.defaultPrevented||e.isComposing)return;
         const typing=e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+        if (!typing && !modal && window.UI.keyboardContextMenu(e)) return;
         const match=id=>(!typing||e.ctrlKey||e.metaKey)&&window.UI.matchesShortcut(id,e);
         if (match('keyboard.new_task')) {
           e.preventDefault(); show('New task'); return;
@@ -475,9 +489,11 @@
       const up = e => {
         if (e.code === 'Space') clearTimeout(talkTimer.current);
       };
+      window.addEventListener('contextmenu', openSurfaceMenu);
       window.addEventListener('keydown', key);
       window.addEventListener('keyup', up);
       return () => {
+        window.removeEventListener('contextmenu', openSurfaceMenu);
         window.removeEventListener('keydown', key);
         window.removeEventListener('keyup', up);
         clearTimeout(talkTimer.current);
@@ -1049,7 +1065,7 @@
       }, event)}>Updates &amp; About</Btn></>;else if (k === 'Ask why') body = <p>The read-only steps find untagged doors and check the prefix before the write step. Approve once runs that proposed change.</p>;else if (k === 'Website') body = <><h2>ArchHub</h2><p>The same catalogue powers the app and its documentation.</p><Btn onClick={event => executeAction("appShell.OpenDocs.97", {
         u
       }, event)}>Open docs</Btn></>;else body = <p>{m.text || 'Choose an action from the app.'}</p>;
-    if (['Node menu', 'Group menu', 'Wire menu', 'Selection menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} wireId={m.wireId} canvas={m.canvas} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
+    if (['Node menu', 'Group menu', 'Wire menu', 'Selection menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments', 'Surface menu'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} wireId={m.wireId} canvas={m.canvas} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} surface={m.surface} close={close} />;
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
     }}><section ref={ref} className={'dialog'+(k==='Search'?' v22g-palette':'')} role="dialog" aria-modal="true" aria-label={k} style={{

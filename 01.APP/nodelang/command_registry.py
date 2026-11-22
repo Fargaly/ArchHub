@@ -11,7 +11,7 @@ _LOG = logging.getLogger(__name__)
 CONTEXTS = ('node', 'wire', 'group', 'session', 'project', 'run', 'step', 'library-card',
             'library-category', 'agent', 'settings-row', 'rail-item', 'header', 'docs-article',
             'automation', 'canvas', 'socket', 'selection', 'message', 'tray',
-            'navigation', 'palette', 'host', 'workshop')
+            'navigation', 'palette', 'host', 'workshop', 'home', 'library', 'settings', 'docs')
 
 # Missing classifications fail closed: an unclassified tool is never read-only.
 READ_TOOLS = frozenset(('read', 'task.list', 'hosts.status', 'hosts_state',
@@ -431,3 +431,19 @@ STUDIO_COMMANDS = tuple({**row, **({'keyFrom': KEYBOARD_ALIASES[row['id']]} if r
      'agent_callable': False, 'read_only': id not in _KEYBOARD_WRITES, 'operation': 'write' if id in _KEYBOARD_WRITES else 'read',
      'enabled_when': {}, 'order': 200 + index, 'keyboard_only': True}
     for index, (id, label, chord, context) in enumerate(_KEYBOARD_GLOBAL))
+
+STUDIO_COMMANDS += tuple(
+    {'id': id, 'label': label, 'group': 'input', 'contexts': contexts,
+     'action': {'client': 'callback', 'binding': id}, 'effect': False, 'approve': False,
+     'agent_callable': False, 'read_only': not writes, 'operation': 'write' if writes else 'read', 'enabled_when': {},
+     'icon': icon, 'shortcut': '', 'danger': False, 'order': 220 + index}
+    for index, (id, label, icon, contexts, writes) in enumerate((
+        ('menu.home.new.task', 'New task', 'plus', ['home'], False),
+        ('menu.project.toggle', 'Expand project', 'group', ['project'], True),
+        ('menu.library.add', 'Add to canvas', 'plus', ['library-card'], True),
+        ('menu.library.toggle', 'Expand category', 'library', ['library-category'], True),
+        ('menu.settings.focus', 'Focus setting', 'settings', ['settings-row'], False),
+        ('menu.docs.open', 'Open in the app', 'arrow', ['docs-article'], False),
+        ('menu.workshop.inspect', 'Inspect', 'info', ['message'], False),
+        ('menu.surface.search', 'Search', 'search', ['workshop', 'settings', 'docs', 'library'], False),
+    )))

@@ -87,7 +87,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    };
   }
   const attempt=()=>js('(()=>{const w=globalThis.__archhubAdmissionWitness;return {calls:w.signIns,status:w.postStatus,phase:w.phase};})()');
-  const retryReady=()=>js("Boolean([...document.querySelectorAll('[data-desktop-admission] button')].find(e=>e.getClientRects().length&&e.textContent.trim()==='Retry'&&!e.disabled))");
+  const retryPoint=()=>rectOf(`[...document.querySelectorAll('[data-desktop-admission] button[aria-label="Retry"]:enabled')].find(e=>e.getClientRects().length)`);
   const hasFailureNotice=()=>js("Boolean([...document.querySelectorAll('[data-desktop-admission] [role=status], [data-desktop-admission] [role=alert]')].find(e=>e.getClientRects().length&&/(sign.in failed|could not start sign.in|connection lost|check your connection)/i.test(e.textContent)))");
   await js('('+observeSignIn.toString()+')()');
   try{
@@ -98,7 +98,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert.equal(offline.calls,1);
    assert(offline.status===503||(offline.status===200&&offline.phase==='failed'),'The offline sign-in did not report failure.');
    assert.equal(await until(hasFailureNotice,Boolean,40,500),true,'The offline failure was not explained in the entry UI.');
-   assert.equal(await until(retryReady,Boolean),true,'Retry was unavailable after the offline failure.');
+   assert.equal(Boolean(await until(retryPoint,Boolean)),true,'Retry was unavailable after the offline failure.');
    assert(fs.existsSync(observed),'The isolated account transport did not observe the cut.');
    assert.equal(launchCount(),0,'Offline sign-in tried to launch a browser.');
    assert.deepEqual(await privateView(),hidden);
@@ -106,7 +106,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
 
    await js('globalThis.__archhubAdmissionWitness.restore();true');
    await js('('+observeSignIn.toString()+')()');
-   const retry=await rectOf("[...document.querySelectorAll('[data-desktop-admission] button')].find(e=>e.getClientRects().length&&e.textContent.trim()==='Retry'&&!e.disabled)");
+   const retry=await retryPoint();
    assert(retry,'Retry was unavailable after restoring the connection.');
    await mouse(retry);
    await mouse(retry);

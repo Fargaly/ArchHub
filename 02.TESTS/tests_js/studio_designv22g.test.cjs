@@ -775,3 +775,180 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
   });
   assert.deepEqual(errors,[]);
 });
+
+test('Canvas zoom controls preserve viewport and preference ordering', {timeout:90000}, async t=>{
+  const {page,profile,server,errors}=await openCourt(t);
+  const zoomId='Appearance.Default zoom';
+  const zoomWrite=request=>{
+    if(request.method()!=='POST'||!request.url().endsWith('/api/universal/settings-action'))return null;
+    const body=request.postDataJSON();
+    return body.function==='setAppearance'&&body.args?.[0]===zoomId
+      ? {value:body.args[1],scope:body.context?.settingsDestination?.scope}:null;
+  };
+  const watch=tab=>{const writes=[];tab.on('request',request=>{const write=zoomWrite(request);if(write)writes.push(write);});return writes;};
+  const writes=watch(page);
+  const zoomState=()=>page.evaluate(id=>{
+    const s=window.ArchHubAPI.getSnapshot();
+    return {value:s.settings.find(row=>row.id===id)?.value,scope:s.settingsDestination?.scope,
+      delay:s.canvasPolicy?.viewport_commit_debounce_ms??140};
+  },zoomId);
+  const viewport=()=>page.locator('.react-flow__viewport').evaluate(el=>{
+    const matrix=new window.DOMMatrix(window.getComputedStyle(el).transform);
+    return {x:matrix.e,y:matrix.f,zoom:matrix.a};
+  });
+  await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().settingsDestination?.scope==='User');
+  await page.evaluate(id=>window.ArchHubAPI.setSetting(id,95),zoomId);
+  const starting=await zoomState();
+  assert.equal(starting.value,95);
+  writes.length=0;
+  assert.equal(starting.scope,'User');
+  const saved={x:21,y:13,zoom:.7};
+  const file=path.join(profile,'zoom-preference-witness.archhub');
+  fs.writeFileSync(file,JSON.stringify({format:'archhub',version:1,id:'zoom-preference-witness',
+    title:'Zoom preference witness',nodes:[],wires:[],groups:[],notes:[],viewport:saved,properties:{viewportSaved:true}}));
+  await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Canvas',exact:true}).click();
+  await page.evaluate(file=>window.ArchHubAPI.openSession(file),file);
+  await page.waitForFunction(view=>{
+    const el=document.querySelector('.react-flow__viewport');
+    if(!el)return false;
+    const matrix=new window.DOMMatrix(window.getComputedStyle(el).transform);
+    return matrix.e===view.x&&matrix.f===view.y&&matrix.a===view.zoom;
+  },saved);
+  await page.waitForTimeout(starting.delay*2+200);
+  assert.deepEqual(await viewport(),saved);
+  assert.deepEqual(writes,[],'Restoring the saved viewport must never POST the default zoom');
+  assert.equal((await zoomState()).value,starting.value);
+
+  const canvas=page.getByLabel('Workflow canvas',{exact:true});
+  const zoomIn=()=>canvas.press('=');
+  const zoomOut=()=>canvas.press('-');
+  const reset=()=>page.getByTitle('Reset zoom',{exact:true}).press('Enter');
+  const savedSetting=page.waitForResponse(response=>zoomWrite(response.request())!==null,{timeout:6000});
+  await reset();
+  assert.equal((await savedSetting).status(),200);
+  await page.waitForTimeout(starting.delay+200);
+  const zoomed=await viewport(),zoomValue=Math.round(zoomed.zoom*100);
+  assert.ok(zoomed.zoom>saved.zoom,'Reset zoom changed the rendered viewport');
+  assert.deepEqual(writes,[{value:zoomValue,scope:starting.scope}]);
+  assert.equal((await zoomState()).value,zoomValue);
+
+  const settings=await page.context().browser().newPage({storageState:await page.context().storageState(),viewport:{width:1440,height:900}});
+  settings.setDefaultTimeout(6000);
+  const settingsWrites=watch(settings);
+  await settings.goto(server.url+'/studio');
+  await settings.locator('[data-home-page]').waitFor({state:'attached'});
+  await settings.getByRole('button',{name:'Settings',exact:true}).first().click();
+  await settings.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Look',exact:true}).click();
+  const control=settings.getByRole('spinbutton',{name:'Default zoom',exact:true});
+  await control.waitFor();
+  assert.equal(await control.inputValue(),String(zoomValue));
+  assert.equal(await settings.getByRole('combobox',{name:'Settings scope',exact:true}).inputValue(),starting.scope);
+
+  const clockStart=new Date();
+  await page.clock.install({time:clockStart});
+  await page.clock.pauseAt(new Date(clockStart.getTime()+1000));
+  writes.length=0;
+  await zoomOut();
+  const moved=await viewport();
+  assert.ok(Math.abs((await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().viewport.zoom))-moved.zoom)<.0001,
+    'The second gesture ended and saved the document viewport before Settings changed');
+  assert.ok((await viewport()).zoom<zoomed.zoom,'Second real zoom gesture changed the viewport');
+  assert.deepEqual(writes,[],'The zoom write must still be pending');
+  const newer=zoomValue+1;
+  const edited=settings.waitForResponse(response=>zoomWrite(response.request())!==null);
+  await settings.getByRole('button',{name:'Increase Default zoom',exact:true}).click();
+  assert.equal((await edited).status(),200);
+  assert.deepEqual(settingsWrites,[{value:newer,scope:starting.scope}]);
+  await page.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+  assert.equal((await zoomState()).value,newer,'Canvas saw the newer owner value before the pending write');
+  await page.clock.runFor(starting.delay*3+300);
+  assert.deepEqual(writes,[],'The pending zoom gesture must not overwrite a newer same-scope Settings edit');
+  await settings.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+  assert.equal(await control.inputValue(),String(newer));
+  for(const external of [false,true]){
+    const zoom=external?zoomOut:zoomIn;
+    writes.length=0;
+    const held=Promise.withResolvers(),release=Promise.withResolvers();
+    const cdp=await page.context().newCDPSession(page);
+    let holding=false;
+    const continueResponse=({requestId})=>cdp.send('Fetch.continueResponse',{requestId});
+    cdp.on('Fetch.requestPaused',async event=>{
+      const body=event.request.postData?JSON.parse(event.request.postData):null;
+      if(!holding&&body?.function==='setAppearance'&&body.args?.[0]===zoomId){
+        holding=true;
+        held.resolve(event.responseStatusCode);
+        await release.promise;
+      }
+      await continueResponse(event).catch(()=>{});
+    });
+    await cdp.send('Fetch.enable',{patterns:[{urlPattern:'*/api/universal/settings-action',requestStage:'Response'}]});
+    try{
+      const firstRequest=page.waitForRequest(request=>zoomWrite(request)!==null,{timeout:6000});
+      await zoom();
+      await page.clock.runFor(starting.delay+250);
+      await firstRequest;
+      const ownerStatus=await Promise.race([held.promise,new Promise(resolve=>{
+        const timeout=setTimeout(()=>resolve(null),6000);
+        held.promise.then(()=>clearTimeout(timeout));
+      })]);
+      assert.equal(ownerStatus,200,'The first zoom write reached the real owner (external edit: '+external+')');
+      const first=await viewport();
+      assert.deepEqual(writes,[{value:Math.round(first.zoom*100),scope:starting.scope}]);
+      await zoom();
+      const second=await viewport();
+      assert.notEqual(second.zoom,first.zoom,'The second zoom gesture rendered before the first acknowledgement');
+      assert.ok(Math.abs((await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().viewport.zoom))-second.zoom)<.0001,
+        'The second gesture ended before the first acknowledgement');
+      assert.equal(writes.length,1,'The second write is still debouncing');
+      let editedValue;
+      if(external){
+        await page.clock.runFor(starting.delay+100);
+        assert.equal(writes.length,1,'The second write is queued behind the outstanding response');
+        await settings.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+        editedValue=Number(await control.inputValue())+1;
+        const externalWrite=settings.waitForResponse(response=>zoomWrite(response.request())?.value===editedValue,{timeout:6000});
+        await settings.getByRole('button',{name:'Increase Default zoom',exact:true}).click();
+        assert.equal((await externalWrite).status(),200);
+        await page.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+        assert.equal((await zoomState()).value,editedValue);
+      }
+      const oldResponse=page.waitForResponse(response=>zoomWrite(response.request())?.value===writes[0].value);
+      release.resolve();
+      assert.equal((await oldResponse).status(),200);
+      if(external){
+        await page.clock.runFor(starting.delay*2+200);
+        await page.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+        assert.equal(writes.length,1,'A newer Settings edit cancels the queued zoom write');
+        await settings.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+        assert.equal(await control.inputValue(),String(editedValue));
+        assert.equal(Math.round((await viewport()).zoom*100),editedValue);
+
+        const nextResponse=page.waitForResponse(response=>zoomWrite(response.request())!==null,{timeout:6000});
+        await reset();
+        await page.clock.runFor(starting.delay+250);
+        assert.equal((await nextResponse).status(),200,'Reset zoom still saves after cancellation');
+        const nextValue=Math.round((await viewport()).zoom*100);
+        assert.deepEqual(writes.slice(1),[{value:nextValue,scope:starting.scope}]);
+        await settings.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+        assert.equal(await control.inputValue(),String(nextValue));
+        continue;
+      }
+      for(let attempt=0;attempt<50&&(await zoomState()).value!==writes[0].value;attempt++){
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      assert.equal((await zoomState()).value,writes[0].value,'Canvas processed the old owner response before the debounce elapsed');
+      const secondValue=Math.round(second.zoom*100);
+      const secondResponse=page.waitForResponse(response=>zoomWrite(response.request())?.value===secondValue,{timeout:9000});
+      await page.clock.runFor(starting.delay*2+200);
+      assert.equal((await secondResponse).status(),200);
+      assert.deepEqual(writes,[{value:Math.round(first.zoom*100),scope:starting.scope},{value:secondValue,scope:starting.scope}]);
+      await settings.evaluate(()=>window.ArchHubAPI.refreshPreferences());
+      assert.equal(await control.inputValue(),String(secondValue));
+      assert.deepEqual(await viewport(),second,'The latest gesture remains visible after both acknowledgements');
+    }finally{
+      release.resolve();
+      await cdp.detach();
+    }
+  }
+  assert.deepEqual(errors,[]);
+});

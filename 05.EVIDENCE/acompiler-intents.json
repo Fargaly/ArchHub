@@ -12330,6 +12330,10 @@
         "03.TOOLS/tools/real_app_check/graph_owner.py",
         "03.TOOLS/tools/real_app_check/real_app_check.py",
         "02.TESTS/tests_replica/test_real_app_check_tool.py",
+        ".github/workflows/release.yml",
+        "03.TOOLS/tools/real_app_check/profile_guard.py",
+        "03.TOOLS/tools/real_app_check/f38_warm_close.py",
+        "03.TOOLS/tools/real_app_check/scenarios/f38_warm_close.mjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

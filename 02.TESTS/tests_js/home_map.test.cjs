@@ -25,6 +25,7 @@ const listed = {groups: [
     session('model', 'Model', 'Tower', {inputLinks: [link('survey', 'points.out', 'points')], members: [{name: 'Claude Code / Tower / session-62fdf0706b09', live: true}]}), session('survey', 'Survey', 'Tower')]}]};
 const task = (id, extra = {}) => ({id: 't-' + id, title: id, status: 'PLANNED', updated_at: today, sessionPath: 'C:/s/' + id + '.archhub', plan: [], progress: {}, ...extra});
 const state = {
+  workspaces: ['Office', 'Other', 'Tower'].map(id => ({id, name: id})),
   tasks: [task('std', {status: 'DONE'}), task('exp'), task('sheets'), task('survey'),
     task('model', {plan: ['Read the model', 'Check the walls', 'Write the report'], progress: {'Read the model': 'done', 'Check the walls': 'working'}}),
     task('idx', {workflow: [{id: 'read', title: 'Read sheet index', type: 'param.value'}], activity: [{id: 'read', status: 'Error'}]})],
@@ -33,7 +34,7 @@ const state = {
   graphs: [], agentGraph: {sessions: [{id: 'r1', name: 'Claude Code / Tower / session-62fdf0706b09', status: 'working', task: 't-model'},
     {id: 'r9', name: 'Codex / Site / session-8dff5b479f68', status: 'working', task: null}]},
 };
-const draw = (params = {}, hidden = []) => plain(homeMap({listed, rows: homeRows(state, {hidden, order: []}), params: {...DEFAULT, ...params}, hidden, titleOf: row => 'Live work of ' + row.id}));
+const draw = (params = {}, hidden = [], view = {}) => plain(homeMap({listed, rows: homeRows(state, {hidden, order: []}), params: {...DEFAULT, ...params}, hidden, titleOf: row => row.title, history: true, ...view}));
 const cards = chart => chart.nodes.filter(node => !node.group);
 const at = (chart, id) => cards(chart).find(card => card.id === id);
 
@@ -50,20 +51,22 @@ test('Canvas resumes selected work, then the last opened task, then the most rec
   assert.equal(resume({groups: [{sessions: [archived, {...c, task: ''}]}]}, []), undefined);
 });
 
-test('quiet unassigned sessions fold together until expanded, and pinned work stays visible', () => {
-  const files = [session('a', 'First task', ''), session('b', 'Second task', '')];
+test('active Home keeps pinned and explicitly resumed files; history offers unassigned saved work', () => {
+  const files = [session('a', 'First task', ''), session('b', 'Pinned finished task', '', {state: 'done', pinned: true})];
   const rows = homeRows({tasks: [], graphs: [], approvals: [], agentGraph: {sessions: []}}, {hidden: [], order: []});
-  const map = (params = {}) => homeMap({listed: {groups: [{sessions: files}]}, rows, params: {...DEFAULT, ...params}});
-  assert.equal(map().groups[0].count, 2);
-  assert.equal(cards(map()).length, 0);
-  assert.equal(cards(map({collapsed: []})).length, 2);
-  files[1] = {...files[1], pinned: true};
-  assert.equal(cards(map()).length, 2);
+  const map = (params = {}, view = {}) => plain(homeMap({listed: {groups: [{sessions: files}]}, rows, params: {...DEFAULT, ...params}, ...view}));
+  assert.deepEqual(map().groups.map(group => group.key), ['Work without a project']);
+  assert.deepEqual(cards(map({done: 'Hide'})).map(card => card.id), ['b']);
+  assert.deepEqual(cards(map({}, {focusPath: files[0].path})).map(card => card.id), ['a', 'b']);
+  const history = map({}, {history: true});
+  assert.deepEqual(history.groups.map(group => group.key), ['Unassigned']);
+  assert.equal(cards(history).length, 2);
+  assert.equal(cards(map({collapsed: ['Unassigned']}, {history: true})).length, 0);
 });
 
 test('a card is one whole session: who works on it, its state word, where it stands and what it needs', () => {
   const chart = draw();
-  assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['No project 1', 'Office 3', 'Tower 3']);
+  assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['Office 3', 'Tower 3', 'Unassigned 1']);
   const model = at(chart, 'model');
   assert.deepEqual([model.title, model.agent, model.state, model.now, model.w], ['Model', 'Claude Code · Tower', 'Working', 'Step 2 of 3 · Check the walls', 300]);
   assert.deepEqual(model.steps.map(step => step.kind), ['done', 'working', 'unreported']);
@@ -79,27 +82,31 @@ test('a card is one whole session: who works on it, its state word, where it sta
 });
 
 test('a card is work: a held run with no session is a card; an agent is a member of work, never a card of its own', () => {
-  const chart = draw(), rows = homeRows(state, {hidden: [], order: []});
+  const chart = draw({}, [], {history: false}), rows = homeRows(state, {hidden: [], order: []});
   const orphan = at(chart, 'approval:b');
   assert.equal(at(chart, 'row:live:r9'), undefined, 'a live agent with no session is present in the Workshop, not a card');
   assert.deepEqual([orphan.title, orphan.state, orphan.agent, orphan.need], ['Send the transmittal', 'Needs you', 'Codex · Site', {text: 'Send the transmittal needs your approval', approval: 'b'}]);
   assert.equal(cards(chart).filter(card => card.state === 'Needs you').length, rows.needsYou);
-  // The header still counts every agent at work; the map shows the one that works on a session, on that session's card.
   assert.equal(cards(chart).filter(card => card.state === 'Working').length, 1);
-  assert.deepEqual([rows.needsYou, rows.running, chart.total, chart.armed], [2, 2, 7, 1]);
+  assert.deepEqual([rows.needsYou, rows.running, chart.total, chart.armed], [2, 1, 7, 1]);
 });
 
-test('a retired declare-made session (its row archived) is no card, from its file or its row; an unretired one stays', () => {
+test('archived work stays off Active and its original file remains reachable from history', () => {
   const extra = {groups: [...listed.groups, {project: {id: 'Tower', label: 'Tower'}, sessions: [session('review7', 'independently reviewed build 11', 'Tower', {task: 'session-1f2e'})]}]};
   const tasks = [...state.tasks, {id: 'session-9a8b', title: '7/7 complete on Build 11', status: 'ARCHIVED', updated_at: today, plan: [], progress: {}},
     {id: 'session-1f2e', title: 'independently reviewed build 11', status: 'ARCHIVED', updated_at: today, sessionPath: 'C:/s/review7.archhub', plan: [], progress: {}}];
-  const chart = plain(homeMap({listed: extra, rows: homeRows({...state, tasks}, {hidden: [], order: []}), params: DEFAULT, titleOf: row => row.title}));
-  assert.equal(cards(chart).some(card => /independently|7\/7/.test(card.title)), false);
-  assert.equal(chart.total, 7, 'the work cards are unchanged');
-  // One the retire left (a person wrote in its thread) is still a session and still a card.
-  const kept = [...state.tasks, {id: 'session-5c6d', title: 'Review he answered in', status: 'PLANNED', updated_at: today, plan: [], progress: {}}];
-  const again = plain(homeMap({listed, rows: homeRows({...state, tasks: kept}, {hidden: [], order: []}), params: DEFAULT, titleOf: row => row.title}));
-  assert.ok(cards(again).some(card => card.title === 'Review he answered in'));
+  const view = (taskRows, history, olderOpen = false) => plain(homeMap({
+    listed: extra, rows: homeRows({...state, tasks: taskRows}, {hidden: [], order: []}),
+    params: DEFAULT, titleOf: row => row.title, history, olderOpen,
+  }));
+  assert.equal(at(view(tasks, false), 'review7'), undefined);
+  assert.equal(at(view(tasks, true), 'review7'), undefined, 'the Older section starts folded');
+  const archive = at(view(tasks, true, true), 'review7');
+  assert.deepEqual([archive.path, archive.task, archive.archived], ['C:/s/review7.archhub', '', true]);
+  assert.equal(cards(view(tasks, true, true)).some(card => card.title === '7/7 complete on Build 11'), false, 'no fake file for a row without one');
+  const kept = [...tasks, {id: 'session-5c6d', title: 'Review he answered in', status: 'PLANNED', updated_at: today, plan: [], progress: {}}];
+  assert.ok(cards(view(kept, true)).some(card => card.title === 'Review he answered in'));
+  assert.ok(!cards(view(kept, false)).some(card => card.title === 'Review he answered in'));
 });
 
 test('an input link is one wire from card edge to card edge, laid left to right, with the design\'s default type and what it carries', () => {
@@ -121,7 +128,7 @@ test('group, order, card, density, finished and the filter are parameters', () =
   const gap = chart => at(chart, 'model').x - at(chart, 'survey').x;
   assert.ok(gap(draw({density: 'Compact'})) < gap(draw()), 'Compact brings the cards closer; a card stays 300 wide');
   assert.ok(cards(draw({card: 'State only'}))[0].h < cards(draw())[0].h);
-  assert.equal(cards(draw({}, ['t-exp'])).some(card => card.id === 'exp'), false, 'a session hidden from Home is not drawn');
+  assert.equal(cards(draw({}, ['t-exp'], {history: false})).some(card => card.id === 'exp'), false, 'a session hidden from Home is not drawn');
 });
 
 test('a collapsed group is one node; every wire that crosses its edge stays', () => {
@@ -133,7 +140,7 @@ test('a collapsed group is one node; every wire that crosses its edge stays', ()
 });
 
 test('a narrow room stacks a group: unlinked sessions sit under the chain and groups wrap, so the map stays readable', () => {
-  const room = r => plain(homeMap({listed, rows: homeRows(state, {hidden: [], order: []}), params: DEFAULT, titleOf: row => 'Live work of ' + row.id, room: r}));
+  const room = r => plain(homeMap({listed, rows: homeRows(state, {hidden: [], order: []}), params: DEFAULT, titleOf: row => row.title, room: r, history: true}));
   const wide = room(1.6), narrow = room(.7), span = (chart, x = 'x', w = 'w') => Math.max(...chart.nodes.map(node => node[x] + node[w])) - Math.min(...chart.nodes.map(node => node[x]));
   const shape = chart => span(chart) / span(chart, 'y', 'h');
   const office = chart => chart.nodes.find(node => node.id === 'group:Office');
@@ -143,21 +150,30 @@ test('a narrow room stacks a group: unlinked sessions sit under the chain and gr
 });
 
 test('nothing given up from the list: the All / Agent sessions / Workflows filter, the folded Older section, and his own order', () => {
-  const base = homeRows(state, {hidden: [], order: []}), draw2 = extra => plain(homeMap({listed, rows: base, params: DEFAULT, titleOf: row => 'Live work of ' + row.id, ...extra}));
+  const base = homeRows(state, {hidden: [], order: []}), draw2 = extra => plain(homeMap({listed, rows: base, params: DEFAULT, titleOf: row => row.title, history: true, ...extra}));
   assert.equal(cards(draw2({kind: 'workflow'})).length, 0, 'no workflow file here: the Workflows filter shows none');
   assert.equal(cards(draw2({kind: 'agent-session'})).length, cards(draw2({})).length, 'every session here is an agent session');
+  const workflow = session('reference', 'Codex / Design archive / reference-01', '', {task: '', kind: 'workflow'});
+  const withWorkflow = {groups: [...listed.groups, {sessions: [workflow]}]};
+  assert.deepEqual(cards(draw2({listed: withWorkflow, kind: 'workflow'})).map(card => card.path), [workflow.path]);
+  assert.equal(at(draw2({listed: withWorkflow, history: false}), workflow.id), undefined);
+  const activeFilter = {filter: 'Running'};
+  const before = draw(activeFilter, [], {history: false});
+  assert.deepEqual(cards(before).map(card => card.id), ['model']);
+  assert.deepEqual(cards(draw({filter: 'Needs you'}, [], {history: true})).map(card => card.id).sort(), ['approval:b', 'exp']);
+  assert.deepEqual(draw(activeFilter, [], {history: false}), before, 'history uses separate parameters from Active');
   // His order: the idle sessions in the order he dragged them (grouped by state, so they share one group).
   const idle = chart => cards(chart).filter(card => card.state === 'Idle').sort((a, b) => a.y - b.y || a.x - b.x).map(card => card.id);
-  const byState = order => idle(plain(homeMap({listed, rows: base, params: {...DEFAULT, group: 'State'}, titleOf: row => row.id, order})));
+  const byState = order => idle(plain(homeMap({listed, rows: base, params: {...DEFAULT, group: 'State'}, titleOf: row => row.id, order, history: true})));
   assert.deepEqual(byState(['t-sheets', 't-std', 't-survey']), ['sheets', 'std', 'survey'], 'the drag order arranges the cards');
   assert.deepEqual(byState(['t-survey', 't-std', 't-sheets']), ['survey', 'std', 'sheets']);
   // Old runs sit in their own folded section; unfolding it shows them.
   const old = {...base, sectionOf: () => 'Older / archived'};
-  const folded = plain(homeMap({listed, rows: old, params: DEFAULT, titleOf: row => row.id}));
+  const folded = plain(homeMap({listed, rows: old, params: DEFAULT, titleOf: row => row.id, history: true}));
   const older = chart => chart.groups.find(group => group.key === 'Older / archived');
   assert.equal(older(folded).collapsed, true, 'folded until he opens it');
   assert.equal(folded.groups.at(-1).key, 'Older / archived', 'the last section');
-  const open = plain(homeMap({listed, rows: old, params: DEFAULT, titleOf: row => row.id, olderOpen: true}));
+  const open = plain(homeMap({listed, rows: old, params: DEFAULT, titleOf: row => row.id, olderOpen: true, history: true}));
   assert.equal(older(open).collapsed, false);
   assert.ok(cards(open).length > cards(folded).length, 'unfolded, its sessions are cards');
 });
@@ -166,7 +182,7 @@ test('projects > tasks > subtasks: a subtask sits in its parent task group, one 
   const tree = {groups: [{project: {id: 'Tower', label: 'Tower'}, sessions: [session('drawings', 'Drawings', 'Tower'), session('plan', 'Ground floor plan', 'Tower'),
     session('tags', 'Door tags', 'Other')]}]};
   const tasks = [task('drawings'), task('plan', {parent: 't-drawings'}), task('tags', {parent: 't-plan'})];
-  const view = (params = {}) => plain(homeMap({listed: tree, rows: homeRows({...state, tasks, approvals: []}, {hidden: [], order: []}), params: {...DEFAULT, ...params}, titleOf: row => row.id}));
+  const view = (params = {}) => plain(homeMap({listed: tree, rows: homeRows({...state, tasks, approvals: []}, {hidden: [], order: []}), params: {...DEFAULT, ...params}, titleOf: row => row.id, history: true}));
   const chart = view();
   assert.deepEqual(chart.groups.map(group => group.key + ' ' + group.count), ['Tower 3'], 'a subtask is drawn in its top task\'s project');
   assert.deepEqual(chart.wires.map(wire => [wire.from, wire.to, wire.label].join(' > ')).sort(), ['drawings > plan > Subtask', 'plan > tags > Subtask']);

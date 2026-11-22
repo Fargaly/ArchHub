@@ -47,7 +47,7 @@ test('Home and the Canvas rail pick the selected session in one order: asked for
   assert.equal(homeRows({...state, tasks: []}, undefined).resumed('a'), undefined);
 });
 
-test('a live agent on a known session is a member of its row; one with no session is its own Working now row', () => {
+test('a live agent on a known session is a member of its row; standalone presence creates no Home row', () => {
   const state = {
     tasks: [task('a')], approvals: [], graphs: [],
     agentGraph: {sessions: [{id: 'r1', name: 'Claude Code / 00.ARCHUB / session-62fdf0706b09', status: 'working', task: 'a'},
@@ -55,8 +55,8 @@ test('a live agent on a known session is a member of its row; one with no sessio
       {id: 'r3', name: 'Gemini CLI / site / session-07fb27aabcc0', status: 'idle', task: null}]},
   };
   const seen = homeRows(state, {hidden: [], order: []});
-  assert.deepEqual(Array.from(seen.sessionRows, row => row.id + ' · ' + seen.sectionOf(row)), ['live:r2 · Working now', 'a · Working now']);
-  assert.equal(seen.sessionRows[0].runtimeAgent.id, 'r2');
-  assert.deepEqual(Array.from(seen.sessionRows[1].members, member => member.name), ['Claude Code / 00.ARCHUB / session-62fdf0706b09']);
+  assert.deepEqual(Array.from(seen.sessionRows, row => row.id + ' · ' + seen.sectionOf(row)), ['a · Working now']);
+  assert.equal(seen.running, 1);
+  assert.deepEqual(Array.from(seen.sessionRows[0].members, member => member.name), ['Claude Code / 00.ARCHUB / session-62fdf0706b09']);
   assert.equal(state.tasks[0].workingNow, undefined, 'the owner\'s task records are not changed');
 });

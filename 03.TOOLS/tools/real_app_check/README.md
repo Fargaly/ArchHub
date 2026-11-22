@@ -26,10 +26,10 @@ Options:
   On a dedicated Windows QA machine, save `{"waitForSignIn":true}` in `qa-signin.json` and run this command from the repository root with a fresh evidence directory:
 
   ```powershell
-  python -B 03.TOOLS/tools/real_app_check/real_app_check.py --scenario 03.TOOLS/tools/real_app_check/scenarios/settings.mjs --input qa-signin.json --out qa-signin-evidence
+  python -B 03.TOOLS/tools/real_app_check/real_app_check.py --scenario 03.TOOLS/tools/real_app_check/scenarios/settings_right_click.mjs --input qa-signin.json --out qa-signin-evidence
   ```
 
-  Complete normal browser sign-in with the approved QA account within five minutes. If sign-in never finishes, the eleven authenticated checks report `NOT EXERCISED` and the run is `INCOMPLETE`.
+  Complete normal browser sign-in with the approved QA account within five minutes. If sign-in never finishes, the authenticated Settings checks and both Home and Canvas context-menu checks report `NOT EXERCISED` and the run is `INCOMPLETE`.
   To also exercise a real account-service outage, use `{"waitForSignIn":true,"verifyAccountOutage":true}` on the dedicated Windows QA machine. The runner refuses new account-service connections in the isolated Python process, keeps loopback available, then restores the connection. Each transition has a 150-second monotonic deadline. While waiting, the verifier reads local Studio state. It checks the protected backend once before disconnect and once at each transition or deadline.
 
   The Projects check uses its saved workflow and pending edit. A pass requires a successful protected read, a data-free 503 during the outage, the locked Studio screen, and a successful read with the same account and intact dirty document after reconnection. A missing sign-in leaves the outage evidence `NOT EXERCISED`. A backend/UI disagreement fails the check. The outage result records the observed HTTP statuses, locked screenshot filename and recovery checks. A pass also requires an explicit save and reopen. Check both the outage evidence and the runner verdict.

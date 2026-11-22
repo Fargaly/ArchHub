@@ -32,6 +32,9 @@ on:
       verify_previous_canvas:
         description: 'Exercise Rerun and Fork on the pinned previous installed build before upgrading'
         type: boolean
+      verify_f38:
+        description: 'Observe startup warm-up and native Close/Quit on the pinned optional-sign-in stable installer'
+        type: boolean
       verify_dwg:
         description: 'Verify the installed DWG reader and Projects export settings using public linked drawings'
         type: boolean
@@ -593,6 +596,7 @@ jobs:
       VERIFY_MINUTES: ${{ inputs.verify_minutes }}
       VERIFY_WORKSHOP_REPLIES: ${{ inputs.verify_workshop_replies }}
       VERIFY_PREVIOUS_CANVAS: ${{ inputs.verify_previous_canvas }}
+      VERIFY_F38: ${{ inputs.verify_f38 }}
       VERIFY_CONNECTORS: ${{ inputs.verify_connectors }}
       PREVIOUS_INSTALLER: ${{ inputs.previous_installer }}
       PUBLISHED_CANDIDATE: ${{ inputs.published_candidate }}
@@ -680,6 +684,7 @@ jobs:
             $stable = $env:PUBLISHED_BUILD -ceq '20261120-190757-44799181046-1-9d03226d4b06f52bd4db9ce0f5854351e6ee6899' -and
                       $env:PUBLISHED_SHA256 -ceq '796135faadb2d5f432bf6951508d5c997f04e735371e2028bfe989c1d139d037' -and
                       $env:PUBLISHED_BYTES -ceq '435230903'
+            if ($env:VERIFY_F38 -eq 'true' -and !$stable) { throw 'F38 requires the pinned optional-sign-in stable Setup.' }
             $contract = if ($stable) { 'stable-optional-sign-in' } else { 'gated' }
             $scenarioRevision = if ($stable) { '9d03226d4b06f52bd4db9ce0f5854351e6ee6899' } else { $env:GITHUB_SHA }
             "ui_contract=$contract" >> $env:GITHUB_OUTPUT
@@ -879,6 +884,28 @@ jobs:
           $state.ui_exit = $LASTEXITCODE
           $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
           if ($state.ui_exit -ne 0) { throw 'Installed Settings actual-window acceptance failed; inspect the retained report.' }
+      - name: Observe F38 warm-up and native Close or Quit on the installed stable build
+        if: ${{ !cancelled() && inputs.verify_f38 && steps.pins.outputs.ui_contract == 'stable-optional-sign-in' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'install.json') | ConvertFrom-Json
+          if (-not $receipt.setup_verified -or $receipt.install_exit -ne 0 -or $receipt.first_run_exit -ne 0 -or
+              $receipt.installed_build -cne $env:PUBLISHED_BUILD) { throw 'The pinned stable installation did not complete.' }
+          $app = $receipt.installed_root
+          $env:PATH = (Join-Path $app 'runtime') + [IO.Path]::PathSeparator + $env:PATH
+          $witness = 'selected/03.TOOLS/tools/real_app_check'
+          $out = Join-Path $env:VERIFY_EVIDENCE 'f38'
+          & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario (Join-Path $witness 'scenarios/f38_warm_close.mjs') --out $out --verify-warm-close --boot-seconds 90 --probe-seconds 90
+          $status = $LASTEXITCODE
+          $report = Get-Content -Raw (Join-Path $out 'report.json') | ConvertFrom-Json
+          if ($report.label -cne 'INSTALLED BUILD' -or $report.build -cne $receipt.installed_build -or
+              $report.installed_code_before -cne $report.installed_code_after -or -not $report.f38.native_close_and_shutdown) {
+            throw 'Installed F38 Close/Quit evidence was incomplete.'
+          }
+          if ($status -ne 0 -or $report.f38.result -cne 'PASS') {
+            throw ("Installed F38 witness returned {0}: {1}" -f $report.f38.result, $report.f38.reason)
+          }
       - name: Record each Settings outcome even when install or launch failed
         if: always()
         shell: pwsh
@@ -961,3 +988,6 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/settings/report.json
             ${{ runner.temp }}/archhub-verify-published/settings/steps.json
             ${{ runner.temp }}/archhub-verify-published/settings/*.png
+            ${{ runner.temp }}/archhub-verify-published/f38/report.json
+            ${{ runner.temp }}/archhub-verify-published/f38/steps.json
+            ${{ runner.temp }}/archhub-verify-published/f38/*.png

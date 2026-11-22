@@ -518,6 +518,37 @@ def test_report_uses_the_qt_launch_timestamp_and_shared_deadline(tmp_path, monke
         assert report["boot_seconds"] > report["nograph_owner"]["health_seconds"]
 
 
+@pytest.mark.parametrize("warm_finished, result, close_overlap, shutdown_overlap", [
+    (70, "PASS", "PASS", "PASS"),
+    (30, "NOT EXERCISED", "PASS", "NOT EXERCISED"),
+    (18, "NOT EXERCISED", "NOT EXERCISED", "NOT EXERCISED"),
+])
+def test_f38_distinguishes_tray_close_from_server_shutdown(warm_finished, result, close_overlap, shutdown_overlap):
+    spec = importlib.util.spec_from_file_location("f38_warm_close", TOOL / "f38_warm_close.py")
+    witness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(witness)
+    trace = [{"event": name, "monotonic_ns": stamp} for name, stamp in (
+        ("warm_call", 10), ("warm_return", warm_finished), ("tray_setup", 15), ("window_request_close", 17),
+        ("window_close", 20), ("window_request_quit", 45), ("server_close_call", 50),
+        ("server_close_return", 60),
+    )]
+    readbacks = {
+        "before": {"visible_window_pids": [5], "job_app_pids": [5], "listener_http_204": True, "monotonic_ns": 16},
+        "close": {"visible_window_pids": [], "job_app_pids": [5], "listener_owned": True, "listener_http_204": True,
+                  "monotonic_ns": 25},
+        "quit": {"visible_window_pids": [], "job_app_pids": [], "port_refused": True, "monotonic_ns": 80},
+    }
+    receipt = witness.verdict(trace, readbacks, False)
+    assert (receipt["result"], receipt["window_close_overlap"], receipt["server_shutdown_overlap"]) == (
+        result, close_overlap, shutdown_overlap)
+    assert receipt["native_close_and_shutdown"] is True
+    assert witness.verdict(trace, readbacks, True)["result"] == "FAIL"
+    wrong_order = {**readbacks, "close": {**readbacks["close"], "monotonic_ns": 52}}
+    assert witness.verdict(trace, wrong_order, False)["result"] == "FAIL"
+    alive = {**readbacks, "quit": {**readbacks["quit"], "job_app_pids": [5]}}
+    assert witness.verdict(trace, alive, False)["result"] == "FAIL"
+
+
 def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, monkeypatch):
     rig = _rig()
     installed = _installed(tmp_path)

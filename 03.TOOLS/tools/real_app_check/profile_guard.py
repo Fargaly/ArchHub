@@ -172,6 +172,9 @@ if __name__ == "__main__":
     else:
         install()
     target, *args = arguments
+    if (warm_trace := os.environ.pop("ARCHHUB_F38_WARM_CLOSE_TRACE", None)) and Path(target).name == "launcher.py":
+        from f38_warm_close import observe_worker
+        observe_worker(warm_trace)
     sys.argv = [target, *args]
     if target in ("-c", "-m") and not sys.flags.safe_path:
         sys.path[0] = os.getcwd()

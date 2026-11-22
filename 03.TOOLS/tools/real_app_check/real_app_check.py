@@ -613,7 +613,10 @@ def main(argv=None) -> int:
     parser.add_argument("--winapp", default=os.environ.get("ARCHHUB_WINAPP", DEFAULT_WINAPP))
     parser.add_argument("--boot-seconds", type=int, default=600)
     parser.add_argument("--probe-seconds", type=int, default=1200)
+    parser.add_argument("--verify-warm-close", action="store_true")
     args = parser.parse_args(argv)
+    if args.verify_warm_close and (args.overlay or args.scenario.resolve() != HERE / "scenarios/f38_warm_close.mjs"):
+        parser.error("--verify-warm-close requires the F38 installed-only scenario")
 
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
@@ -625,6 +628,7 @@ def main(argv=None) -> int:
     report = {"installed": str(installed), "installed_code_before": tree_digest(installed)}
     job = desktop = probe = None
     failures, lines, timed_out, exit_code = [], [], False, None
+    warm_trace, readbacks, warm_close_check = None, {}, None
     try:
         job = RunJob()
         run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=out))
@@ -636,6 +640,10 @@ def main(argv=None) -> int:
             (run_dir / "USERPROFILE" / name).mkdir(exist_ok=True)
         cdp = free_port()
         env = isolated_env(dict(os.environ), run_dir, cdp_port=cdp, lock_port=free_port())
+        if args.verify_warm_close:
+            import f38_warm_close as warm_close_check
+            warm_trace = run_dir / "state" / "f38-warm-close.jsonl"
+            env["ARCHHUB_F38_WARM_CLOSE_TRACE"] = str(warm_trace)
         desktop = HiddenDesktop(job)
         report.update(label=label, build=(app / "BUILD_ID").read_text(encoding="utf-8").strip(), app=str(app),
                       overlay=str(args.overlay) if args.overlay else None, overlay_files=laid,
@@ -691,6 +699,13 @@ def main(argv=None) -> int:
                     answer = window_frame(desktop)
                 elif request.get("kind") == "reopen-rig-window":
                     answer = reopen_rig_window(desktop, run_dir / "state", owner["listener_pid"])
+                elif warm_close_check and request.get("kind") == "f38-window-state" and request.get("phase") in ("before", "close", "quit"):
+                    phase = request["phase"]
+                    trace = warm_close_check.events(warm_trace, owner["listener_pid"])
+                    tray = any(row["event"] == "tray_setup" for row in trace)
+                    answer = warm_close_check.window_state(desktop, owner, probe.pid, phase, tray,
+                                                           deadline, JobRunner.SETTLE_SECONDS)
+                    readbacks[phase] = answer
                 else:
                     answer = {"error": "unknown native request"}
                 natives.append(answer)
@@ -708,6 +723,15 @@ def main(argv=None) -> int:
             report["graph_owner_refused"] = list(exc.problems)
         report["exception"] = traceback.format_exc()[-3000:]
     finally:
+        if warm_trace is not None:
+            try:
+                listener = report.get("nograph_owner", {}).get("listener_pid")
+                report["f38"] = warm_close_check.verdict(warm_close_check.events(warm_trace, listener), readbacks,
+                                                         (warm_trace.parent / "nograph-http-port").exists())
+                if report["f38"]["result"] == "FAIL":
+                    failures.append("FAIL: " + report["f38"]["reason"])
+            except (OSError, ValueError, KeyError) as exc:
+                failures.append("FAIL: the F38 lifecycle trace was unreadable: " + type(exc).__name__)
         if job is not None:
             job.close()                      # ends the app, the probe and any helper, by Job, not by PID
         if desktop is not None:
@@ -736,6 +760,8 @@ def finalize_report(report: dict, out: Path, installed: Path, failures: list) ->
     ) if problem], *probe_problems(report.get("probe", []), report.get("probe_exit_code"),
                                    report.get("probe_timed_out", True), steps)]
     report["result"] = run_result(steps, problems)
+    if report["result"] == "PASS" and report.get("f38", {}).get("result") == "NOT EXERCISED":
+        report["result"] = "INCOMPLETE: F38 natural overlap was not exercised"
     (out / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({key: value for key, value in report.items() if key not in ("probe", "exception")},
                      indent=1, ensure_ascii=False)[:4000])

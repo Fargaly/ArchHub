@@ -95,6 +95,9 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
     options:['Office issue set','Current sheet only','Sheets changed since the last issue'],
     disabledOptions:{'Sheets changed since the last issue':'No verified last-issue baseline for this project. Select sheets explicitly.'}}]});
   });
+  await page.evaluate(()=>window.update({settings:[...window.fixture.settings,
+   ...[['Name pattern','<project>-<originator>-<type>-<role>-<nnn>-<YYYY-MM-DD>'],['Originator code','Office']].map(([label,value])=>({
+    id:'Projects.'+label,page:'Projects',group:'File naming',label,type:'text',value,default:value}))]}));
   const nav=page.getByRole('navigation',{name:'Settings categories'});
   await nav.getByRole('button',{name:'Projects',exact:true}).click();
   const sheetSet=page.getByLabel('Sheet set',{exact:true});
@@ -107,7 +110,17 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   await nav.getByRole('button',{name:'This PC',exact:true}).click();
   await nav.getByRole('button',{name:'Projects',exact:true}).click();
   assert.equal(await sheetSet.inputValue(),'Current sheet only');
-  for(const label of ['Pen table','Default scale','Revit template','Layer standard'])
+  for(const [label,value] of [['Name pattern','<project>-<type>'],['Originator code','Studio']]){
+   const editor=page.getByRole('textbox',{name:label,exact:true});
+   await editor.fill(value);
+   await editor.press('Tab');
+   assert.deepEqual(await page.evaluate(()=>window.settingCalls.at(-1)),{id:'Projects.'+label,value,destination:{scope:'Session',workspace:'example',session:'other-file'}});
+   await nav.getByRole('button',{name:'This PC',exact:true}).click();
+   await nav.getByRole('button',{name:'Projects',exact:true}).click();
+   assert.equal(await editor.inputValue(),value);
+  }
+
+  for(const label of ['Pen table','Default scale','Revit template','Layer standard','Revisions','Check names before saving'])
    await page.getByRole('group',{name:label+'. Coming soon: not built yet',exact:true}).waitFor();
   // Conditional layout fixture: model a fully backed Projects page.
   const completeIds=await page.evaluate(()=>{
@@ -118,7 +131,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
     'IFC and BCF':['IFC version','IFC export setup','BCF version'],
     'Print and PDF':['Pen table','Sheet set','Default scale'],
     'CAD':['Layer standard','Colour to lineweight','DWG export setup','DWG version'],
-    'File naming':['File naming'],'CDE folders':['CDE folders']
+    'File naming':['Name pattern','Originator code','Revisions','Check names before saving'],'CDE folders':['CDE folders']
    };
    const settings=Object.entries(families).flatMap(([group,labels])=>labels.map(label=>
     window.fixture.settings.find(row=>row.page==='Projects'&&row.group===group&&row.label===label)||

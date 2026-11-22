@@ -628,7 +628,7 @@ def main(argv=None) -> int:
     report = {"installed": str(installed), "installed_code_before": tree_digest(installed)}
     job = desktop = probe = None
     failures, lines, timed_out, exit_code = [], [], False, None
-    warm_trace, readbacks, warm_close_check = None, {}, None
+    warm_trace, readbacks, warm_close_check, recent_writer = None, {}, None, None
     try:
         job = RunJob()
         run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=out))
@@ -644,6 +644,7 @@ def main(argv=None) -> int:
             import f38_warm_close as warm_close_check
             warm_trace = run_dir / "state" / "f38-warm-close.jsonl"
             env["ARCHHUB_F38_WARM_CLOSE_TRACE"] = str(warm_trace)
+            recent_writer = warm_close_check.RecentWriter(app, warm_trace)
         desktop = HiddenDesktop(job)
         report.update(label=label, build=(app / "BUILD_ID").read_text(encoding="utf-8").strip(), app=str(app),
                       overlay=str(args.overlay) if args.overlay else None, overlay_files=laid,
@@ -704,7 +705,7 @@ def main(argv=None) -> int:
                     trace = warm_close_check.events(warm_trace, owner["listener_pid"])
                     tray = any(row["event"] == "tray_setup" for row in trace)
                     answer = warm_close_check.window_state(desktop, owner, probe.pid, phase, tray,
-                                                           deadline, JobRunner.SETTLE_SECONDS)
+                                                           deadline, JobRunner.SETTLE_SECONDS, recent_writer.poll)
                     readbacks[phase] = answer
                 else:
                     answer = {"error": "unknown native request"}
@@ -726,12 +727,13 @@ def main(argv=None) -> int:
         if warm_trace is not None:
             try:
                 listener = report.get("nograph_owner", {}).get("listener_pid")
+                writer = recent_writer.close() if recent_writer is not None else {}
                 report["f38"] = warm_close_check.verdict(warm_close_check.events(warm_trace, listener), readbacks,
-                                                         (warm_trace.parent / "nograph-http-port").exists())
+                                                         (warm_trace.parent / "nograph-http-port").exists(), writer)
                 if report["f38"]["result"] == "FAIL":
                     failures.append("FAIL: " + report["f38"]["reason"])
-            except (OSError, ValueError, KeyError) as exc:
-                failures.append("FAIL: the F38 lifecycle trace was unreadable: " + type(exc).__name__)
+            except (OSError, ValueError, KeyError, RuntimeError) as trace_error:
+                failures.append("FAIL: the F38 lifecycle receipt failed: " + str(trace_error))
         if job is not None:
             job.close()                      # ends the app, the probe and any helper, by Job, not by PID
         if desktop is not None:

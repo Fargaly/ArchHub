@@ -542,6 +542,14 @@ def test_f38_distinguishes_tray_close_from_server_shutdown(warm_finished, result
     assert (receipt["result"], receipt["window_close_overlap"], receipt["server_shutdown_overlap"]) == (
         result, close_overlap, shutdown_overlap)
     assert receipt["native_close_and_shutdown"] is True
+    held = {"acquired_ns": 7, "release_started_ns": 53, "released_ns": 54, "release": "observed server_close_call"}
+    waiting = [*trace, {"event": "recent_writer_contended", "monotonic_ns": 12},
+               {"event": "recent_writer_resumed", "monotonic_ns": 55}]
+    with_contention = witness.verdict(waiting, readbacks, False, held)
+    assert with_contention["result"] == result
+    assert with_contention["recent_writer_contended_shutdown"] is (warm_finished == 70)
+    assert witness.verdict(waiting, readbacks, False, {**held, "release": "rig cleanup"})["result"] == "NOT EXERCISED"
+    assert witness.verdict(waiting, readbacks, False, {**held, "release_started_ns": 49})["result"] == "NOT EXERCISED"
     assert witness.verdict(trace, readbacks, True)["result"] == "FAIL"
     wrong_order = {**readbacks, "close": {**readbacks["close"], "monotonic_ns": 52}}
     assert witness.verdict(trace, wrong_order, False)["result"] == "FAIL"

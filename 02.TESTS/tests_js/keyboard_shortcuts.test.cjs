@@ -5,6 +5,11 @@ const React=require('react'),{transformSync}=require('esbuild');
 const {setImmediate}=require('node:timers');
 const {structuredClone,Uint8Array}=globalThis;
 const studio=path.resolve(__dirname,'../../01.APP/nodelang/studio');
+const admitted={ok:true,admitted:true,state:'admitted',subject:'keyboard-fixture',email:'keyboard@example.test'};
+function loadStudioApi(context){
+ for(const name of ['studio-authority.js','api.js'])
+   vm.runInNewContext(fs.readFileSync(path.join(studio,name),'utf8'),context,{filename:name});
+}
 
 test('one saved keybinding drives actual matching, aliases and menu hints',()=>{
  let keys={},pending=false;
@@ -43,11 +48,13 @@ test('pending keyboard read does not delay first-file startup and resolves overr
   const storage=()=>{const values=new Map();return {getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,String(value)),removeItem:key=>values.delete(key),key:index=>[...values.keys()][index]??null,get length(){return values.size;}};};
   const response=data=>({ok:true,status:200,headers:{get:()=>null},json:async()=>data});
   const window={ARCHHUB_BOOT:{token:'test',csrf:'test',nograph:true},crypto:require('node:crypto').webcrypto,structuredClone,
-   localStorage:storage(),sessionStorage:storage(),addEventListener(){},dispatchEvent(){},ArchHubStudioAuthority:{create:()=>({getSnapshot:()=>({canvas:null})})}};
+   localStorage:storage(),sessionStorage:storage(),addEventListener(){},dispatchEvent(){}};
   const context={window,document:{hidden:false,addEventListener(){}},sessionStorage:window.sessionStorage,localStorage:window.localStorage,
    setTimeout,clearTimeout,URLSearchParams,TextEncoder,AbortSignal,AbortController,Uint8Array,CustomEvent:class {},console:{...console,warn:(...args)=>warnings.push(args.join(' '))},
    fetch:async(url,options)=>{
-    const body=options?.body?JSON.parse(options.body):null;requests.push({url,body});
+    const body=options?.body?JSON.parse(options.body):null;
+    requests.push({url,body,subject:new Headers(options?.headers).get('X-ArchHub-Desktop-Subject')});
+    if(url==='/api/universal/desktop-access')return response(admitted);
     if(url==='/api/commands')return response({commands:[{id:'menu.copy',shortcut:'Ctrl C',action:{}}]});
     if(body?.function==='readKeybindings')return new Promise(resolve=>{releaseKeys=()=>resolve(response({ok:true,result:{keybindings:{'menu.copy':'Ctrl Shift C'},keyboardCommands:[],keyboardError:''}}));});
     if(body?.function==='setKeybinding')return response({ok:true,result:{keybindings:{'menu.copy':'Ctrl Alt C'},keyboardCommands:[],keyboardError:''}});
@@ -56,12 +63,13 @@ test('pending keyboard read does not delay first-file startup and resolves overr
     if(url==='/api/universal/studio-surface')return response({ok:true});
     return new Promise(()=>{});
    }};
-  vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),context);
+  loadStudioApi(context);
   window.ArchHubAPI.setActiveSurface(surface);
   for(let i=0;i<50&&!releaseKeys;i++)await new Promise(resolve=>setImmediate(resolve));
   assert.equal(typeof releaseKeys,'function');
   for(let i=0;i<50&&!requests.some(row=>row.url==='/api/session-files');i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(requests.some(row=>row.url==='/api/session-files'),true,'first file starts while only keyboard read is pending');
+  assert.equal(requests[0].url,'/api/universal/desktop-access','cold entry admits the isolated subject before private reads');
+  assert.equal(requests.find(row=>row.url==='/api/session-files')?.subject,admitted.subject,'first file starts with the admitted subject while the keyboard read is pending');
   assert.equal(window.ArchHubAPI.getSnapshot().keyboardPending,true);
   assert.equal(typeof window.ArchHubAPI.getSnapshot,'function','Home and Canvas retain their state API');
   if(newer)await window.ArchHubAPI.setKeybinding('menu.copy','Ctrl Alt C');
@@ -105,10 +113,12 @@ test('session switching rejects stale preference reads and flushes edits before 
  const response=data=>({ok:true,status:200,headers:{get:()=>null},json:async()=>data});
  const preferences=(id,scope='User')=>({appearanceSettings:[{id:'Appearance.Theme',page:'Appearance',label:'Theme',value:id==='first'?'Light':'Dark',default:'Dark'},{id:'Projects.Working subfolder',page:'Projects',label:'Working subfolder (relative)',value:'',default:''}],keybindings:{'menu.copy':id==='first'?'Ctrl Shift C':'Ctrl Alt C'},keyboardCommands:[],keyboardError:'',settingsScope:scope,settingsScopes:{Workspace:true,Session:true},settingsDestination:{scope,workspace:'tower',session:id,workspaceIdentity:'fixture-root'}});
  const window={ARCHHUB_BOOT:{token:'test',csrf:'test',nograph:true},crypto:require('node:crypto').webcrypto,structuredClone,
-  localStorage:storage(),sessionStorage:storage(),addEventListener(){},dispatchEvent(){},ArchHubStudioAuthority:{create:()=>({getSnapshot:()=>({canvas:null})})}};
+  localStorage:storage(),sessionStorage:storage(),addEventListener(){},dispatchEvent(){}};
  const context={window,document:{hidden:false,addEventListener(){}},localStorage:window.localStorage,sessionStorage:window.sessionStorage,setTimeout,clearTimeout,URLSearchParams,TextEncoder,AbortSignal,AbortController,Uint8Array,CustomEvent:class {},console:{...console,warn:(...args)=>warnings.push(args.join(' '))},
   fetch:async(url,options)=>{
-   const body=options?.body?JSON.parse(options.body):null;requests.push({url,body});
+   const body=options?.body?JSON.parse(options.body):null;
+   requests.push({url,body,subject:new Headers(options?.headers).get('X-ArchHub-Desktop-Subject')});
+   if(url==='/api/universal/desktop-access')return response(admitted);
    if(url==='/api/commands')return response({commands:[]});
    if(url==='/api/universal/workspace-roots')return response({roots:[{root_id:'tower2',label:'Example',path:'C:/probe',privacy:'private'}]});
    if(body?.function==='readKeybindings')return response({ok:true,result:{keybindings:{},keyboardCommands:[],keyboardError:''}});
@@ -142,12 +152,13 @@ test('session switching rejects stale preference reads and flushes edits before 
    if(url==='/api/universal/studio-surface')return response({ok:true});
    return new Promise(()=>{});
   }};
- vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),context);
+ loadStudioApi(context);
  window.ArchHubAPI.setActiveSurface('home');
  const turn=()=>new Promise(resolve=>setImmediate(resolve));
  for(let i=0;i<50&&!pending.has('first');i++)await turn();
  assert.equal(pending.has('first'),true);
  await window.ArchHubAPI.ready;
+ assert.equal(requests.find(row=>row.body?.action==='initial')?.subject,admitted.subject);
  for(let i=0;i<50&&!window.ArchHubAPI.getSnapshot().workspaces.some(row=>row.id==='tower2');i++)await turn();
  assert.equal(window.ArchHubAPI.getSnapshot().workspaces.some(row=>row.id==='tower2'),true,'Home discovers local workspaces while controls and network discovery are held');
  await window.ArchHubAPI.openSession('C:/probe/second.archhub');

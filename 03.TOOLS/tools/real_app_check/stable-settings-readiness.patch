@@ -1,0 +1,21 @@
+--- a/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
++++ b/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
+@@ -22 +22 @@
+- const select=async(label,value)=>{assert.equal(await until(()=>js(`(()=>{const e=[...document.querySelectorAll('select')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});return Boolean(e&&!e.disabled&&[...e.options].some(o=>o.value===${JSON.stringify(value)}&&!o.disabled));})()`),Boolean),true);await js(`(()=>{const e=document.querySelector('select[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!e||e.disabled)throw Error('Selector is unavailable');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
++ const select=async(label,value)=>{assert.equal(await until(()=>js(`(()=>{const e=[...document.querySelectorAll('select')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});return Boolean(e&&!e.disabled&&[...e.options].some(o=>o.value===${JSON.stringify(value)}&&!o.disabled));})()`),Boolean),true);await js(`(()=>{const e=document.querySelector('select[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!e||e.disabled)throw Error('Selector is unavailable');if(e.value===${JSON.stringify(value)})return;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
+@@ -24 +24 @@
+- const theme=async value=>{await select('Theme',value);const got=await until(snapshot,s=>s?.theme===value);assert.equal(got.theme,value);return got;};
++ const theme=async value=>{if((await snapshot()).theme===value){const other=value==='Dark'?'Light':'Dark';await select('Theme',other);assert.equal((await until(snapshot,s=>s?.theme===other)).theme,other);}await select('Theme',value);const got=await until(snapshot,s=>s?.theme===value);assert.equal(got.theme,value);return got;};
+@@ -41 +41,11 @@
+-  assert.equal(await until(()=>js("Boolean(document.querySelector('select[aria-label=\"Theme\"]'))"),Boolean),true);
++  const saved = json(file);
++  assert.equal(saved.properties.project,workspaceId,'Saved workflow must belong to the fixture workspace');
++  assert(json(workspaceFile).roots.some(row=>row.root_id===workspaceId),'Fixture workspace must exist on disk');
++  const lookReady=()=>js(`(()=>{
++    const sheet=document.querySelector('[data-screen="settings/Appearance"][data-settings-full]');
++    const theme=sheet?.querySelector('select[aria-label="Theme"]'), state=window.ArchHubAPI.getSnapshot();
++    return Boolean(theme && !theme.disabled && !sheet.querySelector('.sheet-loading,[role="alert"]') &&
++      state.settingsDestination?.session===${JSON.stringify(saved.id)} &&
++      state.settingsDestination?.workspace===${JSON.stringify(workspaceId)});
++  })()`);
++  assert.equal(await until(lookReady,Boolean),true,'Look did not finish loading for the saved fixture workspace and session');

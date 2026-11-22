@@ -878,6 +878,17 @@ jobs:
             $contract = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'ui-contract.json') | ConvertFrom-Json
             $revision = git -C stable-witness rev-parse HEAD
             if ($LASTEXITCODE -ne 0 -or $revision -cne $contract.scenario_revision) { throw 'The stable witness source does not match the pinned release.' }
+            $relative = '03.TOOLS/tools/real_app_check/scenarios/settings.mjs'
+            $scenario = Join-Path stable-witness $relative
+            $original = (Get-FileHash -LiteralPath $scenario -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            if ($original -cne '4118811518c8bef64cc2a27ccc16327a97cfa577af0f50f88899da33fd2c60c0') { throw 'Unexpected original stable Settings witness' }
+            $delta = (Resolve-Path 'selected/03.TOOLS/tools/real_app_check/stable-settings-readiness.patch' -ErrorAction Stop).Path
+            git -c core.autocrlf=false -C stable-witness apply --unidiff-zero --include=$relative -- $delta
+            if ($LASTEXITCODE -ne 0) { throw 'Stable Settings readiness correction could not be applied' }
+            $effective = (Get-FileHash -LiteralPath $scenario -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            if ($effective -cne '6291c7871ce740372385855197ff7a3ddb9fff79546c7adc179be3369959fd62') { throw 'Unexpected effective stable Settings witness' }
+            $contract | Add-Member -NotePropertyMembers @{ original_witness_sha256=$original; effective_witness_sha256=$effective; verification_tools_revision=$env:GITHUB_SHA }
+            $contract | ConvertTo-Json | Set-Content (Join-Path $env:VERIFY_EVIDENCE 'ui-contract.json') -Encoding utf8
             $witness = 'stable-witness/03.TOOLS/tools/real_app_check'
           }
           & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario (Join-Path $witness 'scenarios/settings.mjs') --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300

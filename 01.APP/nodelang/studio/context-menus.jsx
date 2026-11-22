@@ -259,7 +259,8 @@
     };
     let surface, owner, context, label, rows;
     const dedicated = target.closest('[data-screen="library"],[data-screen^="settings/"],[data-screen="docs"],[data-screen="workshop"]');
-    if (!dedicated && (surface = target.closest('[data-home-page]'))) {
+    const workshopDock = target.closest('[data-dock-workshop]');
+    if (!dedicated && !workshopDock && (surface = target.closest('[data-home-page]'))) {
       const flowNode = target.closest('.react-flow__node');
       const session = target.closest('[data-home-task],[data-home-session-path]') ||
         flowNode?.querySelector('[data-home-task],[data-home-session-path]');
@@ -311,6 +312,17 @@
       rows = [topic ? click('menu.docs.open', topic, 'Open topic') :
         article ? click('menu.docs.open', article.querySelector('.docs-open button')) :
         search(surface, 'input[aria-label="Search docs"]')];
+    } else if (workshopDock) {
+      const card = target.closest('[data-ws-approval],[data-ws-failed],[data-ws-working],[data-ws-thread]');
+      if (!card) return false;
+      owner = card;
+      context = 'workshop';
+      label = 'Workshop menu';
+      const buttons = [...card.querySelectorAll('button')];
+      const show = card.matches('button') ? card : buttons.find(button => ['Show','Hide'].includes(button.textContent.trim())) ||
+        card.querySelector('button.wsl');
+      rows = [click('menu.workshop.inspect', show, show?.closest('.wsca') ? show.textContent.trim() : 'Open'),
+        click('menu.workshop.raw', card.querySelector('button.wsraw'))];
     } else if ((surface = target.closest('[data-screen="workshop"]'))) {
       const message = target.closest('.ws-msg');
       owner = message || surface;

@@ -444,6 +444,7 @@ STUDIO_COMMANDS += tuple(
         ('menu.library.toggle', 'Expand category', 'library', ['library-category'], True),
         ('menu.settings.focus', 'Focus setting', 'settings', ['settings-row'], False),
         ('menu.docs.open', 'Open in the app', 'arrow', ['docs-article'], False),
-        ('menu.workshop.inspect', 'Inspect', 'info', ['message'], False),
+        ('menu.workshop.inspect', 'Inspect', 'info', ['message', 'workshop'], False),
+        ('menu.workshop.raw', 'Raw log', 'docs', ['workshop'], False),
         ('menu.surface.search', 'Search', 'search', ['workshop', 'settings', 'docs', 'library'], False),
     )))

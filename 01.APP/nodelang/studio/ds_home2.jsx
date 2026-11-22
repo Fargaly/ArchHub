@@ -65,8 +65,10 @@
   // A Workshop card's Show asks for the cursor in that thread's composer. The ask outlives the screen's remount when the
   // thread opens, and ends on the first composer render that shows that thread (focused) or another thread (dropped).
   let focusAsk = null, homeShown = '';
-  const homeSessionToResume = (listing, selection) => {
-    const files = listing.groups.flatMap(group => group.sessions).filter(file => file.task && file.path && file.state !== 'archived');
+  const homeSessionToResume = (listing, selection, tasks = api.getSnapshot().tasks || []) => {
+    const owners = new Map(tasks.map(row => [row.id, row]));
+    const files = listing.groups.flatMap(group => group.sessions).filter(file => file.task && file.path && file.state !== 'archived' &&
+      !registration(owners.get(file.task) || {id: file.task}));
     for (const id of [...selection, listing.recentTask]) {
       const file = files.find(file => file.task === id);
       if (file) return file;
@@ -551,7 +553,7 @@
     const saveDock = layout => { dockWrites.current = dockWrites.current.then(() => persist(() => api.setDockLayout(layout), 'Could not save the panel layout.')); };
     const showWork = async ({task: target, path, nodeId, approvalId}) => {
       // A held step in a file with no task opens that file and its step; only a card with neither opens the approval itself.
-      if (!target && path) { const opened = await u.act(() => api.openSession(path)); if (opened && !opened.cancelled) { u.go('canvas'); if (nodeId) { window.UI.centreWhenShown = {nodeId, path}; u.setSelectedNodeId(nodeId); } } return; }
+      if (!target && path) { const opened = await u.act(() => api.openSession(path)); if (opened && !opened.cancelled) { u.go('canvas', api.getSessionPath?.() || path); if (nodeId) { window.UI.centreWhenShown = {nodeId, path}; u.setSelectedNodeId(nodeId); } } return; }
       if (!target) { if (approvalId) u.show('Approve', {id: approvalId}); return; }
       if (target.id !== task?.id) await u.openTaskFile(target.id);
       // Show selects the step and brings it to the centre of the free area (design panTo), once the canvas draws it.
@@ -624,7 +626,7 @@
       const agent=[...(s.agents||[]),...(s.providers||[])].find(a=>a.id===name||a.name===name||!name&&a.id===t.owner);
       if(agent)u.show('Agent',{id:agent.id});else u.go('settings/Agents');
     };
-    const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
+    const openFile = () => u.openSavedSession();
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
     const fileKeys = event => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -805,7 +807,7 @@
     </section> : request === 'empty' ? <section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>
       : <section className="resume-zero"><h1>No sessions shown on Home</h1><button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
         const opened = await api.openSession();
-        if (opened && !opened.cancelled) await u.go('canvas');
+        if (opened && !opened.cancelled) await u.go('canvas', api.getSessionPath?.());
       }), event)}>Open a canvas…</button></section>;
     // Hiding and Reset Home are one step each that Undo (the toast's button) takes back exactly.
     const undoable = (text, patch) => { const before = homeRef.current; u.setToast({text, label: 'Undo', open: () => saveHome(before)}); return saveHome(patch); };
@@ -947,6 +949,7 @@
   window.UI.homeDescribe = describe;
   window.UI.homeStepOf = stepOf;
   window.UI.homeDestination = homeDestination;
+  window.UI.isHomeRegistration = registration;
   window.UI.homeSessionToResume = homeSessionToResume;
   window.UI.homeTaskMessages = taskMessages;
   window.UI.homeMiddle = middle;

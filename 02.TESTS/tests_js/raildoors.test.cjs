@@ -24,13 +24,13 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && (shell || full) ? path.join(cache, shell || full, shell ? 'chrome-headless-shell-win64/chrome-headless-shell.exe' : 'chrome-win64/chrome.exe') : undefined);
   const browser = await chromium.launch({headless: true, executablePath});
   try {
-    for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat', 'uxflow']) {
+    for (const mode of ['resume-work', 'resume-empty', 'resume-edited', 'resume-file', 'selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat', 'uxflow']) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       const errors = [];
       let inspectorWidth = 320;
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
-      await page.goto('http://raildoors.test');
+      await page.goto('http://127.0.0.1');
       const mount = async () => {
         await page.addStyleTag({path: path.join(studio, 'style.css')});
         await page.addStyleTag({content: 'html,body,#root{height:100%;margin:0}'});
@@ -45,6 +45,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.evaluate(({mode, inspectorWidth}) => {
           window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
           const s = window.fixture;
+          s.desktopAccess = {ready:true,admitted:true,subject:'rail-fixture'};
           s.settings.push({id:'Appearance.Inspector width',value:inspectorWidth,overridden:true});
           s.tasks = mode === 'empty' ? [] : [
             {id: 'recent', title: 'Recent task', status: 'WIP', sessionPath: 'recent.archhub', messages: []},
@@ -85,6 +86,31 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             sendChatTurn: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
             addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
             openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
+          if (['first','last','empty'].includes(mode)) {
+            const sessions = s.tasks.map(row => ({id:row.id,task:row.id,path:row.sessionPath,title:row.title,state:'open',project:{}}));
+            window.ArchHubAPI.listSessionModel = async () => ({groups:[{sessions}],recentTask:mode === 'last' ? 'selected' : ''});
+            window.ArchHubAPI.openSession = async path => {
+              window.openedTasks.push(s.tasks.find(row => row.sessionPath === path).id);
+              return {ok:true};
+            };
+          }
+          if (mode.startsWith('resume-')) {
+            const presence = {id:'declared-only',title:'A saved session',status:'PLANNED',sessionPath:'presence.archhub',messages:[]};
+            const work = s.tasks[0];
+            s.tasks = mode === 'resume-work' ? [presence,work] : [presence];
+            s.focusedTask = presence.id;
+            let current = presence;
+            const files = s.tasks.map(row => ({id:row.id,task:row.id,path:row.sessionPath,title:row.title,state:'open'}));
+            Object.assign(window.ArchHubAPI, {
+              getSessionPath:()=>current?.sessionPath || '',
+              getSessionDocument:()=>({properties:{taskContext:{task:current?.id}}}),
+              hasSessionEdits:()=>mode === 'resume-edited',
+              listSessionModel:async()=>({groups:[{sessions:files}],recentTask:presence.id}),
+              openSession:async path=>{current=s.tasks.find(t=>t.sessionPath===path);window.openedTasks.push(current.id);return {ok:true};},
+              openTaskGraph:async id=>{current=s.tasks.find(t=>t.id===id);window.openedTasks.push(id);return {ok:true};},
+              newSession:async()=>{current=null;window.openedTasks.push('Untitled');return {ok:true};}
+            });
+          }
         }, {mode, inspectorWidth});
         for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
         await page.evaluate(() => {
@@ -98,11 +124,33 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
                 React.createElement('button', {key: t.id, onClick: () => u.show('Skill', {id: t.id})}, 'Repeat ' + t.id)));
             }, Settings: blank});
         });
+        if (mode.startsWith('resume-')) await page.evaluate(() => {
+          window.UI.Home = () => {
+            const u=window.UI.useApp();
+            return React.createElement('button',{onClick:()=>u.openSavedSession('presence.archhub')},'Open saved file');
+          };
+        });
         await page.addScriptTag({content: sources.at(-1)});
       };
       await mount();
       const nav = page.getByRole('navigation', {name: 'Main navigation'});
       await nav.waitFor();
+      if (mode.startsWith('resume-')) {
+        if (mode === 'resume-file') {
+          await page.getByRole('button',{name:'Open saved file'}).click();
+          await page.locator('[data-fixture-canvas]:visible').waitFor();
+          await nav.getByRole('button',{name:'Home',exact:true}).click();
+        }
+        await nav.getByRole('button',{name:'Canvas',exact:true}).click();
+        const expected = {'resume-work':'recent','resume-empty':'','resume-edited':'declared-only','resume-file':'declared-only'}[mode];
+        await page.waitForFunction(id=>(window.ArchHubAPI.getSessionDocument().properties.taskContext.task || '') === id,expected);
+        if (mode !== 'resume-work') await page.locator('[data-fixture-canvas]:visible').waitFor();
+        assert.deepEqual(await page.evaluate(()=>window.openedTasks),
+          {'resume-work':['recent'],'resume-empty':['Untitled'],'resume-edited':[],'resume-file':['declared-only']}[mode]);
+        assert.deepEqual(errors, []);
+        await page.close();
+        continue;
+      }
       const filter = page.getByRole('group', {name:'Saved document filter',exact:true});
       await filter.waitFor();
       assert.deepEqual(await filter.getByRole('button').allTextContents(), ['All', 'Workflows']);
@@ -131,6 +179,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       if (mode === 'uxflow') {
         // Interrupted sessions sit in the map's folded Older section and appear as cards when it is unfolded.
         const map = page.locator('[data-home-map]'), card = state => map.locator('[data-design="home.card"]').filter({has: page.locator('.home-card-head b', {hasText: 'State ' + state})});
+        await page.getByRole('button',{name:'Session history',exact:true}).click();
         const older = map.locator('[data-design="group.node"]').filter({hasText: 'Older / archived'});
         await older.waitFor();
         assert.equal(await card('interrupted').count(), 0);
@@ -253,9 +302,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         if(face==='Canvas' || ['empty','first','last','cancelled','refused'].includes(mode)) await nav.getByRole('button', {name: 'Canvas', exact: true}).click();
         else await page.getByRole('button', {name: 'Thread', exact: true}).click();
         if (['empty', 'first', 'last'].includes(mode)) {
-          await page.getByRole('alert').filter({hasText: 'Pick a task on Home.'}).waitFor();
-          assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
-          assert.equal(await nav.getByRole('button', {name: 'Home', exact: true}).getAttribute('aria-current'), 'page');
+          await page.locator('[data-fixture-canvas]:visible').waitFor();
+          assert.equal(await nav.getByRole('button', {name: 'Canvas', exact: true}).getAttribute('aria-current'), 'page');
+          assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), {empty:undefined,first:'recent',last:'selected'}[mode]);
+          break;
         } else if (mode === 'cancelled') {
           assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), 'selected');
           assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).count(), 0);
@@ -301,8 +351,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       }
       await nav.getByRole('button', {name: 'Home', exact: true}).click();
       if(mode==='empty') await page.getByRole('heading', {name:'What do you need?',exact:true}).waitFor();
-      // Nothing picked (the rail's Canvas just asked him to pick one): Home is the map with no session selected.
-      else if (['first', 'last'].includes(mode)) { await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor(); assert.equal(await page.locator('[data-home-map] .home-card.sel').count(), 0); }
+      else if (['first', 'last', 'refused', 'cancelled'].includes(mode)) await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor();
       else await page.getByRole('region', {name:'Resumed session',exact:true}).waitFor();
       assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).count(), 0);
       assert.deepEqual(errors, []);

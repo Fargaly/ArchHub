@@ -208,6 +208,10 @@
       }
     }, [s.sessionFile]);
     const navigation = React.useRef(0);
+    const viewedCanvas = React.useRef('');
+    React.useEffect(() => {
+      if (route === 'canvas') viewedCanvas.current = api.getSessionPath?.() || '';
+    }, [route, s.sessionFile]);
     const go = async (r, taskId = '') => {
       const visit = ++navigation.current;
       if (r === 'system') r = 'settings/System graph';
@@ -222,24 +226,29 @@
       const unboundCanvas = r === 'canvas' && document && (
         (taskId && taskId === currentPath) || (!taskId && !currentTask && (currentPath || api.hasSessionEdits?.() || canvasOpened))
       );
+      const resumeCanvas = r === 'canvas' && !taskId;
+      const keepDocument = api.hasSessionEdits?.() || (document && !currentPath) || (currentPath && currentPath === viewedCanvas.current);
       const home = !unboundCanvas && window.UI.homeDestination?.(r);
       if (unboundCanvas) setTask('');
       if (home) {
         if (home.library) setLibraryOpen(true);
-        const selected = taskId ? s.tasks.find(t => t.id === taskId || t.sessionPath === taskId)
-          : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask)
-            || (route === 'home' && r === 'canvas' ? s.tasks.find(t => t.id === window.UI.homeShown?.()) : undefined);  // the open session wins; from Home, Canvas opens the session Home shows selected
-        if (r === 'canvas' && !taskId && currentTask && (!selected || selected.id === currentTask || api.hasSessionEdits?.())) {
+        const tasks = resumeCanvas ? s.tasks.filter(row => !window.UI.isHomeRegistration(row) && row.status !== 'ARCHIVED') : s.tasks;
+        const selected = taskId ? tasks.find(t => t.id === taskId || t.sessionPath === taskId)
+          : tasks.find(t => t.id === task) || tasks.find(t => t.id === s.focusedTask)
+            || (route === 'home' && r === 'canvas' ? tasks.find(t => t.id === window.UI.homeShown?.()) : undefined);  // the open session wins; from Home, Canvas opens the session Home shows selected
+        const currentRow = s.tasks.find(row => row.id === currentTask);
+        const currentEligible = currentTask && !window.UI.isHomeRegistration(currentRow || {id:currentTask}) && currentRow?.status !== 'ARCHIVED';
+        if (resumeCanvas && currentTask && (keepDocument || (currentEligible && (!selected || selected.id === currentTask)))) {
           setTask(currentTask);
           setTaskFace('canvas');
-          r = s.tasks.some(row => row.id === currentTask) ? 'task-file' : 'canvas';
+          r = currentEligible && tasks.some(row => row.id === currentTask) ? 'task-file' : 'canvas';
         } else if (selected) {
           return openTaskFile(selected.id, home.face);
         } else if (r === 'canvas' && !taskId) {
           // Resume a saved task even before the Workshop has published its task rows.
           const listing = await act(() => api.listSessionModel());
-          if (visit !== navigation.current) return;
-          const recent = listing && !api.hasSessionEdits?.() && window.UI.homeSessionToResume(listing, [s.homeLayout?.resume, tabsRef.current.active, s.focusedTask]);
+          if (!listing || visit !== navigation.current) return;
+          const recent = !api.hasSessionEdits?.() && window.UI.homeSessionToResume(listing, [s.homeLayout?.resume, tabsRef.current.active, s.focusedTask]);
           if (recent) {
             const opened = await act(() => api.openSession(recent.path));
             if (!opened || opened.cancelled || visit !== navigation.current) return;
@@ -247,6 +256,10 @@
             setTaskFace('canvas');
             r = s.tasks.some(row => row.id === recent.task) ? 'task-file' : 'canvas';
           } else {
+            if (currentTask && !currentEligible && !api.hasSessionEdits?.()) {
+              const blank = await act(() => api.newSession());
+              if (!blank || blank.cancelled || visit !== navigation.current) return;
+            }
             setTask('');
           }
         } else {

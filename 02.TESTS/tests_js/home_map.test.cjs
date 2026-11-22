@@ -55,6 +55,13 @@ test('Canvas resumes selected work, then the last opened task, then the most rec
   assert.equal(resume(model, [archived.task]).id, b.id);
   assert.equal(resume({...model, recentTask: ''}, []).id, c.id);
   assert.equal(resume({groups: [{sessions: [archived, {...c, task: ''}]}]}, []), undefined);
+  const presence = session('presence', 'Any title', '', {task:'declared-only', updated:'2026-11-22'});
+  const mixed = {groups:[{sessions:[presence, c]}], recentTask:presence.task};
+  assert.equal(resume(mixed, [presence.task]).id, c.id);
+  assert.equal(resume({groups:[{sessions:[presence]}]}, [presence.task]), undefined);
+  const joined = {id:presence.task, declarations:[{work:presence.task}]};
+  assert.equal(resume(mixed, [presence.task], [joined]).id, presence.id);
+  assert.equal(resume(mixed, [c.task], [{id:c.task, declaration:true}]), undefined);
 });
 
 test('active Home keeps pinned and explicitly resumed files; history offers unassigned saved work', () => {

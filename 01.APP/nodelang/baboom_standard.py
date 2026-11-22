@@ -262,6 +262,11 @@ _PUBLIC_GUIDE_TOPICS = (
     (_HOW + r"(?:(?:save|store) " + _CANVAS_FILE + r"|[أا]حفظ " + _AR_FILE + ")",
      'composer-canvas', 'Where your work is saved'),
     (_HOW + r"(?:(?:open|reopen) " + _CANVAS_FILE + r"|[أا]فتح " + _AR_FILE + ")",
+     'composer-canvas', 'Where your work is saved'),
+    (_HOW + r"(?:(?:open|reopen) (?:" + _CANVAS_FILE + r"|my saved file) after "
+     r"(?:reconnecting|signing (?:back )?in)|[أا]فتح (?:" + _AR_FILE + r"|ملفي المحفوظ) بعد "
+     r"(?:عودة الاتصال|إعادة الاتصال|تسجيل الدخول))", 'getting-started', 'Sign in'),
+    (_HOW + r"(?:sign in (?:to|on) archhub|[أا]سجل الدخول (?:إلى|في) " + _PRODUCT + ")",
      'getting-started', 'Sign in'),
     (r"how do (?:the )?archhub approvals work|كيف تعمل (?:الموافقات في |موافقات )" + _PRODUCT,
      'approvals', 'Run mode (for every agent)'),
@@ -314,10 +319,6 @@ def _public_guide(index, question, arabic):
             and row['href'] == f'https://archhub.io/docs/{slug}/']
     if heading == 'Sign in' and slug == 'getting-started' and re.search(r"open|[أا]فتح", query):
         rows = [row for row in rows if '.archhub' in row['text']]
-        scope = ('يشرح الدليل إعادة فتح الملف بعد عودة الاتصال. ' if arabic else
-                 'The guide covers reopening a saved file after reconnecting. ')
-    else:
-        scope = ''
     if not rows:
         return None
     row = next((r for r in rows if bool(_ARABIC.search(r['text'])) == arabic), None)
@@ -325,7 +326,7 @@ def _public_guide(index, question, arabic):
         return None
     row = row or rows[0]
     prefix = 'النص الأصلي الموثق بالإنجليزية: ' if arabic and not _ARABIC.search(row['text']) else ''
-    return {'answer': f"{scope}{prefix}{row['text']} [{slug}]",
+    return {'answer': f"{prefix}{row['text']} [{slug}]",
             'links': [{'title': row['title'], 'href': row['href'], 'sub': heading}]}
 
 

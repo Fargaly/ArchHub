@@ -144,6 +144,35 @@ def test_an_unreviewed_max_script_is_never_placed(machine, tmp_path):
     assert not (tmp_path / "local" / "Autodesk").exists()
 
 
+@pytest.mark.parametrize("change", [
+    {"drop": "reviewed"}, {"reviewed": "true"}, {"reviewed": False},
+    {"drop_activation": "review_sha256"}, {"activation_review": "C" * 64}, {"activation_review": "c" * 63},
+    {"activation_eligibility": "unreviewed"}, {"activation": None}])
+def test_an_incomplete_max_review_record_places_nothing(machine, tmp_path, change):
+    """A valid script pin and eligibility label alone never activate MaxMCP: the review record must be whole."""
+    env = _max_env(machine, tmp_path)
+    _max_index(machine, reviewed=True)
+    index_path = machine.install / "HOST_ARTIFACTS.json"
+    index = json.loads(index_path.read_text())
+    entry = index["max"]
+    if "drop" in change:
+        del entry[change["drop"]]
+    if "reviewed" in change:
+        entry["reviewed"] = change["reviewed"]
+    if "drop_activation" in change:
+        del entry["activation"][change["drop_activation"]]
+    if "activation_review" in change:
+        entry["activation"]["review_sha256"] = change["activation_review"]
+    if "activation_eligibility" in change:
+        entry["activation"]["eligibility"] = change["activation_eligibility"]
+    if "activation" in change:
+        entry["activation"] = change["activation"]
+    index_path.write_text(json.dumps(index))
+    rows = colleague_setup.register_max_startup(machine.install, environment=env, detected_years=["2026"])
+    assert rows == [{"status": "refused", "reason": "not reviewed for activation"}]
+    assert not (tmp_path / "local" / "Autodesk").exists()
+
+
 def _run_uninstall_harness(tmp_path, *, revit_root, app, max_root, shipped):
     import os
     import shutil

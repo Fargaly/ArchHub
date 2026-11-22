@@ -603,8 +603,12 @@ def register_max_startup(root: Path, *, environment=None, detected_years=None) -
     if not isinstance(entry, dict):
         print("  3ds max    : this build carries no MaxMCP entry; nothing placed")
         return []
+    from nodelang.host_artifact_review import ELIGIBILITY
+    from nodelang.host_broker_installation import _digest
     activation = entry.get("activation")
-    if not (isinstance(activation, dict) and activation.get("eligibility") == "reviewed-authenticated-broker"):
+    # The same review record the Revit and AutoCAD owners require: reviewed, eligibility and the review's digest.
+    if not (entry.get("reviewed") is True and isinstance(activation, dict)
+            and activation.get("eligibility") == ELIGIBILITY and _digest(activation.get("review_sha256"))):
         print("  3ds max    : MaxMCP custody is not reviewed for activation; nothing placed")
         return [{"status": "refused", "reason": "not reviewed for activation"}]
     try:

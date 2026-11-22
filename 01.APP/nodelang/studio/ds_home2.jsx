@@ -140,7 +140,7 @@
     const workspaces = s.workspaces || [];
     const projectLabel = (id, label) => {
       const workspace = workspaces.find(item => (id && item.id === id) || (label && (item.label || item.name) === label));
-      return workspace?.label || workspace?.name || 'No project';
+      return workspace?.label || workspace?.name || '';
     };
     // A held run names its session by task id or by the session file it runs in.
     const held = (s.approvals || []).filter(c => c.status === 'pending');
@@ -187,6 +187,7 @@
   };
   // Home shows actionable work. Session history is an explicit view of the same saved files and task rows.
   const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Idle'];
+  const openHistoryView = () => ({map: {filter: 'All', done: 'Show', collapsed: []}, kind: 'all', olderOpen: false});
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
   // kind: All / Agent sessions / Workflows (the list's filter); olderOpen: the Older section unfolded; order: his own arrangement (task ids).
@@ -252,19 +253,18 @@
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
       (card.need?.approval || (!card.archived && (card.pinned || selected(card) ||
         (!card.registration && ['Failed','Working','Needs you'].includes(card.state))))));
-    const cards = (history ? every : active).filter(card => history ||
-      ((p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you')) &&
-      (kind === 'all' || card.kind === kind) && !chainUp(card).some(up => up.subtasksFolded)));
+    const cards = (history ? every : active).filter(card =>
+      (p.done === 'Show' || !card.finished || card.pinned || card.need?.approval) &&
+      (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you')) &&
+      (kind === 'all' || card.kind === kind) && !chainUp(card).some(up => up.subtasksFolded));
     // Old runs keep their own section, folded until he opens it (the list's Older / archived), whatever the grouping.
-    const ownKey = card => history && card.older ? 'Older / archived' : p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state : card.project;
+    const ownKey = card => history && card.older ? 'Older / archived' :
+      p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state :
+        card.project || (history ? 'Unassigned' : 'Work without a project');
     const keyOf = card => ownKey(rootOf(card));
     const rank = card => { const at = order.indexOf(card.task || card.id); return at < 0 ? order.length : at; };  // his drag order, then the rest
     cards.sort((a, b) => (p.order === 'Name' ? 0 : MAP_STATES.indexOf(a.state) - MAP_STATES.indexOf(b.state)) || (p.order === 'Name' ? 0 : rank(a) - rank(b)) || a.title.localeCompare(b.title));
     const keys = [...new Set(cards.map(keyOf))].sort((a, b) => Number(a === 'Older / archived') - Number(b === 'Older / archived') || (p.group === 'State' ? MAP_STATES.indexOf(a) - MAP_STATES.indexOf(b) : a.localeCompare(b)));
-    if (p.group === 'Project' && !params.collapsed) {
-      const unassigned = cards.filter(card => keyOf(card) === 'No project');
-      if (unassigned.length > 1 && unassigned.every(card => card.state === 'Idle' && !card.pinned)) p.collapsed = ['No project'];
-    }
     const folded = key => key === 'Older / archived' ? !olderOpen : p.collapsed.includes(key);
     // An input link is one wire, card edge to card edge: this session feeds that one. The session model holds no socket type
     // for a link, so the wire shows the design's default (files, a list); its hover says what the link really carries.
@@ -358,7 +358,7 @@
     const homeRef = React.useRef(homeLayout), homeWrites = React.useRef(Promise.resolve());
     // The map: the sessions read from their owner, the picked card, and the Home changes Undo and Redo step through.
     const [listing, setListing] = React.useState({status: 'waiting', groups: null, error: ''}), [attempt, setAttempt] = React.useState(0), [mapChoices, setMapChoices] = React.useState(null);
-    const [history, setHistory] = React.useState(false);
+    const [history, setHistory] = React.useState(null);
     const [room, setRoom] = React.useState(null);  // the map's aspect in quarter steps (view state, never saved)
     const [picked, setPicked] = React.useState(''), [pauseBusy, setPauseBusy] = React.useState(false), [, redraw] = React.useState(0), mapHistory = React.useRef({past: [], future: []});
     const saveHome = patch => {
@@ -726,19 +726,36 @@
     }, [published]);
     const heldMap = homeLayout.map || {};
     // The map holds work only (design app.js:345): no "Agent sessions" filter; an agent's own chat is under Agents on this PC.
-    const sessionKind = s.sessionListFilters?.home === 'workflow' ? 'workflow' : 'all', olderOpen = !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
-    const chart = homeMap({listed: listing, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: workTitle, focus, focusPath: api.getSessionPath?.() || '', history,
-      params: {...Object.fromEntries(Object.entries(mapChoices || {}).map(([key, options]) => [key, options[0]])), ...heldMap}});
+    const sessionKind = history?.kind || (s.sessionListFilters?.home === 'workflow' ? 'workflow' : 'all');
+    const olderOpen = history?.olderOpen ?? !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
+    const chart = homeMap({listed: listing, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: workTitle, focus, focusPath: api.getSessionPath?.() || '', history: !!history,
+      params: {...Object.fromEntries(Object.entries(mapChoices || {}).map(([key, options]) => [key, options[0]])), ...heldMap, ...history?.map}});
     const writeMap = (next, from, to) => {
       const held = mapHistory.current;
       mapHistory.current = from ? {...held, [from]: held[from].slice(0, -1), [to]: [...held[to], heldMap]} : {past: [...held.past, heldMap], future: []};
       redraw(count => count + 1);
       return saveHome({map: next});
     };
-    const changeMap = patch => writeMap(patch ? {...heldMap, ...patch} : {}, '', '');
+    const changeMap = patch => {
+      if (!history) return writeMap(patch ? {...heldMap, ...patch} : {}, '', '');
+      setHistory({...history, map: {...history.map, ...patch}});
+      return true;
+    };
+    const changeKind = kind => {
+      if (!history) return u.act(() => api.setSessionListFilter('home', kind));
+      setHistory({...history, kind});
+      return true;
+    };
     const stepMap = (from, to) => mapHistory.current[from].length ? writeMap(mapHistory.current[from].at(-1), from, to) : undefined;
     // The Older section's fold is the list's own record (homeLayout.sections); every other group's is a map parameter.
-    const toggleGroup = key => key === 'Older / archived' ? saveHome({sections: olderOpen ? [...(homeLayout.sections || []), key] : (homeLayout.sections || ['Older / archived']).filter(item => item !== key)}) : changeMap({collapsed: chart.params.collapsed.includes(key) ? chart.params.collapsed.filter(item => item !== key) : [...chart.params.collapsed, key]});
+    const toggleGroup = key => {
+      if (key !== 'Older / archived') return changeMap({collapsed: chart.params.collapsed.includes(key)
+        ? chart.params.collapsed.filter(item => item !== key) : [...chart.params.collapsed, key]});
+      if (!history) return saveHome({sections: olderOpen ? [...(homeLayout.sections || []), key]
+        : (homeLayout.sections || ['Older / archived']).filter(item => item !== key)});
+      setHistory({...history, olderOpen: !olderOpen});
+      return true;
+    };
     // A card's session: its task, else the task whose session file it is (one file, however its path is spelled).
     const cardTask = card => card && !card.archived ? tasks.find(t => card.task && t.id === card.task) || tasks.find(t => sameHomePath(t.sessionPath, card.path)) || null : null;
     // Selection belongs to the Home owner (its resume record and the open session); the layout is never touched by it.
@@ -794,7 +811,7 @@
     const fieldLabels = {group: 'Group by', order: 'Order', card: 'Card', density: 'Density', done: 'Finished sessions', filter: 'Show'};
     const mapInspector = <aside className="shared-properties" data-properties-pane="" data-home-inspector="" aria-label="Properties">
       {pickedCard ? <>
-        <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || 'No agent yet'].join(' · ')}</p></header>
+        <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || 'No agent yet'].filter(Boolean).join(' · ')}</p></header>
         <div className="shared-properties-task">{pickedTask ? resumeView : <Btn sm p onClick={event => executeAction('ui.select', () => openCard(pickedCard), event)}>Open</Btn>}
           {pickedTask && <div className="dx-preview-actions">
             <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
@@ -811,8 +828,8 @@
           {Object.entries(mapChoices || {}).map(([key, options]) => <label className="dx-fact" key={key}><span>{fieldLabels[key] || key}</span><select aria-label={fieldLabels[key] || key} value={chart.params[key]} onChange={event => { const value = event.target.value; return executeAction('ui.select', () => changeMap({[key]: value})); }}>{options.map(option => <option key={option}>{option}</option>)}</select></label>)}
           <h3>{chart.params.group === 'Agent' ? 'Agents' : chart.params.group === 'State' ? 'States' : 'Projects'}</h3>
           {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.count}</span><button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></div>)}
-          {!!homeLayout.hidden.length && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
-          <button type="button" data-design="home1.reset" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>
+          {!history && !!homeLayout.hidden.length && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
+          {!history && <button type="button" data-design="home1.reset" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>}
         </div>
       </>}
     </aside>;
@@ -827,10 +844,10 @@
               {[['Running', rows.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
               {chart.armed > 0 && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {chart.armed} automation{chart.armed === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
               <span className="fill" />
-              <button type="button" className="dx-quiet" data-home-history="" aria-pressed={history}
-                onClick={event => executeAction('ui.select', () => setHistory(current => !current), event)}>Session history</button>
-              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ['workflow', 'Workflows']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => u.act(() => api.setSessionListFilter('home', value)), event)}>{label}</button>)}</div>
-              {[['Undo', 'undo', 'past', 'future'], ['Redo', 'redo', 'future', 'past']].map(([label, icon, from, to]) => <button key={label} type="button" className="dx-quiet" aria-label={label} title={label + ' the last Home change'} disabled={!mapHistory.current[from].length} onClick={event => executeAction('ui.select', () => stepMap(from, to), event)}><Icon name={icon} size={14} /></button>)}
+              <button type="button" className="dx-quiet" data-home-history="" aria-pressed={!!history}
+                onClick={event => executeAction('ui.select', () => setHistory(current => current ? null : openHistoryView()), event)}>Session history</button>
+              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ['workflow', 'Workflows']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => changeKind(value), event)}>{label}</button>)}</div>
+              {!history && [['Undo', 'undo', 'past', 'future'], ['Redo', 'redo', 'future', 'past']].map(([label, icon, from, to]) => <button key={label} type="button" className="dx-quiet" aria-label={label} title={label + ' the last Home change'} disabled={!mapHistory.current[from].length} onClick={event => executeAction('ui.select', () => stepMap(from, to), event)}><Icon name={icon} size={14} /></button>)}
             </div></div>
             <window.UI.Dock face="canvas" rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
               panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} onAdd={startSessionWith} />, insp: mapInspector}}>
@@ -839,10 +856,9 @@
                 {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
                   : mapChoices && listing.status === 'loaded' && (request === 'empty' || request === 'loaded') ? <main className="resume-main">{chart.total ? <section className="resume-zero">
                     <h1>{chart.params.filter === 'Running' ? '0 running' : chart.params.filter === 'Needs you' ? '0 need you' : 'No sessions match your filters'}</h1>
-                    <button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
-                      setHistory(true);
-                      return changeMap({filter: 'All'});
-                    }), event)}>Open session history</button>
+                    <button type="button" onClick={event => executeAction('ui.select', () => setHistory(openHistoryView()), event)}>
+                      {history ? 'Clear history filters' : 'Open session history'}
+                    </button>
                   </section> : zeroState}</main> : null}
                 {/* The composer belongs to the map's own column: between the docks at every width, never over them. */}
                 {/* The picked card's session is the composer's recipient (design v61 C1-C3, the Composer's homeSession); none picked: a new session. */}

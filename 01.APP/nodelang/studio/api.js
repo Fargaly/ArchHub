@@ -691,7 +691,7 @@ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approva
  async addWorkspace(input={}){if(input.create){const result=await request('/api/universal/workspace-roots',{action:'create',parent:input.parent,name:input.name,template:input.template||'',template_source:input.templateSource||'',template_window:projectTemplateWindow});await api.listWorkspaces();return {...result,message:'Project created and added to your workspaces.'};}let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return {cancelled:true,message:'No workspace was added.'};}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return {...result,message:'Workspace added. Your agents can work here.'};},
  async removeWorkspace(id){const result=await request('/api/universal/workspace-roots',{action:'unregister',id});await api.listWorkspaces();return {...result,message:'Workspace removed from ArchHub. Your files are unchanged.'};},
 });
-for(const fn of ['setTaskStatus','archiveTask','reassignTask','setTaskDelegate','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {
+for(const fn of ['setTaskStatus','archiveTask','restoreArchivedTask','reassignTask','setTaskDelegate','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {
  api[fn]=async(...args)=>{const result=await workshop(fn,args);if(result?.ok===false)return result;await refreshTasks();return result;};
 }
 for(const name of approvalActions) {

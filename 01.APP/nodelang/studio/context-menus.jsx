@@ -314,6 +314,8 @@
             const result = await api.archiveTask(id);
             if (result?.ok === false) throw Error(result.error);
             if (u.canvasTabs.tabs.some(tab => tab.id === id)) await u.closeTaskTab(id);
+            if (result?.revision) u.setToast({text:task.title + ' archived.', label:'Undo',
+              open:() => u.act(() => api.restoreArchivedTask(id, result.revision))});
             return result;
           })))];
       } else if (project && surface.contains(project)) {

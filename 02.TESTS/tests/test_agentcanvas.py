@@ -462,3 +462,58 @@ def test_home_fork_retains_registered_project_and_relative_file(history, tmp_pat
     made = tasks.duplicate_home_task(history, None, str(source), files)
     copied = read_document(made['path'])['nodes'][-1]
     assert Path(resolve_file_parameter(copied['params']['path'], made['path'])) == target
+
+
+@pytest.mark.parametrize('previous', ['open', 'done'])
+def test_home_archive_undo_restores_same_task_once(history, previous):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    row = tasks.create(history, 'Archive fixture', 'founder')
+    key, path = row['id'], row['session_path']
+    if previous == 'done':
+        tasks.set_status(history, key, 'DONE')
+    else:
+        tasks.claim(history, key, 'fixture-agent', 'Fixture agent')
+    tasks.archive(history, key)
+    revision = tasks.get(history, key)['revision']
+    with pytest.raises(tasks.TaskConflict):
+        tasks.restore_archived(history, key, revision - 1)
+    assert read_document(path)['properties']['state'] == 'archived'
+    assert tasks.restore_archived(history, key, revision)
+    after = tasks.get(history, key)
+    assert after['status'] == previous and not after['archived'] and after['session_path'] == path
+    assert all(not m.get('lease_until') for m in after['members'])
+    assert read_document(path)['properties']['state'] == previous
+    with pytest.raises(tasks.TaskConflict):
+        tasks.restore_archived(history, key, revision)
+
+
+def test_home_archive_undo_status_belongs_to_owner(history, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from nodelang import nograph_server, workshop_mailbox, workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    monkeypatch.setattr(workshop_mailbox, 'application_history', lambda: nullcontext(history))
+    def route(name, *args):
+        request = SimpleNamespace(method='POST', body={'action':'data-api','function':name,'args':list(args)})
+        return nograph_server.r_workshop(None, request)['result']
+    row = tasks.create(history, 'Owner state fixture', 'founder')
+    key = row['id']
+    receipt = route('archiveTask', key)
+    rev = receipt['revision']
+    assert 'previous' not in receipt
+    assert not route('restoreArchivedTask', key, rev, 'done')['ok']
+    assert tasks.get(history, key)['archived']
+    assert route('restoreArchivedTask', key, rev)['ok']
+    assert tasks.get(history, key)['status'] == 'open'
+    assert read_document(row['session_path'])['properties']['state'] == 'open'
+    receipt = route('archiveTask', key)
+    tasks.rename(history, key, 'Edited while archived')
+    for obsolete in (receipt['revision'], tasks.get(history, key)['revision']):
+        result = route('restoreArchivedTask', key, obsolete)
+        assert not result['ok'] and 'Undo is no longer available' in result['error']
+    assert tasks.get(history, key)['archived']
+    tasks._write(history, 'UPDATE workshop_tasks SET archive_previous=NULL,archive_revision=NULL WHERE id=?',(key,))
+    legacy = route('restoreArchivedTask', key, tasks.get(history, key)['revision'])
+    assert not legacy['ok'] and 'not recorded' in legacy['error']
+    assert read_document(row['session_path'])['properties']['state'] == 'archived'

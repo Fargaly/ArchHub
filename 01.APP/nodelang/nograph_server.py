@@ -1666,12 +1666,31 @@ def _archive_task(task):
     from .workshop_mailbox import application_history
     from .workshop_tasks import archive, TaskNotFound
     try:
-        with application_history() as history:
-            if not archive(history, str(task)):
+        from .workshop_tasks import get
+        with application_history() as history, history._transaction(write=True):
+            row = get(history, str(task))
+            if row is None:
+                raise TaskNotFound(task)
+            if row['archived']:
+                return {'ok':True, 'task':str(task)}
+            if not archive(history, str(task), row['revision']):
                 return {'ok': False, 'error': 'The task changed while archiving it. Retry.'}
+            return {'ok':True, 'task':str(task), 'revision':row['revision'] + 1}
     except TaskNotFound:
         return {'ok': False, 'error': 'No such Workshop task'}
-    return {'ok': True, 'task': str(task)}
+
+
+def _restore_archived_task(task, revision):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import restore_archived, TaskConflict
+    try:
+        with application_history() as history:
+            restore_archived(history, task, revision)
+    except TaskConflict:
+        return {'ok':False, 'error':'This task changed after it was archived. Undo is no longer available.'}
+    except ValueError as error:
+        return {'ok':False, 'error':str(error)}
+    return {'ok':True, 'task':task}
 
 
 def _list_agents():
@@ -1925,6 +1944,7 @@ WORKSHOP_READS = {
     'restoreTaskCheckpoint': lambda task, checkpoint: _checkpoint_task(task, checkpoint, restore=True),
     'setTaskStatus': _set_task_status,
     'archiveTask': _archive_task,
+    'restoreArchivedTask': _restore_archived_task,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: (_SERVER._messages.get()
         if before is None else _list_messages(before)),
@@ -1956,6 +1976,8 @@ def r_workshop(s, req):
                 return {'ok': True, 'result': {'ok': False, 'error': str(refused)}}
         if function == 'createTask':
             return {'ok': True, 'result': _create_task(s, *(body.get('args') or []))}
+        if function == 'restoreArchivedTask' and (not isinstance(body.get('args'), list) or len(body['args']) != 2):
+            return {'ok':True, 'result':{'ok':False, 'error':'Archive Undo takes only a task and its archive revision.'}}
         handler = WORKSHOP_READS.get(function)
         if handler is None:
             return {'ok': True, 'result': not_available('Workshop "%s"' % function)}

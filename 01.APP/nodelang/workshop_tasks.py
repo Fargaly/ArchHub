@@ -22,7 +22,8 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
           "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
-          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT, parent_id TEXT) STRICT")
+          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT, parent_id TEXT, "
+          "archive_previous TEXT, archive_revision INTEGER) STRICT")
 TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
@@ -97,6 +98,10 @@ def _ensure(history):
         _add_column(history, "session_path TEXT")
     if "archived" not in names:
         _add_column(history, "archived INTEGER NOT NULL DEFAULT 0")
+    if "archive_previous" not in names:
+        _add_column(history, "archive_previous TEXT")
+    if "archive_revision" not in names:
+        _add_column(history, "archive_revision INTEGER")
     if "purpose" not in names:
         _add_column(history, "purpose TEXT")
     if "project" not in names:
@@ -525,13 +530,41 @@ def begin_run(history, task, owner, label, revision=None, lease_seconds=None):
     return True
 
 
+def restore_archived(history, task, revision):
+    """Undo this archive only. Ended worker leases are never reactivated."""
+    if type(revision) is not int:
+        raise ValueError('Choose a current archived task.')
+    with history._transaction(write=True):
+        row = get(history, task)
+        if row is None:
+            raise TaskNotFound(task)
+        if not row['archived'] or revision != row['revision']:
+            raise TaskConflict(task, revision)
+        if row['archive_previous'] is None or row['archive_revision'] is None:
+            raise ValueError('The prior state of this older archive was not recorded.')
+        if row['archive_revision'] != revision:
+            raise TaskConflict(task, revision)
+        previous = 'open' if row['archive_previous'] == 'claimed' else row['archive_previous']
+        members = [{**member, 'lease_until':None} for member in row['members']]
+        def restore(expected):
+            return ("UPDATE workshop_tasks SET archived=0,archive_previous=NULL,archive_revision=NULL,status=?,members=?,"
+                    "owner=CASE WHEN ?='done' THEN owner END,owner_label=CASE WHEN ?='done' THEN owner_label END,"
+                    "lease_until=NULL,write_open=0,updated_at=?,revision=revision+1 "
+                    "WHERE id=? AND archived=1 AND revision=?", (previous, json.dumps(members), previous, previous, _now(), task, expected))
+        if not _update(history, task, revision, restore):
+            raise TaskConflict(task, revision)
+        _file_state(row, previous)
+    return True
+
+
 def archive(history, task, revision=None):
     """Close a task so it leaves the active list. Its .archhub file stays readable."""
     if get(history, task) is None:
         raise TaskNotFound(task)
     def statement(expected):
-        return ("UPDATE workshop_tasks SET status='done', archived=1, lease_until=NULL, updated_at=?, "
-                "revision=revision+1 WHERE id=? AND revision=?",
+        return ("UPDATE workshop_tasks SET archive_previous=status, archive_revision=revision+1, "
+                "status='done', archived=1, lease_until=NULL, updated_at=?, "
+                "revision=revision+1 WHERE id=? AND archived=0 AND revision=?",
                 (_now(), task, expected))
     won = _update(history, task, revision, statement)
     if won:
@@ -1163,7 +1196,7 @@ def set_status(history, task, status, revision=None):
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
            "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
-           "revision", "outcome", "write_open", "capacity", "members", "parent_id")
+           "revision", "outcome", "write_open", "capacity", "members", "parent_id", "archive_previous", "archive_revision")
 
 
 def rows(history, task=None, *, include_archived=True, settle=True):

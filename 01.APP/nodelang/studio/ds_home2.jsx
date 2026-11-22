@@ -129,10 +129,8 @@
   const humanLabel = label => String(label || '').split(' / ').slice(0, 2).join(' · ');
   // One owner for the Home list and the header's count: every session row and the section it sits in.
   const sameHomePath = api.sameSessionPath;
-  const providerTitle = /^[^/\n]{1,40} \/ [^/\n]+ \/ /;
   const registration = row => row.declaration === true || (String(row.id).startsWith('declared-') &&
-    providerTitle.test(String(row.description || row.title || '')) &&
-    !(row.declarations || []).some(item => item.task && !providerTitle.test(item.task)));
+    !(row.declarations || []).some(item => item.work === row.id));
 
   const homeRows = (s, layout) => {
     const hidden = layout?.hidden || [], order = layout?.order || [];
@@ -146,7 +144,7 @@
     const namesOf = c => [c.taskId,c.task_id,c.work,...(c.taskIds||[]),c.path,...(c.canvasNodes||[]).flatMap(ref=>[ref.taskId,ref.path])].filter(Boolean);
     const waiting = new Set(held.flatMap(namesOf).flatMap(name => [name,...(s.tasks||[]).filter(t=>t.sessionPath===name).map(t=>t.id)]));
     const rank=id=>{const index=order.indexOf(id);return index<0?order.length:index;};
-    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
+    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED' && !registration(t)).sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
     const sessionRows = [
       ...(s.tasks||[]).filter(t=>!hidden.includes(t.id)).sort((a,b)=>tasks.indexOf(a)-tasks.indexOf(b)).map(t=>({...t,kind:(s.graphs||[]).find(row=>row.path===t.sessionPath)?.kind||'agent-session'})),
       ...(s.graphs||[]).filter(row=>row.kind==='workflow'&&!(s.tasks||[]).some(t=>t.sessionPath===row.path)).map(row=>({...row,id:row.path,title:row.title||row.name,sessionPath:row.path,fileOnly:true}))
@@ -158,7 +156,7 @@
     }
     // A held run that belongs to no listed session is a row too: it needs him, so it is shown and counted.
     for(const card of held.filter((card,index)=>held.findIndex(other=>(other.input_digest||other.id)===(card.input_digest||card.id))===index))
-      if(!namesOf(card).some(name=>sessionRows.some(row=>row.id===name||row.sessionPath===name)))
+      if(!namesOf(card).some(name=>sessionRows.some(row=>!registration(row)&&(row.id===name||row.sessionPath===name))))
         sessionRows.unshift({id:'approval:'+card.id,title:card.title||'A run waits for your approval',kind:'agent-session',approval:card.id,who:card.who||''});
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
@@ -185,7 +183,7 @@
       running: sessionRows.filter(row => !registration(row) && (row.status === 'WIP' || working(row))).length};
   };
   // Home shows actionable work. Session history is an explicit view of the same saved files and task rows.
-  const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Idle'];
+  const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Planned', 'Idle'];
   const openHistoryView = () => ({map: {filter: 'All', done: 'Show', collapsed: []}, kind: 'all', olderOpen: false});
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
@@ -214,7 +212,7 @@
         members: members.slice(1).map(member => member.name).filter(Boolean),
         state: held ? 'Needs you' : failed ? 'Failed' :
           row && (row.status === 'WIP' || rows.working(row)) || steps.some(step => step.kind === 'working') ? 'Working' :
-          row && rows.needs(row) ? 'Needs you' : 'Idle'};
+          row && rows.needs(row) ? 'Needs you' : row?.status === 'PLANNED' ? 'Planned' : 'Idle'};
     };
     // A card is a piece of work (founder 2026-11-19): agents are members of it, never cards. A session whose task row is
     // archived (the one-time retire of declare-made sessions, or his own archive) is no card; its file stays where it is.
@@ -223,7 +221,7 @@
       const archived = session.state === 'archived' || row?.status === 'ARCHIVED';
       const fact = facts(row, session.context?.plan, Array.isArray(row?.members) ? row.members : session.members || []);
       return {id: session.id, path: session.path, task: archived ? '' : session.task || row?.id || '',
-        taskIdentity: session.task || row?.id || '', archived, registration: row ? registration(row) : false,
+        taskIdentity: session.task || row?.id || '', archived, registration: registration(row || {id: session.task}),
         parent: row?.parent || '', title: session.title,
         project: rows.projectLabel(session.project?.id, session.project?.label),
         kind: row?.kind || session.kind || 'agent-session', older: archived || (!!row && rows.sectionOf(row) === 'Older / archived'),
@@ -240,7 +238,7 @@
       pinned: !!row.homePinned, ...facts(row, null, row.approval && row.who ? [{name: row.who}] : row.members || []), armed: 0, links: [],
       kind: row.kind || 'agent-session', older: !row.approval && rows.sectionOf(row) === 'Older / archived',
       ...(row.approval ? {state: 'Needs you', need: {text: row.title + ' needs your approval', approval: row.approval}} : {}), ...(row.status === 'DONE' ? {finished: true} : {})}));
-    const every = [...files, ...loose];
+    const every = [...files.filter(card => !card.registration), ...loose];
     // Projects > tasks > subtasks (one task owner, parent_id): a subtask sits in its top task's group, wired from its parent,
     // one column to the right; a parent folded with 'task:<id>' hides every subtask under it.
     const byTask = new Map(every.filter(card => card.task).map(card => [card.task, card]));
@@ -251,7 +249,7 @@
     const selected = card => (!!focus && card.task === focus) || sameHomePath(card.path, focusPath);
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
       (card.need?.approval || (!card.archived && (card.pinned || selected(card) ||
-        (!card.registration && ['Failed','Working','Needs you'].includes(card.state))))));
+        ['Failed','Working','Needs you'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
     const cards = (history ? every : active).filter(card =>
       (p.done === 'Show' || !card.finished || card.pinned || card.need?.approval) &&
       (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you')) &&

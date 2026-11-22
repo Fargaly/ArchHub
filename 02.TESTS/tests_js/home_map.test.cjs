@@ -81,7 +81,7 @@ test('a card is one whole session: who works on it, its state word, where it sta
   assert.deepEqual([held.state, held.need], ['Needs you', {text: 'Send to client needs your approval', approval: 'a'}], 'a held run is the tinted line with Review');
   const failed = at(chart, 'idx');
   assert.deepEqual([failed.state, failed.now, failed.need], ['Failed', 'Step 1 of 1 · Read sheet index', {text: 'Read sheet index failed', failed: true}]);
-  assert.deepEqual([at(chart, 'survey').state, at(chart, 'survey').agent, at(chart, 'survey').now], ['Idle', '', 'No steps yet']);
+  assert.deepEqual([at(chart, 'survey').state, at(chart, 'survey').agent, at(chart, 'survey').now], ['Planned', '', 'No steps yet']);
   assert.doesNotMatch(JSON.stringify(cards(chart).map(card => [card.title, card.agent, card.now])), /session-[0-9a-f]{6,}/, 'no raw session id on a card');
   for (const group of chart.nodes.filter(node => node.group)) for (const card of cards(chart).filter(item => item.project === group.title))
     assert.ok(card.x >= group.x && card.y >= group.y && card.x + card.w <= group.x + group.w && card.y + card.h <= group.y + group.h, card.title + ' sits inside ' + group.title);
@@ -95,6 +95,18 @@ test('a card is work: a held run with no session is a card; an agent is a member
   assert.equal(cards(chart).filter(card => card.state === 'Needs you').length, rows.needsYou);
   assert.equal(cards(chart).filter(card => card.state === 'Working').length, 1);
   assert.deepEqual([rows.needsYou, rows.running, chart.total, chart.armed], [2, 1, 7, 1]);
+});
+
+test('a planned task and a claimless registration are distinguished by owner identity in both views', () => {
+  const title = 'Codex / Office / Review the door schedule';
+  const work = task('review', {title, plan: ['Check door widths']});
+  const presence = {...task('presence'), id: 'declared-old', title: 'Check door widths'};
+  const files = [session('review', title, 'Office'), session('presence', presence.title, 'Office', {task:presence.id})];
+  const rows = homeRows({...state, tasks:[work, presence], approvals:[]}, {});
+  for (const history of [false, true]) {
+    const chart = homeMap({listed:{groups:[{sessions:files}]}, rows, params:DEFAULT, titleOf:r=>r.title, history, olderOpen:true});
+    assert.deepEqual(plain(cards(chart).map(c=>[c.title,c.state,c.steps.length])), [[title,'Planned',1]]);
+  }
 });
 
 test('archived work stays off Active and its original file remains reachable from history', () => {
@@ -112,7 +124,7 @@ test('archived work stays off Active and its original file remains reachable fro
   assert.equal(cards(view(tasks, true, true)).some(card => card.title === '7/7 complete on Build 11'), false, 'no fake file for a row without one');
   const kept = [...tasks, {id: 'session-5c6d', title: 'Review he answered in', status: 'PLANNED', updated_at: today, plan: [], progress: {}}];
   assert.ok(cards(view(kept, true)).some(card => card.title === 'Review he answered in'));
-  assert.ok(!cards(view(kept, false)).some(card => card.title === 'Review he answered in'));
+  assert.ok(cards(view(kept, false)).some(card => card.title === 'Review he answered in'));
 });
 
 test('an input link is one wire from card edge to card edge, laid left to right, with the design\'s default type and what it carries', () => {
@@ -123,7 +135,7 @@ test('an input link is one wire from card edge to card edge, laid left to right,
 });
 
 test('group, order, card, density, finished and the filter are parameters', () => {
-  assert.deepEqual(draw({group: 'State'}).groups.map(group => group.key), ['Needs you', 'Failed', 'Working', 'Idle']);
+  assert.deepEqual(draw({group: 'State'}).groups.map(group => group.key), ['Needs you', 'Failed', 'Working', 'Planned', 'Idle']);
   assert.deepEqual(draw({group: 'Agent'}).groups.map(group => group.key), ['Claude Code · Tower', 'Codex · Site', 'No agent yet']);
   const office = chart => cards(chart).filter(card => card.project === 'Office').sort((a, b) => a.y - b.y || a.x - b.x).map(card => card.title);
   assert.deepEqual(office(draw()), ['Export package', 'Sheet index', 'Standard check'], 'what needs him first, then what failed');
@@ -138,11 +150,11 @@ test('group, order, card, density, finished and the filter are parameters', () =
 });
 
 test('a collapsed group is one node; every wire that crosses its edge stays', () => {
-  const chart = draw({group: 'State', collapsed: ['Idle']});  // survey and sheets are Idle; model is Working
-  const idle = chart.nodes.find(node => node.id === 'group:Idle');
+  const chart = draw({group: 'State', collapsed: ['Planned']});  // survey and sheets are Planned; model is Working
+  const idle = chart.nodes.find(node => node.id === 'group:Planned');
   assert.equal(idle.collapsed, true);
   assert.equal(cards(chart).some(card => ['survey', 'sheets'].includes(card.id)), false);
-  assert.deepEqual(chart.wires.map(wire => [wire.from, wire.to].join(' > ')).sort(), ['group:Idle > model', 'model > group:Idle']);
+  assert.deepEqual(chart.wires.map(wire => [wire.from, wire.to].join(' > ')).sort(), ['group:Planned > model', 'model > group:Planned']);
 });
 
 test('a narrow room stacks a group: unlinked sessions sit under the chain and groups wrap, so the map stays readable', () => {
@@ -169,10 +181,10 @@ test('nothing given up from the list: the All / Agent sessions / Workflows filte
   assert.deepEqual(cards(draw({filter: 'Needs you'}, [], {history: true})).map(card => card.id).sort(), ['approval:b', 'exp']);
   assert.deepEqual(draw(activeFilter, [], {history: false}), before, 'history uses separate parameters from Active');
   // His order: the idle sessions in the order he dragged them (grouped by state, so they share one group).
-  const idle = chart => cards(chart).filter(card => card.state === 'Idle').sort((a, b) => a.y - b.y || a.x - b.x).map(card => card.id);
+  const idle = chart => cards(chart).filter(card => card.state === 'Planned').sort((a, b) => a.y - b.y || a.x - b.x).map(card => card.id);
   const byState = order => idle(plain(homeMap({listed, rows: base, params: {...DEFAULT, group: 'State'}, titleOf: row => row.id, order, history: true})));
-  assert.deepEqual(byState(['t-sheets', 't-std', 't-survey']), ['sheets', 'std', 'survey'], 'the drag order arranges the cards');
-  assert.deepEqual(byState(['t-survey', 't-std', 't-sheets']), ['survey', 'std', 'sheets']);
+  assert.deepEqual(byState(['t-sheets', 't-survey']), ['sheets', 'survey'], 'the drag order arranges the cards');
+  assert.deepEqual(byState(['t-survey', 't-sheets']), ['survey', 'sheets']);
   // Old runs sit in their own folded section; unfolding it shows them.
   const old = {...base, sectionOf: () => 'Older / archived'};
   const folded = plain(homeMap({listed, rows: old, params: DEFAULT, titleOf: row => row.id, history: true}));

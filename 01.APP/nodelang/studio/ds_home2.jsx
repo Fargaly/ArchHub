@@ -252,10 +252,11 @@
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
       (card.need?.approval || (!card.archived && (card.pinned || selected(card) ||
         ['Failed','Working','Needs you'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
-    const cards = (history ? every : active).filter(card =>
+    const available = (history ? every : active).filter(card => !chainUp(card).some(up => up.subtasksFolded));
+    const cards = available.filter(card =>
       (p.done === 'Show' || !card.finished || card.pinned || card.need?.approval) &&
       (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you')) &&
-      (kind === 'all' || card.kind === kind) && !chainUp(card).some(up => up.subtasksFolded));
+      (kind === 'all' || card.kind === kind));
     // Old runs keep their own section, folded until he opens it (the list's Older / archived), whatever the grouping.
     const ownKey = card => history && card.older ? 'Older / archived' :
       p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state :
@@ -299,7 +300,7 @@
     // A collapsed group stands in for its members on every wire that crosses its edge.
     const wires = links.map(wire => ({...wire, from: inside.get(wire.from), to: inside.get(wire.to)})).filter(wire => wire.from !== wire.to);
     const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
-    return {params: p, nodes, wires, groups, total: every.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
+    return {params: p, nodes, wires, groups, total: every.length, available: available.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
       signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
   // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
@@ -863,9 +864,12 @@
                 {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
                   : mapChoices && listing.status === 'loaded' && (request === 'empty' || request === 'loaded') ? <main className="resume-main">{chart.total ? <section className="resume-zero">
                     <h1>{chart.params.filter === 'Running' ? '0 running' : chart.params.filter === 'Needs you' ? '0 need you' : 'No sessions match your filters'}</h1>
-                    <button type="button" onClick={event => executeAction('ui.select', () => setHistory(openHistoryView()), event)}>
+                    {!history && chart.available ? <button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
+                      if (sessionKind !== 'all') await api.setSessionListFilter('home', 'all');
+                      if (chart.params.filter !== 'All' || chart.params.done !== 'Show') await changeMap({filter: 'All', done: 'Show'});
+                    }), event)}>Show all ({chart.available})</button> : <button type="button" onClick={event => executeAction('ui.select', () => setHistory(openHistoryView()), event)}>
                       {history ? 'Clear history filters' : 'Open session history'}
-                    </button>
+                    </button>}
                   </section> : zeroState}</main> : null}
                 {/* The composer belongs to the map's own column: between the docks at every width, never over them. */}
                 {/* The picked card's session is the composer's recipient (design v61 C1-C3, the Composer's homeSession); none picked: a new session. */}

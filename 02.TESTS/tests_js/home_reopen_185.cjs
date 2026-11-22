@@ -71,21 +71,35 @@ const {chromium} = require('playwright');
       assert.equal((await page.locator('.v22g-tab[data-active="true"] [role="tab"]').textContent()).trim(), 'Canvas session to reopen', 'the open session wins');
     });
     await fresh('3 recover the Home filters without losing saved work', async page => {
-      assert.ok(await create(page, 'Saved task behind the running filter'));
-      await page.evaluate(async () => {
+      const id = await create(page, 'Saved task behind the running filter');
+      const hidden = await create(page, 'Hidden task');
+      const archived = await create(page, 'Archived task');
+      await page.evaluate(id => window.ArchHubAPI.archiveTask(id), archived);
+      await page.evaluate(async hidden => {
         const api = window.ArchHubAPI;
         const {homeLayout} = await api.readHomeLayout();
         await api.setSessionListFilter('home', 'workflow');
-        await api.setHomeLayout({...homeLayout, map: {...homeLayout.map, filter: 'Running'}});
-      });
+        await api.setHomeLayout({...homeLayout, hidden:[...homeLayout.hidden,hidden], map: {...homeLayout.map, group:'Project', filter:'Running'}});
+      }, hidden);
       await page.getByRole('heading', {name: '0 running', exact: true}).waitFor();
       const saved = page.waitForResponse(response => response.url().endsWith('/api/universal/settings-action')
         && response.request().method() === 'POST' && response.request().postDataJSON()?.function === 'setHomeLayout');
       await page.getByRole('button', {name: /^Show all \([1-9]\d*\)$/}).click();
       assert.ok((await saved).ok(), 'the settings owner accepted the filter change');
       await page.locator('[data-home-kind="all"][aria-pressed="true"]').waitFor();
-      const filter = await page.evaluate(async () => (await window.ArchHubAPI.readHomeLayout()).homeLayout.map.filter);
-      assert.equal(filter, 'All');
+      const card = task => page.locator('[data-design="home.card"][data-home-task="'+task+'"]');
+      await card(id).waitFor();
+      assert.equal(await card(hidden).count(), 0);
+      assert.equal(await page.locator('[data-design="home.card"]').filter({hasText:'Archived task'}).count(), 0);
+      assert.equal(await page.locator('[data-home-task^="declared-"]').count(), 0);
+      assert.equal(await page.locator('[data-home-history]').getAttribute('aria-pressed'), 'false');
+      const [layout, kinds] = await page.evaluate(async () => Promise.all([
+        window.ArchHubAPI.readHomeLayout(),window.ArchHubAPI.readSessionListFilters()
+      ]));
+      assert.equal(layout.homeLayout.map.filter, 'All');
+      assert.equal(layout.homeLayout.map.group, 'Project');
+      assert.ok(layout.homeLayout.hidden.includes(hidden));
+      assert.equal(kinds.sessionListFilters.home, 'all');
       assert.equal(await page.getByRole('heading', {name: 'What do you need?', exact: true}).count(), 0);
     });
     console.log('OK both reopening routes and the Home filter recovery');

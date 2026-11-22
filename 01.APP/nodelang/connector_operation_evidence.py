@@ -13,44 +13,43 @@ cards map onto these engines). A row is exactly one of:
 A court proves the operation, not that a host is connected now. The live
 connector state is added beside each row (``connector_state``) so the UI can
 say both at once: "court passed · Rhino not running" or "unavailable: ...".
-tests_replica/test_connector_operation_evidence.py holds this table equal to
+02.TESTS/tests_replica/test_connector_operation_evidence.py holds this table equal to
 the catalogue, and every named court to a test that exists.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-_LIB = "tests_replica/test_the_library_only_offers_what_runs.py::"
-_OWN = "tests_replica/test_connector_operation_evidence.py::"
+_OWN = "02.TESTS/tests_replica/test_connector_operation_evidence.py::"
+_UNVERIFIED = {"unavailable": "Unverified: no named behavioral test of this operation on a real input."}
 
-_REVIT_SCRATCH = ("a Revit session with the authenticated ArchHub add-in that a court may drive; "
-                  "none exists here (the running Revit sessions are the founder's and are never driven "
-                  "by a court) and setup registers the add-in only after its custody review")
+_REVIT_SCRATCH = "an authorized scratch Revit session with an answering add-in and verified operation output"
+_ACAD = "an authorized scratch AutoCAD session with an answering add-in and verified operation output"
 _OFFICE = "an open Excel, Word or PowerPoint in this Windows session (COM); courts never read a person's open documents"
 _OUTLOOK = "classic Outlook open with a mail profile (COM); courts never read a person's mailbox"
 _GRAPH = "PowerShell with the Microsoft.Graph SDK and a signed-in Microsoft 365 account"
 _IMAP = "a company IMAP mailbox signed in with an app password"
-_BRAIN = "the personal brain answering at 127.0.0.1:8473 inside its budget (it timed out in this lane's probe)"
+_BRAIN = "a verified response from the personal Brain service"
 _MODEL = "a picked model whose provider answers (a court would spend model calls; none was run)"
 
 EVIDENCE: dict[str, dict[str, str]] = {
     "vision.sketch_lines": {"unavailable": "OpenCV (cv2), which the desktop requirements.txt does not install"},
     "cad.read_lines": {"court": _OWN + "test_cad_read_lines_reads_the_shipped_sample_dxf"},
     "cad.host_lines": {"unavailable": "a running AutoCAD that loads the ArchHub AutoCAD add-in (acad-mcp); setup registers the add-in (ApplicationPlugins bundle) only after its custody review, and courts do not launch hosts"},
-    "autocad.verb": {"court": "tests_replica/test_host_verbs_folded.py::test_autocad_verb_node_runs_the_verb_and_carries_the_wired_approval"},
+    "autocad.verb": {"unavailable": _ACAD},
     "lines.watch": {"court": _OWN + "test_lines_watch_passes_real_lines_through"},
     "revit.sessions": {"unavailable": _REVIT_SCRATCH},
     "revit.read": {"unavailable": _REVIT_SCRATCH},
     "revit.build_walls": {"unavailable": _REVIT_SCRATCH},
-    "revit.set_parameter_by_name": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_writes_require_gate_and_use_fake_signed_brokers"},
-    "revit.create_sheets": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_writes_require_gate_and_use_fake_signed_brokers"},
-    "revit.renumber_rename": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_writes_require_gate_and_use_fake_signed_brokers"},
-    "revit.elements_of_category": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_read_and_pure_nodes_run_on_fixture_brokers"},
-    "revit.get_parameter": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_read_and_pure_nodes_run_on_fixture_brokers"},
+    "revit.set_parameter_by_name": {"unavailable": _REVIT_SCRATCH},
+    "revit.create_sheets": {"unavailable": _REVIT_SCRATCH},
+    "revit.renumber_rename": {"unavailable": _REVIT_SCRATCH},
+    "revit.elements_of_category": {"unavailable": _REVIT_SCRATCH},
+    "revit.get_parameter": {"unavailable": _REVIT_SCRATCH},
     "brain.recall": {"unavailable": _BRAIN},
     "brain.facts": {"unavailable": _BRAIN},
-    "brain.write": {"court": "tests_replica/test_baboom_agent_gaps.py::test_approved_brain_write_passes_once"},
-    "mods.run": {"court": "tests_domains/test_mods_selfext.py::test_mod_node_runner_is_pure_projection"},
+    "brain.write": _UNVERIFIED,
+    "mods.run": _UNVERIFIED,
     "connector.status": {"court": _OWN + "test_connector_probes_read_this_machine"},
     "skills.catalogue": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "skills.read": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
@@ -61,7 +60,7 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "rhino.exec": {"unavailable": "Rhino 8 running the ArchHub bridge script on :9879; courts do not launch hosts on this machine"},
     "blender.exec": {"unavailable": "Blender running the ArchHub add-on on :9876; courts do not launch hosts on this machine"},
     "office.read": {"unavailable": _OFFICE},
-    "excel.write_range": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_writes_require_gate_and_use_fake_signed_brokers"},
+    "excel.write_range": {"unavailable": _OFFICE},
     "outlook.inbox": {"unavailable": _OUTLOOK},
     "notion.search": {"unavailable": "a Notion integration token (Settings > keys > notion)"},
     "notion.connect": {"unavailable": "a Notion integration token (Settings > keys > notion)"},
@@ -74,28 +73,27 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "outlook.imap.inbox": {"unavailable": _IMAP},
     "outlook.imap.status": {"unavailable": _IMAP},
     "outlook.imap.message": {"unavailable": _IMAP},
-    "library.filter_field": {"court": _LIB + "test_filters_keep_only_rows_that_match"},
-    "library.filter_compare": {"court": _LIB + "test_filters_keep_only_rows_that_match"},
-    "library.filter_rule": {"court": _LIB + "test_filters_keep_only_rows_that_match"},
-    "library.rule_check": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_rule_check_reports_pass_fail_and_adapter_owns_revit_scripts"},
-    "library.set_field": {"court": _LIB + "test_set_field_says_it_changed_the_stream_not_the_host"},
-    "library.move": {"court": _LIB + "test_geometry_moves_the_real_coordinates"},
-    "library.rotate": {"court": _LIB + "test_geometry_moves_the_real_coordinates"},
-    "library.scale": {"court": _LIB + "test_geometry_moves_the_real_coordinates"},
-    "library.group_by": {"court": _LIB + "test_group_and_sort_reuse_the_evaluator"},
-    "library.sort_by": {"court": _LIB + "test_group_and_sort_reuse_the_evaluator"},
-    "library.if": {"court": _LIB + "test_logic_passes_one_branch_only"},
-    "library.switch": {"court": _LIB + "test_logic_passes_one_branch_only"},
-    "library.loop": {"court": _LIB + "test_logic_passes_one_branch_only"},
-    "library.merge": {"court": _LIB + "test_merge_concats_and_dedupes"},
-    "library.add_text": {"court": _LIB + "test_annotations_are_computed_not_invented"},
-    "library.dimensions": {"court": _LIB + "test_annotations_are_computed_not_invented"},
-    "library.build_schedule": {"court": _LIB + "test_compose_reads_columns_it_was_given"},
-    "library.make_legend": {"court": _LIB + "test_compose_reads_columns_it_was_given"},
-    "library.save_skill": {"court": _LIB + "test_save_skill_writes_a_skill_the_catalogue_can_read"},
+    "library.filter_field": _UNVERIFIED,
+    "library.filter_compare": _UNVERIFIED,
+    "library.filter_rule": _UNVERIFIED,
+    "library.rule_check": _UNVERIFIED,
+    "library.set_field": _UNVERIFIED,
+    "library.move": _UNVERIFIED,
+    "library.rotate": _UNVERIFIED,
+    "library.scale": _UNVERIFIED,
+    "library.group_by": _UNVERIFIED,
+    "library.sort_by": _UNVERIFIED,
+    "library.if": _UNVERIFIED,
+    "library.switch": _UNVERIFIED,
+    "library.loop": _UNVERIFIED,
+    "library.merge": _UNVERIFIED,
+    "library.add_text": _UNVERIFIED,
+    "library.dimensions": _UNVERIFIED,
+    "library.build_schedule": _UNVERIFIED,
+    "library.make_legend": _UNVERIFIED,
+    "library.save_skill": _UNVERIFIED,
     "library.think": {"unavailable": _MODEL},
-    "library.terminal": {"court": "tests_replica/test_settings_terminal_routes.py::"
-                                   "test_a_terminal_card_runs_only_for_the_owner_with_execute"},
+    "library.terminal": _UNVERIFIED,
     "library.match_skill": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "library.embed": {"unavailable": _BRAIN},
     "library.notify": {"unavailable": "the running desktop's tray surface, which the application registers at start"},
@@ -108,7 +106,7 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "library.push_speckle": {"unavailable": "a Speckle server address and a token for it"},
     "speckle.send": {"unavailable": "a Speckle server address and a token for it"},
     "ai.master": {"unavailable": _MODEL},
-    "approval.gate": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_writes_require_gate_and_use_fake_signed_brokers"},
+    "approval.gate": _UNVERIFIED,
     "archhub.dry_run_diff": {"unavailable": "pure governance engine without connector evidence"},
     "brain.remember": {"unavailable": _BRAIN},
     "control.foreach": {"unavailable": "base universal control engine"},
@@ -116,9 +114,9 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "host.health": {"court": _OWN + "test_connector_probes_read_this_machine"},
     "host.read": {"unavailable": "a connected host selected by the user"},
     "input.slider": {"unavailable": "base universal input engine"},
-    "math.expression": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_read_and_pure_nodes_run_on_fixture_brokers"},
-    "math.series": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_read_and_pure_nodes_run_on_fixture_brokers"},
-    "text.ops": {"court": "tests_replica/test_nodes_next10_catalogue.py::test_next10_read_and_pure_nodes_run_on_fixture_brokers"},
+    "math.expression": {"court": "02.TESTS/tests_replica/test_designv22g.py::test_bypass_and_disabled_wire_change_real_run"},
+    "math.series": {"court": _OWN + "test_text_replaces_input_and_series_returns_values"},
+    "text.ops": {"court": _OWN + "test_text_replaces_input_and_series_returns_values"},
     "trigger.approval": {"unavailable": "requires an approved workflow run"},
     "trigger.emit": {"unavailable": "base universal trigger engine"},
     "trigger.file": {"unavailable": "a watched folder selected by the user"},
@@ -126,21 +124,48 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "trigger.schedule": {"unavailable": "scheduler runtime"},
     "trigger.webhook": {"unavailable": "server webhook runtime"},
     "skill.wrap": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
-    "workshop.conversation": {"court": "tests_replica/test_workshop_milestone_one.py::test_workshop_and_agent_definitions_run_from_the_catalogue"},
-    "agent.session": {"court": "tests_replica/test_workshop_milestone_one.py::test_workshop_and_agent_definitions_run_from_the_catalogue"},
-    "workshop.review": {"court": "tests_replica/test_workshop_milestone_one.py::test_agent_proposed_workflow_is_edited_approved_executed_and_independently_reviewed"},
     "tool.studio": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.workshop": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.brain": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.baboom": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.connectors": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.cloud": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
-    "library.publish_package": {"court": "tests_replica/test_home3_package_publication.py::test_registered_engine_publishes_reviewed_real_files_once"},
-    "archhub.enforce": {"unavailable": "Source courts: tests_replica/test_enforce.py (isolated fake writes and real graph/readback); tools/archhub-compiler/tests/diagnostics.rs (Rust artifact/type rules). Authenticated installed host/session intent admission is not verified."},
+    "library.publish_package": _UNVERIFIED,
+    "archhub.enforce": {"unavailable": "Authenticated installed host/session intent admission is unverified."},
+    "revit.verb": {"unavailable": _REVIT_SCRATCH},
+    "revit.export_ifc": {"unavailable": _REVIT_SCRATCH},
+    "revit.export_dwg": {"unavailable": _REVIT_SCRATCH},
+    "revit.execute_csharp": {"unavailable": _REVIT_SCRATCH},
+    "revit.info": {"unavailable": _REVIT_SCRATCH},
+    "revit.open_document": {"unavailable": _REVIT_SCRATCH},
+    "revit.screenshot": {"unavailable": _REVIT_SCRATCH},
+    "acad.execute_csharp": {"unavailable": _ACAD},
+    "acad.info": {"unavailable": _ACAD},
+    "acad.ping": {"unavailable": _ACAD},
+    "outlook.forward_draft": {"unavailable": _OUTLOOK},
+    "outlook.read_thread": {"unavailable": _OUTLOOK},
+    "outlook.reply_draft": {"unavailable": _OUTLOOK},
+    "outlook.search": {"unavailable": _OUTLOOK},
+    "excel.build_workbook": {"unavailable": _OFFICE},
+    "excel.open": {"unavailable": _OFFICE},
+    "excel.read_table": {"unavailable": _OFFICE},
+    "excel.share_workbook": {"unavailable": _OFFICE},
+    "excel.write_cells": {"unavailable": _OFFICE},
+    "connector.call": _UNVERIFIED,
+    "host.exec": {"court": "02.TESTS/tests/test_host_exec.py::test_python_host_binds_a_parameter_and_stamps_a_pdf"},
+    "hosts.state": _UNVERIFIED,
+    "pdf.extract_text": {"court": _OWN + "test_pdf_extract_text_reads_a_real_page_twice"},
+    "pdf.snip": _UNVERIFIED,
+    "decide.optimize": {"court": "02.TESTS/tests/test_g6_optimize_schedule.py::test_optimize_knapsack_picks_the_best_pair"},
+    "decide.schedule": {"court": "02.TESTS/tests/test_g6_optimize_schedule.py::test_schedule_respects_after_links_and_crews"},
+    "research.weighted": {"court": "02.TESTS/tests/test_g6_decision_score.py::test_topsis_ranks_and_closeness_is_between_zero_and_one"},
+    "script.python": {"court": "02.TESTS/tests_replica/test_designv22g.py::test_pure_saved_script_solves_without_writing_its_definition"},
+    "data.convert": {"court": _OWN + "test_convert_reads_a_numeric_input"},
 }
 
 # Which connector row (probe_connectors id) an operation needs, when it needs one.
 _CONNECTOR = {
+    "cad.host_lines": "autocad",
     "max.exec": "max", "max.info": "max", "max.python": "max",
     "rhino.exec": "rhino", "blender.exec": "blender",
     "outlook.inbox": "outlook", "library.draft_email": "outlook",
@@ -165,7 +190,9 @@ def operation_rows(connectors: Iterable[Mapping[str, object]] | None = None) -> 
             row.update(evidence="court", detail=evidence["court"])
         else:
             row.update(evidence="unavailable", detail=evidence["unavailable"])
-        connector = _CONNECTOR.get(op)
+        family = op.partition(".")[0]
+        connector = _CONNECTOR.get(op) or {"revit": "revit", "acad": "autocad", "autocad": "autocad",
+                                           "excel": "excel", "outlook": "outlook"}.get(family)
         if connector and connector in states:
             row["connector_state"] = states[connector]
         rows.append(row)

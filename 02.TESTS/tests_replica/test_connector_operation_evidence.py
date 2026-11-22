@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "01.APP"))
 
 from nodelang import connector_operation_evidence as evidence  # noqa: E402
 from nodelang.pipeline_engines import PIPELINE_ENGINES  # noqa: E402
@@ -45,14 +45,50 @@ def test_every_named_court_is_a_test_that_exists():
 
 
 def test_rows_say_court_or_unavailable_and_carry_the_live_connector_state():
-    rows = evidence.operation_rows([{"id": "rhino", "state": "installed"}])
+    rows = evidence.operation_rows([{"id": "rhino", "state": "installed"}, {"id": "revit", "state": "connected"}])
     assert [row["op"] for row in rows] == sorted(PIPELINE_ENGINES)
     assert {row["evidence"] for row in rows} == {"court", "unavailable"}
+    export = next(row for row in rows if row["op"] == "revit.export_ifc")
+    assert export["connector_state"] == "connected" and export["evidence"] == "unavailable"
     rhino = next(row for row in rows if row["op"] == "rhino.exec")
     assert rhino["evidence"] == "unavailable" and rhino["connector_state"] == "installed"
 
 
 # ------------------------------------------ the real courts this table names --
+
+def test_text_replaces_input_and_series_returns_values():
+    text, _ = PIPELINE_ENGINES["text.ops"]({"operation": "replace", "pattern": "Earth", "replacement": "World"}, {"in": "Hello Earth!"})
+    assert text["out"] == "Hello World!"
+    series, _ = PIPELINE_ENGINES["math.series"]({"start": 2, "step": 3, "count": 4}, {})
+    assert series["out"] == [2, 5, 8, 11]
+
+
+def test_pdf_extract_text_reads_a_real_page_twice(tmp_path):
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    path = tmp_path / "door.pdf"
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=150)
+    font = DictionaryObject({NameObject("/Type"): NameObject("/Font"),
+                             NameObject("/Subtype"): NameObject("/Type1"),
+                             NameObject("/BaseFont"): NameObject("/Helvetica")})
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})})
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 16 Tf 20 110 Td (Level 3 door D-312) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    writer.write(path)
+
+    for _ in range(2):
+        result, _description = PIPELINE_ENGINES["pdf.extract_text"]({"path": str(path), "pages": [1]}, {})
+        assert [(row["page"], row["text"]) for row in result["out"]] == [(1, "Level 3 door D-312")]
+
+
+def test_convert_reads_a_numeric_input():
+    output, _ = PIPELINE_ENGINES["data.convert"]({"target_type": "number"}, {"in": "12.5"})
+    assert output == {"out": 12.5}
+
 
 def test_cad_read_lines_reads_the_shipped_sample_dxf():
     sample = ROOT / "01.APP/nodelang" / "samples" / "sample-plan.dxf"
@@ -112,6 +148,8 @@ def test_connector_probes_read_this_machine():
     """
     rows, said = PIPELINE_ENGINES["connector.rows"]({}, {})
     assert rows["out"] and all(row.get("state") for row in rows["out"])
+    health, _ = PIPELINE_ENGINES["host.health"]({"host": rows["out"][0]["id"]}, {})
+    assert rows["out"][0]["id"] in {row["id"] for row in health["out"]}
     status, _ = PIPELINE_ENGINES["connector.status"]({"connector": rows["out"][0]["id"]}, {})
     assert status["out"][0]["id"] == rows["out"][0]["id"]
 

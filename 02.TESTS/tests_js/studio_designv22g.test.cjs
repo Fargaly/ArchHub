@@ -838,7 +838,7 @@ test('Canvas zoom controls preserve viewport and preference ordering', {timeout:
   await settings.goto(server.url+'/studio');
   await settings.locator('[data-home-page]').waitFor({state:'attached'});
   await settings.getByRole('button',{name:'Settings',exact:true}).first().click();
-  await settings.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Look',exact:true}).click();
+  await settings.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'This PC',exact:true}).click();
   const control=settings.getByRole('spinbutton',{name:'Default zoom',exact:true});
   await control.waitFor();
   assert.equal(await control.inputValue(),String(zoomValue));

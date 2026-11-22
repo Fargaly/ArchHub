@@ -72,7 +72,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{reset:'Workspace'});
   await page.getByLabel('Settings scope',{exact:true}).selectOption('Session');await page.getByRole('button',{name:'Import into Current session',exact:true}).waitFor();
   await page.evaluate(()=>window.update({settingsDestination:{scope:'Session',workspace:'example',session:'fixture'},settings:[{id:'Appearance.Theme',label:'Theme',page:'Appearance',type:'enum',options:['Dark','Light','System'],default:'Dark',value:'Dark'}]}));
-  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Look',exact:true}).click();
+  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'This PC',exact:true}).click();
   await page.evaluate(()=>{window.queueSettingAct=true;});
   await page.getByLabel('Theme',{exact:true}).selectOption('Light');
   await page.evaluate(()=>window.update({settingsScope:'User',settingsDestination:{scope:'User',workspace:'example',session:'fixture'},settings:[{id:'Appearance.Theme',label:'Theme',page:'Appearance',type:'enum',options:['Dark','Light','System'],default:'Dark',value:'Dark'}]}));
@@ -104,7 +104,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   assert.match(await unavailable.getAttribute('title'),/no verified last-issue baseline/i);
   await sheetSet.selectOption('Current sheet only');
   assert.deepEqual(await page.evaluate(()=>window.settingCalls.at(-1)),{id:'Projects.Sheet set',value:'Current sheet only',destination:{scope:'Session',workspace:'example',session:'other-file'}});
-  await nav.getByRole('button',{name:'Look',exact:true}).click();
+  await nav.getByRole('button',{name:'This PC',exact:true}).click();
   await nav.getByRole('button',{name:'Projects',exact:true}).click();
   assert.equal(await sheetSet.inputValue(),'Current sheet only');
   for(const label of ['Pen table','Default scale','Revit template','Layer standard'])
@@ -143,7 +143,7 @@ test('pending scope disables its editors and keeps one read-only recovery beside
   await mount(page,{name:'Scope reviewer',signedIn:false,checking:false},{settingsScopes:{Workspace:true,Session:true},keyboardCommands:[],settings:[{id:'Appearance.Theme',label:'Theme',page:'Appearance',type:'enum',options:['Dark','Light','System'],default:'Dark',value:'Dark'}]});
   await page.waitForFunction(()=>typeof window.finishInitialSettingsRead==='function');
   await page.evaluate(()=>window.finishInitialSettingsRead());
-  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Look',exact:true}).click();
+  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'This PC',exact:true}).click();
   await page.evaluate(()=>window.update({settingsScopePending:true}));
   await page.getByRole('status').filter({hasText:'Changing settings scope'}).waitFor();
   assert.equal(await page.getByLabel('Settings scope',{exact:true}).isDisabled(),true);

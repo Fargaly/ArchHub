@@ -16,10 +16,10 @@ async function mount(page,profile,extra){
  await page.addStyleTag({content:'html,body,#root{height:100%;margin:0}'});
  for(const name of ['react.js','react-dom.js'])await page.addScriptTag({path:path.join(studio,'vendor',name)});
  await page.evaluate(({profile,extra})=>{
-  window.fixture={profile,settings:[],hosts:[],agents:[],providers:[],workspaces:[{id:'example',name:'Example workspace',folder:'C:\\Example',path:'C:\\Example',available:true}],activeWorkspace:'example',workspaceHealth:{state:'ready'},graph:{workspaceIds:[]},connections:[],capabilities:[],pages:['Account','Appearance','Workshop','Privacy'],settingsScope:'User',settingsDestination:{scope:'User',workspace:'example',session:'fixture'},keyboardCommands:[{id:'keyboard.save',label:'Save workflow',contexts:['canvas'],value:'Ctrl S'}],sessionsFolder:'Sessions',runtimeParameters:{},...extra};
+  window.fixture={profile,settings:[],hosts:[],agents:[],providers:[],workspaces:[{id:'example',name:'Example workspace',folder:'C:\\Example',path:'C:\\Example',available:true}],activeWorkspace:'example',workspaceHealth:{state:'ready'},graph:{workspaceIds:[]},connections:[],capabilities:[],pages:['Account','Appearance','Workshop','Privacy'],settingsScope:'User',settingsDestination:{scope:'User',workspace:'example',session:'fixture'},keyboardCommands:[{id:'keyboard.save',label:'Save workflow',contexts:['canvas'],value:'Ctrl S'}],sessionsFolder:'Sessions',runtimeParameters:{},update:{state:'idle',installed:'fixture-build',available:null},router:{default_model:'free',models:['free','other'],fallback_models:[],requests:[],free_first:true,live_agents:{complete:true,processes:[]}},...extra};
   window.writes=[];const listeners=new Set();
   window.ArchHubAPI={subscribe:f=>{listeners.add(f);return()=>listeners.delete(f);},getSnapshot:()=>window.fixture,supportsAction:()=>true,
-   refreshRouter:async()=>({default_model:'free',models:[],fallback_models:[],requests:[],free_first:true}),readHostAvailability:async()=>[],listAgentsWorking:async()=>[],refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
+   refreshRouter:async()=>({default_model:'free',models:['free','other'],fallback_models:[],requests:[],free_first:true}),readHostAvailability:async()=>[],listAgentsWorking:async()=>[],refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
    setSetting:async(id,value)=>{window.writes.push({id,value});window.fixture={...window.fixture,settings:window.fixture.settings.map(r=>r.id===id?{...r,value}:r)};listeners.forEach(f=>f());return {ok:true};},
   };
   window.ArchHubAPI.setKeybinding=async(id,value,destination)=>{
@@ -30,15 +30,23 @@ async function mount(page,profile,extra){
   window.ArchHubAPI.resetSetting=async id=>window.ArchHubAPI.setSetting(id,window.fixture.settings.find(row=>row.id===id).default);
   window.ArchHubAPI.setSettingsScope=async scope=>{window.writes.push({scope});return {ok:true};};
   window.ArchHubAPI.exposeSettingsPage=async page=>{window.writes.push({page});return {ok:true};};
+  window.ArchHubAPI.setRouterSettings=async router=>{window.writes.push({router});return {default_model:router.default_model||'free',models:['free','other'],fallback_models:[],requests:[],free_first:true};};
+  let permissions={runMode:'Ask first',runModes:['Ask first','Accept edits','Plan only'],tools:{},toolModes:['Ask','Allow','Deny']};
+  window.ArchHubAPI.readPermissions=async()=>permissions;
+  window.ArchHubAPI.setPermissions=async values=>{window.writes.push({permissions:values});permissions={...permissions,...values};return permissions;};
+  // Owner reads on pages this test only opens (Updates, Library, ...) resolve empty; writes stay recorded above.
+  window.ArchHubAPI=new Proxy(window.ArchHubAPI,{get:(target,key)=>key in target||typeof key!=='string'?target[key]:async()=>({})});
  },{profile,extra});
  for(const name of ['tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx','ds_settings3.jsx']){
   const file=path.join(studio,name);
+  // Settings reads the provider owner at load; its own file is not part of this fixture.
+  if(name==='ds_settings3.jsx')await page.evaluate(()=>{window.UI.Providers=()=>React.createElement('p',null,'Providers owner');});
   await page.addScriptTag({content:transformSync(fs.readFileSync(file,'utf8'),{loader:'jsx'}).code});
  }
  await page.evaluate(()=>{
   for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
   function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);
-   const u={go:route=>{if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};
+   const u={go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
    return React.createElement(window.UI.Ctx.Provider,{value:u},React.createElement(window.UI.Settings,{page}));}
   window.ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
  });
@@ -60,9 +68,42 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    ]});
    await page.locator('.sheet-columns:not([hidden])').waitFor();
    const nav=page.getByRole('navigation',{name:'Settings categories'});
-   const expected=['Account','Look','Projects','Agents','Connections','You','Workshop','Library & Mods','Automations','System','Updates & About'];
-   for(const name of expected) assert.equal(await nav.getByRole('button',{name,exact:true}).count(),1,'missing design area '+name);
-   await nav.getByRole('button',{name:'Workshop',exact:true}).click();
+   const expected=['Account','Projects','Agents','Connections','This PC'];
+   assert.deepEqual(await nav.getByRole('button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),expected,'at most five Settings pages');
+   // Every former area still opens its own page inside one of the five.
+   for(const [former,area,screen] of [['Look','This PC','Appearance'],['You','This PC','Privacy'],['System','This PC','System graph'],['Updates & About','This PC','Updates & About'],['Dependencies','This PC','Dependencies'],['Advanced','This PC','Advanced'],['Workshop','Agents','Workshop'],['Automations','Agents','Automations'],['Library & Mods','Agents','Library & Mods'],['Brain','Account','Brain']]){
+    await page.evaluate(route=>window.goSettings(route),'settings/'+former);
+    await page.locator(`[data-screen="settings/${screen}"]`).waitFor();
+    assert.equal(await nav.locator('button[aria-current="page"]').getAttribute('aria-label'),area,former+' opens inside '+area);
+   }
+   // Models and Permissions open Agents' real owners, not Account; an edit reaches that owner.
+   await page.evaluate(()=>window.goSettings('settings/Models'));
+   await page.locator('[data-screen="settings/BABOOM"]').waitFor();
+   assert.equal(await nav.locator('button[aria-current="page"]').getAttribute('aria-label'),'Agents');
+   assert.equal(await page.getByRole('heading',{name:'Your identity',exact:true}).count(),0,'Models is not Account');
+   await page.getByLabel('Default model',{exact:true}).selectOption('other');
+   assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{router:{default_model:'other'}});
+   await page.evaluate(()=>window.goSettings('settings/Permissions'));
+   await page.locator('[data-screen="settings/Hooks"]').waitFor();
+   assert.equal(await nav.locator('button[aria-current="page"]').getAttribute('aria-label'),'Agents');
+   assert.equal(await page.getByRole('heading',{name:'Your identity',exact:true}).count(),0,'Permissions is not Account');
+   await page.getByLabel('Run mode',{exact:true}).selectOption('Plan only');
+   assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{permissions:{runMode:'Plan only'}});
+   await page.evaluate(()=>window.goSettings('settings/Social'));
+   await page.locator('[data-screen="settings/Account"]').waitFor();
+   const social=page.getByRole('heading',{name:'Social media',exact:true});
+   assert.equal(await social.evaluate(node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.top<window.innerHeight;}),true,'Social lands on Account › Social media');
+   await page.getByRole('button',{name:'Open Social media',exact:true}).waitFor();
+   // Each page shows only its own rows.
+   for(const [route,shown,hidden] of [['settings/Privacy','Privacy.Review','Appearance.Theme'],['settings/Look','Appearance.Theme','Privacy.Review'],['settings/Updates & About',null,'Privacy.Review'],['settings/Workshop','Workshop.Keep messages','Privacy.Review'],['settings/Automations',null,'Workshop.Keep messages'],['settings/Hooks',null,'Workshop.Keep messages']]){
+    await page.evaluate(r=>window.goSettings(r),route);
+    await page.locator(`[data-screen="settings/${route==='settings/Look'?'Appearance':route.slice(9)}"]`).waitFor();
+    if(shown)assert.equal(await page.locator(`[data-setting="${shown}"]`).count(),1,shown+' on '+route);
+    assert.equal(await page.locator(`[data-setting="${hidden}"]`).count(),0,hidden+' not on '+route);
+   }
+   await page.evaluate(()=>window.goSettings('settings/Account'));
+   await nav.getByRole('button',{name:'Agents',exact:true}).click();
+   await page.getByRole('navigation',{name:'Agents pages'}).getByRole('button',{name:'Workshop',exact:true}).click();
    await page.locator('[data-screen="settings/Workshop"]').waitFor();
    await page.getByLabel('Keep messages',{exact:true}).waitFor();
    await page.getByLabel('Search settings',{exact:true}).fill('where do I change message retention');
@@ -81,7 +122,9 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'page overflow '+JSON.stringify(await page.locator('*').evaluateAll(nodes=>nodes.filter(n=>n.getBoundingClientRect().right>window.innerWidth+1&&n.getBoundingClientRect().width).slice(0,8).map(n=>({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right})))));
    assert.deepEqual(errors,[]);
    await page.getByRole('button',{name:'All',exact:true}).click();
-   await nav.getByRole('button',{name:'Look',exact:true}).click();
+   await nav.getByRole('button',{name:'This PC',exact:true}).click();
+   await page.locator('[data-screen="settings/Appearance"]').waitFor();
+   assert.equal(await page.locator('.sheet-page-heading h2').innerText(),'This PC');
    await page.getByLabel('Theme',{exact:true}).selectOption('Light');
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'Light'});
    await page.getByRole('button',{name:'Reset Theme',exact:true}).click();
@@ -115,6 +158,69 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
  }finally{await browser.close();}
 });
 
+
+// The 43 approved design sections (archhub-directions app.js CARDS) and where each lives in the product sheet.
+// [design section, rail area, route, heading shown | null, door button | null, coming-soon label | null]
+const DESIGN_SECTIONS=[
+ ['Account','Account','Account','Your identity'],['Plan & access','Account','Account','Plan & access','Open Plan & access'],['Community','Account','Account','Community','Open Community'],['Social media','Account','Account','Social media','Open Social media'],['Brain and cloud sync','Account','Brain','Brain and cloud sync'],
+ ...['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].map(t=>[t,'Projects','Projects',null,null,'project']),
+ ['Your agents','Agents','Agents','Agents'],['Models','Agents','Models','Models'],['What agents may do','Agents','Permissions','Permissions'],['Workshop','Agents','Workshop','Workshop','Open Workshop'],['Automations','Agents','Automations','Automations'],['Meetings','Agents','Agents','Meetings','Open Meetings'],['BABOOM','Agents','BABOOM','Models'],['Tools in the Library','Agents','Library & Mods','Library & Mods','Open Library'],
+ ['Programs','Connections','Connections','Programs'],['Accounts','Connections','Connections','Accounts','Connect'],['Subscriptions','Connections','Connections','Subscriptions'],['Tool servers (MCP)','Connections','Connections','Tool servers (MCP)'],['Program options','Connections','Connections','Program options',null,'Program options'],['AI providers','Connections','Connections','AI providers','Open model providers'],['Phone and cloud','Connections','Connections','Phone and cloud','Open connected devices'],['Network','Connections','Connections','Network',null,'Network'],['Notifications','Connections','Connections','Notifications','Open notification setting','Desktop notifications, sound and quiet hours'],
+ ...['Theme and colour','Size and density','Panels','Canvas','Keyboard'].map(t=>[t,'This PC','Look',t]),['Agents on this PC','This PC','Dependencies','Managed tools','Open dependencies'],['Workspaces and files','This PC','Privacy','Workspaces and files'],['Privacy and keys','This PC','Privacy','Privacy'],['The app','This PC','Updates & About',null,'Check for updates'],['System graph','This PC','System','Live wiring']
+];
+test('all 43 design sections are reachable under their design parent, working and unavailable actions told apart',async()=>{
+ assert.equal(DESIGN_SECTIONS.length,43);
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];
+  page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
+  await mount(page,{name:'Design reviewer',email:'review@example.test',signedIn:false,checking:false},{settings:[{id:'Privacy.Review',page:'Privacy',group:'Privacy',label:'Review before sharing',type:'boolean',value:true,default:true}]});
+  await page.locator('.sheet-columns:not([hidden])').waitFor();
+  const nav=page.getByRole('navigation',{name:'Settings categories'}),report=[];
+  for(const [section,area,route,heading,door,soon] of DESIGN_SECTIONS){
+   await page.evaluate(r=>window.goSettings(r),'settings/'+route);
+   await page.locator(`[data-screen="settings/${({Look:'Appearance',System:'System graph',Models:'BABOOM',Permissions:'Hooks'})[route]||route}"]`).waitFor();
+   if(heading)await page.locator('.sheet-content').getByRole('heading',{name:heading,exact:true}).first().waitFor();
+   assert.equal(await nav.locator('button[aria-current="page"]').getAttribute('aria-label'),area,section+' sits under '+area);
+   const content=page.locator('.sheet-content');
+   if(heading)assert.ok(await content.getByRole('heading',{name:heading,exact:true}).count()>=1,section+': heading '+heading);
+   if(door)assert.equal(await content.getByRole('button',{name:door,exact:true}).count()>=1,true,section+': working action '+door);
+   let state=door?'working':'shown';
+   if(soon==='project'){const items={'Templates':['Revit template','AutoCAD template','Title block','Sheet size','New project folders'],'IFC and BCF':['IFC version','IFC export setup','BCF version'],'Print and PDF':['Pen table','Sheet set','Default scale'],'CAD':['Layer standard','Colour to lineweight','DWG export setup','DWG version']}[section]||[section];
+    const shown=await content.getByRole('heading',{name:section,exact:true}).count();let pending=0;for(const item of items)pending+=await content.getByRole('group',{name:item+'. Coming soon: not built yet',exact:true}).count();assert.equal(shown+pending>=1,true,section+' shown or marked coming soon');state=shown?'shown':'coming soon';}
+   else if(soon){assert.equal(await content.getByRole('group',{name:soon+'. Coming soon: not built yet',exact:true}).count(),1,section+': unavailable action marked');state=door?'working + coming soon':'coming soon';}
+   report.push([section,area,route,state]);
+  }
+  // The new doors open the existing owner screens.
+  for(const [route,door,target] of [['Account','Open Plan & access','access'],['Account','Open Community','community'],['Account','Open Social media','social'],['Agents','Open Meetings','meetings'],['Connections','Open model providers','settings/Providers'],['Connections','Open connected devices','access'],['Connections','Open notification setting','settings/BABOOM']]){
+   await page.evaluate(r=>window.goSettings(r),'settings/'+route);
+   await page.locator(`[data-screen="settings/${route}"]`).waitFor();
+   await page.locator('.sheet-content').getByRole('button',{name:door,exact:true}).click();
+   assert.equal(await page.evaluate(()=>window.lastRoute),target,door);
+  }
+  // AI providers opens the real provider controls, which normally sit behind Show advanced.
+  await page.evaluate(()=>window.goSettings('settings/Account'));
+  await page.evaluate(()=>window.goSettings('settings/Providers'));
+  await page.locator('[data-screen="settings/BABOOM"]').waitFor();
+  await page.getByRole('heading',{name:'Providers and request profiling',exact:true}).waitFor();
+  assert.equal(await page.getByText('Providers owner',{exact:true}).count(),1,'provider owner mounted');
+  assert.equal(await page.getByRole('button',{name:'Hide advanced',exact:true}).count(),1);
+  // New project folders is a working workflow, not a whole-feature placeholder.
+  await page.evaluate(()=>window.goSettings('settings/Projects'));
+  await page.locator('[data-screen="settings/Projects"]').waitFor();
+  assert.equal(await page.getByRole('group',{name:'New project folders. Coming soon: not built yet',exact:true}).count(),0,'no false placeholder');
+  await page.getByRole('button',{name:'Open New project',exact:true}).click();
+  const folders=page.getByLabel('New project folders',{exact:true});
+  await folders.waitFor();
+  assert.equal(await folders.locator('option[value="ISO 19650 CDE tree"]').evaluate(o=>o.disabled),true,'ISO tree limitation stays visible');
+  await folders.selectOption('Office project tree');
+  await page.getByRole('button',{name:'Choose template folder',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Project name',{exact:true}).count(),1,'registration fields stay separate in the New project form');
+  assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({sections:report.length,coming_soon:report.filter(r=>/coming soon/.test(r[3])).map(r=>r[0]),report}));
+  await page.close();
+ }finally{await browser.close();}
+});
 
 test('Look uses the five design families and passes the actual workflow to the existing read-only Canvas',()=>{
  const React=require('react'),{renderToStaticMarkup}=require('react-dom/server'),vm=require('node:vm');

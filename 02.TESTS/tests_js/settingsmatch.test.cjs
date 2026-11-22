@@ -10,10 +10,22 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'ds_settings3.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'dock.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'ds_settings3.jsx', 'app.jsx'].map(compiled);
 const EMAIL = 'a.very.long.address.for.the.account.value.box@example-office-domain.test';
 const SESSIONS = 'C:\\Users\\someone\\AppData\\Local\\Temp\\applook-7ngv12us\\LOCALAPPDATA\\ArchHub\\Sessions';
 const LONG_TASK = 'Review the drawing set and '.repeat(30).trim();
+// The real registered Studio commands from their owner (command_registry.STUDIO_COMMANDS), read in a throwaway profile.
+let registry = null;
+function studioRegistry() {
+  if (registry) return registry;
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'settingsmatch-registry-'));
+  try {
+    const env = {...process.env, LOCALAPPDATA: profile, APPDATA: profile, USERPROFILE: profile};
+    const script = "import json,sys;sys.path.insert(0,'.');from nodelang import command_registry as c;print(json.dumps({'ok':True,'contexts':list(c.CONTEXTS),'commands':list(c.STUDIO_COMMANDS)}))";
+    registry = JSON.parse(execFileSync(process.env.ARCHHUB_PYTHON || 'python', ['-I', '-B', '-c', script], {cwd: path.resolve(__dirname, '../../01.APP'), env, windowsHide: true, encoding: 'utf8'}));
+  } finally { fs.rmSync(profile, {recursive: true, force: true}); }
+  return registry;
+}
 
 function executable() {
   const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
@@ -24,7 +36,8 @@ function executable() {
 
 async function mount(page, profile, extra = {}) {
   await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
-  await page.goto('http://settingsmatch.test');
+  // Intercepted loopback origin like the real app: api.js needs a secure context (crypto.randomUUID).
+  await page.goto('http://127.0.0.1:1/settingsmatch');
   await page.addStyleTag({path: path.join(studio, 'style.css')});
   await page.addStyleTag({content: 'html,body,#root{height:100%;margin:0}'});
   for (const name of ['react.js', 'react-dom.js']) await page.addScriptTag({path: path.join(studio, 'vendor', name)});
@@ -39,6 +52,8 @@ async function mount(page, profile, extra = {}) {
     s.sessionsFolder = SESSIONS;
     s.graph = {...s.graph, id: 'long', name: LONG_TASK};
     s.tasks = [];
+    // The signed-in shell cases model an admitted, ready desktop account; the gate case passes its own pending access.
+    s.desktopAccess = {admitted: true, state: 'admitted', subject: 'fixture-account', email: profile.email || null, ready: true};
     Object.assign(s, extra);
     window.surfaces = [];
     window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
@@ -56,8 +71,25 @@ async function mount(page, profile, extra = {}) {
     Object.assign(window.UI, {BaboomSprite: blank, ScheduleResponsibility: blank, Canvas: blank, Docs: () => React.createElement('div', null, 'Docs fixture')});
   });
   await page.addScriptTag({content: sources.at(-1)});
+  if (extra.desktopAccess?.admitted === false) return;
   await page.getByRole('navigation', {name: 'Main navigation'}).waitFor();
 }
+
+test('SETTINGSMATCH gate: a pending or signed-out desktop account shows only sign-in, never the shell', async () => {
+  const browser = await chromium.launch({headless: true, executablePath: executable()});
+  try {
+    for (const state of ['pending', 'signed_out']) {
+      const page = await browser.newPage({viewport: {width: 1366, height: 900}}), errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      await mount(page, {name: '', email: '', signedIn: false, checking: false}, {desktopAccess: {admitted: false, state, subject: null, email: null, ready: false}});
+      await page.getByRole('button', {name: 'Sign in with your browser', exact: true}).waitFor();
+      assert.equal(await page.getByRole('navigation', {name: 'Main navigation'}).count(), 0, state + ' shows no shell');
+      assert.equal(await page.locator('[data-screen^="settings/"]').count(), 0, state + ' shows no Settings');
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
+  } finally { await browser.close(); }
+});
 
 test('SETTINGSMATCH: Account sheet matches the board at 900-1920 and the composer chip stays one line', async () => {
   const browser = await chromium.launch({headless: true, executablePath: executable()});
@@ -133,7 +165,10 @@ test('SETTINGSMATCH: the active surface is reported to the app so the desktop co
     URLSearchParams, TextEncoder: globalThis.TextEncoder, AbortSignal: globalThis.AbortSignal, console,
     fetch: async (url, options) => {
       requests.push({url, body: options.body && JSON.parse(options.body)});
-      const data = url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}} : {ok: true};
+      // The desktop account is admitted for these signed-in surface cases (the gate case covers pending/signed out).
+      const data = url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}}
+        : url === '/api/universal/desktop-access' ? {admitted: true, state: 'admitted', subject: 'fixture-account', email: null}
+        : url === '/api/commands' ? studioRegistry() : {ok: true};
       return {ok: true, status: 200, json: async () => data};
     }};
   vm.runInNewContext(fs.readFileSync(path.join(studio, 'api.js'), 'utf8'), context);
@@ -194,7 +229,10 @@ test('SETTINGSMATCH review: a refused surface report is retried on the next chan
     fetch: async (url, options) => {
       requests.push({url, body: options.body && JSON.parse(options.body)});
       if (url === '/api/universal/studio-surface' && refuse) { refuse = false; return {ok: false, status: 500, json: async () => ({ok: false, error: 'refused'})}; }
-      const data = url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}} : {ok: true};
+      // The desktop account is admitted for these signed-in surface cases (the gate case covers pending/signed out).
+      const data = url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}}
+        : url === '/api/universal/desktop-access' ? {admitted: true, state: 'admitted', subject: 'fixture-account', email: null}
+        : url === '/api/commands' ? studioRegistry() : {ok: true};
       return {ok: true, status: 200, json: async () => data};
     }};
   vm.runInNewContext(fs.readFileSync(path.join(studio, 'api.js'), 'utf8'), context);
@@ -207,13 +245,16 @@ test('SETTINGSMATCH review: a refused surface report is retried on the next chan
 });
 
 test('SETTINGSMATCH name: the Name row shows the real profile name or asks for one, never a placeholder word', async () => {
-  for (const [account, expected] of [[{signed_in: false}, ''], [{signed_in: true, email: 'person@example.test', display_name: 'Fixture Person'}, 'Fixture Person'], [{signed_in: true, email: 'person@example.test'}, '']]) {
+  // The cloud session names the admitted desktop subject; another account's name is never shown.
+  for (const [account, expected] of [[{signed_in: false}, ''], [{signed_in: true, user_id: 'fixture-account', email: 'person@example.test', display_name: 'Fixture Person'}, 'Fixture Person'], [{signed_in: true, user_id: 'fixture-account', email: 'person@example.test'}, ''], [{signed_in: true, user_id: 'another-account', display_name: 'Someone Else'}, '']]) {
     const window = {ARCHHUB_AUTHORITY: {}, structuredClone: globalThis.structuredClone, ARCHHUB_BOOT: {home_load_ms: 60000, token: 'lease', csrf: 'csrf'},
       Uint8Array: globalThis.Uint8Array, dispatchEvent() {}, addEventListener() {}, AH: {inkSoft: '#888'}, crypto: require('node:crypto')};
     window.ArchHubStudioAuthority = {create: ({get}) => { let snapshot = null; return {load: async () => { snapshot = {canvas: await get('/api/universal/canvas')}; return snapshot.canvas; }, getSnapshot: () => snapshot, clear: () => { snapshot = null; }, adopt: async canvas => { snapshot = {canvas}; return canvas; }, transact: async action => { const canvas = await action(); snapshot = {canvas}; return canvas; }}; }};
     const context = {window, setTimeout, clearTimeout, document: {hidden: true, addEventListener() {}}, CustomEvent: class {}, sessionStorage: {getItem() { return null; }},
       URLSearchParams, TextEncoder: globalThis.TextEncoder, AbortSignal: globalThis.AbortSignal, console,
-      fetch: async url => ({ok: true, status: 200, json: async () => url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}} : url === '/api/universal/cloud-session' ? {...account} : {ok: true, result: {profile: {}, officeInvitations: [], controlErrors: {}}}})};
+      fetch: async url => ({ok: true, status: 200, json: async () => url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}} : url === '/api/universal/cloud-session' ? {...account}
+        : url === '/api/universal/desktop-access' ? {admitted: true, state: 'admitted', subject: 'fixture-account', email: null} : url === '/api/commands' ? studioRegistry()
+        : {ok: true, result: {profile: {}, officeInvitations: [], controlErrors: {}}}})};
     vm.runInNewContext(fs.readFileSync(path.join(studio, 'api.js'), 'utf8'), context);
     await window.ArchHubAPI.ready;
     await window.ArchHubAPI.syncAccount();
@@ -261,7 +302,7 @@ test('SETTINGSMATCH second review: value boxes open, Retry stays visible, no emp
     assert.ok(box && box.width > 10 && box.x >= header.x && box.x + box.width <= header.x + header.width, JSON.stringify({box, header}));
     assert.equal(await page.locator('.header-error-text').getAttribute('title'), error);
     // 3 + 4. Changed only on Appearance with nothing changed: no bare headings, one line instead.
-    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Look', exact: true}).click();
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'This PC', exact: true}).click();
     await page.getByRole('button', {name: /^Changed \d+$/}).click();
     await page.getByText('No settings differ from their defaults.', {exact: true}).waitFor();
     assert.equal(await page.getByRole('heading', {name: 'Interface', exact: true}).count(), 0);

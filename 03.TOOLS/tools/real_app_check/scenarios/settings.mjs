@@ -27,7 +27,7 @@ function compareOutageObservation(probe, view, transition) {
 
 export const steps=[
  'Installed desktop starts locked with usable sign-in and no private work',
- 'Installed Settings opens all eleven areas',
+ 'Installed Settings opens all five pages and every former area link',
  'First available Workspace selection writes only its owner',
  'Session preferences persist and retain other scopes',
  'Shortcut capture changes the actual Search command',
@@ -159,14 +159,23 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   assert.equal(await clickText('Settings'),true);
   const ready=await until(()=>js("Boolean(document.querySelector('select[aria-label=\"Settings scope\"]')&&!document.querySelector('select[aria-label=\"Settings scope\"]').disabled)"),Boolean);assert.equal(ready,true);
   const areas=await js("[...document.querySelectorAll('nav[aria-label=\"Settings categories\"] button')].map(e=>e.getAttribute('aria-label'))");
-  assert.deepEqual(areas,['Account','Look','Projects','Agents','Connections','You','Workshop','Library & Mods','Automations','System','Updates & About']);
+  assert.deepEqual(areas,['Account','Projects','Agents','Connections','This PC']);
   const opened=[];
   for(const name of areas){
    assert.equal(await js(`(()=>{const e=[...document.querySelectorAll('nav[aria-label="Settings categories"] button')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)});if(!e)return false;e.click();return true;})()`),true);
    const selected=await until(()=>js(`(()=>{const e=document.querySelector('nav[aria-label="Settings categories"] button[aria-current="page"]');const heading=document.querySelector('.sheet-page-heading h2');return {selected:e?.getAttribute('aria-label'),heading:heading?.textContent,screen:document.querySelector('[data-settings-full]')?.getAttribute('data-screen')};})()`),s=>s.selected===name&&s.heading===name);
    assert.equal(selected.selected,name);assert.equal(selected.heading,name);opened.push(selected);
   }
-  assert.equal(await clickText('Look'),true);
+  // Former areas are pages inside the five: each one is a real sub-page button that opens its own screen.
+  const former=[['Agents','Models & BABOOM','BABOOM','select[aria-label="Default model"]'],['Agents','Hooks','Hooks','select[aria-label="Run mode"]'],['Agents','Workshop','Workshop'],['Agents','Automations','Automations'],['Agents','Library & Mods','Library & Mods'],['This PC','System','System graph'],['This PC','Updates & About','Updates & About'],['This PC','Workspaces & privacy','Privacy'],['This PC','Look','Appearance']];
+  for(const [area,label,screen,control] of former){
+   assert.equal(await js(`(()=>{const e=document.querySelector('nav[aria-label="Settings categories"] button[aria-label=${JSON.stringify(area)}]');if(!e)return false;e.click();return true;})()`),true,area);
+   assert.equal(await until(()=>js(`(()=>{const e=[...document.querySelectorAll('nav.sheet-subpages button')].find(e=>e.textContent.trim()===${JSON.stringify(label)});if(!e)return false;e.click();return true;})()`),Boolean),true,label);
+   const at=await until(()=>js("document.querySelector('[data-settings-full]')?.getAttribute('data-screen')"),s=>s==='settings/'+screen);
+   assert.equal(at,'settings/'+screen);opened.push({area,page:label,screen:at});
+   // Models and Permissions show their real owner controls (router model, run mode), never Account.
+   if(control)assert.equal(await until(()=>js(`Boolean(document.querySelector(${JSON.stringify(control)}))`),Boolean),true,control);
+  }
   assert.equal(await until(()=>js("Boolean(document.querySelector('select[aria-label=\"Theme\"]'))"),Boolean),true);
   return {pass:true,got:{areas:opened,workspace:workspaceId}};
  });
@@ -404,7 +413,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   try{
    await call('newSession',['Scope recovery acceptance']);await call('saveSession',[scopeFile]);await call('setSessionModel',[scopeFile,{project:workspaceId}]);await call('getSettings',[]);await call('refreshPreferences',[]);
    assert.equal(await js("(()=>{const e=[...document.querySelectorAll('nav button')].find(e=>e.getAttribute('aria-label')==='Settings'||e.textContent.trim()==='Settings');if(!e)throw Error('Settings rail unavailable');e.click();return true;})()"),true);
-   assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);assert.equal(await clickText('Look'),true);await scope('User');
+   assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);assert.equal(await clickText('This PC'),true);await scope('User');
    const stale=(await snapshot()).destination;
    function holdScopeResponse(){
     const browser=globalThis,original=browser.fetch;let release;

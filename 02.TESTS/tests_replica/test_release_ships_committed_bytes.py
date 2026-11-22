@@ -128,6 +128,7 @@ def test_public_snapshot_bytes_are_independent_of_checkout_location(tmp_path):
     repo = tmp_path / "first checkout"
     repo.mkdir()
     _git(repo, "init", "-q")
+    _git(repo, "config", "--local", "core.longpaths", "true")
     content = b"portable release input\n"
     (repo / "NOTICE").write_bytes(content)
     _git(repo, "add", "NOTICE")

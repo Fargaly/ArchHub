@@ -68,7 +68,17 @@ export async function rightClicks({step, js, until, rectOf, mouse, cdp, clickTex
     assert.ok(JSON.parse(before).nodes.some(node=>node.id===fixture.node));
     assert.equal(await js('window.ArchHubAPI.getSessionDocument().properties.taskContext.task'),fixture.selected);
     const target = `[data-design="home.card"][data-home-task=${JSON.stringify(id)}] .home-card-head b`;
-    if (!await visible(target) && await visible('[data-home-history][aria-pressed="false"]')) await press('[data-home-history]');
+    const historyButton = '[data-home-history]';
+    if (await visible(historyButton+'[aria-pressed="true"]')) await press(historyButton);
+    assert.ok(await until(() => visible(historyButton+'[aria-pressed="false"]'), Boolean), 'Ordinary Home must be open');
+    const activeFilter = '[data-home-filter][aria-pressed="true"]';
+    if (await visible(activeFilter)) await press(activeFilter);
+    await press('[data-home-kind="all"]');
+    assert.ok(await until(() => visible('[data-home-kind="all"][aria-pressed="true"]'), Boolean));
+    assert.equal(await visible(activeFilter), false, 'All must include every work state');
+    assert.ok(await until(() => visible(target), Boolean), 'Unselected task missing from Home All');
+    const state = target.replace(' .home-card-head b', ' .home-card-state');
+    assert.equal(await js(`document.querySelector(${JSON.stringify(state)}).textContent.trim()`), 'Planned');
     const {menu, actions} = await inspectMenu(target, 'Home session menu', ['Open session','Open the thread','Run','Add to another task','Make this an automation',
       'Settings for this session','Rename','Duplicate','Keep at the top','Archive'], ['Fork','Rerun','Invite to watch…']);
     await press(target, 'right');

@@ -375,6 +375,52 @@ def test_signed_out_overview_reads_public_guide_without_model(sites, question, p
     candidate.cloud.assert_not_called()
 
 
+@pytest.mark.parametrize('question,slug,head,excerpt', [
+    ('How do I connect two nodes?', 'composer-canvas', 'Connect nodes', 'Output sockets are filled'),
+    ('يعني إيه أركهاب؟', 'getting-started', 'What is ArchHub?', 'آرك هب تطبيق سطح مكتب'),
+    ('ممكن تعرفني إيه هو آركهب؟', 'getting-started', 'What is ArchHub?', 'آرك هب تطبيق سطح مكتب'),
+    ('لو سمحت، ممكن تقولي ايه هو ارك هاب؟', 'getting-started', 'What is ArchHub?', 'آرك هب تطبيق سطح مكتب'),
+    ('How do I pick a model in the ArchHub composer?', 'composer-canvas', 'Pick a model', 'Open the model picker'),
+    ('كيف أختار نموذجًا في آرك هب؟', 'composer-canvas', 'Pick a model', 'Open the model picker'),
+    ('How do ArchHub approvals work?', 'approvals', 'Run mode (for every agent)', 'Ask first'),
+    ('كيف تعمل الموافقات في آرك هب؟', 'approvals', 'Run mode (for every agent)', 'Ask first'),
+    ('Tell me about startup logs in ArchHub', 'getting-started', 'Startup logs', 'launcher.log'),
+    ('Explain ArchHub routines', 'routines', 'Routines: work that runs by itself', 'a workflow'),
+    ('كيف أربط بين عقدتين؟', 'composer-canvas', 'Connect nodes', 'النص الأصلي الموثق بالإنجليزية'),
+    ('How do I save a Canvas session?', 'composer-canvas', 'Where your work is saved', 'survives a restart'),
+    ('كيف أحفظ جلسة الكانفاس؟', 'composer-canvas', 'Where your work is saved', 'Your graph'),
+    ('How do I open a .archhub file?', 'getting-started', 'Sign in', 'reopen your saved file'),
+    ('How do I open a file in ArchHub?', 'getting-started', 'Sign in', 'reopen your saved file'),
+    ('كيف أفتح ملف .archhub؟', 'getting-started', 'Sign in', 'وافتح ملفك'),
+    ('What does the ArchHub Workshop do?', 'workshop', 'Reach an agent', 'Open the Workshop dock'),
+    ('ما وظيفة ورشة العمل في آرك هب؟', 'workshop', 'Reach an agent', 'Open the Workshop dock'),
+])
+def test_signed_out_public_guide_topics(sites, question, slug, head, excerpt):
+    candidate = sites[1]
+    with running(candidate) as port:
+        result = post(port, question, '/')
+    assert excerpt in result['answer'] and f'[{slug}]' in result['answer']
+    assert [(r['href'], r['sub']) for r in result['links']] == [(f'https://archhub.io/docs/{slug}/', head)]
+    candidate.complete.assert_not_called()
+    candidate.cloud.assert_not_called()
+
+
+@pytest.mark.parametrize('question', ('How do I save a Revit file?', 'How do I connect two nodes under office standard STD-21?',
+                         'What is ArchHub and where do project folders go?', 'What does the BIM workshop require?',
+                         'يعني إيه أركهاب وإيه معيار المكتب؟', 'ممكن تعرفني إيه هو آركهب وفين ملفات المشروع؟',
+                         'How do ArchHub approvals work for private BIM files?', 'Explain ArchHub routines and STD-21',
+                         'How do I pick a model for an office standard in the ArchHub composer?',
+                         'Tell me about startup logs in the ArchHub Workshop',
+                         'كيف أحفظ ملف المشروع حسب المعيار؟', 'كيف أربط بين عقدتين حسب معيار المكتب؟'))
+def test_signed_out_mixed_and_unrelated_topics_keep_account_boundary(sites, question):
+    candidate = sites[1]
+    with running(candidate) as port:
+        result = post(port, question, '/')
+    assert result['links'][0]['href'].startswith('/api/auth/start?')
+    candidate.complete.assert_not_called()
+    candidate.cloud.assert_not_called()
+
+
 def test_chat_guide_passages_are_present_at_the_built_public_citation_urls(tmp_path, monkeypatch):
     website = load('public_website', ROOT / '03.TOOLS/packaging/website/build_site.py')
     monkeypatch.setattr(website, 'catalogue', lambda: {'categories': [], 'nodes': [], 'starters': []})

@@ -246,18 +246,87 @@ def _public_node(index, question, page, arabic):
             'links': [{'title': row['title'], 'href': row['href'], 'sub': row['head']}]}
 
 
-def _public_overview(index, question, arabic):
-    if not re.search(r'\b(archhub|canvas)\b|[اأآ]ر[كک] ?ه[اآ]?ب|كان[فڤ]ا?س|لوحة العمل', question, re.I):
+# Match the entire request: a public product name in an office question is not an intent.
+_PRODUCT = r"(?:archhub|[آأا]ر[كک] ?ه[اآ]?ب)"
+_CANVAS_FILE = r"(?:(?:my|a|an|the|a saved|my saved) )?(?:(?:archhub |canvas )(?:session|file)|\.archhub file|(?:file|session) in archhub|workflow)(?: (?:in|on) (?:archhub|the canvas))?"
+_AR_FILE = r"(?:جلسة (?:الكانفاس|كانفاس|لوحة العمل|canvas)|ملف(?:ي|ا)? (?:\.archhub|archhub)|سير العمل)"
+_HOW = r"(?:how (?:do|can|should) i |how to |كيف |(?:إزاي|ازاي) )?"
+_PUBLIC_GUIDE_TOPICS = (
+    (r"(?:what is |what's |explain |tell me about |how (?:do|can) i use )"
+     r"(?:archhub(?: canvas| and how do i use its canvas)?|(?:the )?canvas)|"
+     r"(?:(?:لو سمحت|من فضلك) ?[،,]? )?(?:ممكن )?(?:(?:تعرفني|تقولي|تقول لي|تشرح لي) )?"
+     r"(?:ما هو |ما هي |(?:يعني )?[إاأ]يه (?:هو |هي )?|كيف أستخدم |اشرح )(?:" + _PRODUCT + r"|(?:ال)?كان[فڤ]ا?س|لوحة العمل)(?: وأستخدم الكانفاس إزاي)?", 'getting-started', 'What is ArchHub?'),
+    (_HOW + r"(?:(?:connect|wire|link) (?:two |2 |the )?nodes(?: together)?(?: (?:on|in) (?:the |archhub )?canvas)?|"
+     r"[أا](?:ربط|وصل) (?:بين )?(?:عقدتين|العقد|نودين)(?: في (?:الكانفاس|لوحة العمل))?)",
+     'composer-canvas', 'Connect nodes'),
+    (_HOW + r"(?:(?:save|store) " + _CANVAS_FILE + r"|[أا]حفظ " + _AR_FILE + ")",
+     'composer-canvas', 'Where your work is saved'),
+    (_HOW + r"(?:(?:open|reopen) " + _CANVAS_FILE + r"|[أا]فتح " + _AR_FILE + ")",
+     'getting-started', 'Sign in'),
+    (r"how do (?:the )?archhub approvals work|كيف تعمل (?:الموافقات في |موافقات )" + _PRODUCT,
+     'approvals', 'Run mode (for every agent)'),
+    (r"(?:كيف |إزاي )[أا]ختار (?:نموذج|موديل)(?:ا|ًا)? في (?:محرر |واجهة )?" + _PRODUCT,
+     'composer-canvas', 'Pick a model'),
+    (r"(?:what (?:is (?:the )?(?:archhub )?workshop(?: for)?|does (?:the )?(?:archhub )?workshop do)|"
+     r"(?:ما (?:هو|هي|وظيفة)|ماذا (?:يفعل|تفعل)|يعني (?:إيه|ايه)) (?:ورش[ةه] العمل|الورشة|(?:archhub )?workshop)(?: في " + _PRODUCT + r")?)",
+     'workshop', 'Reach an agent'),
+)
+
+
+def _explicit_guide_heading(index, query):
+    # Strip only the question framing. All remaining words must name one published section.
+    if not re.search(r"\barchhub\b", query):
         return None
-    if not re.search(r'\b(what is|what.s|how (do|can) i use|explain|tell me about)\b|'
-                     r'ما هو|يعني|[اأإ]يه|ايش|ازاي|[اإ]ز[اى]ي|كيف|اشرح|[اأ]ستخدم', question, re.I):
-        return None
+    subject = re.sub(r"^(?:how (?:do|can) i |how (?:do|does) |how to |what (?:is|are) |"
+                     r"tell me about |explain |help with )", "", query)
+    if query.startswith(("how do ", "how does ")):
+        subject = subject.removesuffix(" work")
+    scope = None
+    for suffix, slug in ((" in the archhub composer", "composer-canvas"), (" on the archhub canvas", "composer-canvas"),
+                         (" in the archhub workshop", "workshop"), (" in archhub", None)):
+        if subject.endswith(suffix):
+            subject, scope = subject.removesuffix(suffix), slug
+            break
+    subject = subject.removeprefix("the ").removeprefix("archhub ").removeprefix("the ")
+    matches = set()
     for row in index.public_docs:
-        if (row['id'] == 'getting-started' and row['head'] == 'What is ArchHub?'
-                and bool(_ARABIC.search(row['text'])) == arabic):
-            return {'answer': row['text'] + ' [getting-started]',
-                    'links': [{'title': row['title'], 'href': row['href'], 'sub': row['head']}]}
+        slug, heading = row['id'], row['head']
+        if (scope and scope != slug) or row['href'] != f'https://archhub.io/docs/{slug}/':
+            continue
+        labels = {heading.casefold().removeprefix('the ')}
+        if heading == row['title']:
+            labels.update((slug.replace('-', ' '), heading.split(':', 1)[0].casefold()))
+        if subject in labels:
+            matches.add((slug, heading))
+    if len(matches) == 1:
+        return matches.pop()
     return None
+
+
+def _public_guide(index, question, arabic):
+    query = ' '.join(re.sub(r'[\u064b-\u0652]', '', question.casefold()).split()).rstrip(' .?!؟')
+    section = next(((slug, heading) for pattern, slug, heading in _PUBLIC_GUIDE_TOPICS
+                    if re.fullmatch(pattern, query)), None) or _explicit_guide_heading(index, query)
+    if not section:
+        return None
+    slug, heading = section
+    rows = [row for row in index.public_docs if row['id'] == slug and row['head'] == heading
+            and row['href'] == f'https://archhub.io/docs/{slug}/']
+    if heading == 'Sign in' and slug == 'getting-started' and re.search(r"open|[أا]فتح", query):
+        rows = [row for row in rows if '.archhub' in row['text']]
+        scope = ('يشرح الدليل إعادة فتح الملف بعد عودة الاتصال. ' if arabic else
+                 'The guide covers reopening a saved file after reconnecting. ')
+    else:
+        scope = ''
+    if not rows:
+        return None
+    row = next((r for r in rows if bool(_ARABIC.search(r['text'])) == arabic), None)
+    if row is None and not arabic:
+        return None
+    row = row or rows[0]
+    prefix = 'النص الأصلي الموثق بالإنجليزية: ' if arabic and not _ARABIC.search(row['text']) else ''
+    return {'answer': f"{scope}{prefix}{row['text']} [{slug}]",
+            'links': [{'title': row['title'], 'href': row['href'], 'sub': heading}]}
 
 
 def _site_answer(index, question, token, complete, arabic):
@@ -310,14 +379,15 @@ def answer(index, question, token='', page='/', *, complete=None):
     if token and identity:
         return {'answer': _ARABIC_IDENTITY if arabic and index.public_docs else identity, 'links': []}
     if index.public_docs:
+        if not token:
+            guide = _public_guide(index, question, arabic)
+            if guide:
+                return guide
         node = _public_node(index, question, page, arabic)
         if node:
             return node
         if token:
             return _site_answer(index, question, token, complete, arabic)
-        overview = _public_overview(index, question, arabic)
-        if overview:
-            return overview
     query = question
     if token and complete:
         try:

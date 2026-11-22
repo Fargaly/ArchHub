@@ -863,7 +863,8 @@
       held = React.useRef(null),
       zoomTimer = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
-      pendingZoomWrites = React.useRef(0);
+      zoomGeneration = React.useRef(0),
+      writingZoom = React.useRef(null);
     const flow = React.useRef(null);
     const viewSource = React.useMemo(() => { const listeners = new Set(); return {get: () => view.current, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); }, emit: () => listeners.forEach(fn => fn())}; }, []);
     // A stable ref callback: the observer below re-attaches when the drawing area element itself changes.
@@ -945,17 +946,30 @@
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
-    React.useEffect(() => () => clearTimeout(zoomTimer.current), [active, s.graph.scopeKey, zoomSetting]);
+    const destination = s.settingsDestination ?? null;
+    const invalidateZoom = () => {
+      zoomGeneration.current++;
+      clearTimeout(zoomTimer.current);
+    };
+    React.useLayoutEffect(() => invalidateZoom, [active, s.graph.scopeKey, s.profile?.id,
+      destination?.scope, destination?.session, destination?.workspace, destination?.workspaceIdentity]);
     const saveZoomPreference = value => {
       clearTimeout(zoomTimer.current);
       const percent = Math.round(value * 100);
-      if (embedded || !active || !['loaded','empty'].includes(requestState) || zoomSetting === undefined || percent === Number(zoomSetting)) return;
-      const destination = s.settingsDestination ?? null;
+      if (embedded || !active || !['loaded','empty'].includes(requestState) || zoomSetting === undefined || (percent === Number(zoomSetting) && writingZoom.current === null)) return;
+      const generation = zoomGeneration.current;
       zoomTimer.current = setTimeout(() => {
-        pendingZoomWrites.current++;
-        zoomWrites.current = zoomWrites.current.then(() => u.act(() => api.setSetting(zoomRow.id, percent, destination)))
-          .then(() => { appliedZoomSetting.current=api.getSnapshot().settings.find(row=>row.id===zoomRow.id)?.value; })
-          .finally(() => { pendingZoomWrites.current--; })
+        zoomWrites.current = zoomWrites.current.then(async () => {
+          if (generation !== zoomGeneration.current) return;
+          writingZoom.current = percent;
+          try {
+            await u.act(() => api.setSetting(zoomRow.id, percent, destination));
+            if (generation === zoomGeneration.current && api.getSnapshot().settings.find(row=>row.id===zoomRow.id)?.value === percent)
+              appliedZoomSetting.current = percent;
+          } finally {
+            writingZoom.current = null;
+          }
+        })
           .catch(() => {}); // u.act reports the refusal; allow the next gesture to save.
       }, zoomSaveDelay);
     };
@@ -985,12 +999,12 @@
         y = client ? client.y - bounds.top : bounds.height / 2;
       updateView({zoom: next, pan: {x: x - (x - old.pan.x) * next / old.zoom, y: y - (y - old.pan.y) * next / old.zoom}}, true, saveZoom);
     };
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
       if (embedded || !active || Object.is(appliedZoomSetting.current,zoomSetting)) return;
-      if (pendingZoomWrites.current) { appliedZoomSetting.current=zoomSetting; return; }
-      if (!Number.isFinite(Number(zoomSetting))) return;
       appliedZoomSetting.current=zoomSetting;
-      zoomAt(Number(zoomSetting) / 100, null, false);
+      if (writingZoom.current === Number(zoomSetting)) return; // Acknowledging our own write keeps the newer gesture.
+      invalidateZoom();
+      if (Number.isFinite(Number(zoomSetting))) zoomAt(Number(zoomSetting) / 100, null, false);
     }, [zoomSetting, requestState, active]);
     const reload = () => {
       setRequestState('waiting');

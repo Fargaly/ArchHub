@@ -258,7 +258,8 @@
       return input && choice('menu.surface.search', () => input.focus());
     };
     let surface, owner, context, label, rows;
-    if ((surface = target.closest('[data-home-page]'))) {
+    const dedicated = target.closest('[data-screen="library"],[data-screen^="settings/"],[data-screen="docs"],[data-screen="workshop"]');
+    if (!dedicated && (surface = target.closest('[data-home-page]'))) {
       const flowNode = target.closest('.react-flow__node');
       const session = target.closest('[data-home-task],[data-home-session-path]') ||
         flowNode?.querySelector('[data-home-task],[data-home-session-path]');

@@ -219,9 +219,9 @@
       const document = api.getSessionDocument?.();
       const currentPath = api.getSessionPath?.();
       const currentTask = document?.properties?.taskContext?.task;
-      const unboundCanvas = r === 'canvas' && document && !currentTask
-        && (!taskId || taskId === currentPath)
-        && (currentPath || api.hasSessionEdits?.() || canvasOpened);
+      const unboundCanvas = r === 'canvas' && document && (
+        (taskId && taskId === currentPath) || (!taskId && !currentTask && (currentPath || api.hasSessionEdits?.() || canvasOpened))
+      );
       const home = !unboundCanvas && window.UI.homeDestination?.(r);
       if (unboundCanvas) setTask('');
       if (home) {
@@ -374,7 +374,7 @@
     const pickFile = () => act(async () => { const file = await api.addFile(); if (file) return api.addComposerAttachment(file.id); return null; });
     const openSavedSession = async path => {
       const opened = await act(() => api.openSession(path));
-      if (opened && !opened.cancelled) await go('canvas');
+      if (opened && !opened.cancelled) await go('canvas', api.getSessionPath?.() || path);
       return opened || null;
     };
     const value = {

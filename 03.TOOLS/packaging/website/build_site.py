@@ -401,6 +401,13 @@ def build_site(output, build_id, installer_url, sha256):
         if route in DESIGN_SKIP or route.startswith("/baboom/") or route == "/changelog":
             continue
         name = "404.html" if route == "404" else route.strip("/") + "/index.html" if route != "/" else "index.html"
+        if route == "/download":
+            guide = app_guides()["account-web"][2]
+            answer = guide.split("## What needs an account\n\n", 1)[1].split("\n\n", 1)[0]
+            markup, count = re.subn(r"(<summary>Do I need an account\?</summary>\s*<p>)[^<]+(?=<a )",
+                                    lambda match: match[1] + html.escape(answer) + " ", markup)
+            if count != 1:
+                raise ValueError("Expected one account FAQ on the download page")
         title = re.search(r'aria-label="([^"]+)"', markup)
         pages[name] = (title.group(1) if title and route != "/" else "ArchHub", release_facts(from_design(markup)))
     for index, row in enumerate(guides()):

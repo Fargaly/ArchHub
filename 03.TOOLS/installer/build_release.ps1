@@ -10,6 +10,7 @@ param(
     # The output folder of packaging/windows/build_goose.py (pinned source). This build never downloads or builds Goose.
     [string]$GooseBuildPath,
     [string]$PythonPath,
+    [string]$RuntimePythonPath,
     [switch]$PrepareCandidateManifest,
     [string]$LocalCandidateManifest,
     [ValidatePattern('^[0-9a-fA-F]{64}$')]
@@ -59,9 +60,6 @@ function Get-PayloadPath([string]$Path) {
     }
     return $Path
 }
-# Resolve the selected build interpreter early; the later packaging logic still
-# owns its Python/dependency validation.
-$compilerPython = if ($PythonPath) { $PythonPath } else { 'python' }
 $compilerSourceRoot = if (Test-Path -LiteralPath (Join-Path $selectedRoot '03.TOOLS/tools')) { Join-Path $selectedRoot '03.TOOLS' } else { $selectedRoot }
 $acompilerInputs = @(
     'NOTICE', 'tools/__init__.py', 'tools/ratchet.py', 'tools/pipeline/__init__.py',
@@ -82,7 +80,7 @@ $selectedInputs = @(
     'nodelang', 'nodelang/outlook_graph.ps1', 'colleague_setup.py', 'docs/SPEC.md',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
-    'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
+    'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py', 'packaging/pack_runtime.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
     'tools/real_app_check/graph_owner.py',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
@@ -201,7 +199,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'LICENSE.md', 'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'packaging/windows/build_goose.py', 'packaging/windows/goose/Cargo.lock',
             'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',
-            'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
+            'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py', 'packaging/pack_runtime.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
     'tools/real_app_check/graph_owner.py',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md', 'nodelang/README.md', 'app/README.md',
@@ -633,11 +631,6 @@ if ($PrepareCandidateManifest) {
     return
 }
 # Admission happens per commit (pre-commit ACOMPILER); the release only builds and installs.
-# The connector's runtime as two zips (zipimport): one file read instead of hundreds per connector start.
-# Beside nodelang in either layout (the installer ships it as {app}\packed).
-$packedRuntime = Join-Path (Split-Path -Parent (Join-Path $selectedRoot (Get-RepositoryPath 'nodelang'))) 'packed'
-& $compilerPython (Join-Path $selectedRoot (Get-RepositoryPath 'packaging/pack_runtime.py')) --out $packedRuntime
-if ($LASTEXITCODE -ne 0) { throw 'Connector runtime packing failed; no release without the packed runtime.' }
 $isCandidate = -not [string]::IsNullOrEmpty($LocalCandidateManifest)
 if ($isCandidate -ne (-not [string]::IsNullOrEmpty($LocalCandidateManifestSha256))) {
     throw 'LocalCandidateManifest and its reviewed SHA256 must be supplied together.'
@@ -727,16 +720,13 @@ foreach ($row in $snapshot.Rows) {
 }
 Assert-CandidateSources $snapshot
 $selectedRoot = Join-Path $output 'source/selected'
-# The snapshot holds tracked files only; the packed runtime (gitignored, packed above) joins it here
-# for the installer's ..\packed\* source.
-Copy-Item -LiteralPath $packedRuntime -Destination (Join-Path $selectedRoot 'packed') -Recurse -ErrorAction Stop
-if (-not (Test-Path -LiteralPath (Join-Path $selectedRoot 'packed/stamp.json') -PathType Leaf)) {
-    throw 'The packed runtime has no stamp.json; no release without the packed runtime.'
-}
 
 if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }
+if (-not $RuntimePythonPath) { $RuntimePythonPath = $PythonPath }
+& $RuntimePythonPath -I -B -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 14))'
+if ($LASTEXITCODE -ne 0) { throw 'The packed connector runtime requires CPython 3.14; pass -RuntimePythonPath.' }
 
 Assert-BuildSnapshot $snapshot
 $candidateClock.Stop()
@@ -805,6 +795,9 @@ if (@($wheels | Where-Object { $_.Name -match '^(?i:pytest)-' }).Count -ne 1) {
 $wheelLines = @($wheels | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" })
 [IO.File]::WriteAllText((Join-Path $output 'wheelhouse.sha256'), ($wheelLines -join "`n") + "`n", $utf8)
+# Pack the same checked dependency set Setup installs, in a fresh site directory.
+& $RuntimePythonPath -I -B (Join-Path $selectedRoot 'packaging/pack_runtime.py') --out (Join-Path $selectedRoot 'packed') --wheelhouse $wheelhouse
+if ($LASTEXITCODE -ne 0) { throw 'Connector runtime packing failed; no release without the packed runtime.' }
 # The authenticated host brokers, built per Revit / AutoCAD year installed here
 # from the snapshot's bridges/sources. They carry activation only with the
 # broker review record (-BrokerReviewPath); setup refuses them otherwise.
@@ -848,7 +841,9 @@ foreach ($name in 'site.zip', 'stdlib.zip', 'stamp.json') {
 # packed MCP version, so a cold start reads it instead of importing MCP. Acceleration only: a failed bake leaves the
 # app to build it on first start, so it never fails the release.
 # Isolated (-E -s: no PYTHON* variables, no user site), paths passed explicitly, bounded at 120 s.
-$bakePaths = (@((Join-Path $selectedRoot 'packed/site.zip'), $selectedRoot) | ConvertTo-Json -Compress)
+$bakeSourcePaths = @($selectedRoot)
+if ($RuntimePythonPath -eq $PythonPath) { $bakeSourcePaths = @((Join-Path $selectedRoot 'packed/site.zip'), $selectedRoot) }
+$bakePaths = ConvertTo-Json -InputObject $bakeSourcePaths -Compress
 $bakeCode = "import json,sys; sys.path[:0]=json.loads(sys.argv[1]); from nodelang.command_registry import bake_catalogue; bake_catalogue()"
 try {
     $bake = [Diagnostics.ProcessStartInfo]::new($PythonPath)

@@ -6,7 +6,7 @@ httpx, anyio... and the standard library). On a machine where each file access c
 that alone took 2.8-4.3 s; from two zips it takes about 1.1 s. Native extension modules (.pyd) stay
 files on the normal path; package data files (JSON schemas, certificates) travel inside the zip.
 
-    python pack_runtime.py --out <app>/packed
+    python pack_runtime.py --out <app>/packed --wheelhouse <release>/wheelhouse
 writes site.zip, stdlib.zip and stamp.json (the interpreter they were built for). nodelang adds
 them to sys.path only in a connector process and only when the stamp matches the interpreter.
 """
@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import site
+import subprocess
 import sys
 import sysconfig
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -46,6 +49,20 @@ def pack_site(site_packages, out):
     return written
 
 
+def pack_wheelhouse(wheelhouse, out):
+    wheels = sorted(str(wheel.resolve()) for wheel in Path(wheelhouse).glob('*.whl') if wheel.is_file())
+    if not wheels:
+        raise ValueError('No wheels to pack from the desktop wheelhouse.')
+    with tempfile.TemporaryDirectory(prefix='archhub-pack-site-') as target:
+        env = {key: value for key, value in os.environ.items() if not key.upper().startswith('PIP_')}
+        env['PIP_CONFIG_FILE'] = os.devnull
+        command = [sys.executable, '-I', '-B', '-m', 'pip', 'install',
+                   '--disable-pip-version-check', '--no-index', '--no-deps', '--no-compile',
+                   '--ignore-installed', '--target', target]
+        subprocess.run([*command, *wheels], env=env, check=True)
+        return pack_site(Path(target), out)
+
+
 def pack_stdlib(out):
     library = Path(sysconfig.get_paths()['stdlib'])
     skip = set(PACK_NODE['params']['stdlib_skip'])
@@ -60,11 +77,17 @@ def pack_stdlib(out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--out', required=True)
-    parser.add_argument('--site-packages', default=next(p for p in site.getsitepackages() if p.endswith('site-packages')))
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument('--site-packages')
+    source.add_argument('--wheelhouse', type=Path)
     args = parser.parse_args(argv)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    packed = pack_site(Path(args.site_packages), out / 'site.zip')
+    if args.wheelhouse:
+        packed = pack_wheelhouse(args.wheelhouse, out / 'site.zip')
+    else:
+        site_packages = args.site_packages or next(p for p in site.getsitepackages() if p.endswith('site-packages'))
+        packed = pack_site(Path(site_packages), out / 'site.zip')
     pack_stdlib(out / 'stdlib.zip')
     (out / 'stamp.json').write_text(json.dumps({'python': sys.version, 'hexversion': sys.hexversion,
                                                 'packages': packed}, indent=1), encoding='utf-8')

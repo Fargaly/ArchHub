@@ -59,6 +59,12 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    page.setDefaultTimeout(6000);
    page.on('pageerror',e=>{errors.push(e.message);console.error('PAGEERROR',e.message);});
    await mount(page,{name:'Design reviewer',email:'review@example.test',signedIn:false,checking:false},{settings:[
+    {id:'Projects.Angle precision',page:'Projects',group:'Units and precision',label:'Angle precision',type:'number',control:'range',min:0,max:3,default:1,value:1},
+    {id:'Projects.Dates',page:'Projects',group:'Units and precision',label:'Dates',type:'choice',options:['DD/MM/YYYY','YYYY-MM-DD','MM/DD/YYYY'],default:'DD/MM/YYYY',value:'DD/MM/YYYY'},
+    {id:'Projects.Area',page:'Projects',group:'Units and precision',label:'Area',type:'choice',options:['m²','ft²'],default:'m²',value:'m²'},
+    {id:'Projects.Area precision',page:'Projects',group:'Units and precision',label:'Area precision',type:'number',control:'range',min:0,max:3,default:2,value:2},
+    {id:'Projects.Length',page:'Projects',group:'Units and precision',label:'Length',type:'choice',options:['Millimetres','Centimetres','Metres','Feet and inches'],default:'Millimetres',value:'Millimetres'},
+    {id:'Projects.Length precision',page:'Projects',group:'Units and precision',label:'Length precision',type:'number',control:'range',min:0,max:3,default:0,value:0},
     {id:'Appearance.Theme',page:'Appearance',group:'Theme and colour',label:'Theme',type:'enum',options:['Dark','Light','System'],value:'Dark',default:'Dark'},
     {id:'Appearance.Text scale',page:'Appearance',group:'Size and density',label:'Text scale',type:'number',value:110,default:100},
     {id:'Workshop.Keep messages',page:'Workshop',group:'Messages',label:'Keep messages',description:'Conversation retention',type:'number',value:20,default:10},
@@ -150,7 +156,17 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    await nav.getByRole('button',{name:'Projects',exact:true}).click();
    await page.getByRole('heading',{name:'Project folders',exact:true}).waitFor();
    await page.getByRole('heading',{name:'Example workspace',exact:true}).waitFor();
-   await page.getByRole('group',{name:'Units and precision. Coming soon: not built yet',exact:true}).waitFor();
+   await page.getByLabel('Length',{exact:true}).selectOption('Metres');
+   const precision=page.getByRole('slider',{name:'Length precision'});
+   await precision.focus();
+   await precision.press('ArrowRight');
+   assert.deepEqual(await page.evaluate(()=>window.writes.slice(-2)),[{id:'Projects.Length',value:'Metres'},{id:'Projects.Length precision',value:1}]);
+   await page.getByLabel('Area',{exact:true}).selectOption('ft²');
+   await page.getByRole('slider',{name:'Area precision',exact:true}).press('ArrowRight');
+   assert.deepEqual(await page.evaluate(()=>window.writes.slice(-2)),[{id:'Projects.Area',value:'ft²'},{id:'Projects.Area precision',value:3}]);
+   await page.getByRole('slider',{name:'Angle precision',exact:true}).press('ArrowRight');
+   await page.getByLabel('Dates',{exact:true}).selectOption('YYYY-MM-DD');
+   assert.deepEqual(await page.evaluate(()=>window.writes.slice(-2)),[{id:'Projects.Angle precision',value:2},{id:'Projects.Dates',value:'YYYY-MM-DD'}]);
    assert.deepEqual(errors,[]);
    console.log(JSON.stringify({width,areas:expected.length,wordSearch:true,keyboardJump:true,globalChanged:true,errors}));
    await page.close();
@@ -186,7 +202,7 @@ test('all 43 design sections are reachable under their design parent, working an
    if(heading)assert.ok(await content.getByRole('heading',{name:heading,exact:true}).count()>=1,section+': heading '+heading);
    if(door)assert.equal(await content.getByRole('button',{name:door,exact:true}).count()>=1,true,section+': working action '+door);
    let state=door?'working':'shown';
-   if(soon==='project'){const items={'Templates':['Revit template','AutoCAD template','Title block','Sheet size','New project folders'],'IFC and BCF':['IFC version','IFC export setup','BCF version'],'Print and PDF':['Pen table','Sheet set','Default scale'],'CAD':['Layer standard','Colour to lineweight','DWG export setup','DWG version']}[section]||[section];
+   if(soon==='project'){const items={'Units and precision':['Length','Length precision','Area','Area precision','Angle precision','Dates'],'Templates':['Revit template','AutoCAD template','Title block','Sheet size','New project folders'],'IFC and BCF':['IFC version','IFC export setup','BCF version'],'Print and PDF':['Pen table','Sheet set','Default scale'],'CAD':['Layer standard','Colour to lineweight','DWG export setup','DWG version']}[section]||[section];
     const shown=await content.getByRole('heading',{name:section,exact:true}).count();let pending=0;for(const item of items)pending+=await content.getByRole('group',{name:item+'. Coming soon: not built yet',exact:true}).count();assert.equal(shown+pending>=1,true,section+' shown or marked coming soon');state=shown?'shown':'coming soon';}
    else if(soon){assert.equal(await content.getByRole('group',{name:soon+'. Coming soon: not built yet',exact:true}).count(),1,section+': unavailable action marked');state=door?'working + coming soon':'coming soon';}
    report.push([section,area,route,state]);
@@ -244,4 +260,76 @@ test('Look uses the five design families and passes the actual workflow to the e
  const empty=renderToStaticMarkup(React.createElement(window.UI.Settings,{page:'Appearance'}));
  assert.ok(empty.includes('Open a workflow to preview its real nodes here.'));
  assert.equal(calls.length,1,'an unloaded workflow does not mount a Canvas');
+});
+
+test('dimensioned schedule keeps its warning, quantity and source measurement', async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage();
+  await mount(page,{name:'Reviewer'}, {settings:[{id:'Projects.Length',value:'Metres'},{id:'Projects.Length precision',value:2}]});
+  await page.evaluate(()=>{window.ReactResizablePanels={};});
+  await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'ds_screens.jsx'),'utf8'),{loader:'jsx'}).code});
+  await page.evaluate(()=>{
+   const result={columns:['length_mm','qty'],rows:[[1250,2]],warnings:['Two source rows were excluded']};
+   window.rawSchedule=result;
+   window.ReactDOM.createRoot(document.body.appendChild(document.createElement('section'))).render(window.React.createElement(window.UI.ResultPreview,{value:result}));
+  });
+  const preview=page.locator('section').filter({has:page.getByRole('columnheader',{name:'Length',exact:true})}).last();
+  await preview.getByText('1.25 m',{exact:true}).waitFor();
+  assert.deepEqual(await preview.locator('td').allTextContents(),['1.25 m','2']);
+  assert.equal(await preview.locator('dd').innerText(),'Two source rows were excluded');
+  assert.equal(await page.evaluate(()=>window.rawSchedule.rows[0][0]),1250);
+ }finally{await browser.close();}
+});
+
+test('square-metre Revit fields display in project area units and preserve warnings and untyped values',async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage();
+  await mount(page,{name:'Reviewer'},{settings:[{id:'Projects.Area',value:'ft²'},{id:'Projects.Area precision',value:3}]});
+  await page.evaluate(()=>{window.ReactResizablePanels={};});
+  await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'ds_screens.jsx'),'utf8'),{loader:'jsx'}).code});
+  await page.evaluate(()=>{
+   const result={columns:['area_m2','area'],rows:[[1,2.75],[0,0],[null,'']],total_area_m2:1,warnings:['Some elements were missing']};
+   window.rawArea=result;
+   window.ReactDOM.createRoot(document.body.appendChild(document.createElement('article'))).render(window.React.createElement(window.UI.ResultPreview,{value:result}));
+  });
+  const preview=page.locator('article').filter({has:page.getByRole('columnheader',{name:'Area',exact:true})}).last();
+  await preview.locator('td').first().waitFor();
+  assert.deepEqual(await preview.locator('td').allTextContents(),['10.764 ft²','2.75','0.000 ft²','0','','']);
+  assert.deepEqual(await preview.locator('dd').allTextContents(),['10.764 ft²','Some elements were missing']);
+  assert.deepEqual(await page.evaluate(()=>window.rawArea.rows),[[1,2.75],[0,0],[null,'']]);
+  await page.evaluate(()=>window.ArchHubAPI.setSetting('Projects.Area','m²'));
+  await preview.getByRole('cell',{name:'1.000 m²',exact:true}).waitFor();
+ }finally{await browser.close();}
+});
+
+test('register field previews apply project formats only to declared angles and civil dates',async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage({timezoneId:'America/Los_Angeles'});
+  await mount(page,{name:'Reviewer'},{settings:[{id:'Projects.Angle precision',value:2},{id:'Projects.Dates',value:'MM/DD/YYYY'}]});
+  const xy=require('./studio_xyflow.cjs');
+  await page.addScriptTag({content:xy.script()});
+  await page.addStyleTag({content:xy.css()});
+  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
+  await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'ds_screens.jsx'),'utf8'),{loader:'jsx'}).code});
+  await page.evaluate(()=>{
+   const defs=[{id:'turn',name:'Turn',type:'number',unit:'rad'},{id:'issued',name:'Issued',type:'date'},{id:'key',name:'Key',type:'text'}];
+   const cells={turn:Math.PI/2,issued:'2024-02-29',key:'2024-02-29'};
+   const base={kind:'Node',params:{},inputs:[],outputs:[],x:0,y:0};
+   const graph={id:'register',name:'Register',wires:[],nodes:[
+    {...base,id:'table',title:'Register',type:'data.dataset',dataset:{fields:defs,records:[{cells}]}},
+    ...defs.map((f,i)=>({...base,id:f.id,title:f.name,x:380,y:120*i,type:'data.field',column:{dataset:'Register',field:f.id,label:f.type}}))]};
+   window.fixture={...window.fixture,graph,catalogue:[],approvals:[],messages:[],workspacePolicies:{}};
+   const stage=document.body.appendChild(document.createElement('div'));
+   stage.style.cssText='width:1000px;height:700px';
+   window.ReactDOM.createRoot(stage).render(window.React.createElement(window.UI.Ctx.Provider,{value:{act:f=>f(),show(){},go(){}}},window.React.createElement(window.UI.Canvas,{embedded:true,preview:graph})));
+  });
+  for(const [key,expected] of [['turn','1.57'],['issued','02/29/2024'],['key','2024-02-29']]){
+   const out=page.locator('[data-column-of="Register.'+key+'"]');
+   await out.waitFor({timeout:4000});
+   assert.equal((await out.textContent()).trim(),expected+'  ›');
+  }
+ }finally{await browser.close();}
 });

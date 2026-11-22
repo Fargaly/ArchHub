@@ -862,6 +862,37 @@ def preference_settings(function='readControls', args=(), settings=None):
             else:
                 settings.update({}, remove=[storage_key])
             function, args = "readControls", ()
+    def choice(label, key, options):
+        return {'id': 'Projects.' + label, 'storageKey': key, 'type': 'choice', 'label': label,
+                'options': options, 'default': options[0]}
+
+    def precision(label, key, initial):
+        return {'id': 'Projects.' + label, 'storageKey': key, 'type': 'number', 'control': 'range',
+                'label': label, 'min': 0, 'max': 3, 'default': initial}
+
+    measurement_rows = [
+        choice('Length', 'lenUnit', ['Millimetres', 'Centimetres', 'Metres', 'Feet and inches']),
+        precision('Length precision', 'lenDecimals', 0),
+        choice('Area', 'areaUnit', ['m²', 'ft²']),
+        precision('Area precision', 'areaDecimals', 2),
+        precision('Angle precision', 'angleDecimals', 1),
+        choice('Dates', 'dateFormat', ['DD/MM/YYYY', 'YYYY-MM-DD', 'MM/DD/YYYY']),
+    ]
+    for row in measurement_rows:
+        key = row['storageKey']
+        if args and args[0] == row['id'] and function in ('setAppearance', 'resetAppearance'):
+            if function == 'resetAppearance':
+                settings.update({}, remove=[key])
+            else:
+                value = args[1]
+                if ('options' in row and value not in row['options']) or (
+                        'min' in row and (type(value) is not int or not row['min'] <= value <= row['max'])):
+                    raise ValueError('Choose a valid value for ' + row['label'] + '.')
+                settings.update({key: value})
+            function, args = 'readControls', ()
+    preferences = settings.read()
+    for row in measurement_rows:
+        row.update(page='Projects', group='Units and precision', value=preferences.get(row['storageKey'], row['default']))
     title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']
     if args and args[0] == 'Projects.Sheet set' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
@@ -957,7 +988,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows]}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows]}
 
 
 def preference_setting(identity):

@@ -112,7 +112,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   // Conditional layout fixture: model a fully backed Projects page.
   const completeIds=await page.evaluate(()=>{
    const families={
-    'Project register':['Project folder'],'Units and precision':['Units'],'Office standard':['Office standard'],
+    'Project register':['Project folder'],'Units and precision':['Length','Length precision','Area','Area precision','Angle precision','Dates'],'Office standard':['Office standard'],
     'Templates':['Revit template','AutoCAD template','Title block','Sheet size','New project folders'],
     'Location':['Location'],'Revit worksharing':['Revit worksharing'],
     'IFC and BCF':['IFC version','IFC export setup','BCF version'],

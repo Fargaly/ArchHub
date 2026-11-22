@@ -635,7 +635,17 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       const cards=[...(content.current?.querySelectorAll('.sheet-columns > section, .sheet-owner-card')||[])];
       setOutline(cards.map((node,index)=>{node.id='settings-section-'+index;return {id:node.id,label:node.querySelector('h2,h3')?.textContent||'Preferences'};}));
     },[page,advancedOpen,changedOnly,query,load.status,s.settings]);
-    const missingProjectFamilies=['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].flatMap(label=>['IFC and BCF','Templates','CAD','Print and PDF'].includes(label)?(label==='Print and PDF'?['Pen table','Sheet set','Default scale']:label==='CAD'?['Layer standard','Colour to lineweight','DWG export setup','DWG version']:label==='Templates'?['Revit template','AutoCAD template','Title block','Sheet size']:['IFC version','IFC export setup','BCF version']).filter(name=>!s.settings.some(row=>row.page==='Projects'&&row.group===label&&row.label===name)):s.settings.some(row=>row.page==='Projects'&&row.group===label)?[]:[label]);
+    const projectFields = {
+      'Units and precision': ['Length', 'Length precision', 'Area', 'Area precision', 'Angle precision', 'Dates'],
+      'Print and PDF': ['Pen table', 'Sheet set', 'Default scale'],
+      'CAD': ['Layer standard', 'Colour to lineweight', 'DWG export setup', 'DWG version'],
+      'Templates': ['Revit template', 'AutoCAD template', 'Title block', 'Sheet size'],
+      'IFC and BCF': ['IFC version', 'IFC export setup', 'BCF version']
+    };
+    const missingProjectFamilies = ['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'].flatMap(group => {
+      const backed = s.settings.filter(row => row.page === 'Projects' && row.group === group);
+      return projectFields[group] ? projectFields[group].filter(label => !backed.some(row => row.label === label)) : backed.length ? [] : [group];
+    });
     const jump=id=>document.getElementById(id)?.scrollIntoView({block:'start',behavior:'auto'});
     // Opens the existing New project form in Project folders (the workspace owner's own control).
     const openNewProject=()=>{const form=content.current?.querySelector('form[aria-label="New project"]');if(form){form.scrollIntoView({block:'start'});return;}const button=[...(content.current?.querySelectorAll('button')||[])].find(node=>node.textContent.trim()==='New project');if(button){button.click();button.scrollIntoView({block:'start'});}};

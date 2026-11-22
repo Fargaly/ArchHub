@@ -338,7 +338,27 @@
     const dataset = graph.nodes.find(d => d.dataset && d.title === n.column.dataset), def = dataset?.dataset.fields.find(f => f.id === n.column.field);
     return def && {dataset, def, values: dataset.dataset.records.map(r => r.cells[def.id])};
   };
+  function columnValue(value, field, settings) {
+    if (field.type === 'date' && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const instant = new Date(value + 'T00:00:00Z');
+      if (!Number.isNaN(instant.getTime()) && instant.toISOString().slice(0, 10) === value) {
+        const [year, month, day] = value.split('-');
+        const format = settings.find(row => row.id === 'Projects.Dates')?.value;
+        if (format === 'YYYY-MM-DD') return value;
+        return format === 'MM/DD/YYYY' ? [month, day, year].join('/') : [day, month, year].join('/');
+      }
+    }
+    if (['number', 'integer'].includes(field.type) && Number.isFinite(value) &&
+        ['°','deg','degree','degrees','rad','radian','radians'].includes(String(field.unit).trim().toLowerCase())) {
+      const precision = settings.find(row => row.id === 'Projects.Angle precision')?.value;
+      const digits = Number.isInteger(precision) && precision >= 0 && precision <= 3 ? precision : 1;
+      const formatted = value.toFixed(digits);
+      return Number(formatted) === 0 ? (0).toFixed(digits) : formatted;
+    }
+    return cellText(value);
+  }
   function FieldNode({n, field: {dataset, def, values}, selected, headerProps, renderSocket}) {
+    const {settings} = useData();
     // Spec FieldNode 180x92: name, typed line, record count, one value strip; sockets at the card edges (y 44).
     const edge = side => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11, top: 44, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
     return <div data-ds-node="" data-spec="field" className={'lm-node ' + (headerProps?.className || '')} {...headerProps} title={dataset.title + ' · ' + def.name}
@@ -350,7 +370,7 @@
       <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', color: SPEC.label}} title="All records">{values.length}</span>
       <div style={{position: 'absolute', left: 12, top: 34, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
       <output data-column-of={n.column.dataset + '.' + n.column.field} data-todo="output-summary-expanded" style={{position: 'absolute', left: 8, right: 8, top: 56, height: 24, boxSizing: 'border-box', padding: '5px 6px', borderRadius: 5,
-        background: SPEC.slot, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
+        background: SPEC.slot, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(value => columnValue(value, def, settings || [])).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
     </div>;
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
@@ -514,13 +534,52 @@
       <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
     </div>;
   }
+  const measureLabels = new Map([['length_mm', 'Length'], ['area_m2', 'Area'], ['total_area_m2', 'Total area']]);
+  function MeasurementResult({field, value}) {
+    const {settings} = useData();
+    const area = field !== 'length_mm';
+    const setting = area ? 'Projects.Area' : 'Projects.Length';
+    const unit = settings.find(row => row.id === setting)?.value;
+    const precision = settings.find(row => row.id === setting + ' precision')?.value;
+    const digits = Number.isInteger(precision) && precision >= 0 && precision <= 3 ? precision : (area ? 2 : 0);
+    if (area) {
+      const squareFeet = unit === 'ft²';
+      return (squareFeet ? value / (0.3048 ** 2) : value).toFixed(digits) + (squareFeet ? ' ft²' : ' m²');
+    }
+    if (unit === 'Feet and inches') {
+      const scale = 10 ** digits;
+      const inches = Math.round(Math.abs(value) / 25.4 * scale);
+      const feet = Math.floor(inches / (12 * scale));
+      return (value < 0 && inches ? '−' : '') + feet + '′ ' + (inches % (12 * scale) / scale).toFixed(digits) + '″';
+    }
+    const [divisor, symbol] = unit === 'Metres' ? [1000, 'm'] : unit === 'Centimetres' ? [10, 'cm'] : [1, 'mm'];
+    return (value / divisor).toFixed(digits) + ' ' + symbol;
+  }
+  function ResultTable({columns, rows}) {
+    const shown = columns.slice(0, 4);
+    for (const key of columns) if (measureLabels.has(key) && !shown.includes(key)) shown.push(key);
+    return <table><thead><tr>{shown.map(key => <th key={key}>{measureLabels.get(key) ?? key}</th>)}</tr></thead>
+      <tbody>{rows.slice(0, 8).map((row, i) => <tr key={i}>{shown.map(key => {
+        const value = Array.isArray(row) ? row[columns.indexOf(key)] : row[key];
+        return <td key={key}>{measureLabels.has(key) && Number.isFinite(value) ? <MeasurementResult field={key} value={value}/> :
+          value == null && (key === 'area_m2' || key === 'total_area_m2') ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')}</td>;
+      })}</tr>)}</tbody></table>;
+  }
   function ResultPreview({value}) {
     if(value == null || value === '' || typeof value==='object' && (!Object.keys(value).length || !Array.isArray(value) && 'approvalId' in value)) return null;
     const picture = typeof value === 'object' && (value.thumbnail || value.thumb || value.image);
     if(typeof picture === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(picture)) return <img src={picture} alt={value.name || value.title || 'Step output'} style={{width:'100%',maxHeight:148,objectFit:'contain'}}/>;
-    if(Array.isArray(value) && value.every(row=>row && typeof row==='object' && !Array.isArray(row))){const keys=[...new Set(value.flatMap(Object.keys))].slice(0,4);return <table><thead><tr>{keys.map(key=><th key={key}>{key}</th>)}</tr></thead><tbody>{value.slice(0,8).map((row,i)=><tr key={i}>{keys.map(key=><td key={key}>{typeof row[key]==='object'?JSON.stringify(row[key]):String(row[key]??'')}</td>)}</tr>)}</tbody></table>;}
+    if (Array.isArray(value) && value.every(row => row && typeof row === 'object' && !Array.isArray(row)))
+      return <ResultTable columns={[...new Set(value.flatMap(Object.keys))]} rows={value}/>;
     if(Array.isArray(value))return <pre>{value.slice(0,8).map(item=>typeof item==='object'?JSON.stringify(item):String(item)).join('\n')}</pre>;
-    if(typeof value==='object'){const rows=Object.entries(value);if(rows.length===1)return <ResultPreview value={rows[0][1]}/>;return <dl>{rows.slice(0,8).map(([key,item])=><React.Fragment key={key}><dt>{key.replace(/_/g,' ')}</dt><dd><ResultPreview value={item}/></dd></React.Fragment>)}</dl>;}
+    if (typeof value === 'object') {
+      const schedule = Array.isArray(value?.columns) && value.columns.some(key => measureLabels.has(key)) && value.columns.every(column => typeof column === 'string') && Array.isArray(value.rows) && value.rows.every(Array.isArray);
+      const rows = Object.entries(value).filter(([key]) => !schedule || (key !== 'columns' && key !== 'rows'));
+      const preview = (key, item) => measureLabels.has(key) && Number.isFinite(item) ? <MeasurementResult field={key} value={item}/> : <ResultPreview value={item}/>;
+      if (!schedule && rows.length === 1) return preview(...rows[0]);
+      return <>{schedule && <ResultTable columns={value.columns} rows={value.rows}/>}
+        {rows.length > 0 && <dl>{rows.slice(0, schedule ? 6 : 8).map(([key,item]) => <React.Fragment key={key}><dt>{measureLabels.get(key) ?? key.replace(/_/g,' ')}</dt><dd>{preview(key,item)}</dd></React.Fragment>)}</dl>}</>;
+    }
     return <pre>{String(value)}</pre>;
   }
   // The run mode shown on the Session card is the Settings › Permissions value, read from and written to its owner.

@@ -861,6 +861,7 @@
     const area = React.useRef(), [areaNode, setAreaNode] = React.useState(null),
       view = React.useRef(viewport),
       held = React.useRef(null),
+      zoomTimer = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
     const flow = React.useRef(null);
@@ -944,11 +945,26 @@
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
+    React.useEffect(() => () => clearTimeout(zoomTimer.current), [active, s.graph.scopeKey, zoomSetting]);
+    const saveZoomPreference = value => {
+      clearTimeout(zoomTimer.current);
+      const percent = Math.round(value * 100);
+      if (embedded || !active || !['loaded','empty'].includes(requestState) || zoomSetting === undefined || percent === Number(zoomSetting)) return;
+      const destination = s.settingsDestination ?? null;
+      zoomTimer.current = setTimeout(() => {
+        pendingZoomWrites.current++;
+        zoomWrites.current = zoomWrites.current.then(() => u.act(() => api.setSetting(zoomRow.id, percent, destination)))
+          .then(() => { appliedZoomSetting.current=api.getSnapshot().settings.find(row=>row.id===zoomRow.id)?.value; })
+          .finally(() => { pendingZoomWrites.current--; })
+          .catch(() => {}); // u.act reports the refusal; allow the next gesture to save.
+      }, zoomSaveDelay);
+    };
     const persistView = ({x,y,zoom}) => {
       userViewport.current = true;
       api.setSessionViewport?.({x,y,zoom});
     };
-    const updateView = (next, persist = true) => {
+    const updateView = (next, persist = true, saveZoom = persist) => {
+      if (saveZoom && next.zoom !== view.current.zoom) saveZoomPreference(next.zoom);
       view.current = next;
       flow.current?.setViewport({x: next.pan.x, y: next.pan.y, zoom: next.zoom});
       viewSource.emit();
@@ -961,35 +977,21 @@
       userViewport.current = s.graph.viewportSaved === true;
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
     }, [s.graph.scopeKey, embedded, s.graph.viewportSaved, s.graph.viewport?.x, s.graph.viewport?.y, s.graph.viewport?.zoom]);
-    const zoomAt = (value, client = null) => {
+    const zoomAt = (value, client = null, saveZoom = true) => {
       const bounds = area.current?.getBoundingClientRect();
       if (!bounds) return;
       const old = view.current, next = Math.max(zoomMin, Math.min(zoomMax, value));
       const x = client ? client.x - bounds.left : bounds.width / 2,
         y = client ? client.y - bounds.top : bounds.height / 2;
-      updateView({zoom: next, pan: {x: x - (x - old.pan.x) * next / old.zoom, y: y - (y - old.pan.y) * next / old.zoom}});
+      updateView({zoom: next, pan: {x: x - (x - old.pan.x) * next / old.zoom, y: y - (y - old.pan.y) * next / old.zoom}}, true, saveZoom);
     };
     React.useEffect(() => {
       if (embedded || !active || Object.is(appliedZoomSetting.current,zoomSetting)) return;
       if (pendingZoomWrites.current) { appliedZoomSetting.current=zoomSetting; return; }
       if (!Number.isFinite(Number(zoomSetting))) return;
       appliedZoomSetting.current=zoomSetting;
-      zoomAt(Number(zoomSetting) / 100);
+      zoomAt(Number(zoomSetting) / 100, null, false);
     }, [zoomSetting, requestState, active]);
-    React.useEffect(() => {
-      const percent = Math.round(zoom * 100);
-      if (embedded || !active) return;
-      if (!['loaded','empty'].includes(requestState) || zoomSetting === undefined || percent === Number(zoomSetting)) return;
-      const timer = setTimeout(() => {
-        pendingZoomWrites.current++;
-        zoomWrites.current = zoomWrites.current.then(() => u.act(() => api.setSetting(zoomRow.id, percent)))
-          .then(() => { appliedZoomSetting.current=api.getSnapshot().settings.find(row=>row.id===zoomRow.id)?.value; })
-          .finally(() => { pendingZoomWrites.current--; });
-        // u.act reports failures; a refused save must not poison the next gesture.
-        zoomWrites.current = zoomWrites.current.catch(() => {});
-      }, zoomSaveDelay);
-      return () => clearTimeout(timer);
-    }, [zoom, zoomSetting, zoomRow?.id, zoomSaveDelay, requestState, active]);
     const reload = () => {
       setRequestState('waiting');
       return api.refreshProjects({userCanvas:true}).then(() => {
@@ -1606,7 +1608,7 @@
      <FlowStage nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview&&!flowView} elevateNodesOnSelect={false}
        defaultViewport={{x: pan.x, y: pan.y, zoom}} onInit={inst => { flow.current = inst; inst.setViewport({x: view.current.pan.x, y: view.current.pan.y, zoom: view.current.zoom}); }}
        onMove={(event,v) => { if (event instanceof window.Event) { view.current = {zoom: v.zoom, pan: {x: v.x, y: v.y}}; viewSource.emit(); } }}
-       onMoveEnd={(event, v) => { if (event instanceof window.Event) { setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
+       onMoveEnd={(event, v) => { if (event instanceof window.Event) { if (v.zoom !== zoom) saveZoomPreference(v.zoom); setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
        onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}

@@ -306,12 +306,13 @@
       ]
     },
     "PUBLISHSAFE": {
-      "source": "Founder 2026-11-08: continue lane/payload-identity at e1e813ae; fail closed on refused or malformed checker reports, bind tag/source revision/assets to the build, stop every native gh error, prevent refused build auto-publication, prove zero gh calls with fake PATH commands, run complete release set and commit without push.",
+      "source": "Founder 2026-11-08: continue lane/payload-identity at e1e813ae; fail closed on refused or malformed checker reports, bind tag/source revision/assets to the build, stop every native gh error, prevent refused build auto-publication, prove zero gh calls with fake PATH commands, run complete release set and commit without push. The public Windows release manifest records repository-relative provenance with a byte-for-byte test across checkout locations.",
       "scope": [
         "02.TESTS/tests_replica/test_update_release_path.py",
         "03.TOOLS/installer/build_release.ps1",
         "03.TOOLS/packaging/windows/publish_release.ps1",
-        "04.DOCS/FAILURE_LOG.md"
+        "04.DOCS/FAILURE_LOG.md",
+        "02.TESTS/tests_replica/test_release_ships_committed_bytes.py"
       ]
     },
     "ONETASK": {
@@ -12447,7 +12448,7 @@
       ]
     },
     "SETTINGSSCOPE": {
-      "source": "Settings scope and bulk actions. Use the existing user, workspace and session owners for editable preferences, preserve the selected destination on import and reset, and keep Canvas setting nodes and the Settings screen in agreement. Founder Settings design and existing coordinator assignment. Existing coordinator assignment 9aecdf095aec4b4cb291de3a7e19b222 extends workspace preferences into the real Session context and Workshop handover, preserving explicit node values and the registered root owner.",
+      "source": "Settings scope and bulk actions. Use the existing user, workspace and session owners for editable preferences, preserve the selected destination on import and reset, and keep Canvas setting nodes and the Settings screen in agreement. Founder Settings design and existing coordinator assignment. Existing coordinator assignment 9aecdf095aec4b4cb291de3a7e19b222 extends workspace preferences into the real Session context and Workshop handover, preserving explicit node values and the registered root owner. Projects measurement and date preferences update real table and schedule displays, preserve raw cells and keep the three preference scopes independent.",
       "scope": [
         "01.APP/nodelang/settings_owner.py",
         "01.APP/nodelang/nograph_server.py",
@@ -12461,7 +12462,9 @@
         "02.TESTS/tests_js/keyboard_shortcuts.test.cjs",
         "02.TESTS/tests_js/settings_scope.test.cjs",
         "02.TESTS/tests_js/wire_settings.test.cjs",
-        "02.TESTS/tests_replica/test_scoped_preferences.py"
+        "02.TESTS/tests_replica/test_scoped_preferences.py",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests_js/settings_design_areas.test.cjs"
       ]
     },
     "SETTINGSKEYS": {

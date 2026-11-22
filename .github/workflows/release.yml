@@ -913,7 +913,11 @@ jobs:
             $contract | ConvertTo-Json | Set-Content (Join-Path $env:VERIFY_EVIDENCE 'ui-contract.json') -Encoding utf8
             $witness = 'stable-witness/03.TOOLS/tools/real_app_check'
           }
-          & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario (Join-Path $witness 'scenarios/settings.mjs') --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
+          $scenario = Join-Path $witness 'scenarios/settings.mjs'
+          if ('${{ inputs.verify_operations }}' -eq 'true' -and $env:VERIFY_UI_CONTRACT -ceq 'gated') {
+            $scenario = Join-Path $witness 'scenarios/settings_right_click.mjs'
+          }
+          & (Join-Path $app '.venv/Scripts/python.exe') -B (Join-Path $witness 'real_app_check.py') --app $app --scenario $scenario --out (Join-Path $env:VERIFY_EVIDENCE 'settings') --boot-seconds 600 --probe-seconds 300
           $state.ui_exit = $LASTEXITCODE
           $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
           if ($state.ui_exit -ne 0) { throw 'Installed Settings actual-window acceptance failed; inspect the retained report.' }

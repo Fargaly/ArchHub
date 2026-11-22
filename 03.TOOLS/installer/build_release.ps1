@@ -509,9 +509,10 @@ function Read-ReleaseSnapshotManifest([switch]$WorkingCandidate) {
     Assert-CommittedBlobBytes $selectedRoot $selectedInputs $rows -WorkingCandidate:$WorkingCandidate
     $marker = if ($WorkingCandidate) { 'ARCHHUB_LOCAL_CANDIDATE_MANIFEST_V2' } else { 'ARCHHUB_RELEASE_SOURCE_MANIFEST_V2' }
     $revisionKey = if ($WorkingCandidate) { 'selected_base_revision' } else { 'selected_revision' }
+    $manifestRoot = if ($WorkingCandidate) { $selectedRoot } else { '.' }
     $lines = @(
         $marker, "build_id`t$BuildId",
-        "selected_root`t$selectedRoot",
+        "selected_root`t$manifestRoot",
         "$revisionKey`t$sourceRevision",
         "source`tpath`tbytes`tsha256"
     )

@@ -119,3 +119,49 @@ def test_a_candidates_reviewed_change_and_new_files_are_not_held_to_head(tmp_pat
     assert _judge(tmp_path, repo, ["edited.py", "added.py"], candidate=True) == {"ok": True}
     # A public release never gets that allowance (its inputs must be committed).
     assert _judge(tmp_path, repo, ["edited.py"])["ok"] is False
+
+
+@pytest.mark.skipif(not PWSH, reason="PowerShell is required for the release snapshot")
+def test_public_snapshot_bytes_are_independent_of_checkout_location(tmp_path):
+    import hashlib
+
+    repo = tmp_path / "first checkout"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    content = b"portable release input\n"
+    (repo / "NOTICE").write_bytes(content)
+    _git(repo, "add", "NOTICE")
+    _git(repo, "-c", "user.name=court", "-c", "user.email=court@example.invalid", "commit", "-qm", "snapshot")
+    script = tmp_path / "snapshot.ps1"
+    script.write_text(r"""
+param($Build, $selectedRoot, $Destination, [switch]$Local)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Build, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'build script does not parse' }
+foreach ($fn in $ast.EndBlock.Statements) {
+    if ($fn -is [System.Management.Automation.Language.FunctionDefinitionAst]) { . ([scriptblock]::Create($fn.Extent.Text)) }
+}
+$selectedInputs = $acompilerInputs = @('NOTICE')
+$BuildId = 'provenance-test'
+$sourceRevision = git -C $selectedRoot rev-parse HEAD
+$utf8 = [Text.UTF8Encoding]::new($false)
+$plainDirectories = [Collections.Generic.HashSet[string]]::new()
+$candidateClock = [Diagnostics.Stopwatch]::StartNew()
+$candidateBuffer = [byte[]]::new(4096)
+$snapshot = Read-ReleaseSnapshotManifest -WorkingCandidate:$Local
+[IO.File]::WriteAllBytes($Destination, $snapshot.Bytes)
+""", encoding="utf-8")
+
+    def snapshot(*extra):
+        dest = tmp_path / "snapshot.tsv"
+        subprocess.run([PWSH, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+                        str(BUILD), str(repo), str(dest), *extra], check=True, capture_output=True)
+        return dest.read_bytes()
+
+    first = snapshot()
+    repo = repo.rename(tmp_path / "second checkout")
+    assert snapshot() == first
+    assert b"selected_root\t.\n" in first
+    assert first.splitlines()[-1].decode() == f"selected\tNOTICE\t{len(content)}\t{hashlib.sha256(content).hexdigest()}"
+    assert f"selected_root\t{repo}\n".encode() in snapshot("-Local")

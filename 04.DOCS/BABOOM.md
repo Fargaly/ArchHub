@@ -19,11 +19,10 @@ The live [BABOOM BIM Standard site](https://baboom.archhub.io/) publishes the
 standards, libraries and tools, and offers Ask BABOOM. Desktop standards lookup
 uses the site’s chat endpoint. [Desktop standards lookup source](../01.APP/nodelang/baboom_standard.py).
 
-On November 22, 2026, the live standards chat asked visitors to sign in for
-‘What is ArchHub?’ in both English and Arabic. Read the public
-[Getting started guide](https://archhub.io/docs/getting-started/) for that
-answer. The prepared site update answers these public overview questions in
-both languages and cites the guide.
+Signed-out visitors can ask “What is ArchHub?” in English or Egyptian Arabic.
+BABOOM answers from the public [Getting started guide](https://archhub.io/docs/getting-started/).
+Questions about the Field node’s inputs link to the [Field reference](https://archhub.io/docs/nodes/data-field/).
+Model-generated answers require signing in with an ArchHub account.
 [Site preparation source](../03.TOOLS/tools/prepare_baboom_site.py).
 
 ## Historical Universal Cell design and WIP (September–October 2026)

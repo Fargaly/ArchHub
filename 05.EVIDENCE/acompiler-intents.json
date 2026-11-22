@@ -12435,6 +12435,10 @@
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests_js/settings_design_areas.test.cjs",
+        "02.TESTS/tests_js/settings_scope.test.cjs",
+        "02.TESTS/tests_js/settings_updates.cjs",
+        "02.TESTS/tests_js/settingsmatch.test.cjs",
+        "02.TESTS/tests_js/studio_designv22g.test.cjs",
         "03.TOOLS/tools/real_app_check/scenarios/settings.mjs"
       ]
     },

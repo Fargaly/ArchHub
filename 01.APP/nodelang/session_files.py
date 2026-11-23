@@ -2145,6 +2145,7 @@ class SessionFiles:
                 # Autosave is in place: the open file IS the document agents edit too.
                 from .canvas_documents import commit_ui
                 path = str(local_path(body['path'])) if body.get('path') else str(document_path(self.directory, document))
+                issued_save_revision(document, body.get('path') or path)
                 base = int(body.get('base_revision', canvas_documents.revision(document)))
                 merged = commit_ui(path, document, base, expect_existing=bool(body.get('path')))
                 # APPTIDY owns names only in Sessions; external filenames belong to the user.
@@ -2173,6 +2174,7 @@ class SessionFiles:
                 path = str(document_path(self.directory, document))
             if not path:
                 return {'ok':True,'cancelled':True}
+            issue_revision = issued_save_revision(document, path)
             path = str(local_path(path))
             copy_source = conflict_copy or body.get('copy_source')
             if body.get('save_as') and copy_source and local_path(copy_source) == Path(path):
@@ -2191,7 +2193,8 @@ class SessionFiles:
                                                       expect_existing=body.get('expect_existing') is True)
             self.remember(path,document)
             self._current(document['id'], path)
-            return {'ok':True,'path':path,'document':document,'revision':canvas_documents.revision(document)}
+            return {'ok':True,'path':path,'document':document,'revision':canvas_documents.revision(document),
+                    **({'issueRevision': issue_revision} if issue_revision else {})}
         if action == 'save-skill':
             document = dormant_copy(validate(body.get('document')))
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):
@@ -2504,6 +2507,46 @@ def resolve_setting(document, identity):
             raise ValueError('Choose a registered keyboard action.')
         return {'value': row['value'], 'scope': 'global'}
     return {'value': preference_setting(identity)['value'], 'scope': 'global'}
+
+
+def issued_save_revision(document, path):
+    from .daily_work_nodes import assigned_container
+    from .workspace_roots_catalogue import folder_identity, issued_destination, register_paths
+    target = local_path(path)
+    roots = _registered_roots()
+    owners = []
+    for project, row in roots.items():
+        if not row.get('issued_destination'):
+            continue
+        root = Path(row['path'])
+        folder = root / row['issued_destination']
+        if not any(candidate.is_relative_to(folder) for candidate in (Path(path), target)):
+            continue
+        issued_destination(root, row['issued_destination'])
+        if not target.is_relative_to(folder) or (row.get('identity') and list(folder_identity(root) or ()) != row['identity']):
+            raise ValueError('The issued destination changed. Choose the project folder again.')
+        owners.append((project, row))
+    if len(owners) > 1:
+        raise ValueError('More than one project claims this issued destination. Correct the project registers.')
+    if owners:
+        project, row = owners[0]
+        if _project_of(document.get('properties', {}), roots)['id'] != project:
+            raise ValueError('Select the project that owns this issued destination on the document.')
+        if resolve_setting(document, 'Projects.Check names before saving')['value'] is False:
+            return None
+        if not row.get('project_number'):
+            raise ValueError('Set the project number used in the naming register.')
+        refs = register_paths(row)
+        if any(key not in refs or refs[key].suffix.lower() != '.xlsx' for key in ('issuedRegister', 'namingRegister')):
+            raise ValueError('Choose both project register workbooks (.xlsx) before saving in the issued folder.')
+        rule, revision, _ = assigned_container(refs, row.get('project_number'), None, target.stem, 'ARCHHUB')
+        scheme = resolve_setting(document, 'Projects.Revisions')['value']
+        formats = {'P01, C01 (ISO 19650)': r'[PC][0-9]{2,}', 'A, B, C': r'[A-Z]+',
+                   'Rev 0, 1, 2': r'(?:Rev )?(?:0|[1-9][0-9]*)'}
+        if scheme not in formats or not re.fullmatch(formats[scheme], revision):
+            raise ValueError(f'The issued register records {revision} under {rule["StandardID"]}. Choose its revision display in Projects or correct the assigned record.')
+        return ('Rev ' + revision if scheme == 'Rev 0, 1, 2' and revision.isdecimal() else revision)
+    return None
 
 
 def resolve_project_folder(document, explicit=''):

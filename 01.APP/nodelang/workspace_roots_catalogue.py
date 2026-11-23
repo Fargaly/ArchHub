@@ -194,6 +194,8 @@ def project_register(row):
     for key, field in REGISTER_REFERENCES.items():
         if row.get(field):
             register[key] = row[field]
+    if row.get('issued_destination'):
+        register['issuedDestination'] = row['issued_destination']
     return register
 
 
@@ -202,6 +204,23 @@ def project_register(row):
 # contents; which standard a register follows is the project's, not ArchHub's.
 REGISTER_REFERENCES = {'namingRegister': 'naming_register', 'issuedRegister': 'issued_register'}
 REGISTER_FORMS = {'namingRegister': ('.xlsx', '.xlsm', '.csv'), 'issuedRegister': ('.md', '.xlsx', '.xlsm', '.csv')}
+
+
+def issued_destination(root, value):
+    if not isinstance(value, str) or len(value) > 240 or not value.strip() or not value.isprintable():
+        raise ValueError('Choose an issued folder inside this project.')
+    base = Path(root).resolve()
+    folder = base / value.strip()
+    if not folder.is_relative_to(base) or folder == base or '..' in folder.parts:
+        raise ValueError('Choose an issued subfolder inside this project.')
+    for part in (folder, *folder.parents):
+        if part == base:
+            break
+        if part.is_symlink() or part.is_junction():
+            raise ValueError('Choose an issued folder without links or junctions.')
+    if not folder.is_dir() or not folder.resolve().is_relative_to(base):
+        raise ValueError('Choose an existing issued folder inside this project.')
+    return str(folder.relative_to(base))
 
 
 def register_reference(root, value, key='issuedRegister'):

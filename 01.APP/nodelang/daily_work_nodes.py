@@ -470,8 +470,90 @@ def bcf_project(source, document):
     return project
 
 
-def assigned_bcf(source, params, feeds, document):
+def read_assignment_table(path, sheets):
     from openpyxl import load_workbook
+    try:
+        with path.open('rb') as stream:
+            raw = stream.read(8 * 1024 * 1024 + 1)
+        if len(raw) > 8 * 1024 * 1024:
+            raise ValueError('Register workbook exceeds 8 MiB.')
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            if sum(entry.file_size for entry in archive.infolist()) > 32 * 1024 * 1024:
+                raise ValueError('Expanded register workbook exceeds 32 MiB.')
+        book = load_workbook(io.BytesIO(raw), read_only=True, data_only=False, keep_links=False)
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ValueError('Cannot read the selected register: ' + path.name) from error
+    try:
+        tables = []
+        for sheet, fields in sheets:
+            if sheet not in book:
+                raise ValueError('Missing register sheet: ' + sheet)
+            table = book[sheet]
+            if (table.max_row or 0) > 10000 or (table.max_column or 0) > 64:
+                raise ValueError('Register table exceeds the supported size: ' + sheet)
+            rows = table.iter_rows(max_col=64)
+            header = tuple(cell.value for cell in next(rows, ()))
+            for field in fields:
+                if header.count(field) != 1:
+                    raise ValueError('Missing or ambiguous register column: ' + sheet + ' / ' + field)
+            records = []
+            for index, row in enumerate(rows, 2):
+                if index > 10000:
+                    raise ValueError('Register table exceeds the supported size: ' + sheet)
+                record = {}
+                for field in fields:
+                    cell = row[header.index(field)]
+                    value = None if cell.data_type in ('f', 'e') else cell.value
+                    if field in ('Edition', 'Revision'):
+                        value = str(value).strip() if type(value) in (int, float, str) else ''
+                    record[field] = value
+                if any(record.values()):
+                    records.append(record)
+            tables.append(records)
+        return tables, hashlib.sha256(raw).hexdigest()
+    finally:
+        book.close()
+
+
+def assigned_container(refs, project_code, annex, container, use):
+    (adoptions, codes), naming_hash = read_assignment_table(refs['namingRegister'], [('Adoptions', ('StandardID','Edition','Incorporation decision','Token order')),
+        ('Codes', ('Token','Code','ProjectID','Authority','State'))])
+    (records,), issued_hash = read_assignment_table(refs['issuedRegister'], [('Container template', ('ContainerID','Revision','Permitted use'))])
+    selected = [r for r in adoptions if (annex is None or r['StandardID'] == annex) and r['Incorporation decision'] == 'Adopted']
+    if annex is None and len(selected) > 1:
+        # The canvas has no annex selector: only the project's approved codes may disambiguate its record.
+        parts = container.split('-')
+        def fits(rule):
+            order = str(rule['Token order'] or '').split('-')
+            return len(parts) == len(order) and all(any(
+                r['Token'] == token and r['Code'] == code and r['ProjectID'] == project_code
+                and r['Authority'] == rule['StandardID'] and r['State'] == 'Approved' for r in codes)
+                for token, code in zip(order, parts))
+        selected = [rule for rule in selected if fits(rule)]
+    if len(selected) != 1 or not selected[0]['StandardID'] or not selected[0]['Edition']:
+        raise ValueError('Select one explicitly adopted naming annex with a recorded edition.')
+    rule = selected[0]
+    annex = rule['StandardID']
+    order = str(rule['Token order'] or '').split('-')
+    if any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', token) for token in order) or len(set(order)) != len(order):
+        raise ValueError('Specify the ordered token names in the adopted naming annex.')
+    matched = [r for r in records if r['ContainerID'] == container and r['Permitted use'] == use]
+    if len(matched) != 1 or not matched[0]['Revision']:
+        raise ValueError(f'Select one assigned ContainerID with a revision and {use} permitted use. Choose its exact name from the issued register.')
+    parts = container.split('-')
+    errors = []
+    if len(parts) != len(order):
+        errors.append('ContainerID must follow ' + '-'.join(order) + '.')
+    for token, code in zip(order, parts):
+        if not any(r['Token'] == token and r['Code'] == code and r['ProjectID'] == project_code
+                   and r['Authority'] == annex and r['State'] == 'Approved' for r in codes):
+            errors.append(token + ': ' + code + ' is not approved for this project and annex.')
+    if errors:
+        raise ValueError(' '.join(errors))
+    return rule, matched[0]['Revision'], {'namingRegister': naming_hash, 'issuedRegister': issued_hash}
+
+
+def assigned_bcf(source, params, feeds, document):
     from .workspace_roots_catalogue import project_register, register_paths
     project = bcf_project(source, document)
     project_id = (document or {}).get('properties', {}).get('project')
@@ -495,79 +577,12 @@ def assigned_bcf(source, params, feeds, document):
     if refs['issuedRegister'].suffix.lower() != '.xlsx':
         raise ValueError('For BCF assignment, select an .xlsx issued containers register with a Container template sheet. '
                          'The selected register format is ' + refs['issuedRegister'].suffix.lower() + '.')
-    hashes = {}
-    def read(key, sheets):
-        path = refs[key]
-        try:
-            with path.open('rb') as stream:
-                raw = stream.read(8 * 1024 * 1024 + 1)
-            if len(raw) > 8 * 1024 * 1024:
-                raise ValueError('Register workbook exceeds 8 MiB.')
-            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-                if sum(entry.file_size for entry in archive.infolist()) > 32 * 1024 * 1024:
-                    raise ValueError('Expanded register workbook exceeds 32 MiB.')
-            book = load_workbook(io.BytesIO(raw), read_only=True, data_only=False, keep_links=False)
-        except (OSError, zipfile.BadZipFile) as error:
-            raise ValueError('Cannot read the selected register: ' + path.name) from error
-        hashes[key] = hashlib.sha256(raw).hexdigest()
-        try:
-            tables = []
-            for sheet, fields in sheets:
-                if sheet not in book:
-                    raise ValueError('Missing register sheet: ' + sheet)
-                table = book[sheet]
-                if (table.max_row or 0) > 10000 or (table.max_column or 0) > 64:
-                    raise ValueError('Register table exceeds the supported size: ' + sheet)
-                rows = table.iter_rows(max_col=64)
-                header = tuple(cell.value for cell in next(rows, ()))
-                for field in fields:
-                    if header.count(field) != 1:
-                        raise ValueError('Missing or ambiguous register column: ' + sheet + ' / ' + field)
-                records = []
-                for index, row in enumerate(rows, 2):
-                    if index > 10000:
-                        raise ValueError('Register table exceeds the supported size: ' + sheet)
-                    record = {}
-                    for field in fields:
-                        cell = row[header.index(field)]
-                        value = None if cell.data_type in ('f', 'e') else cell.value
-                        if field in ('Edition', 'Revision'):
-                            value = str(value).strip() if type(value) in (int, float, str) else ''
-                        record[field] = value
-                    if any(record.values()):
-                        records.append(record)
-                tables.append(records)
-            return tables
-        finally:
-            book.close()
-    adoptions, codes = read('namingRegister', [('Adoptions', ('StandardID','Edition','Incorporation decision','Token order')),
-        ('Codes', ('Token','Code','ProjectID','Authority','State'))])
-    records, = read('issuedRegister', [('Container template', ('ContainerID','Revision','Permitted use'))])
-    selected = [r for r in adoptions if r['StandardID'] == annex and r['Incorporation decision'] == 'Adopted']
-    if len(selected) != 1 or not selected[0]['Edition']:
-        raise ValueError('Select one explicitly adopted naming annex with a recorded edition.')
-    rule = selected[0]
-    order = str(rule['Token order'] or '').split('-')
-    if any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', token) for token in order) or len(set(order)) != len(order):
-        raise ValueError('Specify the ordered token names in the adopted naming annex.')
-    matched = [r for r in records if r['ContainerID'] == container and r['Permitted use'] == 'BCF']
-    if len(matched) != 1 or not matched[0]['Revision']:
-        raise ValueError('Select one assigned ContainerID with a revision and BCF permitted use.')
-    parts = container.split('-')
-    errors = []
-    if len(parts) != len(order):
-        errors.append('ContainerID must follow ' + '-'.join(order) + '.')
-    for token, code in zip(order, parts):
-        if not any(r['Token'] == token and r['Code'] == code and r['ProjectID'] == project_code
-                   and r['Authority'] == annex and r['State'] == 'Approved' for r in codes):
-            errors.append(token + ': ' + code + ' is not approved for this project and annex.')
-    if errors:
-        raise ValueError(' '.join(errors))
+    rule, revision, hashes = assigned_container(refs, project_code, annex, container, 'BCF')
     target = source.with_name(container + '.bcf')
     if target.exists() or target.is_symlink():
         raise ValueError('The assigned output already exists. Choose an unused assigned record.')
     return target, {'project': project_id, 'annex': annex, 'edition': str(rule['Edition']),
-                    'container': container, 'revision': str(matched[0]['Revision']), 'registerHashes': hashes,
+                    'container': container, 'revision': revision, 'registerHashes': hashes,
                     'registers': {key: value.relative_to(Path(project['path'])).as_posix() for key, value in refs.items()}}
 
 

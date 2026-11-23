@@ -2317,7 +2317,7 @@ def r_settings_action(s, req):
 
 
 def r_workspace_roots(s, req):
-    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity, project_register, REGISTER_REFERENCES, register_reference, register_files
+    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity, project_register, REGISTER_REFERENCES, register_reference, register_files, issued_destination
     action, body = _action(req, 'list')
     if action == 'browse':
         window = body.get('template_window')
@@ -2440,6 +2440,12 @@ def r_workspace_roots(s, req):
                         references[field] = None if body[key] == '' else register_reference(row['path'], body[key], key)
                     except ValueError as refused:
                         raise Refused(str(refused)) from None
+            if 'issuedDestination' in body:
+                value = body['issuedDestination']
+                try:
+                    references['issued_destination'] = None if value == '' else issued_destination(row['path'], value)
+                except ValueError as refused:
+                    raise Refused(str(refused)) from None
             if number.strip():
                 row['project_number'] = number.strip()
             else:

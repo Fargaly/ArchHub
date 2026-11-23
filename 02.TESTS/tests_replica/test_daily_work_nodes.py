@@ -740,3 +740,76 @@ def test_bcf_explains_format_for_saved_registers(tmp_path, naming, issued, messa
         daily.assigned_bcf(folder/'input.ifc', {'naming_annex':'Local','container_id':'S01'}, {},
                            {'properties':{'project':'sample'}})
     assert call('list')['roots'][0]['register'] == saved
+
+
+def test_issued_canvas_save_preserves_original_target_and_scope(tmp_path, monkeypatch):
+    from openpyxl import Workbook
+    from nodelang import session_files as files, settings_owner
+    from nodelang.workspace_roots_catalogue import issued_destination
+
+    issued = tmp_path/'Issue'
+    issued.mkdir()
+    assert issued_destination(tmp_path, str(issued)) == 'Issue'
+    with pytest.raises(ValueError):
+        issued_destination(tmp_path, str(tmp_path.parent))
+    project = {'root_id':'north', 'path':str(tmp_path), 'issued_destination':'Issue',
+               'issued_register':'containers.xlsx', 'naming_register':'rules.xlsx', 'project_number':'P'}
+    monkeypatch.setattr(files, '_registered_roots', lambda: {'north':project})
+    def workbook(name, tables):
+        book = Workbook()
+        for index, (title, rows) in enumerate(tables):
+            sheet = book.create_sheet(title) if index else book.active
+            sheet.title = title
+            for row in rows:
+                sheet.append(row)
+        book.save(tmp_path/name)
+        book.close()
+    workbook('rules.xlsx', [
+        ('Adoptions',[('StandardID','Edition','Incorporation decision','Token order'),('Local',1,'Adopted','SERIAL')]),
+        ('Codes',[('Token','Code','ProjectID','Authority','State'),('SERIAL','S01','P','Local','Approved')])])
+    files_owner = files.SessionFiles(tmp_path/'sessions')
+    doc = files.new_document()
+    doc['properties']['project'] = 'north'
+    source = tmp_path/'my working drawing.archhub'
+    result = files_owner.dispatch({'action':'save','path':str(source),'document':doc})
+    doc = result['document']
+    existing = issued/'wrong.archhub'
+    existing.write_bytes(source.read_bytes())
+    def save_as(target):
+        return files_owner.dispatch({'action':'save','document':doc,'save_as':True,'copy_source':str(source)},
+                                    save_picker=lambda *_:str(target))
+    project['settings'] = {'Projects.Revisions':'A, B, C'}
+    project['project_override'] = True
+    toggle = 'Projects.Check names before saving'
+    for revision, display, expected in [('B','A, B, C','B'),('P02','P01, C01 (ISO 19650)','P02'),(0,'Rev 0, 1, 2','Rev 0')]:
+        workbook('containers.xlsx',[('Container template',[
+            ('ContainerID','Revision','Permitted use'),('S01',revision,'ARCHHUB')])])
+        if display != 'A, B, C':
+            doc['properties']['settings'] = {'Projects.Revisions':files._setting_value('Projects.Revisions',display)}
+        original, target = source.read_bytes(), existing.read_bytes()
+        current = (files_owner.metadata/'current.json').read_bytes()
+        with pytest.raises(ValueError, match='exact name'):
+            save_as(existing)
+        assert (source.read_bytes(), existing.read_bytes(), (files_owner.metadata/'current.json').read_bytes()) == (original,target,current)
+        assert save_as(issued/'S01.archhub')['issueRevision'] == expected
+    for value in (False,True):
+        settings_owner.preference_settings('setAppearance',[toggle,value])
+        assert files.resolve_setting(doc,toggle)['value'] is value
+        if not value:
+            assert save_as(issued/'ordinary.archhub')['ok']
+    settings_owner.preference_settings('resetAppearance',[toggle])
+    assert files.resolve_setting(doc,toggle)['value'] is True
+    assert save_as(tmp_path/'ordinary elsewhere.archhub')['ok']
+    bad = {'action':'save', 'document':doc, 'path':str(existing), 'expect_existing':True}
+    with pytest.raises(ValueError, match='exact name'):
+        files_owner.dispatch(bad)
+    with pytest.raises(ValueError, match='exact name'):
+        files_owner.dispatch({**bad, 'action':'autosave'})
+    assert existing.read_bytes() == target
+    for value in (False, True):
+        doc['properties']['settings'][toggle] = files._setting_value(toggle, value)
+        missing = (issued/'S01.archhub')
+        missing.unlink(missing_ok=True)
+        with pytest.raises(ValueError):
+            files_owner.dispatch({**bad,'path':str(missing)})
+        assert not missing.exists()

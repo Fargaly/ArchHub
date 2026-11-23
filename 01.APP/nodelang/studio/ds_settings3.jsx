@@ -250,23 +250,28 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
     const [saving, setSaving] = React.useState(false);
     const [naming, setNaming] = React.useState(register?.namingRegister || '');
     const [issued, setIssued] = React.useState(register?.issuedRegister || '');
+    const [destination, setDestination] = React.useState(register?.issuedDestination || '');
+    const pickedProject = React.useRef(workspace?.id);
+    pickedProject.current = workspace?.id;
     // A saved or switched register shows its owner value (a picked path comes back project-relative).
-    React.useEffect(() => { setNaming(register?.namingRegister || ''); setIssued(register?.issuedRegister || ''); },
-      [workspace?.id, register?.namingRegister, register?.issuedRegister]);
+    React.useEffect(() => { setNaming(register?.namingRegister || ''); setIssued(register?.issuedRegister || ''); setDestination(register?.issuedDestination || ''); },
+      [workspace?.id, register?.namingRegister, register?.issuedRegister, register?.issuedDestination]);
     const changed = register && (number !== register.number || override !== register.override
-      || naming !== (register.namingRegister || '') || issued !== (register.issuedRegister || ''));
+      || naming !== (register.namingRegister || '') || issued !== (register.issuedRegister || '') || destination !== (register.issuedDestination || ''));
     const saveRegister = async () => {
       if (saving) return;
       setSaving(true);
-      try { await u.act(()=>api.updateProjectRegister(workspace,number,override,{namingRegister:naming.trim(),issuedRegister:issued.trim()})); } finally { setSaving(false); }
+      try { await u.act(()=>api.updateProjectRegister(workspace,number,override,{namingRegister:naming.trim(),issuedRegister:issued.trim(),issuedDestination:destination.trim()})); } finally { setSaving(false); }
     };
     // A picked file fills the field; a cancelled pick leaves it as it was. Saving still goes through the owner.
     const [pick, setPick] = React.useState({state: 'empty', error: '', result: null, last: null});
     const pickRegister = async (key, title) => {
       setPick({state: 'waiting', error: '', result: null, last: [key, title]});
       try {
-        const result = await api.pickProjectRegister(title);
-        if (result.path) (key === 'namingRegister' ? setNaming : setIssued)(result.path);
+        const id = workspace?.id;
+        const result = await api.pickProjectRegister(title, key === 'issuedDestination');
+        if (id !== pickedProject.current) { setPick({state:'empty',error:'',result:null,last:null}); return null; }
+        if (result.path) (key === 'namingRegister' ? setNaming : key === 'issuedDestination' ? setDestination : setIssued)(result.path);
         setPick({state: result.note ? 'error' : 'loaded', error: result.note || '', result, last: [key, title]});
         return result;
       } catch (failure) {
@@ -280,9 +285,9 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
     const fileState = (key, value) => !value ? '' : value !== (register[key] || '') ? 'Checked when you save.'
       : files[key] === 'usable' ? 'Found in this project.' : files[key] === 'missing' ? 'File not found in this project folder.' : 'No longer a valid register path; choose it again.';
     const registerField = (key, label, value, setValue) => <div className="grid" data-register-field={key}>
-      <label>{label}<input aria-label={label} value={value} maxLength={240} placeholder="A file inside this project folder" onChange={event=>setValue(event.target.value)}/></label>
+      <label>{label}<input aria-label={label} value={value} maxLength={240} placeholder={key === 'issuedDestination' ? 'Optional folder inside this project' : 'A file inside this project folder'} onChange={event=>setValue(event.target.value)}/></label>
       <button type="button" className="sheet-action" aria-label={'Choose ' + label.toLowerCase()} onClick={event=>runAction('settings.ds_settings3.PickProjectRegister', key, 'Choose the ' + label.toLowerCase(), event)}>Choose…</button>
-      {value && <small role="status" data-register-state={value !== (register[key] || '') ? 'pending' : files[key] || 'refused'}>{fileState(key, value)}</small>}</div>;
+      {value && key !== 'issuedDestination' && <small role="status" data-register-state={value !== (register[key] || '') ? 'pending' : files[key] || 'refused'}>{fileState(key, value)}</small>}</div>;
     return <section data-design-section="Project register"><h2>Project register</h2>
       <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>
       <label>Registered project<select aria-label="Registered project" value={workspace?.id || ''} onChange={event=>u.act(()=>api.selectWorkspace(event.target.value))}>
@@ -293,6 +298,7 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
         <small>Use this project’s saved Projects preferences over account defaults. A value set on the session still wins.</small>
         {registerField('namingRegister', 'Naming register', naming, setNaming)}
         {registerField('issuedRegister', 'Issued register', issued, setIssued)}
+        {registerField('issuedDestination', 'Issued destination folder', destination, setDestination)}
         <small>The naming and issued-containers registers this project has adopted. ArchHub keeps only where they are, never their contents.</small>
         <div aria-live="polite">{pick.state === 'waiting' && <p role="status">Choose the file in the window that opened…</p>}
           {pick.state === 'error' && <div role="alert"><p>{pick.error}</p><window.UI.RegisteredActionStatus state={{status:'error',message:pick.error}} retry={()=>pick.retry()}/></div>}

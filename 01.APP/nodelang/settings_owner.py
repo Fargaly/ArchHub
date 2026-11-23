@@ -929,21 +929,31 @@ def preference_settings(function='readControls', args=(), settings=None):
     preferences = settings.read()
     for row in measurement_rows:
         row.update(page='Projects', group='Units and precision', value=preferences.get(row['storageKey'], row['default']))
+    revision_schemes = ('P01, C01 (ISO 19650)', 'A, B, C', 'Rev 0, 1, 2')
     naming_rows = []
     for label, key, default in (
         ('Name pattern', 'namePattern', '<project>-<originator>-<type>-<role>-<nnn>-<YYYY-MM-DD>'),
         ('Originator code', 'originator', 'Office'),
+        ('Revisions', 'revScheme', revision_schemes[0]),
+        ('Check names before saving', 'nameCheck', True),
     ):
         identity = 'Projects.' + label
         if args and args[0] == identity and function in ('setAppearance', 'resetAppearance'):
             if function == 'resetAppearance':
                 settings.update({}, remove=[key])
             else:
-                from .daily_work_nodes import validate_name_component
-                validate_name_component(args[1], pattern=key == 'namePattern')
+                if key in ('namePattern', 'originator'):
+                    from .daily_work_nodes import validate_name_component
+                    validate_name_component(args[1], pattern=key == 'namePattern')
+                elif key == 'revScheme' and args[1] not in revision_schemes:
+                    raise ValueError('Choose a listed revision display.')
+                elif key == 'nameCheck' and type(args[1]) is not bool:
+                    raise ValueError('Choose whether to check names before saving.')
                 settings.update({key: args[1]})
             function, args = 'readControls', ()
-        naming_rows.append({'id': identity, 'storageKey': key, 'label': label, 'type': 'text',
+        naming_rows.append({'id': identity, 'storageKey': key, 'label': label,
+                            'type': 'choice' if key == 'revScheme' else 'boolean' if key == 'nameCheck' else 'text',
+                            **({'options': list(revision_schemes)} if key == 'revScheme' else {}),
                             'group': 'File naming', 'page': 'Projects', 'default': default,
                             'value': settings.read().get(key, default)})
     title_blocks = ['Not set', 'Office A1 title block', 'Office A0 title block', 'Office A3 title block']

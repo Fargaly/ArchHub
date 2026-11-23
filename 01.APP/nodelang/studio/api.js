@@ -696,7 +696,7 @@ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approva
   return result;
  },
  // A register file picked on this PC; a cancelled pick answers {cancelled:true} and changes nothing.
- async pickProjectRegister(title){const picked=await request('/api/universal/pick-file',{title,filter:'Register (*.xlsx *.xlsm *.csv *.md)'});return picked.path?{path:picked.path}:{cancelled:true,note:picked.note||''};},
+ async pickProjectRegister(title, folder=false){const picked=folder?await request('/api/universal/workspace-roots',{action:'browse'}):await request('/api/universal/pick-file',{title,filter:'Register (*.xlsx *.xlsm *.csv *.md)'});return picked.path?{path:picked.path}:{cancelled:true,note:picked.note||''};},
  async chooseProjectTemplate(){return request('/api/universal/workspace-roots',{action:'browse',template:true,template_window:projectTemplateWindow});},
  async addWorkspace(input={}){if(input.create){const result=await request('/api/universal/workspace-roots',{action:'create',parent:input.parent,name:input.name,template:input.template||'',template_source:input.templateSource||'',template_window:projectTemplateWindow});await api.listWorkspaces();return {...result,message:'Project created and added to your workspaces.'};}let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return {cancelled:true,message:'No workspace was added.'};}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return {...result,message:'Workspace added. Your agents can work here.'};},
  async removeWorkspace(id){const result=await request('/api/universal/workspace-roots',{action:'unregister',id});await api.listWorkspaces();return {...result,message:'Workspace removed from ArchHub. Your files are unchanged.'};},
@@ -2254,12 +2254,14 @@ api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(ope
 api.importSession=async file=>{const navigation=++fileNavigation;if(!file.name.toLowerCase().endsWith('.archhub')||file.size>8388608)throw Error('Choose an .archhub file up to 8 MiB.');return adoptFile(JSON.parse(await file.text()),'',navigation);};
 api.saveSession=async(path=sessionPath,saveAs=false)=>{
  if(sessionDocument && sessionDocument.properties?.viewportSaved!==true)api.setSessionViewport(window.UI?.requestCanvasViewport?.() || sessionDocument.viewport);
- const navigation=fileNavigation,previousPath=sessionPath,writeAccount=accountEpoch;await flushAutosave();
+ const navigation=fileNavigation,previousPath=sessionPath,writeAccount=accountEpoch;
+ if(saveAs){refuseUnresolvedSave();clearTimeout(autosaveTimer);}else await flushAutosave();
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
  if(navigation!==fileNavigation||writeAccount!==accountEpoch||!desktopAdmitted())return {cancelled:true};
+ refuseUnresolvedSave();
  const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs,copy_source:saveAs?sessionPath:undefined,base_revision:sessionRevision,expect_existing:!!path&&path===sessionPath}).catch(error=>{rememberSaveConflict(error,path);throw error;});
- if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
+ if(saved.cancelled){if(saveAs&&localDirty&&navigation===fileNavigation)queueAutosave();return saved;}if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();if(saved.issueRevision)notice('Saved '+saved.issueRevision);}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };
 api.saveSessionAs=()=>api.saveSession('',true);

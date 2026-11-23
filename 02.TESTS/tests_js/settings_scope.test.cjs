@@ -206,7 +206,7 @@ test('project registers are picked inside the project, a cancelled pick keeps th
   await page.getByRole('button',{name:'Save register',exact:true}).click();
   await page.waitForFunction(()=>window.registerCalls.length===1);
   assert.deepEqual(await page.evaluate(()=>window.registerCalls[0]),{id:'example',number:'P-1',override:false,
-   references:{namingRegister:'C:\\Example\\Registers\\naming-r02.xlsx',issuedRegister:''}});
+   references:{namingRegister:'C:\\Example\\Registers\\naming-r02.xlsx',issuedRegister:'',issuedDestination:''}});
   await page.evaluate(()=>window.update({workspaces:[{...window.fixture.workspaces[0],register:{number:'P-1',override:false,namingRegister:'Registers\\naming-r02.xlsx'},registerFiles:{namingRegister:'usable'}}]}));
   await page.waitForFunction(()=>document.querySelector('[data-register-field="namingRegister"] input').value==='Registers\\naming-r02.xlsx');
   assert.equal(await field.getByRole('status').textContent(),'Found in this project.');

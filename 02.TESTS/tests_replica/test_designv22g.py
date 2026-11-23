@@ -547,3 +547,29 @@ def test_saving_one_canvas_rebuilds_only_its_own_library_card(monkeypatch):
     titles = [item['title'] for group in library_engines.library_catalogue() for item in group['items']]
     assert 'Saved 1 (edited)' in titles
     assert set(reads) == {str(edited_path)}
+
+
+def test_library_cards_survive_a_restart_and_a_damaged_card_file_only_rebuilds(monkeypatch):
+    """A fresh process reuses the saved cards with no session reads; a corrupt card file just rebuilds them."""
+    import json
+    from nodelang import library_engines
+    document = session_files.new_document('Kept card')
+    path = session_files.document_path(session_files.sessions_directory(), document)
+    session_files.write_document(path, document)
+    library_engines._SKILL_CARDS.clear()
+    built = json.dumps(library_engines.library_catalogue(), sort_keys=True, default=str)
+    assert library_engines._cards_file().is_file()
+
+    def restart():
+        library_engines._SKILL_CARDS.clear()
+        library_engines._CARDS_LOADED.clear()
+
+    reads, read = [], session_files.read_document
+    monkeypatch.setattr(session_files, 'read_document', lambda p, *a, **k: (reads.append(str(p)), read(p, *a, **k))[1])
+    restart()
+    assert json.dumps(library_engines.library_catalogue(), sort_keys=True, default=str) == built
+    assert reads == []
+    library_engines._cards_file().write_text('{not json', encoding='utf-8')
+    restart()
+    assert json.dumps(library_engines.library_catalogue(), sort_keys=True, default=str) == built
+    assert str(path) in reads

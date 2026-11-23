@@ -2730,6 +2730,53 @@ def _skill_card_reusable(held, mark, base):
             and all(_file_stamp(path) == stamp for path, stamp in held[3].items()))
 
 
+_CARDS_VERSION = 1
+_CARDS_LOADED = set()  # card files already read in this process
+
+
+def _cards_file():
+    from .user_paths import state_directory
+    return state_directory() / 'cache' / 'library-skill-cards.json'
+
+
+def _stamp_tuple(value):
+    return tuple(value) if value else None
+
+
+def _load_skill_cards():
+    """Disposable acceleration (spec 3.1.5): a missing, unreadable or older file only means the cards are rebuilt."""
+    path = _cards_file()
+    if str(path) in _CARDS_LOADED:
+        return
+    _CARDS_LOADED.add(str(path))
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(data, dict) or data.get('version') != _CARDS_VERSION or not isinstance(data.get('cards'), dict):
+            raise ValueError('not a version %d card file' % _CARDS_VERSION)
+        loaded = {key: (_stamp_tuple(mark), tuple(base), card, {link: _stamp_tuple(stamp) for link, stamp in links.items()})
+                  for key, (mark, base, card, links) in data['cards'].items()}
+    except (OSError, ValueError, TypeError, AttributeError) as unusable:
+        _LOG.debug("Library card file %s not used: %s", path, unusable)
+        return
+    for key, held in loaded.items():
+        _SKILL_CARDS.setdefault(key, held)
+
+
+def _save_skill_cards():
+    path = _cards_file()
+    rows = {key: [list(mark) if mark else None, list(base), card, {link: list(stamp) if stamp else None
+                                                                   for link, stamp in links.items()}]
+            for key, (mark, base, card, links) in _SKILL_CARDS.items()}
+    temporary = path.with_name(path.name + '.tmp')
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps({'version': _CARDS_VERSION, 'cards': rows}), encoding='utf-8')
+        os.replace(temporary, path)
+    except (OSError, TypeError, ValueError) as unsaved:
+        # The cards stay in memory; the next start rebuilds them once.
+        _LOG.debug("Library card file %s not saved: %s", path, unsaved)
+
+
 def _complete_library(groups):
     """One catalogue: existing cards, every pipeline engine, every host tool, every skill file."""
     from .canvas_documents import node_contract
@@ -2785,6 +2832,7 @@ def _complete_library(groups):
     # finished card is reused while that file, every file it links (inside or outside the Library folder) and the
     # cards built before the skills are unchanged; saving one canvas rebuilds only that canvas's card.
     from .session_files import read_document, sessions_directory
+    _load_skill_cards()
     base = tuple(sorted(seen))
     reused, fresh, present = set(), [], set()
     for path in sorted(sessions_directory().glob('*.archhub')):
@@ -2804,8 +2852,9 @@ def _complete_library(groups):
             entry = _skill_entry({'path': path, 'skill': skill}, items)
             fresh.append((key, mark, entry, skill))
         add(entry)
-    for gone in set(_SKILL_CARDS) - present:
-        del _SKILL_CARDS[gone]
+    gone = set(_SKILL_CARDS) - present
+    for key in gone:
+        del _SKILL_CARDS[key]
     for item in items:
         # A reused skill card keeps its saved, parameter-aware purity; the engine default must not replace it.
         kept = item.get('pure') if id(item) in reused else None
@@ -2817,6 +2866,8 @@ def _complete_library(groups):
             item['pure'] = kept
     for key, mark, entry, skill in fresh:
         _SKILL_CARDS[key] = (mark, base, copy.deepcopy(entry), _linked_files([skill]))
+    if fresh or gone:
+        _save_skill_cards()
     categories = engine_categories([{'items': items}])
     buckets = {category: [] for category, _rows in LIBRARY_PRESENTATION}
     for item in items:

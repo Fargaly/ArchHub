@@ -793,3 +793,20 @@ def test_preexisting_open_declare_sessions_are_retired_at_runtime_and_excluded_f
         all_tasks = tasks.column(history, include_archived=True)
         archived_entry = next(t for t in all_tasks if t['id'] == 'session-old-declare-card')
         assert archived_entry['status'] == 'ARCHIVED'
+
+
+def test_refresh_renews_live_work_only_in_the_agent_s_own_project(project):
+    """A live lease in another project is never returned for this one (542e sessionwork-project-refresh)."""
+    import json
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        tower = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+        villa = tasks.create_session(history, 'Villa roof', select=False, workspace='villa')['taskId']
+        lease = json.dumps([{'owner': 'agent-x', 'lease_until': time.time() + 600}])
+        history._db.execute('UPDATE workshop_tasks SET members=? WHERE id=?', (lease, villa))
+        stored = dict(history._db.execute('SELECT id, IFNULL(project,"") FROM workshop_tasks WHERE id IN (?,?)',
+                                          (tower, villa)).fetchall())
+        assert stored[tower] and stored[villa] and stored[tower] != stored[villa]
+        assert tasks._session_for(history, 'agent-x', stored[tower], None, None, 24) is None
+        assert tasks._session_for(history, 'agent-x', stored[villa], None, None, 24) == villa

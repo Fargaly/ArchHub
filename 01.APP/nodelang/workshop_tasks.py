@@ -621,8 +621,8 @@ def _session_for(history, owner, project, request, inherited, hours, kind="refre
     if not request:
         if kind == "alias":
             return None
-        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND " + _LIVE_MEMBER +
-                                   " ORDER BY updated_at DESC LIMIT 1", (owner, now)).fetchone()
+        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? AND " + _LIVE_MEMBER +
+                                   " ORDER BY updated_at DESC LIMIT 1", (project or "", owner, now)).fetchone()
         if mine:
             return mine[0]
         mine = _own_membership(history, owner, project)

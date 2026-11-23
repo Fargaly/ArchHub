@@ -743,9 +743,13 @@ def undo_last(path, by, *, expected_op=None):
     """Undo the newest history entry (any author), itself recorded as an attributed edit."""
     def change(document):
         history = document.get('properties', {}).get('history', [])
-        if expected_op is not None and (not history or history[-1]['op'] != expected_op):
-            raise ValueError('The canvas changed after migration. Both files were preserved.')
-        entry = next((h for h in reversed(history) if not h['op'].startswith('undo')), None)
+        if expected_op is None:
+            entry = next((h for h in reversed(history) if not h['op'].startswith('undo')), None)
+        else:
+            entry = next((h for h in reversed(history) if not
+                          (h['op'] == 'edit in ArchHub' and h.get('view_only') is True)), None)
+            if entry is None or entry['op'] != expected_op:
+                raise ValueError('The canvas changed after migration. Both files were preserved.')
         if entry is None:
             raise ValueError('Nothing to undo.')
         nodes = {n['id']: n for n in document['nodes']}
@@ -870,7 +874,16 @@ def commit_ui(path, document, base_revision, by='You', *, record_creation=True, 
         if current is not None or record_creation:
             document['properties'] = {**(current or {}).get('properties', {}), **{k: v for k, v in (document.get('properties') or {}).items()
                                                                               if k not in ('revision', 'history', 'checkpoints')}}
+            # Saving the viewport after a task move must not consume its Undo.
+            view_only = current is not None and all(document.get(k) == current.get(k)
+                for k in document.keys() | current.keys() if k not in ('viewport', 'properties'))
+            if view_only:
+                old, new = current['properties'], document['properties']
+                view_only = all(old.get(k) == new.get(k) for k in old.keys() | new.keys()
+                                if k not in ('revision', 'history', 'viewportSaved'))
             _stamp(document, current, by, 'edit in ArchHub')
+            if view_only:
+                document['properties']['history'][-1]['view_only'] = True
         write_document(path, document)
         remember(path, document)
         return document

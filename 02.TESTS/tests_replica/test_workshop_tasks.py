@@ -171,6 +171,12 @@ def test_explicit_legacy_child_migration(tmp_path, monkeypatch):
         assert server._open_task_graph(c['id'])['path'] == p['session_path']
         with application_history() as h:
             assert workshop_tasks.get(h,c['id'])['parent_id'] == (p['id'] if as_subtask else None)
+        target = p['session_path']
+        saved = session_files.read_document(target)
+        saved['viewport']['x'] += 12
+        saved['properties']['viewportSaved'] = True
+        saved = canvas_documents.commit_ui(target,saved,canvas_documents.revision(saved))
+        assert saved['properties']['history'][-1]['view_only'] is True
         assert server._move_legacy_child(c['id'],restore=True)['path'] == source
         with application_history() as h:
             assert workshop_tasks.get(h,c['id'])['parent_id'] is None
@@ -179,6 +185,14 @@ def test_explicit_legacy_child_migration(tmp_path, monkeypatch):
     canvas_documents.undo_last(p['session_path'], 'You')
     reopened = server._open_task_graph(c['id'])
     assert reopened.get('path') == source, reopened
+    server._move_legacy_child(c['id'],p['id'])
+    edited = session_files.read_document(target)
+    edited['title'] += ' changed by the user'
+    canvas_documents.commit_ui(target,edited,canvas_documents.revision(edited))
+    with pytest.raises(ValueError,match='canvas changed'):
+        server._move_legacy_child(c['id'],restore=True)
+    assert session_files.read_document(target)['title'] == edited['title']
+    assert server._open_task_graph(c['id'])['path'] == target
 
 
 def test_native_canvas_tools_attribute_solved_count_to_selected_task(tmp_path, monkeypatch):

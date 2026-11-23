@@ -283,16 +283,20 @@ async function refreshApprovals() {
 }
 async function refreshTasks(details=true) {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
- const tasks=await workshop('listTasks',[true]);if(!Array.isArray(tasks))return tasks;
+ const tasks=await workshop('listTasks',[true]);if(!Array.isArray(tasks))return tasks==null ? state.tasks : tasks;
  const room=await workshop('listWorkshopMessages');
  const liveAgents=await workshop('listLiveAgents').catch(()=>[]);
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
+ const roomPage=Array.isArray(room?.messages)
+  ? {workshopMessages:room.messages,workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding}
+  : state.workshopMessagesScope===binding ? {}
+  : {workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null};
  const opened=new Map(state.tasks.map(t=>[t.id,t]));
  const fileOwned=['fileMessages','path','sessionId','parameters'];
  publish({tasks:tasks.map(t=>{const old=opened.get(t.id)||{};const projected=key=>Object.hasOwn(t,key)?t[key]:(fileOwned.includes(key)?old[key]:undefined);return {...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[],
   workflow:projected('workflow'),activity:projected('activity'),plan:projected('plan'),agents:projected('agents'),progress:projected('progress'),parameters:projected('parameters'),
   scope:projected('scope'),rules:projected('rules'),fileMessages:projected('fileMessages'),path:projected('path'),folders:projected('folders'),references:projected('references'),sessionId:projected('sessionId')};}),
-   workshopMessages:room.messages||[],liveAgents:Array.isArray(liveAgents)?liveAgents:[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});
+   ...roomPage,liveAgents:Array.isArray(liveAgents)?liveAgents:[]});
  projectProviders();
  const current=tasks.find(row=>row.sessionOpen&&row.sessionPath);
  if(current&&!openingTask&&!Array.isArray(opened.get(current.id)?.workflow)){
@@ -1761,11 +1765,13 @@ api.duplicateHomeTask=async(task,path)=>{
  return created;
 };
 api.insertSession=async(path,position={})=>{
- const navigation=fileNavigation, original=portableDocument();
+ const navigation=fileNavigation, destination=sessionPath, original=portableDocument();
  const result=await sessionRequest('insert-session',{document:original,session:path,...position});
- if(navigation!==fileNavigation)return {cancelled:true};
- if(JSON.stringify(original)!==JSON.stringify(portableDocument()))throw Error('The destination changed. Try again.');
- fileEdit(d=>{d.nodes=result.document.nodes;},[result.node]);
+ if(navigation!==fileNavigation || destination!==sessionPath || original.id!==sessionDocument?.id)return {cancelled:true};
+ // The server validates the child link against this document ID. Apply only its new node to the current draft.
+ const linked=result.document.nodes.find(n=>n.id===result.node);
+ if(!linked || sessionDocument.nodes.some(n=>n.id===linked.id))throw Error('The linked node could not be inserted.');
+ fileEdit(d=>{d.nodes.push(linked);},[linked.id]);
  return state.graph.nodes.find(n=>n.id===result.node);
 };
 api.detachSession=async node=>{

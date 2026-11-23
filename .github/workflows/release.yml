@@ -49,7 +49,6 @@ on:
         required: false
         type: choice
         options: ['15', '20', '25', '30']
-
 permissions:
   contents: read
 
@@ -615,7 +614,7 @@ jobs:
   verify-published:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'verify-published' }}
     runs-on: windows-2025
-    timeout-minutes: ${{ fromJSON(inputs.verify_minutes) }}
+    timeout-minutes: ${{ fromJSON(inputs.verify_minutes || '15') }}
     permissions:
       contents: read
     env:
@@ -623,7 +622,7 @@ jobs:
       PUBLISHED_BUILD: 20261120-143339-44754205914-1-7c364326cfec80539087ac8153d5616322a78955
       PUBLISHED_SHA256: 62772163849761374db264a247e21bf3a50b7b170986f224cfff5f0f421bfeb6
       PUBLISHED_BYTES: '416586952'
-      VERIFY_MINUTES: ${{ inputs.verify_minutes }}
+      VERIFY_MINUTES: ${{ inputs.verify_minutes || '15' }}
       VERIFY_WORKSHOP_REPLIES: ${{ inputs.verify_workshop_replies }}
       VERIFY_PREVIOUS_CANVAS: ${{ inputs.verify_previous_canvas }}
       VERIFY_F38: ${{ inputs.verify_f38 }}

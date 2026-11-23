@@ -2002,3 +2002,13 @@ if ($mode -eq 'create') { $options.CreatePreview=$true } else { $options.Promote
     run("promote")
     assert json.loads((tmp_path / "stable.json").read_bytes()) == dict(preview, prerelease=False)
     assert len((tmp_path / "mutations").read_text().splitlines()) == 3
+
+
+def test_verify_published_budget_has_a_default():
+    """An omitted verify_minutes made fromJSON('') fail before the Windows job started."""
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    block = workflow[workflow.index("      verify_minutes:"):workflow.index("\npermissions:")]
+    assert "options: ['15', '20', '25', '30']" in block
+    # An omitted budget falls back to the first allowed one in both the job limit and the step check.
+    assert "timeout-minutes: ${{ fromJSON(inputs.verify_minutes || '15') }}" in workflow
+    assert "VERIFY_MINUTES: ${{ inputs.verify_minutes || '15' }}" in workflow

@@ -566,6 +566,11 @@ def test_everyone_is_addressed_to_each_chosen_agent_not_the_room(monkeypatch):
     with application_history() as history:
         pair = history.get(ROOM, two['message_id'], principal=DELIVERY_AUTHOR)
     assert pair['content'].partition('\n')[0] == 'To ' + seats[0]['agent'] + ', ' + seats[1]['agent'] + ':'
+    # e988 5b2bd8cc: each chosen seat is addressed with the message, so its first pending read sees it before any tick.
+    from nodelang.workshop_mailbox import delivery_events
+    with application_history() as history:
+        addressed = {key for key, events in delivery_events(history, grouped).items() if 'addressed' in events}
+    assert addressed == {s['session'] for s in seats}
     # A plain room note stays room-only.
     from nodelang.workshop_mailbox import _send
     with application_history() as history:

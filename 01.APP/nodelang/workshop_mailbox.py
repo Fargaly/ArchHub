@@ -2289,6 +2289,12 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
             evidence=evidence,
             reply_principal=identity["sender"],
             idempotency_key=retry_key)
+        if explicit and not prior:
+            # The chosen recipients are addressed with the message, so their first pending read sees it before the
+            # app's delivery loop runs (the same addressed receipt that loop writes; it reuses these).
+            for row in recipients:
+                _delivery_receipt(history, message, row, "addressed", runtime=row.get("runtime"),
+                                  native_session_id=row.get("native_session_id"))
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
         if waiting:
             history._db.execute("INSERT OR IGNORE INTO workshop_waiting VALUES(?,?)", (message["id"], target))

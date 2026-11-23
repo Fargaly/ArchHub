@@ -1803,6 +1803,7 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 # (universal_pipeline._ensure_pipeline_node_interfaces mints them), so what
 # the library says a card does is what can be wired to it.
 ENGINE_SOCKETS = {
+    "revit.read": {"source": ("out",), "target": ("in", "operation", "session")},
     'research.weighted': {'source':('out',), 'target':('in','criteria','method')},
     "tool.workshop": {"source": ("out",), "target": (
         "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",

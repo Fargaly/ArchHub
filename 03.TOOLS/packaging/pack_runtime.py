@@ -49,6 +49,12 @@ def pack_site(site_packages, out):
     return written
 
 
+def versions(site_packages):
+    # Keyed as pip names dist-info folders; nodelang requires each one in the interpreter before it trusts site.zip.
+    return dict(entry.name[:-len('.dist-info')].lower().split('-', 1)
+                for entry in sorted(Path(site_packages).glob('*-*.dist-info')))
+
+
 def pack_wheelhouse(wheelhouse, out):
     wheels = sorted(str(wheel.resolve()) for wheel in Path(wheelhouse).glob('*.whl') if wheel.is_file())
     if not wheels:
@@ -60,7 +66,7 @@ def pack_wheelhouse(wheelhouse, out):
                    '--disable-pip-version-check', '--no-index', '--no-deps', '--no-compile',
                    '--ignore-installed', '--target', target]
         subprocess.run([*command, *wheels], env=env, check=True)
-        return pack_site(Path(target), out)
+        return pack_site(Path(target), out), versions(target)
 
 
 def pack_stdlib(out):
@@ -84,13 +90,14 @@ def main(argv=None):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     if args.wheelhouse:
-        packed = pack_wheelhouse(args.wheelhouse, out / 'site.zip')
+        packed, packed_versions = pack_wheelhouse(args.wheelhouse, out / 'site.zip')
     else:
         site_packages = args.site_packages or next(p for p in site.getsitepackages() if p.endswith('site-packages'))
         packed = pack_site(Path(site_packages), out / 'site.zip')
+        packed_versions = versions(site_packages)
     pack_stdlib(out / 'stdlib.zip')
     (out / 'stamp.json').write_text(json.dumps({'python': sys.version, 'hexversion': sys.hexversion,
-                                                'packages': packed}, indent=1), encoding='utf-8')
+                                                'packages': packed, 'versions': packed_versions}, indent=1), encoding='utf-8')
     print('packed %d site entries and the standard library into %s' % (len(packed), out))
     return 0
 

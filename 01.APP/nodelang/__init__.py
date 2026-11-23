@@ -19,8 +19,27 @@ def _use_packed_runtime():
     except (OSError, ValueError) as unreadable:
         sys.stderr.write("packed runtime ignored: %s\n" % unreadable)
         return
-    if stamp.get("hexversion") == sys.hexversion:
-        sys.path[0:0] = [str(folder / "site.zip"), str(folder / "stdlib.zip")]
+    if stamp.get("hexversion") != sys.hexversion:
+        return
+    # site.zip must hold exactly what the environment holds (one version of each packed distribution),
+    # or the connector would run other code than the app, or mix zip pydantic with venv pydantic_core.
+    import site
+    installed = {}
+    for path in site.getsitepackages():
+        try:
+            entries = os.listdir(path)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.endswith(".dist-info") and "-" in entry:
+                name, version = entry[:-len(".dist-info")].lower().split("-", 1)
+                installed.setdefault(name, set()).add(version)
+    packed = stamp.get("versions") or {}
+    differ = sorted(name for name, version in packed.items() if installed.get(name) != {version})
+    if not packed or differ:
+        sys.stderr.write("packed runtime ignored: differs from the environment in %s\n" % (differ or "versions"))
+        return
+    sys.path[0:0] = [str(folder / "site.zip"), str(folder / "stdlib.zip")]
 
 
 _use_packed_runtime()

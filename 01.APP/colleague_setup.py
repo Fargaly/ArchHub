@@ -17,6 +17,7 @@ the machine's policy; a firm share alone does not guarantee their absence.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -108,6 +109,18 @@ def _write_ready(root: Path, identity: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def packed_constraints(root: Path) -> str:
+    """`name==version` for exactly the set packed/site.zip was built from (packaging/pack_runtime.py).
+    Not the wheel file names: an updated install keeps older wheels beside the new ones."""
+    try:
+        versions = json.loads((root / "packed" / "stamp.json").read_text(encoding="utf-8")).get("versions") or {}
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not isinstance(versions, dict):
+        return ""
+    return "".join("%s==%s\n" % item for item in sorted(versions.items()))
+
+
 def install_requirements(root: Path, pinned: Path, python=None):
     """Install the desktop requirements, from the bundled wheelhouse first.
 
@@ -121,9 +134,17 @@ def install_requirements(root: Path, pinned: Path, python=None):
     wheelhouse = root / "wheelhouse"
     if wheelhouse.is_dir() and any(wheelhouse.glob("*.whl")):
         print("  installing : from the bundled wheelhouse (no internet needed)")
-        result = subprocess.run(
-            base + ["--no-index", "--find-links", str(wheelhouse), "-r", str(pinned)],
-            env=clean_environment())
+        # Pin every package to this build's version: a reused environment otherwise keeps older
+        # packages inside the requirement ranges, and the packed connector runtime then no longer
+        # matches the environment.
+        with tempfile.TemporaryDirectory(prefix="archhub-constraints-") as folder:
+            command = base + ["--no-index", "--find-links", str(wheelhouse), "-r", str(pinned)]
+            pins = packed_constraints(root)
+            if pins:
+                constraints = Path(folder, "packed.txt")
+                constraints.write_text(pins, encoding="utf-8")
+                command += ["-c", str(constraints)]
+            result = subprocess.run(command, env=clean_environment())
         if result.returncode == 0:
             return result
         print("  wheelhouse : incomplete for this machine; trying the package index")

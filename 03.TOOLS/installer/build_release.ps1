@@ -777,11 +777,13 @@ if (-not (Test-Path -LiteralPath $nodeLicense -PathType Leaf)) { throw 'Bundled 
 # The desktop wheelhouse: every wheel requirements.txt needs on the colleague's
 # CPython 3.14 x64, so setup installs with --no-index behind any proxy. Binary
 # wheels only; the desktop list carries no server package (requirements-cloud.txt).
+# pip judges dependency markers by the Python running it, so download with the 3.14 runtime.
 $wheelhouse = Join-Path $output 'wheelhouse'
 New-Item -ItemType Directory -Path $wheelhouse -ErrorAction Stop | Out-Null
-& $PythonPath -m pip download --disable-pip-version-check --only-binary=:all: `
-    --platform win_amd64 --python-version 3.14 --implementation cp `
-    -d $wheelhouse -r (Join-Path $selectedRoot 'requirements.txt')
+$wheelArguments = @('-m', 'pip', 'download', '--disable-pip-version-check', '--only-binary=:all:',
+    '--platform', 'win_amd64', '--python-version', '3.14', '--implementation', 'cp',
+    '-d', $wheelhouse, '-r', (Join-Path $selectedRoot 'requirements.txt'))
+& $RuntimePythonPath @wheelArguments
 if ($LASTEXITCODE -ne 0) { throw 'The desktop wheelhouse could not be assembled.' }
 $wheels = @(Get-ChildItem -LiteralPath $wheelhouse -Filter '*.whl' -File)
 if ($wheels.Count -eq 0) { throw 'The desktop wheelhouse is empty.' }

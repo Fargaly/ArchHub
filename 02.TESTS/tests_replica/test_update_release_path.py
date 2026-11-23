@@ -680,6 +680,9 @@ def test_missing_host_sdks_names_each_absent_year_before_any_compile(tmp_path):
     missing = offer_check.missing_host_sdks(hosted)
     assert len(missing) == 6 and missing[0] == "revit 2020 (RevitAPI.dll, RevitAPIUI.dll)"
     assert missing[-1] == "autocad 2026 (acmgd.dll, acdbmgd.dll, accoremgd.dll)"
+    assert offer_check.main(["--missing-host-sdks", str(hosted)]) == 1
+    (good / "Autodesk/Revit 2027/RevitAPIUI.dll").write_bytes(b"sdk")
+    assert offer_check.main(["--missing-host-sdks", str(good)]) == 0
 
 
 class _Body(io.BytesIO):

@@ -181,8 +181,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'goose' }}
         shell: pwsh
         run: |
-          $check = 'import runpy,sys; m=runpy.run_path(sys.argv[1])["missing_host_sdks"](sys.argv[2]); print("; ".join(m)); raise SystemExit(1 if m else 0)'
-          $missing = python -E -s -B -c $check selected/03.TOOLS/packaging/windows/check_update_offer.py $env:ProgramFiles
+          $missing = python -E -s -B selected/03.TOOLS/packaging/windows/check_update_offer.py --missing-host-sdks $env:ProgramFiles
           if ($LASTEXITCODE -ne 0) {
             throw "This runner lacks the Autodesk SDKs a stable installer needs: $missing. Build the full installer on the CAD-capable Windows host (03.TOOLS/installer/build_release.ps1); on a hosted runner use mode goose for the engine only."
           }

@@ -441,6 +441,12 @@ def preview_publication(directory, report, mode, phase, stable_id, preview_id, p
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["--missing-host-sdks"] and len(argv) == 2:
+        # Build preflight: a plain argument, so every Windows shell passes it unchanged.
+        missing = missing_host_sdks(argv[1])
+        print("; ".join(missing))
+        return 1 if missing else 0
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("release_dir", type=Path)
     parser.add_argument("--expected-revision", default="")

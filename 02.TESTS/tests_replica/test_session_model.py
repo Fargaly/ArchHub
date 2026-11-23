@@ -480,3 +480,22 @@ def test_registration_history_uses_authored_content_and_keeps_source_files(profi
     edited = copy.deepcopy(original)
     edited['notes'] = [{'text':'Clear width at entrance'}]
     assert projection(edited)
+
+
+@pytest.mark.parametrize('operation,args,key,value', [
+    ('set', ['start', 'brief', 'Review the entrance'], 'brief', 'Review the entrance'),
+    ('add', ['start', 'Design tolerance', 'number', 2.5], 'design_tolerance', 2.5),
+])
+def test_history_recognises_parameter_only_edits_to_declared_sessions(profile, operation, args, key, value):
+    from nodelang.session_files import SessionFiles, read_document, session_fields
+    from nodelang.workshop_tasks import _start_session
+
+    path = _start_session('declared-parameter-test', 'Registration')
+    original = read_document(path)
+    assert not session_fields(original, path)['authoredRegistration']
+    files = SessionFiles()
+    edited = files.dispatch({'action': 'param-op', 'document': original, 'op': operation, 'args': args})['document']
+    files.dispatch({'action': 'save', 'document': edited, 'path': path})
+    reopened = files.dispatch({'action': 'open', 'path': path})['document']
+    assert next(node for node in reopened['nodes'] if node['id'] == 'start')['params'][key] == value
+    assert session_fields(reopened, path)['authoredRegistration']

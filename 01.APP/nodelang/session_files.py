@@ -2459,6 +2459,11 @@ def authored_registration(document):
         if kind == 'thing.agent' and params.get('workshop_step') is True and re.fullmatch(r'step-[0-9a-f]{24}', identity):
             steps.add(identity)
         elif fixed.get(identity) == kind and node.get('fixed'):
+            if identity == 'start':
+                defaults = canvas_documents.session_param_values()
+                if (any(key in params and params[key] != value for key, value in defaults.items())
+                        or any(definition['id'] not in defaults for definition in node.get('paramDefs', []))):
+                    return True
             continue
         elif identity == 'start' and kind == 'param.value' and params == {'type':'text','value':document['title']}:
             continue

@@ -208,7 +208,7 @@
       running: sessionRows.filter(row => !registration(row) && working(row)).length};
   };
   // Home shows actionable work. Session history is an explicit view of the same saved files and task rows.
-  const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Paused', 'Planned', 'Idle'];
+  const MAP_STATES = ['Needs you', 'Failed', 'Running', 'Working', 'Armed', 'Paused', 'Planned', 'Idle'];
   const openHistoryView = () => ({map: {filter: 'All', done: 'Show', collapsed: []}, kind: 'all', olderOpen: false});
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
@@ -252,11 +252,10 @@
       const paused = activity?.paused || 0;
       const running = !!activity?.running || fact.state === 'Working';
       let state = fact.state;
-      if (!fact.need && running) state = 'Working';
+      if (!fact.need && activity?.running) state = 'Running';
       else if (state === 'Idle' || state === 'Planned') {
-        if (armed) state = 'Armed · waiting';
+        if (armed) state = 'Armed';
         else if (paused) state = 'Paused';
-        else if (state === 'Idle' && triggers.some(trigger => ['trigger.schedule','trigger.file'].includes(trigger.kind))) state = 'Configured · inactive';
       }
       return {id: session.id, path: session.path, task: archived || declared ? '' : session.task || row?.id || '',
         taskIdentity: session.task || row?.id || '', archived, registration: declared, authoredRegistration: session.authoredRegistration === true,

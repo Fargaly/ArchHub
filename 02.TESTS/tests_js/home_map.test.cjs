@@ -444,13 +444,13 @@ test('taskless workflows appear only while monitored or running, and pause stays
     listed: {groups:[{sessions:files}]}, workflowActivity: {[files[0].path]:{armed:1},[files[1].path]:{running:true}}};
   const active = draw({}, [], view);
   assert.deepEqual(cards(active).map(c=>c.id).sort(), ['run','timer']);
-  assert.equal(at(active,'timer').state, 'Armed · waiting');
-  assert.equal(at(active,'run').state, 'Working');
+  assert.equal(at(active,'timer').state, 'Armed');
+  assert.equal(at(active,'run').state, 'Running');
   assert.equal(active.running, 1);
   assert.equal(active.armed, 1);
   assert.deepEqual(cards(draw({filter:'Running'}, [], view)).map(c=>c.id), ['run']);
   const history = draw({}, [], {...view, history:true});
-  assert.equal(at(history,'closed').state, 'Configured · inactive');
+  assert.equal(at(history,'closed').state, 'Idle');
   assert.equal(at(history,'manual').state, 'Idle');
   const paused = draw({}, [], {...view, workflowActivity:{[files[0].path]:{paused:1}}});
   assert.equal(at(paused,'timer').state, 'Paused');

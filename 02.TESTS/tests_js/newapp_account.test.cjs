@@ -780,7 +780,7 @@ test('speak: invokes platform synthesis and reports completion only on its compl
 test('ensureDependency: posts existing Settings owner command and publishes confirmed inventory',async()=>{
  const {api,calls}=await buttonsAdapter();assert.equal(api.supportsAction('ensureDependency'),true);
  await api.ensureDependency('codex');const call=calls.find(x=>x.body?.function==='ensureDependency');
- assert.deepEqual(call,{url:'/api/universal/settings-action',body:{function:'ensureDependency',args:['codex']}});
+ assert.deepEqual(call,{url:'/api/universal/settings-action',body:{function:'ensureDependency',args:['codex'],context:{session:'',surface:'home'}}});
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
@@ -1259,7 +1259,7 @@ for(const [name,args,result,key,expected] of [
  assert.equal(api.supportsAction(name),true);assert.equal(api.supportsAction('changePlan'),false);
  calls.length=0;const answer=await api[name](...args);
  const command=calls.find(c=>c.body?.function===name);
- assert.deepEqual(command,{url:'/api/universal/settings-action',body:{function:name,args}});
+ assert.deepEqual(command,{url:'/api/universal/settings-action',body:{function:name,args,context:{session:'',surface:'home'}}});
  assert.equal(answer.id||answer.state||answer.companion?.mode||answer.providerPreferences?.ollama,
   result.id||result.state||result.companion?.mode||result.providerPreferences?.ollama);
  if(key)assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot()[key])),expected);

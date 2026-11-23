@@ -1595,6 +1595,13 @@ def _open_task_graph(task, path=None):
         return {'ok': False, 'error': str(refused)}
 
 
+def _move_legacy_child(task, canvas=None, as_subtask=False, *, restore=False):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import move_legacy_child
+    with application_history() as history:
+        return move_legacy_child(history, task, canvas, as_subtask=as_subtask, restore=restore)
+
+
 def _rename_task(task, title):
     """The founder renames the selected task. The row title is the record."""
     from .workshop_mailbox import application_history
@@ -1942,6 +1949,8 @@ WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(a[0] if a else False),
     'renameTask': _rename_task,
     'openTaskGraph': _open_task_graph,
+    'joinLegacyChild': _move_legacy_child,
+    'restoreLegacyChild': lambda task: _move_legacy_child(task, restore=True),
     'setTaskSession': _set_task_session,
     'pinTaskMessage': _pin_task_message,
     'attachMeetingNotes': _attach_task_notes,

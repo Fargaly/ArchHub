@@ -116,6 +116,10 @@ def _ensure(history):
         _add_column(history, "capacity TEXT")
     if "members" not in names:
         _add_column(history, "members TEXT")
+    if "legacy_parent_id" not in names:
+        _add_column(history, "legacy_parent_id TEXT")
+    if "legacy_session_path" not in names:
+        _add_column(history, "legacy_session_path TEXT")
     if "parent_id" not in names:  # Projects > tasks > subtasks: a subtask names its parent task; old rows stay top level
         _add_column(history, "parent_id TEXT")
     history._db.execute("CREATE INDEX IF NOT EXISTS workshop_tasks_open_work "
@@ -1276,7 +1280,7 @@ def set_status(history, task, status, revision=None):
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
            "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
-           "revision", "outcome", "write_open", "capacity", "members", "parent_id", "archive_previous", "archive_revision")
+           "revision", "outcome", "write_open", "capacity", "members", "parent_id", "archive_previous", "archive_revision", "legacy_session_path", "legacy_parent_id")
 
 
 def rows(history, task=None, *, include_archived=True, settle=True):
@@ -1535,7 +1539,11 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
         raise ValueError("No such Workshop task")
     bound = row.get("session_path")
     if bound:
-        return _show(task, bound, read_document(bound), select=select)
+        document = read_document(bound)
+        if (row.get('legacy_session_path') and not any(n['id'] == task for n in document['nodes'])
+                and _legacy_undo(document, task)):
+            return move_legacy_child(history, task, restore=True, select=select)
+        return _show(task, bound, document, select=select)
     if path is not None:
         target = str(local_path(path))
         holder = history._db.execute("SELECT id FROM workshop_tasks WHERE session_path=? AND id!=?", (target, task)).fetchone()
@@ -1549,6 +1557,123 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
     document = read_document(target)
     _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)
+
+
+def _legacy_undo(document, task):
+    for entry in reversed(document['properties'].get('history', [])):
+        nodes = entry.get('undo', {}).get('nodes', {})
+        if task in nodes:
+            previous = nodes[task] or {}
+            return entry['op'] == 'undo' and previous.get('taskContext', {}).get('legacyDigest')
+    return None
+
+
+def move_legacy_child(history, task, canvas=None, *, as_subtask=False, restore=False, select=False):
+    """Explicit, single-task migration. The original file is the reversal source."""
+    from pathlib import Path
+    from . import canvas_documents
+    from .session_files import read_document, task_context
+    with history._transaction(write=True):
+        row = get(history, task)
+        if not row or row['archived'] or type(as_subtask) is not bool:
+            raise ValueError('Choose an active saved task.')
+        target_id = canvas or row['parent_id']
+        destination_row = get(history, target_id) if target_id else None
+        if not restore:
+            if not destination_row or destination_row['archived'] or target_id == task:
+                raise ValueError('Choose another active destination task.')
+            if (row['project'] or '') != (destination_row['project'] or ''):
+                raise ValueError('Choose a canvas in this project.')
+            if history._db.execute('SELECT 1 FROM workshop_tasks WHERE parent_id=? LIMIT 1', (task,)).fetchone():
+                raise ValueError('Move the child tasks first.')
+        parent_id = (target_id if as_subtask or canvas is None else None) if not restore else row['legacy_parent_id']
+        old = row['legacy_session_path']
+        current = row['session_path']
+        target = current if restore else destination_row['session_path']
+        if not current or not target:
+            raise ValueError('Both tasks need saved files.')
+        if not restore and old and current == target:
+            if row['parent_id'] != parent_id:
+                raise ValueError('This task is already on that canvas with a different parent.')
+            task_context(read_document(target), task)
+            return _show(task, target, read_document(target), select=select)
+        if old and not restore:
+            raise ValueError('Undo the current move first.')
+        if restore and not old:
+            raise ValueError('This child has no migration to reverse.')
+        source = old if restore else current
+        if Path(source).resolve() == Path(target).resolve() or Path(source).resolve().parent != Path(target).resolve().parent:
+            raise ValueError('Choose separate task files in the same folder.')
+        if history._db.execute('SELECT 1 FROM workshop_tasks WHERE session_path=? AND id!=?', (source, task)).fetchone():
+            raise ValueError('The child file already has another task.')
+        op = 'join legacy child ' + task
+        with canvas_documents.locked(source):
+            child = read_document(source)
+            context = child['properties'].get('taskContext', {})
+            if context.get('task') != task or context.get('anchor'):
+                raise ValueError('Expected a standalone child canvas.')
+            digest = sha256(Path(source).read_bytes()).hexdigest()
+            def join(doc):
+                from .session_files import _project_of, _registered_roots
+                roots = _registered_roots()
+                if _project_of(child['properties'], roots, row) != _project_of(doc['properties'], roots, destination_row):
+                    raise ValueError('Choose a canvas in this project.')
+                task_context(doc, target_id)
+                anchor = next((n for n in doc['nodes'] if n['id'] == task), None)
+                if anchor:
+                    previous = anchor.get('taskContext', {})
+                    if previous.get('legacyDigest') == digest and previous.get('parent') == parent_id:
+                        return []  # retry after the file write but before the mailbox commit
+                    raise ValueError('A different node already uses this child id.')
+                nodes = [n for n in child['nodes'] if not n.get('fixed')]
+                fixed = {n['id'] for n in child['nodes'] if n.get('fixed')}
+                fixed_wires = {'fixed-agent', 'fixed-profile', 'fixed-rules'}
+                wires = [w for w in child['wires'] if w['id'] not in fixed_wires]
+                if any(w[end]['node'] in fixed for w in wires for end in ('from','to')):
+                    raise ValueError('The child has custom wiring to its session controls.')
+                if any(n.get('workshopTask', task) != task for n in nodes):
+                    raise ValueError('The child contains work owned by another task.')
+                if any(n['type'].startswith('trigger.') or n.get('taskContext') for n in nodes):
+                    raise ValueError('The child contains a trigger or nested task.')
+                for key, items in [('nodes',nodes), ('wires',wires), ('groups',child['groups']), ('notes',child['notes'])]:
+                    taken = {item['id'] for item in doc[key] if item.get('id')}
+                    if any(item.get('id') in taken or item.get('id') == task for item in items):
+                        raise ValueError('Canvas identifiers overlap. Both files were preserved.')
+                doc['nodes'].append({'id':task, 'type':'param.value', 'title':row['title'],
+                    'workshopTask':task, 'params':{'type':'text', 'value':row['title']},
+                    'position':canvas_documents.free_spot(doc,480,80),
+                    'taskContext':{**context, 'parent':parent_id, 'legacyDigest':digest}})
+                doc['nodes'].extend({**n, 'workshopTask':task} for n in nodes)
+                doc['wires'].extend(wires)
+                doc['groups'].extend(child['groups'])
+                for index,note in enumerate(child['notes']):
+                    if _task_message(note) and note.get('workshopTask', task) != task:
+                        raise ValueError('The child contains another task’s messages.')
+                    if _task_message(note):
+                        identity = note.get('id') or ('note-%d' % index)
+                        if not note.get('id') and any(n.get('id') == identity for n in doc['notes']):
+                            raise ValueError('A message identifier is already in use on this canvas.')
+                        note = {**note, 'id':identity, 'workshopTask':task}
+                    doc['notes'].append(note)
+                return []
+            if restore:
+                doc = read_document(target)
+                anchor = next((n for n in doc['nodes'] if n['id'] == task), None)
+                if anchor:
+                    if anchor.get('taskContext', {}).get('legacyDigest') != digest:
+                        raise ValueError('The original child changed. Both versions were preserved.')
+                    canvas_documents.undo_last(target, 'Workshop', expected_op=op)
+                elif _legacy_undo(doc, task) != digest:
+                    raise ValueError('Missing migration history. Both files were preserved.')
+            else:
+                canvas_documents.edit(target, 'Workshop', op, join, solve_changed=False)
+            destination = source if restore else target
+            if not _write(history, 'UPDATE workshop_tasks SET session_path=?,legacy_session_path=?,parent_id=?,legacy_parent_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?',
+                   (destination, None if restore else source, parent_id, None if restore else row['parent_id'], _now(), task, row['revision'])):
+                raise ValueError('The task changed. Retry its migration.')
+    return _show(task, destination, read_document(destination), select=select)
+
+
 
 
 def checkpoint_session(history, task, identity=None, label=None):

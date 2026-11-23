@@ -905,7 +905,7 @@ api.setTaskSession=async(id,values)=>{
 };
 api.pinTaskMessage=(id,message,pinned)=>taskFileAction('pinTaskMessage',id,message,pinned);
 api.attachMeetingNotes=async(id,text)=>{const result=await workshop('attachMeetingNotes',[id,text]);if(!result||result.ok===false)throw Error(result?.error||'Meeting notes were not attached.');await refreshTasks(false);return result;};
-for(const method of ['checkpointTask','restoreTaskCheckpoint'])api[method]=async(id,...args)=>{const result=await taskFileAction(method,id,...args);await refreshTasks(false);return result;};
+for(const method of ['checkpointTask','restoreTaskCheckpoint','joinLegacyChild','restoreLegacyChild'])api[method]=async(id,...args)=>{const result=await taskFileAction(method,id,...args);await refreshTasks(false);return result;};
 let openingTask=null;
 api.openTaskGraph=id=>{
  if(openingTask?.id===id)return openingTask.promise;

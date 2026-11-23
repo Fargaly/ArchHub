@@ -739,10 +739,12 @@ def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_
     return document, solved
 
 
-def undo_last(path, by):
+def undo_last(path, by, *, expected_op=None):
     """Undo the newest history entry (any author), itself recorded as an attributed edit."""
     def change(document):
         history = document.get('properties', {}).get('history', [])
+        if expected_op is not None and (not history or history[-1]['op'] != expected_op):
+            raise ValueError('The canvas changed after migration. Both files were preserved.')
         entry = next((h for h in reversed(history) if not h['op'].startswith('undo')), None)
         if entry is None:
             raise ValueError('Nothing to undo.')

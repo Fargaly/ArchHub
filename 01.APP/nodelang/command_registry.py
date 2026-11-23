@@ -440,6 +440,7 @@ STUDIO_COMMANDS += tuple(
     for index, (id, label, icon, contexts, writes) in enumerate((
         ('menu.home.thread', 'Open the thread', 'workshop', ['session'], False),
         ('menu.home.run', 'Run', 'play', ['session'], True),
+        ('menu.home.move', 'Move to canvas…', 'group', ['session'], True),
         ('menu.home.add', 'Add to another task', 'group', ['session'], True),
         ('menu.home.watch', 'Invite to watch…', 'eye', ['session'], False),
         ('menu.home.automate', 'Make this an automation', 'clock', ['session'], True),

@@ -296,6 +296,8 @@
             const result = await api.runNode();
             if (result?.approvalId) u.show('Approve', {id: result.approvalId});
           })),
+          sessionTask && choice('menu.home.move', () => u.show('Move to canvas', {id, title:task.title}),
+            null, !source && 'Save this task first.'),
           choice('menu.home.add', addTo, null, !source ? 'Save this session first.' : !destinations.length && 'There is no other task to add it to.'),
           // Invite to watch: the right-clicked session only; disabled until the cloud serves watch grants.
           sessionTask && choice('menu.home.watch', () => u.show('Invite to watch', {path: source, title: task?.title}), null,

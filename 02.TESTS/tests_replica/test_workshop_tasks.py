@@ -108,6 +108,79 @@ def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     assert rows[first_id]["status"] == "PLANNED" and rows[second_id]["status"] == "DONE"
 
 
+def test_explicit_legacy_child_migration(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from nodelang.canvas_tools import register_canvas_tools
+    from nodelang import nograph_server as server
+    from pathlib import Path
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path))
+    tools = {}
+    class Server:
+        def tool(self, *, name, **unused):
+            def bind(fn):
+                tools[name] = fn
+                return fn
+            return bind
+    register_canvas_tools(Server())
+    actor = SimpleNamespace(session=SimpleNamespace(client_params=SimpleNamespace(clientInfo=SimpleNamespace(name='Codex QA'))))
+    with application_history() as h:
+        p,c,i = [workshop_tasks.create(h,title,'founder') for title in ('Project','Child','Independent')]
+        h._db.execute('UPDATE workshop_tasks SET parent_id=? WHERE id=?',(p['id'],c['id']))
+        h._db.commit()
+        assert workshop_tasks.claim(h,c['id'],'Codex QA','Codex QA')
+        source = c['session_path']
+        listing = tools['canvas.add_node'](source,'n_list',actor,params={'value':'[8,9]'},task=c['id'])['node']
+        count = tools['canvas.add_node'](source,'s_count',actor,task=c['id'])['node']
+        tools['canvas.wire'](source,listing+'.value',count+'.items',actor)
+    from nodelang import canvas_documents
+    def legacy_note(doc):
+        doc['notes'].append({'text':'Preserve this child message','role':'task'})
+    canvas_documents.edit(source,'You','legacy chat',legacy_note,solve_changed=False)
+    canvas_documents.edit(p['session_path'],'You','parent annotation',
+                          lambda doc: doc['notes'].append({'text':'Parent annotation'}),solve_changed=False)
+    original, unrelated = [Path(path).read_bytes() for path in (source,i['session_path'])]
+    for move in ('first', 'retried'):  # a retried move is a no-op
+        assert server._move_legacy_child(c['id'])['path'] == p['session_path'], move
+        view = server._open_task_graph(c['id'])
+        assert any(m['text']=='Preserve this child message' and m['id']=='note-0' for m in view['messages'])
+        assert all(m['text']!='Preserve this child message' for m in server._open_task_graph(p['id'])['messages'])
+        assert next(item['output']['count'] for item in view['activity'] if item['id']==count) == 2
+    assert server._move_legacy_child(c['id'],restore=True)['path'] == source
+    reopened = server._open_task_graph(c['id'])
+    assert reopened.get('path') == source, reopened
+    assert Path(source).read_bytes() == original
+    assert Path(i['session_path']).read_bytes() == unrelated
+    assert count not in {n['id'] for n in server._open_task_graph(p['id'])['workflow']}
+    with application_history() as h:
+        h._db.execute('UPDATE workshop_tasks SET parent_id=NULL WHERE id=?',(c['id'],))
+        h._db.commit()
+    with pytest.raises(ValueError, match='destination'):
+        server._move_legacy_child(c['id'])
+    from nodelang import session_files
+    monkeypatch.setattr(session_files,'_registered_roots',lambda:{'p1':{'label':'Same'},'p2':{'label':'Same'}})
+    canvas_documents.edit(source,'You','project one',lambda doc: doc['properties'].update(project='p1'),solve_changed=False)
+    canvas_documents.edit(p['session_path'],'You','project two',lambda doc: doc['properties'].update(project='p2'),solve_changed=False)
+    with pytest.raises(ValueError,match='in this project'):
+        server._move_legacy_child(c['id'],p['id'])
+    assert server._open_task_graph(c['id'])['path'] == source
+    canvas_documents.edit(p['session_path'],'You','same project',lambda doc: doc['properties'].update(project='p1'),solve_changed=False)
+    for as_subtask in (False, True):
+        view = server._move_legacy_child(c['id'],p['id'],as_subtask)
+        assert view['path'] == p['session_path']
+        assert next(item['output']['count'] for item in view['activity'] if item['id']==count) == 2
+        assert server._open_task_graph(c['id'])['path'] == p['session_path']
+        with application_history() as h:
+            assert workshop_tasks.get(h,c['id'])['parent_id'] == (p['id'] if as_subtask else None)
+        assert server._move_legacy_child(c['id'],restore=True)['path'] == source
+        with application_history() as h:
+            assert workshop_tasks.get(h,c['id'])['parent_id'] is None
+        assert Path(i['session_path']).read_bytes() == unrelated
+    server._move_legacy_child(c['id'],p['id'])
+    canvas_documents.undo_last(p['session_path'], 'You')
+    reopened = server._open_task_graph(c['id'])
+    assert reopened.get('path') == source, reopened
+
+
 def test_native_canvas_tools_attribute_solved_count_to_selected_task(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from nodelang.canvas_tools import register_canvas_tools

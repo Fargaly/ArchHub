@@ -864,6 +864,11 @@ jobs:
                 & (Join-Path $app '.venv/Scripts/python.exe') -I -B selected/03.TOOLS/tools/real_app_check/upgrade_persistence.py $phase $pin.build
                 if ($LASTEXITCODE -ne 0) { throw "Installed owner persistence check failed during $phase." }
               }
+              if (-not $previous) {
+                # The shipped update controller: same build answers up to date; a newer build still waits for busy work.
+                & (Join-Path $app '.venv/Scripts/python.exe') -I -B selected/03.TOOLS/tools/real_app_check/update_controller_check.py 2>&1 | Tee-Object -FilePath (Join-Path $env:VERIFY_EVIDENCE 'update-controller.json')
+                if ($LASTEXITCODE -ne 0) { throw 'Installed update controller check failed.' }
+              }
               if ($previous -and $env:VERIFY_PREVIOUS_CANVAS -eq 'true') {
                 $witness = 'selected/03.TOOLS/tools/real_app_check'
                 $savedPath = $env:PATH

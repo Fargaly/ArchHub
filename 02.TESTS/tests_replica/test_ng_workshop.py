@@ -403,6 +403,57 @@ print(json.dumps({'lock_errors':0}))
         self.assertTrue(scans)
         self.assertEqual(sent, ['recipient-one'])
 
+    def test_seen_reads_the_roster_before_taking_the_writer(self):
+        mailbox.call('declare', {'task': 'recipient', 'paths': [str(Path.cwd())], 'status': 'working',
+                                 'request_id': 'unassigned'}, self.context)
+        sent = mailbox.call('send', {'to': 'founder', 'text': 'seen check'}, self.context)
+        real, probes = mailbox.read_declarations, []
+        with patch.object(mailbox, 'read_declarations',
+                          side_effect=lambda connection, **k: probes.append(connection.in_transaction) or real(connection, **k)):
+            mailbox.call('seen', {'message_ids': [sent['message_id']], 'channel': 'connector tool result'}, self.context)
+        self.assertTrue(probes)
+        self.assertNotIn(True, probes)
+
+    def test_a_confirmed_background_claim_acknowledges_the_message_for_its_recipient(self):
+        with mailbox.application_history(None) as history:
+            identity, _runtime, _peer = mailbox._identity(self.context, None)
+            message = history.get(mailbox.ROOM, mailbox._send(history, {'to': 'founder', 'text': 'claimed'}, identity)
+                                  ["message_id"], principal=mailbox.DELIVERY_AUTHOR)
+            seat = {'session': 'agent:session:x', 'agent': 'X', 'runtime': 'claude', 'native_session_id': 'native-x'}
+            other = {'session': 'agent:session:y', 'agent': 'Y', 'runtime': 'claude', 'native_session_id': 'native-y'}
+            recipient = {'sender_key': 'agent:session:x', 'sender': 'X [agent:session:x]'}
+            self.assertFalse(mailbox._acknowledged(history, message, recipient, seat))
+            self.assertTrue(mailbox.claim_delivery(history, message, seat, 'initial', 'background')[0])
+            mailbox.record_claim_outcome(history, message['id'], seat, 'initial', 'uncertain')
+            self.assertFalse(mailbox._acknowledged(history, message, recipient, seat))  # uncertain stays pending
+            self.assertTrue(mailbox.claim_delivery(history, message, other, 'initial', 'background')[0])
+            mailbox.record_claim_outcome(history, message['id'], other, 'initial', 'delivered')
+            self.assertFalse(mailbox._acknowledged(history, message, recipient, seat))  # per recipient
+            self.assertTrue(mailbox._acknowledged(history, message, {'sender_key': 'agent:session:y',
+                                                                      'sender': 'Y [agent:session:y]'}, other))
+
+    def test_an_unchanged_waiting_backlog_is_not_rescanned_every_tick(self):
+        worker = mailbox.WorkshopInjection(None, None)
+        with mailbox.application_history(None) as history:
+            identity, _runtime, _peer = mailbox._identity(self.context, None)
+            sent = mailbox._send(history, {'to': 'offline-role-nobody', 'text': 'No reply needed.'}, identity)
+            history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
+            history._db.execute("INSERT OR IGNORE INTO workshop_waiting VALUES (?,?)", (sent['message_id'], 'offline-role-nobody'))
+        mailbox.call('declare', {'task': 'someone', 'paths': [str(Path.cwd())], 'status': 'working',
+                                 'request_id': 'unassigned'}, self.context)
+        real, scans = mailbox.read_declarations, []
+        with patch.object(mailbox, 'read_declarations', side_effect=lambda *a, **k: scans.append(1) or real(*a, **k)):
+            worker.tick(now=time.time())
+            first = len(scans)
+            worker.tick(now=time.time() + 1)
+            worker.tick(now=time.time() + 2)
+            self.assertEqual(len(scans), first)   # same roster, same backlog: no rescan
+            mailbox.call('declare', {'task': 'newcomer', 'paths': [str(Path.cwd())], 'status': 'working',
+                                     'request_id': 'unassigned'}, {'claude/sessionID': 'newcomer'})
+            scans.clear()
+            worker.tick(now=time.time() + 3)
+            self.assertTrue(scans)   # a new declaration is picked up promptly
+
     def test_a_busy_activity_line_never_turns_a_committed_send_into_an_error(self):
         import sqlite3
         busy = sqlite3.OperationalError('database is locked')

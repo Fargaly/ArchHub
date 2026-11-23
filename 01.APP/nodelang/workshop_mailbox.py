@@ -830,6 +830,14 @@ def _acknowledged(history, message, identity, declaration=None):
                        + marks + ")" + (" OR (native_session_id=? AND app=?)" if seat else "") + ")",
                        (message["id"], *sessions, *seat)).fetchone() is not None:
         return True
+    # A background claim whose push this recipient confirmed is a delivery too (claims store recipient_identity).
+    claimed = [json.dumps(["session", key]) for key in sorted(sessions)]
+    if seat:
+        claimed.append(json.dumps(["native", seat[1], seat[0]]))
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_claims'").fetchone() is not None and \
+            db.execute("SELECT 1 FROM workshop_claims WHERE message_id=? AND outcome='delivered' AND recipient IN ("
+                       + ",".join("?" for _ in claimed) + ") LIMIT 1", (message["id"], *claimed)).fetchone() is not None:
+        return True
     return db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND reply_to=? AND author=? LIMIT 1",
                       (ROOM, message["id"], identity["sender"])).fetchone() is not None
 
@@ -856,14 +864,16 @@ def _seen(history, body, identity, runtime):
     if type(ids) is not list or not all(type(value) is str and value for value in ids) or type(body["channel"]) is not str:
         raise ValueError("Workshop mailbox arguments are invalid")
     at = datetime.now(timezone.utc).isoformat()
+    # The roster (process liveness probes) is read before the writer is taken; receipts and settlement stay atomic.
+    known = read_declarations(history._db, include_archived=True)
+    declaration = _declaration(history, identity, runtime, known)
+    declarations = [row for row in known if row["current"]]  # what read_declarations() returns without archived
     with history._transaction(write=True):
         history._db.execute(SCHEMA)
-        declaration = _declaration(history, identity, runtime)
-        declarations = read_declarations(history._db)
         for message_id in ids:
             message = history.get(ROOM, message_id, principal=DELIVERY_AUTHOR)
             if not message or not (_deliver_to(message, identity, declaration, history) or _routed_to(
-                    history, message, declaration, read_declarations(history._db, include_archived=True))) \
+                    history, message, declaration, known)) \
                     or not _can_ack(history, message, identity, declaration, declarations):
                 continue
             # Resolve only this recipient's provisional aliases; other recipients retain their receipts.
@@ -1122,6 +1132,8 @@ class WorkshopInjection:
         self.backfill_seconds = float(backfill_minutes) * 60
         self._settled = set()
         self._replies_done = set()  # replies whose "answered" receipts are written; never re-read per tick
+        self._waiting_roster = ()   # the declared roster (count, newest update) at the last full pass
+        self._progress = True       # the last full pass delivered or settled something
         self._tick_lock = threading.Lock()
         self.last_error = None
         self._reads, self._reads_lock = {}, threading.Lock()
@@ -1423,13 +1435,24 @@ class WorkshopInjection:
                     and (str(message.get("created_at") or "") >= cutoff or message["id"] in waiting_ids)):
                 self._pending[message["id"]] = message["sequence"]
         replies = [raw for raw in [*rows, *latest] if raw["reply_to"] is not None and raw["id"] not in self._replies_done]
-        if not (direct or replies or self._pending or now - self._watched_at >= WATCH_NODE["params"]["check_seconds"]):
-            # Idle: no new reply, nothing pending, no watcher pass due. The roster scan probes every declared process.
+        # Mail waiting for an absent holder only moves when the declared roster changes: one SQL read, no probes.
+        roster = (history._db.execute("SELECT count(*), max(json_extract(record,'$.updated_at')) "
+                                      "FROM workshop_declarations").fetchone()
+                  if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone()
+                  else None)
+        roster = tuple(roster) if roster is not None else None
+        # Pending mail is worth a pass while the last pass made progress or the roster changed; a backlog that the
+        # last pass could not move (its holders are absent) waits for a new declaration.
+        movable = bool(self._pending) and (self._progress or roster != self._waiting_roster)
+        if not (direct or rows or replies or movable
+                or now - self._watched_at >= WATCH_NODE["params"]["check_seconds"]):
+            # Idle: nothing new, no movable work, no watcher pass due. The roster scan probes every declared process.
             if rows:
                 self._cursor = rows[-1]["sequence"]
             return
         # Process liveness probes must not keep SQLite readers blocking a sender's COMMIT.
         declarations = read_declarations(history._db, include_archived=True)
+        self._waiting_roster, self._progress = roster, False
         if len(self._replies_done) > 10000:
             self._replies_done.clear()  # shortcut: bounded memory; a cleared reply is only re-checked once
         # Replies are new room notes even when their parent has settled.
@@ -1451,6 +1474,7 @@ class WorkshopInjection:
         if rows:
             self._cursor = rows[-1]["sequence"]
         if not direct and self._watch(history, now, declarations):
+            self._progress = True
             return
         for message_id, _sequence in sorted(self._pending.items(), key=lambda item:item[1], reverse=True):
             if self._stop.is_set():
@@ -1463,6 +1487,7 @@ class WorkshopInjection:
                 recorded = delivery_events(history, message)
             if message["id"] in waiting_ids and _settle_waiting(history, message, declarations):
                 self._pending.pop(message["id"], None)
+                self._progress = True
                 continue
             routing = _routing(message)
             control_data = routing.get("native_control") if routing else None
@@ -1566,10 +1591,12 @@ class WorkshopInjection:
                     delivery_outcome(outcome.get("status", "uncertain"), outcome.get("dispatch_attempted")),
                     public_delivery_reason(outcome.get("delivery_reason", "")))
                 if not direct:
+                    self._progress = True
                     return  # The app yields between effects; a direct send completes its own recipients.
             if settled:
                 self._pending.pop(message["id"], None)
                 self._settled.add(message["id"])
+                self._progress = True
 
 
 def _text(value, label, maximum):

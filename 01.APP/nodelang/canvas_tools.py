@@ -33,7 +33,9 @@ def _summary(document, solved=None):
               'output': (n.get('result') or {}).get('output', {}), 'error': (n.get('result') or {}).get('error', '')}
              for n in document['nodes']]
     from .session_files import catalogue
-    ports = {item['id']: item['ports'] for item in catalogue()}
+    # Only a node without stored ports (older canvases) needs the Library's card for its sockets.
+    legacy = any(source.get('item') and not source.get('ports') for source in document['nodes'])
+    ports = {item['id']: item['ports'] for item in catalogue()} if legacy else {}
     from .node_params import bound_value, ports as node_ports, PARAM_ENGINE
     for node, source in zip(nodes, document['nodes']):
         if source.get('workshopTask'):

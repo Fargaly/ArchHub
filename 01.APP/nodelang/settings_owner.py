@@ -1443,12 +1443,12 @@ class PreferenceScope:
             self.assert_destination(require_available=False)
             if workspace:
                 project = ((self.document or {}).get('properties') or {}).get('project')
-                if project and project != workspace:
+                if self.document and project != workspace:
                     raise SettingsDestinationChanged('The session workspace changed. Refresh Settings and choose its scope again.')
                 self.context_workspace = self.workspace = workspace
             self._require(scope)
             if expected and (self.document or {}).get('id') != expected:
-                raise ValueError('The session changed. Refresh Settings and retry.')
+                raise SettingsDestinationChanged('The session changed. Refresh Settings and retry.')
             self.settings.update({'settingsScope': scope, 'activeWorkspace': self.workspace})
         return self.read()
 

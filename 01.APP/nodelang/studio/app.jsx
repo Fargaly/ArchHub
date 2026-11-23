@@ -270,6 +270,7 @@
       }
       if (r.startsWith('settings/') && !route.startsWith('settings/')) settingsOrigin.current = route;
       if(r==='canvas')setCanvasOpened(true);
+      else if(homeInspector?.path)setHomeInspector(null);
       api.setActiveSurface?.(r);
       setRoute(r);
       setModal(null);

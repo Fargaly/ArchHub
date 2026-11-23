@@ -1354,9 +1354,9 @@ const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes',
 api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
 api.setApplicationSetting=async(key,value)=>{const saved=await settingsAction('setApplicationSetting',[key,value]);await refreshLiveUpdatePolicy();return saved;};
 let settingsScopeRequests=0;
-api.setSettingsScope=async(scope,destination=state.settingsDestination)=>{
+api.setSettingsScope=async(scope,destination=state.settingsDestination,workspace=destination?.workspace)=>{
  settingsScopeRequests++;publish({settingsScopePending:true});
- try{return await settingsAction('setSettingsScope',[scope,destination?.workspace??sessionDocument?.properties?.project??state.activeWorkspace??'',destination?.session??state.graph.id],destination);}
+ try{return await settingsAction('setSettingsScope',[scope,workspace??sessionDocument?.properties?.project??state.activeWorkspace??'',destination?.session??state.graph.id],destination);}
  finally{settingsScopeRequests--;publish({settingsScopePending:settingsScopeRequests>0});}
 };
 api.refreshPreferences=()=>settingsAction('readPreferences');

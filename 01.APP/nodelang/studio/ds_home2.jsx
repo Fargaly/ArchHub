@@ -361,7 +361,7 @@
         error => { if (current) setLoad({status: 'error', message: error.message}); });
       return () => { current = false; };
     }, [stamp]);
-    if (!path || !session) return null;
+    if (!path) return null;
     if (load.status === 'waiting') return <section className="v48-session-inspector" aria-label="Session"><h3>Session</h3><p role="status">Reading this session…</p></section>;
     if (load.status === 'error') return <section className="v48-session-inspector" aria-label="Session"><h3>Session</h3><p role="alert">{load.message}</p><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setAttempt(value => value + 1), event)}>Retry session</button></section>;
     if (load.status === 'empty') return <section className="v48-session-inspector" aria-label="Session"><h3>Session</h3><p className="muted">This file has no session record yet.</p></section>;
@@ -370,16 +370,16 @@
     const done = model.state === 'loaded' ? model.row.doneCheck : null, tries = done?.tries || 0;
     const doneState = !done ? 'Not set' : done.blocked ? 'Blocked · failed 3 of 3' : tries ? 'Failed ' + tries + ' of 3' : 'Not run yet';
     const setDone = node => u.act(() => api.setSessionModel(path, {doneCheck: node ? {node} : null}).then(row => { setModel({state: 'loaded', row}); return row; }));
-    const readOnly = session.params.read_only_agents || [], members = (task?.members || []).map(row => row.name).concat(task?.members?.length ? [] : task?.agents || []);
+    const readOnly = session?.params?.read_only_agents || [], members = (task?.members || []).map(row => row.name).concat(task?.members?.length ? [] : task?.agents || []);
     const setReadOnly = (name, on) => u.act(() => api.setNodeParam(session.id, 'read_only_agents', on ? [...new Set([...readOnly, name])] : readOnly.filter(row => row !== name)));
-    const budget = (session.parameterSchema || []).find(row => row.key === 'run_budget');
+    const budget = (session?.parameterSchema || []).find(row => row.key === 'run_budget');
     if (load.status === 'loaded') return <section className="v48-session-inspector" data-design="inspector.session" aria-label="Session">
       <h3>Session</h3>
       <label className="grid">Done when<select data-design="inspector.session.donewhen" aria-label="Done when" value={done?.node || ''} onChange={event => setDone(event.target.value)}>
         <option value="">{checks.length ? 'Pick a check on this canvas…' : 'Add a Check node to this canvas first'}</option>{checks.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
       <p className="muted" data-design="inspector.session.donestate">{doneState}{done ? ' · three failures in a row block Done' : ''}</p>
       <h4>Who works on it</h4>
-      {members.length ? members.map(name => <label key={name} className="v48-session-param"><span>{name}</span><span>Read only <input type="checkbox" aria-label={name + ' read only'} checked={readOnly.includes(name)} onChange={event => setReadOnly(name, event.target.checked)}/></span></label>) : <p className="muted">No agent yet.</p>}
+      {members.length ? members.map(name => <label key={name} className="v48-session-param"><span>{name}</span><span>Read only <input type="checkbox" disabled={!session} aria-label={name + ' read only'} checked={readOnly.includes(name)} onChange={event => setReadOnly(name, event.target.checked)}/></span></label>) : <p className="muted">No agent yet.</p>}
       <h4>Inputs from other sessions</h4>
       {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span>{link.source.path}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
       {budget && <label className="grid">Run budget<window.UI.ValueWidget n={session} p={budget} value={session.params.run_budget} u={u}/></label>}
@@ -1026,6 +1026,7 @@
   window.UI.homeRows = homeRows;
   window.UI.homeMap = homeMap;
   window.UI.Sheet = Sheet;
+  window.UI.SessionInspector = SessionInspector;
   window.UI.homeListSame = sameList;
   window.UI.homeCommitList = commitList;
   window.UI.homeDescribe = describe;

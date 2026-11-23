@@ -908,6 +908,7 @@
     const live = useData(), s = preview ? {...live, graph: preview, sessionBreadcrumbs: []} : live,
       u = useApp();
     const api = preview ? {getSnapshot:()=>s, refreshProjects:async()=>preview, setSessionViewport:()=>{}} : window.UI.api;
+    const sessionSettings = active && !preview && !embedded && u.homeInspector?.tab==='Session' && u.homeInspector.path===api.getSessionPath?.();
     const zoomRow = s.settings.find(r => r.id === 'Appearance.Default zoom') || s.settings.find(r => r.page === 'Appearance' && (r.label === 'Zoom percentage' || r.key === 'Zoom percentage'))
       || s.settings.find(r => r.id === 'Appearance.Zoom percentage');
     // The design's zoom range: 30-200%.
@@ -1575,11 +1576,11 @@
     React.useLayoutEffect(() => {
       const frame = window.requestAnimationFrame(() => {
         for (const [panel, narrow] of [[libraryPanel, paneWidth < 480], [inspectionPanel, paneWidth < 1436]]) {
-          if(narrow) panel.current?.collapse(); else panel.current?.expand();
+          if(narrow && !(panel===inspectionPanel && sessionSettings)) panel.current?.collapse(); else panel.current?.expand();
         }
       });
       return () => window.cancelAnimationFrame(frame);
-    }, [paneWidth < 480, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire)]);
+    }, [paneWidth < 480, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire),sessionSettings]);
     const menuTask = embedded && !preview ? (s.tasks || []).find(row => row.id === u.canvasTabs?.active) : null;
     // Delete task archives it (the task owner's archive): it leaves the active list and Home; its session file stays on disk and
     // The owner has no unarchive, so the confirm says where it goes instead of offering an Undo.
@@ -1718,8 +1719,8 @@
 
    </div>
    </WorkPanel>
-   {!externalInspector && (inspected || wire) && <><CanvasSeparator className="pane-splitter" aria-label="Resize Inspector" /><CanvasPanel id="canvas-inspection" panelRef={inspectionPanel} collapsible collapsedSize={48} minSize={280} maxSize={480} defaultSize={320} groupResizeBehavior="preserve-pixel-size" onResize={size=>setInspectionRail(size.inPixels<=49)}>
-     {inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
+   {!externalInspector && (sessionSettings || inspected || wire) && <><CanvasSeparator className="pane-splitter" aria-label="Resize Inspector" /><CanvasPanel id="canvas-inspection" panelRef={inspectionPanel} collapsible collapsedSize={48} minSize={280} maxSize={480} defaultSize={320} groupResizeBehavior="preserve-pixel-size" onResize={size=>setInspectionRail(size.inPixels<=49)}>
+     {sessionSettings ? <aside className="pane inspector" aria-label="Session settings"><button type="button" className="dx-quiet" aria-label="Close Session settings" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setHomeInspector(null)},event)}>×</button><window.UI.SessionInspector key={u.homeInspector.path} s={s} u={u} task={(s.tasks||[]).find(row=>row.id===api.getSessionDocument()?.properties?.taskContext?.task)} /></aside> : inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
    </CanvasPanel></>}
   </Panes>
   {mapHost && window.ReactDOM.createPortal(<LiveMap source={viewSource} surfaceSize={areaSize} nodes={visible} sizes={new Map(flowNodes.map(f => [f.id, f.measured]))} area={area} onView={next => { stopAutoFrame(); updateView(next); }} onZoom={value => { stopAutoFrame(); zoomAt(value); }} />, mapHost)}

@@ -24,7 +24,7 @@ async function mount(page,profile,extra){
      await new Promise(resolve=>{window.releaseAgentRead=resolve;});
      window.fixture={...window.fixture,agents:[{id:'qa',name:'QA Agent',presence:'working',status_text:'Working'}]};
      listeners.forEach(f=>f());return window.fixture.agents;
-   },refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
+   },listSessionModel:async()=>({groups:[{sessions:extra?.pickerSessions||[]}]}),refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
    setSetting:async(id,value)=>{window.writes.push({id,value});window.fixture={...window.fixture,settings:window.fixture.settings.map(r=>r.id===id?{...r,value}:r)};listeners.forEach(f=>f());return {ok:true};},
   };
   window.ArchHubAPI.setKeybinding=async(id,value,destination)=>{
@@ -50,9 +50,9 @@ async function mount(page,profile,extra){
  }
  await page.evaluate(()=>{
   for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
-  function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);
-   const u={go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
-   return React.createElement(window.UI.Ctx.Provider,{value:u},React.createElement(window.UI.Settings,{page}));}
+  function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);
+   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
+   return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{page}));}
   window.ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
  });
 }
@@ -265,6 +265,36 @@ test('Look uses the five design families and passes the actual workflow to the e
  const empty=renderToStaticMarkup(React.createElement(window.UI.Settings,{page:'Appearance'}));
  assert.ok(empty.includes('Open a workflow to preview its real nodes here.'));
  assert.equal(calls.length,1,'an unloaded workflow does not mount a Canvas');
+});
+
+test('named project stays in Settings and a named file opens its own Session inspector',async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage({viewport:{width:1360,height:930}});page.setDefaultTimeout(6000);
+  const pathB='/sessions/drawing-review.archhub';
+  await mount(page,{name:'Reviewer'},{activeWorkspace:'office',workspaces:[{id:'office',name:'Office'},{id:'demo',name:'Demo Block',available:true}],pickerSessions:[{path:pathB,title:'Drawing set review'}],settingsScopes:{Workspace:true},graph:{id:'drawing',name:'Drawing set review',nodes:[],wires:[],workspaceIds:[]},catalogue:[],approvals:[],messages:[],workspacePolicies:{}});
+  const xy=require('./studio_xyflow.cjs');
+  await page.addScriptTag({content:xy.script()});
+  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
+  for(const file of ['ds_home2.jsx','ds_screens.jsx'])await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,file),'utf8'),{loader:'jsx'}).code});
+  await page.evaluate(()=>{
+   const a=window.ArchHubAPI;
+   a.getSessionPath=()=>window.openedPath;a.sessionPathKey=p=>p;a.getSessionDocument=()=>({properties:{}});
+   a.readSessionModel=async path=>{window.inspectedPath=path;return {members:[]};};a.sessionInputLinks=async()=>[];
+   a.setSettingsScope=async(scope,destination,workspace)=>{
+    window.writes.push({scope,destination,workspace});
+    window.fixture={...window.fixture,activeWorkspace:workspace,settingsScope:scope,settingsDestination:{...destination,scope,workspace}};
+    return {ok:true};
+   };
+  });
+  const project=page.getByLabel('Which project');await project.click();await project.selectOption('demo');
+  await page.getByRole('heading',{name:'Projects · Demo Block',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.lastRoute),'settings/Projects');
+  assert.equal(await page.evaluate(()=>window.writes.at(-1).workspace),'demo');
+  const session=page.getByLabel('Which session');await session.click();await session.selectOption(pathB);
+  await page.getByRole('complementary',{name:'Session settings'}).getByLabel('Done when').waitFor();
+  assert.equal(await page.evaluate(()=>window.inspectedPath),pathB);
+ }finally{await browser.close();}
 });
 
 test('dimensioned schedule keeps its warning, quantity and source measurement', async()=>{

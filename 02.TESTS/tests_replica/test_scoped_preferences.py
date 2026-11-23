@@ -151,6 +151,15 @@ def test_scoped_preferences_round_trip_node_binding_and_atomic_import(tmp_path, 
     call('readPreferences')
     other=files.new_document('Other session');other['properties']['project']='tower2'
     other_path=files.document_path(files.sessions_directory(),other);files.write_document(other_path,other)
+    call('readPreferences')
+    paths_before = {p: p.read_bytes() for p in (prefs.path, roots.path, path, other_path)}
+    unchanged_after_refusal('setSettingsScope', 'Workspace', 'tower2', doc['id'])
+    unchanged_after_refusal('setSettingsScope', 'Session', 'tower', other['id'])
+    files.SessionFiles().dispatch({'action':'open','path':str(other_path)})
+    unchanged_after_refusal('setAppearance', 'Appearance.Theme', 'Dark')
+    assert all(p.read_bytes() == value for p, value in paths_before.items())
+    files.SessionFiles().dispatch({'action':'open','path':str(path)})
+    call('readPreferences')
     def open_during_validation(context,scope,values,maps):
         validate(context,scope,values,maps)
         files.SessionFiles().dispatch({'action':'open','path':str(other_path)})

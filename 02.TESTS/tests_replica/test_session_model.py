@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import os
 import pytest
 
 
@@ -542,3 +543,12 @@ def test_home_activity_reads_scheduler_eligibility_and_inflight_work(profile):
         assert _workflow_activity(service) == {path: {'armed': 1}}
     finally:
         service.close()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows path identity')
+def test_session_list_merges_scheduler_case_and_separator_variants(profile):
+    from nodelang.session_files import list_sessions
+    path, _ = session('Home card')
+    variant = Path(path).as_posix().swapcase()
+    rows = [row for group in list_sessions(active_paths=[variant])['groups'] for row in group['sessions']]
+    assert [row['path'] for row in rows] == [path]

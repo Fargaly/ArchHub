@@ -499,3 +499,21 @@ def test_history_recognises_parameter_only_edits_to_declared_sessions(profile, o
     reopened = files.dispatch({'action': 'open', 'path': path})['document']
     assert next(node for node in reopened['nodes'] if node['id'] == 'start')['params'][key] == value
     assert session_fields(reopened, path)['authoredRegistration']
+
+
+def test_home_activity_reads_scheduler_eligibility_and_inflight_work(profile):
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.nograph_server import _workflow_activity
+    path = trigger_session()
+    service = TriggerService()
+    try:
+        service.refresh()
+        assert _workflow_activity(service)[path] == {'armed': 1}
+        # Observe the scheduler while its real fire callback is on the stack.
+        observed = []
+        service.fire = lambda *args, **kwargs: observed.append(_workflow_activity(service))
+        service.dispatch((path, 't'), 'trigger.schedule', {'ask_before_running': False}, reason='manual')
+        assert observed == [{path: {'armed': 1, 'running': True}}]
+        assert _workflow_activity(service) == {path: {'armed': 1}}
+    finally:
+        service.close()

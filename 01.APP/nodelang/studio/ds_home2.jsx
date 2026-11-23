@@ -213,7 +213,7 @@
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
   // kind: All / Agent sessions / Workflows (the list's filter); olderOpen: the Older section unfolded; order: his own arrangement (task ids).
-  const homeMap = ({listed, rows, params, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = [], focus = '', focusPath = '', history = false}) => {
+  const homeMap = ({listed, rows, params, workflowActivity, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = [], focus = '', focusPath = '', history = false}) => {
     const p = {...params, collapsed: params.collapsed || []};
     // What a card says comes from the session's own row: its steps and their states, its held run or its failed step.
     const facts = (row, filePlan, members = row?.members || []) => {
@@ -240,18 +240,31 @@
     };
     // A card is a piece of work (founder 2026-11-19): agents are members of it, never cards. A session whose task row is
     // archived (the one-time retire of declare-made sessions, or his own archive) is no card; its file stays where it is.
+    const activityByPath = new Map(Object.entries(workflowActivity || {}).map(([path, activity]) => [api.sessionPathKey(path), activity]));
     const files = (listed?.groups || []).flatMap(group => group.sessions).map(session => {
       const row = rows.sessionRows.find(item => session.task ? item.id === session.task : sameHomePath(item.sessionPath, session.path));
       const archived = session.state === 'archived' || row?.status === 'ARCHIVED';
       const fact = facts(row, session.context?.plan, Array.isArray(row?.members) ? row.members : session.members || []);
       const declared = registration(row || {id:session.task});
+      const triggers = session.automation || [];
+      const activity = activityByPath.get(api.sessionPathKey(session.path));
+      const armed = activity?.armed || (workflowActivity ? 0 : triggers.filter(trigger => trigger.live).length);
+      const paused = activity?.paused || 0;
+      const running = !!activity?.running || fact.state === 'Working';
+      let state = fact.state;
+      if (!fact.need && running) state = 'Working';
+      else if (state === 'Idle' || state === 'Planned') {
+        if (armed) state = 'Armed · waiting';
+        else if (paused) state = 'Paused';
+        else if (state === 'Idle' && triggers.some(trigger => ['trigger.schedule','trigger.file'].includes(trigger.kind))) state = 'Configured · inactive';
+      }
       return {id: session.id, path: session.path, task: archived || declared ? '' : session.task || row?.id || '',
         taskIdentity: session.task || row?.id || '', archived, registration: declared, authoredRegistration: session.authoredRegistration === true,
         parent: row?.parent || '', title: session.title,
         project: rows.projectLabel(session.project?.id, session.project?.label),
         kind: declared && session.authoredRegistration ? 'workflow' : row?.kind || session.kind || 'agent-session', older: archived || (!!row && rows.sectionOf(row) === 'Older / archived'),
-        pinned: !!session.pinned, ...fact,
-        finished: fact.finished || session.state === 'done' || row?.status === 'DONE', armed: (session.automation || []).filter(trigger => trigger.armed).length, links: session.inputLinks || []};
+        pinned: !!session.pinned, ...fact, state, running, armed, paused,
+        finished: fact.finished || session.state === 'done' || row?.status === 'DONE', links: session.inputLinks || []};
     });
     const filed = new Set(files.map(card => card.taskIdentity).filter(Boolean));
     const loose = rows.sessionRows.filter(row => !registration(row) && !filed.has(row.id) &&
@@ -273,12 +286,12 @@
     for (const card of every) { card.subtasks = every.filter(other => above(other) === card).length; card.subtasksFolded = card.subtasks > 0 && p.collapsed.includes('task:' + card.task); }
     const selected = card => focus && card.task ? card.task === focus : sameHomePath(card.path, focusPath);
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
-      (card.need?.approval || (!card.archived && (card.pinned || selected(card) ||
+      (card.need?.approval || (!card.archived && (card.pinned || card.armed || card.running || selected(card) ||
         ['Failed','Working','Needs you','Paused'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
     const available = (history ? every : active).filter(card => !chainUp(card).some(up => up.subtasksFolded));
     const matches = card =>
-      (p.done === 'Show' || !card.finished || card.pinned || card.need?.approval) &&
-      (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you')) &&
+      (p.done === 'Show' || !card.finished || card.pinned || card.running || card.armed || card.need?.approval) &&
+      (p.filter === 'All' || (p.filter === 'Running' ? card.running || card.state === 'Working' : card.state === 'Needs you')) &&
       (kind === 'all' || card.kind === kind);
     const cards = available.filter(matches);
     // Old runs keep their own section, folded until he opens it (the list's Older / archived), whatever the grouping.
@@ -331,7 +344,8 @@
     // A collapsed group stands in for its members on every wire that crosses its edge.
     const wires = links.map(wire => ({...wire, from: inside.get(wire.from), to: inside.get(wire.to)})).filter(wire => wire.from !== wire.to);
     const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
-    return {params: p, nodes, wires, groups, total: every.length, available: available.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
+    return {params: p, nodes, wires, groups, total: every.length, available: available.length, armed: every.reduce((sum, card) => sum + card.armed, 0),
+      paused: every.reduce((sum, card) => sum + (card.paused || 0), 0), running: active.filter(card => card.running || card.state === 'Working').length, layout,
       signature: layout + JSON.stringify([nodes.map(node => [node.title, node.countText, node.state, node.agent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
   // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
@@ -767,7 +781,7 @@
     // The map holds work only (design app.js:345): no "Agent sessions" filter; an agent's own chat is under Agents on this PC.
     const sessionKind = history?.kind || (s.sessionListFilters?.home === 'workflow' ? 'workflow' : 'all');
     const olderOpen = history?.olderOpen ?? !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
-    const chart = homeMap({listed: listing, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: workTitle, focus, focusPath: api.getSessionPath?.() || '', history: !!history,
+    const chart = homeMap({listed: listing, workflowActivity: s.desktop?.workflowActivity, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: workTitle, focus, focusPath: api.getSessionPath?.() || '', history: !!history,
       params: {...Object.fromEntries(Object.entries(mapChoices || {}).map(([key, options]) => [key, options[0]])), ...heldMap, ...history?.map}});
     const writeMap = (next, from, to) => {
       const held = mapHistory.current;
@@ -898,8 +912,8 @@
       <div className="dx-home">
         {!fileWorkspace ? <div className="dx-workspace home-map" data-dx="workspace" data-home-map="" data-task-face="canvas">
             <div className="v22g-strip"><div className="v22g-toolbar v48-toolbar home-map-bar" role="toolbar" aria-label="Map of the work">
-              {[['Running', rows.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
-              {chart.armed > 0 && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {chart.armed} automation{chart.armed === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
+              {[['Running', chart.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
+              {(chart.armed > 0 || paused) && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {paused ? chart.paused : chart.armed} automation{(paused ? chart.paused : chart.armed) === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
               {(s.watching?.watching || []).length > 0 && <button type="button" className="dx-quiet" data-home-watching="" title="Sessions other people share with you, read-only" onClick={event => executeAction('ui.select', () => u.go('access'), event)}><b>{s.watching.watching.length}</b> shared with you</button>}
               <span className="fill" />
               <button type="button" className="dx-quiet" data-home-history="" aria-pressed={!!history}

@@ -42,7 +42,7 @@ const session = (id, title, project, extra = {}) => ({id, title, path: 'C:/s/' +
 const link = (source, output, input) => ({source: {path: source + '.archhub', id: source}, output, input});
 // Tower: survey -> model -> sheets (a chain); Office: one finished session, one with a held run, one with a failed step.
 const listed = {groups: [
-  {project: {id: 'Office', label: 'Office'}, sessions: [session('std', 'Standard check', 'Office', {state: 'done'}), session('exp', 'Export package', 'Office', {automation: [{node: 'n', armed: true}]}),
+  {project: {id: 'Office', label: 'Office'}, sessions: [session('std', 'Standard check', 'Office', {state: 'done'}), session('exp', 'Export package', 'Office', {automation: [{node: 'n', armed: true, live: true}]}),
     session('idx', 'Sheet index', 'Office')]},
   {project: {id: 'Tower', label: 'Tower'}, sessions: [session('sheets', 'Sheets', 'Tower', {inputLinks: [link('model', 'walls.out', 'walls')]}),
     session('model', 'Model', 'Tower', {inputLinks: [link('survey', 'points.out', 'points')], members: [{name: 'Claude Code / Tower / session-62fdf0706b09', live: true}]}), session('survey', 'Survey', 'Tower')]}]};
@@ -435,4 +435,24 @@ test('A held task on a shared canvas has one Review action and one Needs you cou
   const fileOnly=homeRows({...state,agentGraph:{sessions:[]},tasks,approvals:[{id:'file-hold',path,status:'pending'}]},{});
   assert.equal(fileOnly.needsYou,1);
   assert.equal(fileOnly.sessionRows.filter(row=>row.approval==='file-hold').length,1);
+});
+
+test('taskless workflows appear only while monitored or running, and pause stays reversible', () => {
+  const files = ['timer','run','closed','manual'].map(id => session(id, id, '', {task: '',
+    automation: [{kind: id === 'manual' ? 'trigger.manual' : 'trigger.schedule', armed: true}]}));
+  const view = {history: false, rows: homeRows({...state,tasks:[],graphs:[],approvals:[],agentGraph:{sessions:[]}}, {hidden:[],order:[]}),
+    listed: {groups:[{sessions:files}]}, workflowActivity: {[files[0].path]:{armed:1},[files[1].path]:{running:true}}};
+  const active = draw({}, [], view);
+  assert.deepEqual(cards(active).map(c=>c.id).sort(), ['run','timer']);
+  assert.equal(at(active,'timer').state, 'Armed · waiting');
+  assert.equal(at(active,'run').state, 'Working');
+  assert.equal(active.running, 1);
+  assert.equal(active.armed, 1);
+  assert.deepEqual(cards(draw({filter:'Running'}, [], view)).map(c=>c.id), ['run']);
+  const history = draw({}, [], {...view, history:true});
+  assert.equal(at(history,'closed').state, 'Configured · inactive');
+  assert.equal(at(history,'manual').state, 'Idle');
+  const paused = draw({}, [], {...view, workflowActivity:{[files[0].path]:{paused:1}}});
+  assert.equal(at(paused,'timer').state, 'Paused');
+  assert.deepEqual([paused.running, paused.armed, paused.paused], [0,0,1]);
 });

@@ -1228,7 +1228,7 @@ def r_canvas_op(s, req):
             if type(args) is not list or len(args) != 1:
                 raise Refused('Choose Pause all or Resume all.')
             paused = service.set_paused(args[0])
-            return {'ok': True, 'result': {'paused': paused, 'schedules': _schedules()}}
+            return {'ok': True, 'result': {'paused': paused, 'schedules': _schedules(), 'workflowActivity': _workflow_activity(service)}}
         return {'ok': True, 'result': {'paused': service.paused}}
     if op in ('add_schedule', 'set_schedule_enabled', 'set_schedule_time', 'remove_schedule'):
         if s.is_halted():
@@ -1839,10 +1839,23 @@ def _schedules():
     return rows
 
 
+def _workflow_activity(service):
+    activity = {}
+    if service is not None:
+        with service.lock:
+            for row in service.armed:
+                counts = activity.setdefault(row['path'], {})
+                state = 'paused' if service.paused else 'armed'
+                counts[state] = counts.get(state, 0) + 1
+            for path, _ in service.running:
+                activity.setdefault(path, {})['running'] = True
+    return activity
+
+
 def _read_desktop():
     service = getattr(_SERVER, 'triggers', None)
     return {'owner': 'app:desktop', 'program': '', 'stage': 'Watching', 'taskId': None, 'offers': [],
-            'schedules': _schedules(), 'automationsPaused': service.paused if service is not None else None}
+            'schedules': _schedules(), 'workflowActivity': _workflow_activity(service), 'automationsPaused': service.paused if service is not None else None}
 
 
 def _send_to_baboom(description, options=None):

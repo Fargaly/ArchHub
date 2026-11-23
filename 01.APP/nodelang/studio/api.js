@@ -1538,7 +1538,7 @@ Object.assign(api,{
  },
  automationPause:async(...args)=>{
    const {result}=await request('/api/universal/canvas-op',{op:'automation_pause',args});
-   if(Array.isArray(result.schedules))publish({schedules:result.schedules,desktop:{...state.desktop,automationsPaused:result.paused}});
+   if(Array.isArray(result.schedules))publish({schedules:result.schedules,desktop:{...state.desktop,automationsPaused:result.paused,workflowActivity:result.workflowActivity}});
    return result;
  },
  setScheduleEnabled:(id,enabled)=>changeSchedule('set_schedule_enabled',[id,enabled]),

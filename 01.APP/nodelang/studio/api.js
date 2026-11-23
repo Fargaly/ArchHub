@@ -686,6 +686,8 @@ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approva
  checkForUpdates:()=>updateAction('check'),
  acknowledgeUpdate:()=>updateAction('acknowledge'),
  async installUpdate(){
+  // An explicit click asks the native guard again: a refusal from a moment ago (busy agents) may no longer hold.
+  if(!state.update.available||state.update.restartRefusal)await refreshApplicationUpdate();
   if(!state.update.available)throw Error(state.update.detail||'No verified update is ready. Check for updates.');
   if(state.update.restartRefusal)throw Error(state.update.restartRefusal);
   return updateAction('reload');

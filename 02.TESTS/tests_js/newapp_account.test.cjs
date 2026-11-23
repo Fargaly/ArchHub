@@ -372,15 +372,30 @@ test('a stale status read cannot erase a newer checked release',async()=>{
  assert.equal(api.getSnapshot().update.available,true);assert.equal(api.getSnapshot().update.next,'next');
 });
 
-test('a refused restart is not replayed and clears the stale ready offer',async()=>{
+test('a refused restart clears the stale offer; each explicit retry asks the guard again',async()=>{
  const {api,requests}=await adapter({...signedInAccount},{'/api/universal/application-update':body=>body?
   {ok:false,error:'A Workshop job is running'}:{ok:true,state:'ready',available_build:'next',current_build:'installed',restart_supported:true}});
  await api.refreshApplicationUpdate();
  for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
  await assert.rejects(()=>api.installUpdate(),/Workshop job/);
  assert.equal(api.getSnapshot().update.available,false);
+ // Still busy: the second click reaches the guard and shows its current reason, not a replayed one.
  await assert.rejects(()=>api.installUpdate(),/Workshop job/);
- assert.equal(requests.filter(r=>r.body?.action==='reload').length,1);
+ assert.equal(requests.filter(r=>r.body?.action==='reload').length,2);
+});
+
+test('after a busy refusal, the next click installs once the agents are idle',async()=>{
+ let busy=true;
+ const {api,requests}=await adapter({...signedInAccount},{'/api/universal/application-update':body=>body?
+  (busy?{ok:false,error:'deferred: pid 7888: 2 call(s) in flight'}:{ok:true,state:'restarting',current_build:'installed',restart_supported:true}):
+  {ok:true,state:'ready',available_build:'next',current_build:'installed',restart_supported:true}});
+ await api.refreshApplicationUpdate();
+ for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
+ await assert.rejects(()=>api.installUpdate(),/in flight/);
+ busy=false;
+ await api.installUpdate();
+ assert.equal(requests.filter(r=>r.body?.action==='reload').length,2);
+ assert.equal(api.getSnapshot().update.state,'restarting');
 });
 
 // WIRE-projects: targeted real-browser and existing-owner checks.

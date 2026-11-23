@@ -717,7 +717,10 @@ def main(argv=None) -> int:
                                      stderr=subprocess.STDOUT, env=env)
             job.adopt(int(probe._handle))
             scenario_input = json.loads(args.input.read_text(encoding="utf-8")) if args.input else None
-            if args.scenario.name == 'settings.mjs':
+            if args.scenario.name == 'settings_right_click.mjs':
+                scenario_input = {**(scenario_input or {}), 'installedRoot': str(installed),
+                                  'build': (installed / 'BUILD_ID').read_text(encoding='utf-8').strip()}
+            if args.scenario.name in ('settings.mjs', 'settings_right_click.mjs'):
                 scenario_input = {**(scenario_input or {}), 'installedPython': str(python)}
             probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input}) + "\n")
             probe.stdin.flush()

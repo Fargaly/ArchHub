@@ -5,16 +5,19 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import settings, {steps as settingsSteps} from './settings.mjs';
 
+import {homePair, homeSteps} from './home_pair.mjs';
+
 const home = 'Right-click a disposable Home session card';
 const canvas = 'Right-click a disposable Canvas node';
-export const steps = [...settingsSteps, home, canvas];
+export const steps = [...settingsSteps, home, canvas, ...homeSteps];
 
 export default async function run(ctx) {
   await settings(ctx);
-  await rightClicks(ctx);
+  await rightClicks(ctx, true);
 }
 
-export async function rightClicks({step, js, until, rectOf, mouse, cdp, clickText, shot}) {
+export async function rightClicks(ctx, verifyHome = false) {
+  const {step, js, until, rectOf, mouse, cdp, clickText, shot} = ctx;
   const title = 'Right-click check ' + randomUUID();
   const visible = selector => js(`Boolean(document.querySelector(${JSON.stringify(selector)})?.getClientRects().length)`);
   const check = (name, action) => step(name, async () => {
@@ -226,4 +229,5 @@ export async function rightClicks({step, js, until, rectOf, mouse, cdp, clickTex
     const {actions} = await inspectMenu(target, 'Node menu', ['Properties','Rerun','Fork'], ['Open session']);
     return {actions, escapeDismissed:true};
   });
+  if (verifyHome) await homePair(ctx, {check, press, visible});
 }

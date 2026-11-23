@@ -666,3 +666,15 @@ Replaces: listTasks' settle/reap/fold inside the read. The read-only connection 
 Budgets (disposable profiles): with an unrelated writer holding the lock, Home's task read returns at once instead of waiting about 2.26 s. Not measured: the founder's live store under several agents.
 
 Verification: tests_replica/test_workshop_tasks.py, plus the session, model, hierarchy and Watch suites (104 passed); the Home read leaves a held writer untouched and returns the task.
+
+## D-050 The release verifier reads a disposable guest Workshop store read-only (2026-11-24)
+
+Request: F337 (SESSION-IS-THE-WORK) and Codex e988's release acceptance on 2026-11-24 (Workshop 517888fb): the clean-Windows upgrade proved Workshop persistence but never ran the composer fan-out it releases. The verifier now sends through the installed composer to 12 synthetic Cursor seats and must read back what was saved.
+
+Prior art: Playwright and Selenium end-to-end suites -> drive the shipped app, then assert on its stored state through a read-only connection. SQLite WAL -> a read-only reader neither blocks nor changes the writer it observes. Fit: the witness opens the Workshop store the installed app created in the witness's own temp profile, through application_history(read_only=True, existing_only=True), and only counts rows.
+
+Replaces: nothing. No new store or file: the read targets the throwaway workshop/messages.sqlite3 inside the witness's temp profile; the founder's and the runner user's stores are never opened.
+
+Budgets: the composer witness runs in seconds (local run: 12/12 seats, two sends). Not measured: hosted-runner wall time.
+
+Verification: 03.TOOLS/tools/real_app_check/upgrade_persistence.py composer_fanout_snapshot, run locally against main's modules: both sends 12/12 first reads, 0 excluded, 0 repeats, 12 receipts each.

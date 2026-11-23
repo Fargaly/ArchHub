@@ -349,6 +349,86 @@ def workshop_reply_snapshot(app, run, previous=None):
     return observations
 
 
+def composer_fanout_snapshot(app, run):
+    from contextlib import chdir, redirect_stderr, redirect_stdout
+    from io import StringIO
+    from tempfile import TemporaryDirectory
+    from unittest.mock import patch
+
+    from nodelang import agent_budget, native_agent_hooks, nograph_server, workshop_live
+    from nodelang import workshop_mailbox as mailbox
+
+    for module in (agent_budget, native_agent_hooks, nograph_server, workshop_live, mailbox):
+        if Path(module.__file__).resolve() != app / 'nodelang' / (module.__name__.split('.')[-1] + '.py'):
+            raise RuntimeError('Composer witness requires the selected application modules.')
+    seats = [f'upgrade-{run}-{i:02d}' for i in range(13)]
+    selected = set(seats[:12])
+    result = {}
+    with TemporaryDirectory(prefix='archhub-upgrade-composer-') as temp, chdir(temp):
+        root = plain_path(Path(temp).resolve())
+        profile_keys = ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME', 'TMP', 'TEMP', 'ARCHHUB_TEST_STATE_DIR')
+        with (patch.dict(os.environ, dict.fromkeys(profile_keys, str(root))),
+              patch.object(mailbox, '_local_transport', side_effect=AssertionError('External transport')) as transport,
+              patch.object(nograph_server, '_ask_installed', side_effect=AssertionError('External agent')),
+              patch.object(nograph_server, '_ask_baboom', side_effect=AssertionError('External model'))):
+            db = mailbox.profile_database().resolve()
+            if (db != root / 'workshop/messages.sqlite3' or db.exists()
+                    or agent_budget.router_database().resolve() != root / 'settings/router.sqlite'):
+                raise RuntimeError('Composer witness requires fresh disposable guest storage.')
+            for i, seat in enumerate(seats):
+                mailbox.call('declare', {'task': 'Upgrade verification', 'paths': [str(root / seat)], 'status': 'working',
+                                         'request_id': 'upgrade-' + str(i), 'display_name': f'QA seat {i:02d}'},
+                             native_agent_hooks.cursor_context(seat), database=db)
+
+            def read_hook(seat):
+                out, err = StringIO(), StringIO()
+                with redirect_stdout(out), redirect_stderr(err):
+                    code = native_agent_hooks.emit_cursor_hook({'hook_event_name': 'stop', 'status': 'completed',
+                                                               'workspace_roots': [str(root / seat)], 'conversation_id': seat}, database=db)
+                if code or err.getvalue():
+                    raise ValueError('Cursor stop hook failed for ' + seat)
+                return json.loads(out.getvalue()).get('followup_message', '')
+
+            for mode in ('everyone', 'named'):
+                advertised = selected if mode == 'everyone' else set(seats)
+                with patch.object(workshop_live, 'live_ids', return_value={'cursor': advertised}):
+                    roster = workshop_live.live_agents()
+                    targets = [row for row in roster if row['native_session_id'] in selected]
+                    if {row['native_session_id'] for row in roster} != advertised or len(targets) != 12:
+                        raise ValueError('Unexpected synthetic Cursor roster.')
+                    label_bytes = len(', '.join(row['agent'] for row in targets).encode())
+                    address = '@everyone' if mode == 'everyone' else ' '.join('@' + row['handle'] for row in targets)
+                    if label_bytes <= 512 or len(address.encode()) > 512:
+                        raise ValueError('Fixture did not exercise the long recipient header.')
+                    prompt = address + ' verify ' + run
+                    sent = nograph_server._chat({'agent': 'BABOOM', 'prompt': prompt}, lambda _: None)
+                    mid = sent['request_id']
+                    expected = workshop_live.envelope(mid, workshop_live.FOUNDER, prompt)
+                    first = {seat: read_hook(seat) for seat in seats}
+                    for seat, message in first.items():
+                        if message != (expected if seat in selected else ''):
+                            raise ValueError(f'{mode}: unexpected first native-hook result for {seat}')
+                    repeat = sum(bool(read_hook(seat)) for seat in seats)
+                    if repeat:
+                        raise ValueError(f'{mode}: duplicate native-hook delivery')
+                    with mailbox.application_history(database=db, read_only=True, existing_only=True) as history:
+                        rows = history._db.execute(
+                            'SELECT id FROM messages WHERE author=? AND substr(content, instr(content, char(10)) + 1)=?',
+                            (workshop_live.FOUNDER, prompt)).fetchall()
+                        receipts = history._db.execute(
+                            'SELECT state, channel, COUNT(*) FROM workshop_live_deliveries WHERE message_id=? GROUP BY state, channel',
+                            (mid,)).fetchall()
+                    if [r[0] for r in rows] != [mid] or [tuple(r) for r in receipts] != [('delivered', 'cursor stop hook', 12)]:
+                        raise ValueError(f'{mode}: expected one saved message and 12 native receipts')
+                    result[mode] = {'message_id': mid, 'first_read': sum(bool(m) for m in first.values()),
+                                    'excluded': sum(bool(first[seat]) for seat in set(seats) - selected),
+                                    'repeat': repeat, 'receipts': receipts[0][2], 'label_bytes': label_bytes}
+            transport.assert_not_called()
+    if result['everyone']['message_id'] == result['named']['message_id']:
+        raise ValueError('Two composer sends returned the same message identity.')
+    return result
+
+
 def main():
     phase, expected_build = sys.argv[1:]
     if (phase not in ('seed', 'verify') or os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'
@@ -436,6 +516,7 @@ def main():
                     'messages': seed['workshop_reply_messages'], 'native_injection': 'not exercised',
                     'observations': workshop_reply_snapshot(app, run, seed['workshop_reply_messages']),
                 }
+                record['workshop_composer'] = composer_fanout_snapshot(app, run)
         record['preference_checks'] = {scope: 'PASS' if value is not None else 'NOT EXERCISED'
                                        for scope, value in data['values'].items()}
         record['result'] = 'PASS'

@@ -693,6 +693,11 @@ def _stamp(document, before, by, op):
             'wires': {i: old_wires.get(i) for i in set(old_wires) | set(new_wires) if old_wires.get(i) != new_wires.get(i)},
             'title': (before or {}).get('title'),
             **{key: copy.deepcopy(before[key]) for key in ('groups', 'notes') if before is not None and before.get(key) != document.get(key)}}
+    previous_context = ((before or {}).get('properties') or {}).get('taskContext') or {}
+    if previous_context.get('anchor') != (props.get('taskContext') or {}).get('anchor'):
+        undo['task_anchor'] = previous_context.get('anchor')
+    if 'plan' in previous_context and 'plan' not in (props.get('taskContext') or {}):
+        undo['legacy_plan'] = copy.deepcopy(previous_context['plan'])
     history = [row for row in (before or {}).get('properties', {}).get('history', [])][-(DOCUMENT_NODE['params']['history_limit'] - 1):]
     history.append({'revision': props['revision'], 'by': str(by)[:120], 'op': str(op)[:200],
                     'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'undo': undo})
@@ -751,6 +756,14 @@ def undo_last(path, by):
         for key in ('groups', 'notes'):
             if key in entry['undo']:
                 document[key] = copy.deepcopy(entry['undo'][key])
+        if 'task_anchor' in entry['undo']:
+            context = document['properties'].setdefault('taskContext', {})
+            if entry['undo']['task_anchor'] is None:
+                context.pop('anchor', None)
+            else:
+                context['anchor'] = entry['undo']['task_anchor']
+        if 'legacy_plan' in entry['undo']:
+            document['properties'].setdefault('taskContext', {})['plan'] = copy.deepcopy(entry['undo']['legacy_plan'])
         entry['op'] = 'undo:' + entry['op']
         return [k for k in entry['undo']['nodes'] if k in nodes]
     return edit(path, by, 'undo', change)

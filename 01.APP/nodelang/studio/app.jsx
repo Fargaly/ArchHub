@@ -322,7 +322,7 @@
     };
     const keepTaskTab = id => saveCanvasTabs({...tabsRef.current, tabs: tabsRef.current.tabs.map(tab => tab.id === id ? {...tab, kept: true} : tab)});
     React.useEffect(()=>{
-      const id=api.getSessionDocument?.()?.properties?.taskContext?.task || tabsRef.current.active;
+      const id=tabsRef.current.active || api.getSessionDocument?.()?.properties?.taskContext?.task;
       const tab=tabsRef.current.tabs.find(tab=>tab.id===id);
       if(tab && !tab.kept && (api.hasSessionEdits?.() || s.graph.nodes.some(node=>node.status==='Running')))keepTaskTab(id).catch(error=>setToast(error.message));
     },[s.sessionDirty,s.graph.nodes]);

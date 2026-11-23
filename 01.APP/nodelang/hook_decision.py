@@ -1874,11 +1874,17 @@ def _ask_card(row: dict) -> dict:
     if continuation:
         refs, current, node = [], continuation, (row.get('replay') or {}).get('payload', {}).get('node', {})
         while current:
-            refs.append({'path': current['path'], 'nodeId': node.get('id'),
-                         'taskId': current['document'].get('properties', {}).get('taskContext', {}).get('task') or ''})
+            document = current['document']
+            root = document.get('properties', {}).get('taskContext', {}).get('task') or ''
+            saved = next((n for n in document.get('nodes', []) if n.get('id') == node.get('id')), {})
+            owner = saved.get('workshopTask') or (saved.get('agentWork') or {}).get('task') or root
+            if owner != root and not any(n.get('id') == owner and n.get('taskContext', {}).get('task') == owner
+                                         for n in document.get('nodes', [])):
+                owner = ''
+            refs.append({'path': current['path'], 'nodeId': node.get('id'), 'taskId': owner})
             current = current.get('parent')
             node = current.get('node', {}) if current else {}
-        task = refs[-1]['taskId'] or task
+        task = refs[-1]['taskId']
         card.update(approvalKind='canvas', kind='canvas', taskId=task or '', work=task or row['id'],
                     path=continuation.get('path') or '', nodeId=refs[0]['nodeId'], canvasNodes=refs,
                     taskIds=list(dict.fromkeys(ref['taskId'] for ref in refs if ref['taskId'])))

@@ -923,6 +923,10 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
             from .workshop_tasks import _bound_messages
             messages = _bound_messages(history, task)
             task_context = '\n\n'.join('%s: %s' % (m['who'], m['text']) for m in messages if m['text'])
+    if body.get('task_peer') is True:
+        if not task:
+            raise ValueError('Select the task to continue.')
+        return _inject(prompt, [], task=task, task_peer=True)
     handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
     from .acp_client import agent_for
     if agent_for(body.get('agent')) and (body.get('continue') is True or not handles):
@@ -1047,13 +1051,13 @@ def _ask_installed(agent, prompt, task, on_delta, on_step, cancelled=lambda: Fal
     return result
 
 
-def _inject(prompt, handles, reply_to=None, task=None):
+def _inject(prompt, handles, reply_to=None, task=None, *, task_peer=False):
     """Joined agents: one Workshop message from Ahmed, pushed live (direct injection, as before)."""
     import uuid
     from .model_router import request_profiles
     from .workshop_live import send_as_founder
     started = time.monotonic()
-    sent = send_as_founder(prompt, handles, reply_to=reply_to, task=task)
+    sent = send_as_founder(prompt, handles, reply_to=reply_to, task=task, **({'task_peer': True} if task_peer else {}))
     for row in sent['deliveries']:
         request_profiles({'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': str(row.get('agent')), 'model': 'agent session',
                           'provider': 'workshop:' + str(row.get('channel')), 'tokens': None, 'ms': row.get('ms') or 0,
@@ -1602,14 +1606,14 @@ def _rename_task(task, title):
         return {'ok': False, 'error': str(refused)}
 
 
-def _create_task(s, title, agent='', workspace='', parent=''):
+def _create_task(s, title, agent='', workspace='', parent='', canvas_task=''):
     """The studio's new task: one Workshop row and the .archhub file that is its session."""
     from .workshop_mailbox import application_history
     from .workshop_tasks import create_session
     try:
         with application_history() as history:
             zoom = s.files['settings'].read().get('appearanceDefaultZoom', 100)
-            return create_session(history, title, zoom=zoom / 100, agent=agent, workspace=workspace, parent=parent)
+            return create_session(history, title, zoom=zoom / 100, agent=agent, workspace=workspace, parent=parent, canvas_task=canvas_task)
     except ValueError as refused:
         return {'ok': False, 'error': str(refused)}
 

@@ -173,7 +173,7 @@
       groups = [[bind('menu.copy.text', () => run(async () => {await navigator.clipboard.writeText(String(message.text));return {ok:true};}), null, false),
         bind('menu.reply', () => {close();open?.();}, null, false),
         bind('menu.show.on.canvas', () => run(async () => {if(!referencedNode)throw Error('This message names no node on this canvas.');u.setSelectedNodeId(referencedNode.id);return {ok:true};}), null, referencedNode ? false : 'This message names no node on this canvas.'),
-        bind('menu.make.a.task.from.this', () => run(async () => {const made=await api.createTask(String(message.text).slice(0,2000));if(made.taskId)await u.openTaskFile(made.taskId);return made;}), null, false),
+        bind('menu.make.a.task.from.this', () => run(async () => {if(!taskId)throw Error('This message has no originating task.');const made=await api.createTask(String(message.text).slice(0,2000),'','','',taskId);if(made.taskId)await u.openTaskFile(made.taskId);return made;}), null, false),
         bind('menu.unpin', () => run(() => api.pinTaskMessage(taskId,message.id,!pinned)), pinned ? 'Unpin' : 'Pin to the task', false)]];
     } else if (kind === 'Task tab menu') {
       const tab = u.canvasTabs.tabs.find(row => row.id === nodeId);

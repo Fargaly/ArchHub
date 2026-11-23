@@ -181,3 +181,14 @@ def test_design_canvas_rows_rendered(tmp_path, monkeypatch):
     finally:
         client.close()
         server.close()
+
+def test_held_node_display_uses_its_task_and_preserves_nested_file_refs():
+    from nodelang.hook_decision import _ask_card
+    document = {'properties':{'taskContext':{'task':'A'}},
+                'nodes':[{'id':'B','taskContext':{'task':'B'}},{'id':'count','workshopTask':'B'}]}
+    parent = {'document':{'nodes':[], 'properties':{'taskContext':{'task':'P'}}},'path':'parent.archhub','node':{'id':'skill'}}
+    replay = {'payload':{'node':{'id':'count'}, 'continuation':{'document':document,'path':'shared.archhub','parent':parent}}}
+    card = _ask_card({'id':'hold','input_digest':'exact','replay':replay})
+    assert card['taskIds'] == ['B','P'] and card['taskId'] == 'P'
+    assert card['canvasNodes'][0] == {'path':'shared.archhub','nodeId':'count','taskId':'B'}
+    assert card['input_digest'] == 'exact' and card['status'] == 'pending'

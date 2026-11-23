@@ -899,6 +899,7 @@
     controlsRef,
     steps,
     planned,
+    onEditPlan,
     occludedWidth = 0,
     docked = false,  // the Library, Map and Inspector live in the Canvas dock around this stage
     mapHost = null,
@@ -1700,7 +1701,7 @@
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionMode={crossing?'partial':'full'} onSelectionEnd={event=>setSelected(boxSelection(flowNodes.map(f=>({id:f.id,x:f.position.x,y:f.position.y,w:f.measured?.width||0,h:f.measured?.height||0})),boxFrom.current.at,toFlow(event),event.clientX<boxFrom.current.x))}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{onEditPlan && <button type="button" className="dx-quiet nodrag" onClick={event=>executeAction("projects.controls.activate",{handler:onEditPlan},event)}>Edit plan on canvas</button>}{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
        {presenceAgent && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-presence nodrag nopan" data-design="canvas.presence" data-state={busyStep.status==='Running'?'working':'waiting'} data-on={presenceStep.id} style={{position:'absolute',left:presenceStep.x,top:presenceStep.y-32}}><window.UI.Av id={presenceAgent} size={18}/><b>{presenceAgent}</b><em>{busyStep.status==='Running'?'working':'needs you'}</em>
          <button type="button" data-design="canvas.follow" data-follow="" aria-pressed={following} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setFollowing(!following);u.setToast(following?'Stopped following.':'Following '+presenceAgent+': the view moves with it. Scroll, click the canvas or press Esc to stop.');}},event)}>{following?'Following · Stop':'Follow'}</button></div></RF.ViewportPortal>}</FlowStage>
     </CanvasContext.Provider>
@@ -1765,17 +1766,17 @@
     const c = React.useContext(HomeMapContext), n = data.n;
     // One handle each side at the card's vertical middle: a wire joins card edge to card edge (this session feeds that one).
     const edges = <><RF.Handle type="target" position={RF.Position.Left} id="in" isConnectable={false} className="home-card-edge" /><RF.Handle type="source" position={RF.Position.Right} id="out" isConnectable={false} className="home-card-edge" /></>;
-    if (n.group && !n.collapsed) return <div data-graph-node={id} data-design="group.frame" data-project={n.title}><div className="v22g-group-frame" style={{width:n.w,height:n.h}}><header className="node-header"><b data-design="group.title">{n.title}</b><span>{n.count} session{n.count === 1 ? '' : 's'}</span>
+    if (n.group && !n.collapsed) return <div data-graph-node={id} data-design="group.frame" data-project={n.title}><div className="v22g-group-frame" style={{width:n.w,height:n.h}}><header className="node-header"><b data-design="group.title">{n.title}</b><span>{n.countText}</span>
       <button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label={'Collapse ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>−</button></header></div></div>;
     if (n.group) return <div data-graph-node={id} data-design="group.node" data-project={n.title} className="home-card">{edges}<header className="home-card-head"><span className="home-card-noagent"><window.AHIcon name="group" size={13}/></span>
-      <div><b data-design="group.title">{n.title}</b><small>{n.count} session{n.count === 1 ? '' : 's'}</small></div><button type="button" className="dx-link nodrag" aria-label={'Expand ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>Expand</button></header></div>;
+      <div><b data-design="group.title">{n.title}</b><small>{n.countText}</small></div><button type="button" className="dx-link nodrag" aria-label={'Expand ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>Expand</button></header></div>;
     // A session card is one whole session, never a tool node: who works on it, its state, where it stands, and what it needs from him.
     return <div data-graph-node={id} data-design="home.card" data-home-state={n.state} data-home-task={n.task || undefined} data-home-session-path={n.path || undefined} className={'home-card' + (selected ? ' sel' : '')}>{edges}
       <header className="home-card-head">{n.agent ? <window.UI.Av id={n.agent} size={28}/> : <span className="home-card-noagent"><window.AHIcon name="users" size={13}/></span>}
         <div><b>{n.title}</b><small>{n.agent || 'No agent yet'}</small></div>{n.members?.length > 0 && <span className="home-card-members" title={'Also on this work: ' + n.members.join(', ')}>{n.members.slice(0, 3).map(name => <window.UI.Av key={name} id={name} size={18}/>)}</span>}<span className="home-card-state" data-state={n.state}>{n.state}</span></header>
       {c.detail && <><p className="home-card-now">{n.now}</p><div className="home-card-bar" role="progressbar" aria-label={n.done + ' of ' + n.steps.length + ' steps done'} aria-valuemin={0} aria-valuemax={n.steps.length || 1} aria-valuenow={n.done}>{n.steps.map((step, index) => <i key={index} data-state={step.kind} title={step.title} />)}</div></>}
       {n.subtasks > 0 && <button type="button" className="dx-link nodrag" data-home-subtasks={n.subtasks} aria-expanded={!n.subtasksFolded} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse('task:' + n.task)},event)}>{(n.subtasksFolded ? 'Show ' : 'Hide ') + n.subtasks + ' subtask' + (n.subtasks === 1 ? '' : 's')}</button>}
-      {n.need && <div className={'home-card-need' + (n.need.failed ? ' err' : '')}><span>{n.need.text}</span><button type="button" className={(n.need.failed ? 'dx-link' : 'dx-quiet') + ' nodrag'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>n.need.failed ? c.onOpen(n) : n.need.resume ? c.onPick(n) : c.onReview(n)},event)}>{n.need.failed ? 'Open' : n.need.resume ? 'Continue' : 'Review'}</button></div>}
+      {n.need && <div className={'home-card-need' + (n.need.failed ? ' err' : '')}><span>{n.need.text}</span><button type="button" className={(n.need.failed ? 'dx-link' : 'dx-quiet') + ' nodrag'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>n.need.failed ? c.onOpen(n) : n.need.resume ? c.onContinue(n) : c.onReview(n)},event)}>{n.need.failed ? 'Open' : n.need.resume ? 'Continue' : 'Review'}</button></div>}
     </div>;
   }
   const homeNodeTypes = {home: HomeMapNode};
@@ -1788,7 +1789,7 @@
     }, [chart.signature, picked]);
     return [flow, setFlow];
   }
-  function HomeMap({chart, picked, onPick, onOpen, onReview, onCollapse, mapHost, onRoom, onArrange}) {
+  function HomeMap({chart, picked, onPick, onOpen, onContinue, onReview, onCollapse, mapHost, onRoom, onArrange}) {
     const s = useData(), area = React.useRef(null), [flow, setFlow] = useHomeFlow(chart, picked), [view, setView] = React.useState({zoom: 1, pan: {x: 0, y: 0}}), seen = React.useRef(view), touched = React.useRef(false);
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
     seen.current = view;
@@ -1830,7 +1831,7 @@
     return <div className="v22g-canvas home-map-canvas" data-design="canvas.stage" data-home-canvas="">
       <div ref={area} className="node-canvas" tabIndex={0} aria-label="Map of the work" title="Drag to pan · Wheel to zoom · Double-click to fit" style={{position:'absolute',inset:0,'--xy-background-color':'transparent'}}
         onDoubleClick={event => { if (event.target.classList?.contains('react-flow__pane')) fit(); }}>
-        <HomeMapContext.Provider value={{onOpen, onReview, onCollapse, onPick, detail: chart.params.card !== 'State only'}}>
+        <HomeMapContext.Provider value={{onOpen, onContinue, onReview, onCollapse, onPick, detail: chart.params.card !== 'State only'}}>
           <RF.ReactFlow nodes={flow} edges={edges} nodeTypes={homeNodeTypes} edgeTypes={edgeTypes} nodesDraggable nodesConnectable={false} elevateNodesOnSelect={false}
             viewport={{x: view.pan.x, y: view.pan.y, zoom: view.zoom}} onMove={(event, v) => { if (event instanceof window.Event) { touched.current = true; setView({zoom: v.zoom, pan: {x: v.x, y: v.y}}); } }} minZoom={zoomMin} maxZoom={zoomMax}
             onNodesChange={changes => setFlow(nodes => RF.applyNodeChanges(changes.filter(change => change.type === 'dimensions' || change.type === 'position'), nodes))}

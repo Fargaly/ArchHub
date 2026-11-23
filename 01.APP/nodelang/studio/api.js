@@ -878,7 +878,7 @@ function rememberTask(result, select=true){
  publish(select?{focusedTask:result.taskId,tasks}:{tasks});
  return session;
 }
-api.createTask=async(title,agent='',workspace=state.activeWorkspace||'',parent='')=>{const result=await workshop('createTask',parent?[title,agent,workspace,parent]:[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
+api.createTask=async(title,agent='',workspace=state.activeWorkspace||'',parent='',canvasTask='')=>{const result=await workshop('createTask',canvasTask?[title,agent,workspace,parent,canvasTask]:parent?[title,agent,workspace,parent]:[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
 api.renameTask=async(id,title)=>{const result=await taskFileAction('renameTask',id,title);await refreshTasks(false);return result;};
 async function taskFileAction(method,id,...args){
  const navigation=fileNavigation;
@@ -1178,7 +1178,7 @@ api.apiRouterChat=(prompt,agent,replyTo,task)=>routerChat(prompt,agent,replyTo,t
 api.sendChatTurn=async(turn,replyTo,task)=>{
  const key=task||'';
  try{
-  const result=await routerChat(turn.prompt,turn.agent,replyTo,task,turn.resume?{continue:true}:turn.fresh?{fresh:true}:{});
+  const result=await routerChat(turn.prompt,turn.agent,replyTo,task,turn.taskPeer?{task_peer:true}:turn.resume?{continue:true}:turn.fresh?{fresh:true}:{});
   if(turn.agent!=='BABOOM')publish({chatThreads:{...state.chatThreads,[key]:turn.agent},chatEnded:{...state.chatEnded,[key]:''}});
   return result;
  }catch(error){
@@ -1750,8 +1750,8 @@ api.leaveSession=async()=>{
  const parent=sessionBreadcrumbs.at(-1);if(!parent)return;
  await api.openSession(parent.path,true);sessionBreadcrumbs.pop();publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});
 };
-api.sameSessionPath = (a, b) => !!a && !!b &&
-    String(a).replaceAll('\\', '/').toLowerCase() === String(b).replaceAll('\\', '/').toLowerCase();
+api.sessionPathKey = path => String(path || '').replaceAll('\\', '/').toLowerCase();
+api.sameSessionPath = (a, b) => !!a && !!b && api.sessionPathKey(a) === api.sessionPathKey(b);
 api.duplicateHomeTask=async(task,path)=>{
  const openSource=api.sameSessionPath(path,sessionPath) || (task && sessionDocument?.properties?.taskContext?.task===task);
  if(openSource && currentEditState().unsaved)throw Error('Save your edits before duplicating this task.');
@@ -1933,7 +1933,16 @@ function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve
  if(!sessionDocument)throw Error('Open a session first.');
  const before=copy(sessionDocument);
  if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
- try{edit(sessionDocument);}catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
+ try{
+  edit(sessionDocument);
+  if(before.properties?.taskContext?.anchor && sessionDocument.nodes.length>before.nodes.length){
+   const task=state.focusedTask, active=state.tasks.find(row=>row.id===task);
+   if(!active || !api.sameSessionPath(active.sessionPath,sessionPath) ||
+      !before.nodes.some(node=>node.id===task && node.workshopTask===task))throw Error('Open the task to add nodes to its canvas.');
+   const prior=new Set(before.nodes.map(node=>node.id));
+   for(const node of sessionDocument.nodes)if(!prior.has(node.id))node.workshopTask=task;
+  }
+ }catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
  localDirty=true;if(!preserveSolve)runEpoch++;
  // afterPaint: the document, undo step and autosave are set now (a reload or close right after still saves it);
  // only the redraw of every view waits for the next painted frame.
@@ -2533,7 +2542,7 @@ api.pasteNodes=async point=>{
  }
  const ids=new Map(source.nodes.map(n=>[n.id,window.crypto.randomUUID()])),dx=(point?.x??Math.min(...source.nodes.map(n=>n.position.x))+32)-Math.min(...source.nodes.map(n=>n.position.x)),dy=(point?.y??Math.min(...source.nodes.map(n=>n.position.y))+32)-Math.min(...source.nodes.map(n=>n.position.y));
  for(const node of source.nodes)if(node.type==='trigger.schedule'||node.type==='trigger.file')node.params.armed=false;
- for(const n of source.nodes){n.id=ids.get(n.id);n.position={x:n.position.x+dx,y:n.position.y+dy};delete n.result;if(n.parent&&ids.has(n.parent))n.parent=ids.get(n.parent);else delete n.parent;if(n.children)n.children=n.children.map(id=>ids.get(id));if(n.frameMembers)n.frameMembers=n.frameMembers.filter(id=>ids.has(id)).map(id=>ids.get(id));if(n.bind&&ids.has(n.bind.node))n.bind.node=ids.get(n.bind.node);for(const p of n.paramDefs||[])if(p.promoted)p.promoted=ids.get(p.promoted)||null;}
+ for(const n of source.nodes){n.id=ids.get(n.id);n.position={x:n.position.x+dx,y:n.position.y+dy};delete n.result;delete n.taskContext;delete n.workshopTask;if(n.parent&&ids.has(n.parent))n.parent=ids.get(n.parent);else delete n.parent;if(n.children)n.children=n.children.map(id=>ids.get(id));if(n.frameMembers)n.frameMembers=n.frameMembers.filter(id=>ids.has(id)).map(id=>ids.get(id));if(n.bind&&ids.has(n.bind.node))n.bind.node=ids.get(n.bind.node);for(const p of n.paramDefs||[])if(p.promoted)p.promoted=ids.get(p.promoted)||null;}
  for(const w of source.wires){w.id=window.crypto.randomUUID();w.from.node=ids.get(w.from.node);w.to.node=ids.get(w.to.node);}
  fileEdit(d=>{d.nodes.push(...source.nodes);d.wires.push(...source.wires);d.groups.push(...source.groups.map(g=>({...g,id:ids.get(g.id),nodes:g.nodes.map(id=>ids.get(id))})));},source.nodes.map(n=>n.id));
  return {ids:source.nodes.filter(n=>!n.parent).map(n=>n.id)};

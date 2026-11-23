@@ -36,9 +36,10 @@ def test_a_subtask_names_its_parent_and_sits_in_its_project(profile):
     assert [rows[top]['parent'], rows[sub]['parent'], rows[leaf]['parent'], rows[alone]['parent']] == ['', top, sub, '']
     assert [rows[t]['project'] for t in (top, sub, leaf)] == ['Tower', 'Tower', 'Tower'], 'a subtask inherits its parent project'
     assert rows[alone]['project'] == ''
-    # Every level is a task of its own with its own session file.
+    # Each level has its own task id on the chosen canvas.
     paths = [stored[t]['session_path'] for t in (top, sub, leaf)]
-    assert all(paths) and len(set(paths)) == 3
+    assert all(paths) and len(set(paths)) == 1
+    assert stored[alone]['session_path'] != paths[0]
 
 
 def test_a_missing_parent_is_refused_and_writes_nothing(profile):

@@ -1971,7 +1971,7 @@ def _task(history, method, body, identity):
     from . import workshop_tasks
     me, label = identity["sender_key"], identity["sender_label"]
     if method == "task_create":
-        view = workshop_tasks.create_session(history, body["title"], label, select=False, parent=body.get("parent") or "")
+        view = workshop_tasks.create_session(history, body["title"], label, select=False, parent=body.get("parent") or "", canvas_task=body.get("canvas_task") or "")
         return {"task": workshop_tasks.get(history, view["taskId"]), "session": view}
     if method == "task_list":
         return {"tasks": workshop_tasks.rows(history, include_archived=False)}

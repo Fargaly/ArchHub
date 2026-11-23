@@ -2486,6 +2486,30 @@ def authored_registration(document):
     return False
 
 
+def task_context(document, task=None):
+    root = (document.get('properties') or {}).get('taskContext') or {}
+    if not task:
+        return root
+    if root.get('task') == task and not root.get('anchor'):
+        return root
+    if root.get('task') == task and any(n['id'] == root['anchor'] and n.get('workshopTask') == task for n in document['nodes']):
+        return root
+    anchor = next((n for n in document['nodes'] if n['id'] == task and n.get('taskContext', {}).get('task') == task), None)
+    if anchor is None:
+        raise ValueError('This task is no longer on its canvas. Undo its removal to reopen it.')
+    return anchor['taskContext']
+
+
+def session_plan(document, task=None):
+    root = (document.get('properties') or {}).get('taskContext') or {}
+    held = task_context(document, task)
+    if isinstance(held.get('plan'), list):
+        return list(held['plan'])
+    steps = [n for n in document['nodes'] if n['type'] == 'note' and type(n['params'].get('plan_order')) is int
+             and n.get('workshopTask', root.get('task')) == held.get('task')]
+    return [n['title'] for n in sorted(steps, key=lambda n: n['params']['plan_order'])]
+
+
 def session_fields(document, path=None, *, roots=None, task_row=None):
     """Every session-model field with its default; reads only, never writes."""
     props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
@@ -2505,7 +2529,7 @@ def session_fields(document, path=None, *, roots=None, task_row=None):
             'doneCheck': copy.deepcopy(props['doneCheck']) if isinstance(props.get('doneCheck'), dict) else None,
             'automation': automation, 'settings': dict(props.get('settings') or {}),
             'inputLinks': copy.deepcopy(props.get('inputLinks') or []),
-            'context': {'plan': list(held['plan']) if isinstance(held.get('plan'), list) else [],
+            'context': {'plan': session_plan(document),
                         'handover': dict(held['handover']) if isinstance(held.get('handover'), dict) else {}}}
 
 

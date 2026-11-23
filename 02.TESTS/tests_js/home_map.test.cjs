@@ -17,6 +17,23 @@ const context = vm.createContext({
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/api.js'), 'utf8'), context);
 vm.runInContext(transformSync(source, {loader: 'jsx'}).code, context);
 const {homeRows, homeMap} = context.window.UI;
+
+test('Continue cannot substitute the other task on the same canvas', async () => {
+  const row = {id:'A', sessionPath:'shared.archhub'}, card = {task:'B', path:row.sessionPath};
+  let opens=0, sends=0;
+  await assert.rejects(context.window.UI.continueHomeWork(card,[row],()=>++opens,()=>({}),()=>++sends,()=>{},()=>{}), /selected task is unavailable/);
+  assert.equal(opens,0); assert.equal(sends,0);
+});
+
+test('Continue retains the selected task reply if refreshing Home fails', async () => {
+  const rows=['A','B'].map(id=>({id,sessionPath:'shared.archhub'}));
+  const sent=[],shown=[];
+  const reply=await context.window.UI.continueHomeWork({task:'B'},rows,async id=>id==='B',
+    ()=>({agent:'Codex'}),async (turn,unused,id)=>{sent.push(id);return {provider:'Codex',answer:'Saved the step'};},
+    text=>shown.push(text),async()=>{throw Error('refresh unavailable');});
+  assert.deepEqual(sent,['B']);assert.deepEqual(shown,['Codex · Saved the step']);assert.equal(reply.answer,'Saved the step');
+});
+
 const plain = value => JSON.parse(JSON.stringify(value));
 const today = new Date().toISOString();
 const DEFAULT = {group: 'Project', order: 'Needs you first', card: 'Steps and state', density: 'Comfortable', done: 'Show', filter: 'All'};
@@ -368,4 +385,54 @@ test('History opens the edited declaration canvas at its file path and omits an 
   const build = history => cards(homeMap({listed,rows,params:DEFAULT,titleOf:r=>r.title,history,olderOpen:true}));
   assert.equal(build(false).length,0);
   assert.deepEqual(plain(build(true).map(c=>[c.path,c.task])),[[files[1].path,'']]);
+});
+
+test('Tasks sharing one canvas each retain their own Home card and agent', () => {
+  const document=session('shared','Project canvas','Tower',{task:'t-a'}), path=document.path;
+  const make=(id,name)=>task(id,{sessionPath:path,workspace:'Tower',members:[{name}]});
+  const rows=homeRows({...state,approvals:[],agentGraph:{sessions:[]},tasks:[make('b','Peer B'),make('a','Peer A')]},{});
+  const chart=homeMap({listed:{groups:[{sessions:[document]}]},rows,params:DEFAULT,hidden:[],
+    titleOf:r=>r.title,history:true,focus:'t-b',focusPath:path});
+  const found=Array.from(chart.nodes).filter(n=>n.task);
+  assert.deepEqual(found.map(n=>[n.task,n.agent]).sort(),[['t-a','Peer A'],['t-b','Peer B']]);
+});
+
+test('A folded and reopened project reports one canvas and its distinct tasks and subtasks', () => {
+  const document=session('shared','Package','Tower',{task:'t-a'}), common={sessionPath:document.path,workspace:'Tower'};
+  const tasks=[task('a',common),task('b',common),task('child',{...common,parent:'t-b'})];
+  const rows=homeRows({...state, approvals:[], agentGraph:{sessions:[]}, tasks},{});
+  for (const collapsed of [[],['Tower'],['task:t-b']]) {
+    const chart=homeMap({listed:{groups:[{sessions:[document]}]}, rows, params:{...DEFAULT,collapsed},
+      hidden:[],titleOf:r=>r.title,history:true});
+    assert.equal(chart.groups[0].countText,'1 canvas · 2 tasks · 1 subtask');
+    assert.equal(chart.nodes.find(n=>n.group).countText,chart.groups[0].countText);
+  }
+});
+
+test('Make a task from this uses the message owner even with another task selected', async () => {
+  const calls=[], opened=[];
+  const ui={api:{createTask:async(...args)=>{calls.push(args);return {taskId:'new-task'};}}};
+  const command={id:'menu.make.a.task.from.this',label:'Make a task from this',contexts:['message']};
+  const sandbox=vm.createContext({window:{UI:ui,ArchHubCommandRegistry:{commands:[command]}}});
+  const menu=fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/context-menus.jsx'),'utf8');
+  vm.runInContext(transformSync(menu,{loader:'jsx'}).code,sandbox);
+  const menuRows=ui.contextCommandGroups({kind:'Task message menu',taskId:'B',message:{id:'msg',text:'Door check'},close(){}},
+    {tasks:[{id:'A'},{id:'B'}],graph:{nodes:[]}}, {task:'A',openTaskFile:id=>opened.push(id)}, {run:fn=>fn()});
+  await menuRows.flat().find(item=>item.command.id===command.id)[3]();
+  assert.deepEqual(calls,[['Door check','','','','B']]);
+  assert.deepEqual(opened,['new-task']);
+});
+
+test('A held task on a shared canvas has one Review action and one Needs you count', () => {
+  const document=session('shared','Package','Tower',{task:'t-a'}), path=document.path;
+  const tasks=['a','b'].map(id=>task(id,{sessionPath:path,workspace:'Tower'}));
+  const card={id:'receipt',status:'pending',taskId:'t-a',taskIds:['t-a'],path,canvasNodes:[{taskId:'t-a',path,nodeId:'door'}]};
+  const rows=homeRows({...state,agentGraph:{sessions:[]},tasks,approvals:[card]},{});
+  assert.equal(rows.needsYou,1);
+  assert.equal(rows.heldOf(tasks[1]),undefined);
+  const chart=homeMap({listed:{groups:[{sessions:[document]}]},rows,params:DEFAULT,hidden:[],titleOf:r=>r.title,history:true});
+  assert.deepEqual(Array.from(chart.nodes).filter(n=>n.need?.approval==='receipt').map(n=>n.task),['t-a']);
+  const fileOnly=homeRows({...state,agentGraph:{sessions:[]},tasks,approvals:[{id:'file-hold',path,status:'pending'}]},{});
+  assert.equal(fileOnly.needsYou,1);
+  assert.equal(fileOnly.sessionRows.filter(row=>row.approval==='file-hold').length,1);
 });

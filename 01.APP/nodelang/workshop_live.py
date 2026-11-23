@@ -331,13 +331,26 @@ def live_agents(with_status=False):
     return agents
 
 
-def send_as_founder(text, handles, *, reply_to=None, task=None):
+def send_as_founder(text, handles, *, reply_to=None, task=None, task_peer=False):
     """The composer's @mention path: one Workshop message from Ahmed, pushed live to each mentioned agent.
     Sent from a session's thread, the message is bound to that task (refs), so it and the replies show there."""
     from .workshop_mailbox import application_history, _send
     agents = live_agents()
     chosen = agents if 'everyone' in handles else [a for a in agents if a['handle'] in handles]
     unknown = [h for h in handles if h != 'everyone' and h not in {a['handle'] for a in agents}]
+    if task_peer:
+        from .workshop_tasks import get, _live
+        with application_history() as history:
+            row = get(history, task) if task else None
+        if not row or row.get('archived') or row['status'] == 'done' or not row.get('session_path'):
+            raise ValueError('The selected task has no open canvas to continue.')
+        attached = [member for member in row['members'] if not member.get('left')]
+        current = _live(attached)
+        owners = {member['owner'] for member in current or attached}
+        chosen = [agent for agent in agents if agent['session'] in owners]
+        if len(chosen) != 1:
+            raise ValueError('Several agents are attached. Choose one in the task thread.' if chosen else
+                             'No attached agent is available. Choose a recipient in the task thread.')
     if not chosen:
         raise ValueError('No live agent matches %s. Mention one of: %s' % (
             ', '.join('@' + h for h in handles), ', '.join('@' + a['handle'] for a in agents) or 'none joined'))

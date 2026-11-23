@@ -286,13 +286,18 @@ def rename(history, task, title, revision=None):
         if row.get('session_path'):
             from . import canvas_documents
             def retitle(document):
-                document['title'] = short_title(text)
+                from .session_files import task_context
+                task_context(document, task)
+                if document['properties']['taskContext']['task'] == task and not document['properties']['taskContext'].get('anchor'):
+                    document['title'] = short_title(text)
+                else:
+                    next(n for n in document['nodes'] if n['id'] == task)['title'] = text
                 return []
             canvas_documents.edit(row['session_path'], 'You', 'rename task', retitle, solve_changed=False)
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 
-def create(history, title, creator, *, agent='', workspace='', zoom=1, parent='', fork=None):
+def create(history, title, creator, *, agent='', workspace='', zoom=1, parent='', fork=None, canvas_task=''):
     task = uuid4().hex
     title = _text(title, "title", 2000)
     above = None
@@ -307,15 +312,50 @@ def create(history, title, creator, *, agent='', workspace='', zoom=1, parent=''
         if not workspace and above.get('project'):
             roots, _ = read_registered_roots()
             workspace = next((key for key, value in roots.items() if value.get('label') == above['project']), '')
-    path = _start_session(task, title, zoom, agent=agent, workspace=workspace, fork=fork)
+    canvas = get(history, canvas_task) if canvas_task else above
+    if canvas_task and not canvas:
+        raise TaskNotFound(canvas_task)
+    if canvas and (canvas.get('archived') or not canvas.get('session_path') or fork or
+                   (above and above['session_path'] != canvas['session_path'])):
+        raise ValueError('Choose an open task on this canvas.')
+    path = canvas['session_path'] if canvas else _start_session(task, title, zoom, agent=agent, workspace=workspace, fork=fork)
     project = ''
     if workspace:
         roots, _ = read_registered_roots()
         project = (roots.get(workspace) or {}).get('label') or workspace
     # A subtask sits in its parent's project unless its own workspace names one.
     project = project or (above or {}).get('project') or (fork or {}).get('project') or ''
-    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,project,parent_id) "
-           "VALUES(?,?,'open',?,?,?,?,?,?)", (task, title, creator, _now(), _now(), path, project or None, above and above['id']))
+    with history._transaction(write=True):
+        if canvas:
+            from . import canvas_documents
+            from .session_files import task_context, read_document, session_fields
+            chosen = session_fields(read_document(path), path, task_row=canvas)['project']
+            if workspace and workspace != chosen['id']:
+                raise ValueError('The selected canvas belongs to another project.')
+            project = chosen['label'] or canvas.get('project') or ''
+        _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,project,parent_id) "
+               "VALUES(?,?,'open',?,?,?,?,?,?)", (task, title, creator, _now(), _now(), path, project or None, above and above['id']))
+        if canvas:
+            def add(document):
+                task_context(document, canvas['id'])
+                root = document['properties']['taskContext']['task']
+                root_context = document['properties']['taskContext']
+                if not root_context.get('anchor'):
+                    if any(n['id'] == root for n in document['nodes']):
+                        raise ValueError('The task id is already used by another node on this canvas.')
+                    root_context['anchor'] = root
+                    document['nodes'].append({'id':root, 'type':'param.value', 'title':document['title'],
+                        'params':{'type':'text', 'value':document['title']}, 'workshopTask':root,
+                        'position':canvas_documents.free_spot(document,480,80)})
+                anchor = {'id':task, 'type':'param.value', 'title':title, 'params':{'type':'text', 'value':title},
+                          'workshopTask':task, 'taskContext':{'task':task, 'agents':[agent] if agent else []},
+                          'position':canvas_documents.free_spot(document, 480, 80)}
+                if above:
+                    task_context(document, above['id'])
+                    anchor['taskContext']['parent'] = above['id']
+                document['nodes'].append(anchor)
+                return []
+            canvas_documents.edit(path, creator, 'add task to canvas', add, solve_changed=False)
     return get(history, task)
 
 
@@ -330,6 +370,11 @@ def claim(history, task, owner, label, lease_seconds=None, revision=None):
         raise ValueError("Lease must be 30 to 86400 seconds")
     now = time.time()
     _settle_lapsed(history)
+    shared = history._db.execute("SELECT t.session_path FROM workshop_tasks t WHERE t.id=? AND EXISTS "
+                                 "(SELECT 1 FROM workshop_tasks s WHERE s.session_path=t.session_path AND s.id!=t.id)",
+                                 (task,)).fetchone()
+    if shared and _session_context(shared[0],task_row={'id':task}).get('removedFromCanvas'):
+        raise ValueError('This task was removed from its canvas.')
 
     def statement(expected):
         members = _members_now(history, task)
@@ -662,8 +707,10 @@ def handover(history, task):
     """What a joining agent needs to continue: the work, its file, the plan and the last handover note."""
     from .canvas_documents import session_param_values
     row = get(history, task)
-    context = _session_context(row.get("session_path")) if row else {}
+    context = _session_context(row.get("session_path"), task_row=row) if row else {}
     # The Session card's Context and Reply in (the session node's own values): every agent that joins gets them.
+    if context.get('removedFromCanvas'):
+        raise ValueError('This task was removed from its canvas.')
     held = next((entry["params"] for entry in context.get("parameters") or [] if entry.get("id") == "start"), {})
     values = {**session_param_values(), **held}
     from .session_files import read_document, resolve_project_folder
@@ -671,8 +718,11 @@ def handover(history, task):
         document = read_document(row['session_path']) if row and row.get('session_path') else None
     except (OSError, ValueError):
         document = None
+    if document and not held:
+        shared = next((n['params'] for n in document['nodes'] if n['id'] == 'start' and n.get('fixed')), {})
+        values.update(shared)
     values['project_folder'] = resolve_project_folder(document, values['project_folder'])
-    return {"task": task, "title": short_title(row["title"]) if row else "", "path": (row or {}).get("session_path") or "",
+    return {"task": task, "title": context.get('sessionTitle') or (short_title(row["title"]) if row else ""), "path": (row or {}).get("session_path") or "",
             "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {}),
             "context": {"brief": values["brief"], "project_folder": values["project_folder"], "standard": values["standard"],
                         "reply_in": values["reply_in"]},
@@ -790,23 +840,23 @@ def record_step(history, task, owner, label, title, status, result="", request="
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         declaration = history._db.execute("SELECT json_extract(record,'$.runtime'),json_extract(record,'$.display_name'),record FROM workshop_declarations "
                                          "WHERE json_extract(record,'$.session')=? LIMIT 1", (owner,)).fetchone()
-    identity = 'step-' + sha256(owner.encode()).hexdigest()[:24]
     def change(document):
-        context = document.get('properties', {}).get('taskContext', {})
-        if context.get('task') != task:
-            raise ValueError('Session file belongs to another task')
+        from .session_files import task_context
+        context = task_context(document, task)
+        root = document['properties']['taskContext']['task']
+        identity = 'step-' + sha256((owner if root == task else task + '\0' + owner).encode()).hexdigest()[:24]
         if row.get('project') and 'project' not in document['properties']:  # a set session project wins
             context['project'] = row['project']
             if not context.get('workspace'):
                 from .workspace_roots_catalogue import read_registered_roots
                 roots, _ = read_registered_roots()
                 context['workspace'] = next((key for key, value in roots.items() if value.get('label') == row['project']), '')
-        steps = [n for n in document['nodes'] if n.get('params', {}).get('workshop_step')]
+        steps = [n for n in document['nodes'] if n.get('params', {}).get('workshop_step') and n.get('workshopTask',root) == task]
         node = next((n for n in steps if n['id'] == identity), None)
         if node is None:
-            previous = steps[-1] if steps else next((n for n in document['nodes'] if n['id'] == 'start'), None)
+            previous = steps[-1] if steps else next((n for n in document['nodes'] if n['id'] == ('start' if task == root else task)), None)
             from .canvas_documents import free_spot
-            node = {'id': identity, 'type': 'thing.agent', 'title': title or row['title'], 'params': {},
+            node = {'id': identity, 'type': 'thing.agent', 'workshopTask':task, 'title': title or row['title'], 'params': {},
                     'position': free_spot(document, (previous['position']['x'] + 384) if previous else 80, 80)}
             document['nodes'].append(node)
             if previous:
@@ -912,12 +962,18 @@ def _session_context(path, *, roots=None, task_row=None):
         roots = _registered_roots() if roots is None else roots
         stat = os.stat(path)
         stamp = (stat.st_mtime_ns, stat.st_size)
-        held = _SESSION_CONTEXTS.get(path)
+        cache_key = (path, (task_row or {}).get('id'))
+        held = _SESSION_CONTEXTS.get(cache_key)
         # A recently written file may change again within one coarse FAT/SMB timestamp tick.
         if held and held[0] == stamp and time.time() - stat.st_mtime >= 2:
             context, choice = copy.deepcopy(held[1:])
         else:
             document = read_document(path)
+            root = (document.get('properties', {}).get('taskContext') or {}).get('task')
+            identity = (task_row or {}).get('id')
+            if root and identity and (identity != root or document['properties']['taskContext'].get('anchor')) and not any(
+                    n['id'] == identity and n.get('workshopTask') == identity for n in document['nodes']):
+                return {'removedFromCanvas': True}
             context = _held_context(document, roots=roots, task_row=task_row)
             props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
             saved = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
@@ -926,14 +982,17 @@ def _session_context(path, *, roots=None, task_row=None):
                 choice['project'] = props['project']
             context.pop('project', None)
             context.pop('workspace', None)
-            context['sessionTitle'] = document['title']
-            context['fileMessages'] = _file_messages(document)
-            _SESSION_CONTEXTS[path] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
+            anchor = next((n for n in document['nodes'] if n['id'] == (task_row or {}).get('id') and n.get('workshopTask') == n['id']), None)
+            if anchor:
+                context['anchorTitle'] = anchor['title']
+            context['sessionTitle'] = anchor['title'] if anchor else document['title']
+            context['fileMessages'] = _file_messages(document, (task_row or {}).get('id'))
+            _SESSION_CONTEXTS[cache_key] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
         project = _project_of(choice, roots, task_row)
         context.update(project=project['label'], workspace=project['id'])
         return context
     except (OSError, ValueError, KeyError, TypeError):
-        _SESSION_CONTEXTS.pop(path, None)
+        _SESSION_CONTEXTS.pop((path, (task_row or {}).get('id')), None)
         return {}
 
 
@@ -1091,6 +1150,8 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
             continue
         declaration = _declaration_for(row, declarations, index)
         session = _session_context(row.get("session_path"), roots=roots, task_row=row)
+        if session.get("removedFromCanvas"):
+            continue
         if project and project not in (session.get("workspace"), session.get("project", row.get("project"))):
             continue
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
@@ -1110,7 +1171,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
         activity = list(session.get("activity") or [])
         if not activity and (declaration or row.get("result") or owner):
             activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
-        built.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
+        built.append({'id': row['id'], 'title': short_title(session.get('anchorTitle') or row['title']), 'description': session.get('anchorTitle') or row['title'],
              'owner': owner, 'revision': row.get('revision') or 0,
              'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
              'capacity': row.get('capacity') or '',
@@ -1160,15 +1221,22 @@ def refresh_steps(path):
     """The existing head/read poll reconciles native calls that arrive after declare()."""
     from .workshop_mailbox import application_history
     with application_history() as history:
-        task = next((r for r in rows(history, settle=False) if r.get('session_path') == str(path)), None)
-        if not task:
+        bound = {r['id'] for r in rows(history, settle=False) if r.get('session_path') == str(path)}
+        if not bound:
             return
-        from .session_files import read_document
+        from .session_files import read_document, task_context
         document = read_document(path)
         for node in document['nodes']:
             if node.get('params', {}).get('workshop_step'):
                 p = node['params']
-                record_step(history, task['id'], p['session'], p['agent'], None, p['status'], p.get('result', ''))
+                task = node.get('workshopTask', document['properties']['taskContext']['task'])
+                if task not in bound:
+                    continue
+                try:
+                    task_context(document, task)
+                except ValueError:
+                    continue  # its task card was removed; Undo may bring it back
+                record_step(history, task, p['session'], p['agent'], None, p['status'], p.get('result', ''))
 
 
 def set_status(history, task, status, revision=None):
@@ -1257,12 +1325,18 @@ def _current_session():
         return ""
 
 
+def _node_task(node, root):
+    return node.get('workshopTask') or (node.get('agentWork') or {}).get('task') or root
+
+
 def _held_context(document, *, roots=None, task_row=None):
     props = document.get("properties") if isinstance(document.get("properties"), dict) else {}
-    held = props.get("taskContext") if isinstance(props.get("taskContext"), dict) else {}
-    from .session_files import _project_of, _registered_roots
+    from .session_files import _project_of, _registered_roots, session_plan, task_context
+    task = (task_row or {}).get('id')
+    root = (props.get('taskContext') or {}).get('task')
+    held = task_context(document, task)
     project = _project_of(props, _registered_roots() if roots is None else roots, task_row)
-    nodes = document.get("nodes") or []
+    nodes = [n for n in document.get("nodes") or [] if not task or _node_task(n, root) == task]
     agents = list(held["agents"]) if isinstance(held.get("agents"), list) else []
     for node in nodes:
         if node.get("type") == "thing.agent":
@@ -1275,9 +1349,10 @@ def _held_context(document, *, roots=None, task_row=None):
         "pinnedMessages": list(held.get('pinnedMessages') or []),
         "workspace": project['id'],
         **({"project": project['label']} if 'project' in props or held.get('project') or held.get('workspace') else {}),
-        "homePinned": props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True,
+        "homePinned": (held.get('pinned') is True if task and task != root else
+                       props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True),
         "agents": agents,
-        "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
+        "plan": session_plan(document, task),
         "handover": held["handover"] if isinstance(held.get("handover"), dict) else {},
         "progress": held["progress"] if isinstance(held.get("progress"), dict) else {},
         "workflow": [{"id": node["id"], "type": node.get("type", ""), "title": node.get("title", "")} for node in nodes],
@@ -1298,9 +1373,11 @@ def _task_message(note):
     return isinstance(note, dict) and note.get("role") == _TASK_ROLE
 
 
-def _file_messages(document):
+def _file_messages(document, task=None):
     found = []
     for index, note in enumerate(document.get("notes") or []):
+        if task and note.get('workshopTask', document['properties']['taskContext']['task']) != task:
+            continue
         if not _task_message(note) or not isinstance(note.get("text"), str):
             continue
         found.append({"id": note["id"] if isinstance(note.get("id"), str) and note["id"] else "note-%d" % index,
@@ -1311,7 +1388,7 @@ def _file_messages(document):
 
 
 def _view(task, path, document):
-    return {"id": document["id"], "path": path, "taskId": task, "messages": _file_messages(document), **_held_context(document)}
+    return {"id": document["id"], "path": path, "taskId": task, "messages": _file_messages(document, task), **_held_context(document, task_row={'id':task})}
 
 
 def _stamp(path, task, document):
@@ -1330,11 +1407,12 @@ def _stamp(path, task, document):
 def _show(task, path, document, *, select=True):
     """Remember the file. Only an explicit open moves the canvas the founder has selected."""
     from .session_files import SessionFiles
+    view = _view(task, str(path), document)
     files = SessionFiles()
     files.remember(path, document)
     if select:
         files._current(document["id"], path)
-    return _view(task, str(path), document)
+    return view
 
 
 def _bind_session(history, task, revision, target):
@@ -1483,9 +1561,10 @@ def pin_message(history, task, message, pinned):
     path = row['session_path']
     bound = {item['id'] for item in _bound_messages(history, task)}
     def change(document):
-        if message not in bound | {item['id'] for item in _file_messages(document)}:
+        if message not in bound | {item['id'] for item in _file_messages(document, task)}:
             raise ValueError('That message does not belong to this task.')
-        context = document.setdefault('properties', {}).setdefault('taskContext', {})
+        from .session_files import task_context
+        context = task_context(document, task)
         held = [identity for identity in context.get('pinnedMessages', []) if identity != message]
         if pinned:
             if len(held) >= 80:
@@ -1518,8 +1597,10 @@ def duplicate_home_task(history, task, path, files):
         if path.parent != Path(files.directory).resolve() and path not in {Path(r['path']).resolve() for r in files.recent()}:
             raise ValueError('Choose a saved Home session.')
     source = read_document(path)
+    root_task = (source['properties'].get('taskContext') or {}).get('task')
     fixed = {'start', 'fixed-agent', 'fixed-workshop', 'fixed-you'}
     steps = {n['id']: n for n in source['nodes'] if n['id'] not in fixed and not n.get('fixed')
+             and (not task or _node_task(n, root_task) == task) and n.get('workshopTask') != n['id']
              and n['type'] != 'thing.session' and not n['type'].startswith('trigger.')}
     if not steps:
         raise ValueError('It has no steps to copy yet.')
@@ -1586,7 +1667,7 @@ def duplicate_home_task(history, task, path, files):
     return {'ok':True, 'taskId':created['id'], 'path':created['session_path']}
 
 
-def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace='', parent=''):
+def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace='', parent='', canvas_task=''):
     """A new task and the .archhub file that holds its session; parent makes it a subtask of that task."""
     if type(agent) is not str or len(agent) > 80 or '\0' in agent:
         raise ValueError('Choose a task agent.')
@@ -1595,11 +1676,11 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
     if workspace:
         from .settings_owner import SettingsOwner
         SettingsOwner(None)._workspace(workspace)
-    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom, parent=parent)
+    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom, parent=parent, canvas_task=canvas_task)
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 
-_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned", "project"}
+_SESSION_FIELDS = {"materializePlan", "scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned", "project"}
 _HANDOVER = ("done", "next", "results", "summary", "next_step", "files_touched", "blocker", "resume_prompt", "updated_at")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
 _ABSOLUTE = re.compile(
@@ -1736,7 +1817,7 @@ def _apply_parameters(document, rows):
         _merge_params(nodes[row["id"]], row.get("params"))
 
 
-def _apply_messages(document, rows):
+def _apply_messages(document, rows, task):
     if type(rows) is not list or len(rows) > 80:
         raise ValueError("Task messages must be a short list")
     messages = []
@@ -1746,9 +1827,38 @@ def _apply_messages(document, rows):
         text = _short_text(row.get("text"), "message", 4000)
         who = _short_text(row.get("who") or "Agent", "message author", 80)
         note_id = row.get("id") if type(row.get("id")) is str and row["id"] and len(row["id"]) <= 80 else "msg-%d" % index
-        messages.append({"id": note_id, "role": _TASK_ROLE, "who": who, "text": text})
-    kept = [note for note in (document.get("notes") or []) if not _task_message(note)]
+        messages.append({"id": note_id, "workshopTask":task, "role": _TASK_ROLE, "who": who, "text": text})
+    kept = [note for note in (document.get("notes") or []) if not _task_message(note) or note.get("workshopTask",document["properties"]["taskContext"]["task"]) != task]
     document["notes"] = kept + messages
+
+
+def _write_plan_nodes(document, titles, task):
+    from .canvas_documents import free_spot
+    root = document['properties']['taskContext']['task']
+    steps = sorted((n for n in document['nodes'] if n['type'] == 'note' and type(n['params'].get('plan_order')) is int
+                    and n.get('workshopTask', root) == task),
+                   key=lambda n: n['params']['plan_order'])
+    # Match unchanged steps first so inserting one at the start preserves every existing node and wire.
+    matched = []
+    for title in titles:
+        node = next((n for n in steps if n['title'] == title), None)
+        matched.append(node)
+        if node is not None:
+            steps.remove(node)
+    for order, title in enumerate(titles):
+        node = matched[order] or (steps.pop(0) if steps else None)
+        if node is None:
+            node = {'id': uuid4().hex, 'type': 'note', 'params': {}, 'position': free_spot(document, 480, 80)}
+            document['nodes'].append(node)
+        node['title'] = title
+        node['workshopTask'] = task
+        node['params']['plan_order'] = order
+    removed = {n['id'] for n in steps}
+    if removed:
+        if any(w[end]['node'] in removed for w in document['wires'] for end in ('from', 'to')) or any(
+                n.get('parent') or n.get('children') or n.get('frameMembers') for n in steps):
+            raise ValueError('Remove the connected or grouped step on its canvas to update its connections.')
+        document['nodes'] = [n for n in document['nodes'] if n['id'] not in removed]
 
 
 def update_session(history, task, values):
@@ -1767,11 +1877,15 @@ def update_session(history, task, values):
     from .session_files import _registered_roots, _set_project
     def change(document):
         props = dict(document.get("properties") or {})
-        held = dict(props.get("taskContext") or {})
+        from .session_files import task_context
+        held = task_context(document, task)
+        root = props['taskContext']['task']
+        if task != root and 'project' in values:
+            raise ValueError('Change the project on the canvas itself.')
         if 'homePinned' in values:
             if type(values['homePinned']) is not bool:
                 raise ValueError('Choose whether to show this task at the top of Home.')
-            props['pinned'] = values['homePinned']  # the session's one pinned value (session model)
+            (props if task == root else held)['pinned'] = values['homePinned']  # the session's one pinned value (session model)
             held.pop('homePinned', None)
         if "scope" in values:
             held["scope"] = _short_text(values["scope"], "scope", 200)
@@ -1779,8 +1893,15 @@ def update_session(history, task, values):
             held["rules"] = _text_list(values["rules"], "rules")
         if "agents" in values:
             held["agents"] = _text_list(values["agents"], "agents")
-        if "plan" in values:
-            held["plan"] = _text_list(values["plan"], "plan")
+        if "materializePlan" in values:
+            expected = _text_list(values["materializePlan"], "plan")
+            if "plan" in values or held.get("plan") != expected:
+                raise ValueError("The plan changed. Reopen the task before editing its steps.")
+            _write_plan_nodes(document, expected, task)
+            held.pop("plan", None)
+        elif "plan" in values:
+            _write_plan_nodes(document, _text_list(values["plan"], "plan"), task)
+            held.pop("plan", None)
         if "handover" in values:
             note = values["handover"]
             if type(note) is not dict or not note or set(note) - set(_HANDOVER):
@@ -1813,16 +1934,30 @@ def update_session(history, task, values):
                 raise ValueError("Task progress must be an object")
             held["progress"] = _plain(progress)
         held["task"] = task
-        props["taskContext"] = held
+        if task == root:
+            props["taskContext"] = held
         if "project" in values:
             _set_project(props, values["project"], _registered_roots())
         document["properties"] = props
-        if "nodes" in values:
-            _apply_nodes(document, values["nodes"])
-        if "parameters" in values:
-            _apply_parameters(document, values["parameters"])
+        if 'nodes' in values or 'parameters' in values:
+            existing = {n['id']:n for n in document['nodes']}
+            for key in ('nodes', 'parameters'):
+                specs = values.get(key, [])
+                if not isinstance(specs, list):
+                    raise ValueError('Task nodes and parameters must be lists.')
+                for spec in specs:
+                    node = existing.get(spec.get('id')) if isinstance(spec, dict) and isinstance(spec.get('id'), str) else None
+                    if node and _node_task(node, root) != task:
+                        raise ValueError('This node belongs to another task on the canvas.')
+            if 'nodes' in values:
+                _apply_nodes(document, values['nodes'])
+                for node in document['nodes']:
+                    if node['id'] not in existing:
+                        node['workshopTask'] = task
+            if 'parameters' in values:
+                _apply_parameters(document, values['parameters'])
         if "messages" in values:
-            _apply_messages(document, values["messages"])
+            _apply_messages(document, values["messages"], task)
         return []
     canvas_documents.edit(path, 'You', 'update task session', change, solve_changed=False)
     return _show(task, path, read_document(path), select=False)
@@ -1837,7 +1972,18 @@ def _file_state(row, state):
     from .session_files import set_session_fields
     if not Path(row['session_path']).exists():
         return False  # a file moved away outside the app: the task row stays the record until it is reopened
-    set_session_fields(row['session_path'], {'state': state}, by='Workshop')
+    from .session_files import read_document
+    path = row['session_path']
+    root_context = read_document(path)['properties']['taskContext']
+    if root_context['task'] == row['id'] and not root_context.get('anchor'):
+        set_session_fields(path, {'state': state}, by='Workshop')
+    else:
+        from . import canvas_documents
+        from .session_files import task_context
+        def change(document):
+            task_context(document, row['id'])['state'] = state
+            return []
+        canvas_documents.edit(path, 'Workshop', 'update task state', change, solve_changed=False)
     return True
 
 
@@ -1863,7 +2009,9 @@ def _done_check(task, row):
         document = read_document(path)
     except FileNotFoundError:
         return
-    check = (document.get('properties') or {}).get('doneCheck')
+    from .session_files import task_context
+    context = task_context(document, task)
+    check = (document['properties'] if document['properties']['taskContext']['task'] == task else context).get('doneCheck')
     if not check:
         return
     if check.get('blocked'):
@@ -1872,7 +2020,7 @@ def _done_check(task, row):
     outcome = {}
 
     def change(document):
-        held = document['properties']['doneCheck']
+        held = (document['properties'] if document['properties']['taskContext']['task'] == task else task_context(document, task))['doneCheck']
         held['tries'] = 0 if passed else held.get('tries', 0) + 1
         held['blocked'] = not passed and held['tries'] >= DONE_CHECK_TRIES
         if passed:

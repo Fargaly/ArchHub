@@ -36,6 +36,10 @@ def _summary(document, solved=None):
     ports = {item['id']: item['ports'] for item in catalogue()}
     from .node_params import bound_value, ports as node_ports, PARAM_ENGINE
     for node, source in zip(nodes, document['nodes']):
+        if source.get('workshopTask'):
+            node['task'] = source['workshopTask']
+            if source['id'] == source['workshopTask']:
+                node['task_anchor'] = True
         held = node_ports(source, source.get('ports') or ports.get(source.get('item')) or {})
         node['sockets'] = {'in': [p['id'] + ':' + p.get('type', 'any') for p in held['target']],
                            'out': [p['id'] + ':' + p.get('type', 'any') for p in held['source']]}
@@ -110,8 +114,8 @@ def register_canvas_tools(server):
 
     @server.tool(name='canvas.add_node')
     def canvas_add_node(path: str, type: str, ctx: Context, params: dict | None = None, x: float = 0, y: float = 0,
-                        title: str = '') -> dict:
-        """Add a Library node (id, engine or title from library.search) with optional params and position."""
+                        title: str = '', task: str = '') -> dict:
+        """Add a Library node. On a shared task canvas pass the selected Workshop task id from canvas.read."""
         item = _item(type)
         node = {'id': str(uuid4()), 'type': item['engine'], 'item': item['id'], 'title': title or item['title'], 'pure': item['pure'], 'budget': dict(item['budget']),
                 **({'loop': dict(item['loop'])} if item['loop'] else {}),
@@ -119,9 +123,18 @@ def register_canvas_tools(server):
                 **({'paramDefs': [dict(row) for row in item['paramDefs']]} if item.get('paramDefs') else {}),
                 'position': {'x': float(x), 'y': float(y)}}
         def change(document):
+            from .session_files import task_context
+            root = document.get('properties', {}).get('taskContext') or {}
+            if root.get('anchor') and not task:
+                raise ValueError('Choose the task for this node from canvas.read.')
+            if task:
+                task_context(document, task)
+                node['workshopTask'] = task
             if node['type'] == 'skill' and node['params'].get('session_file'):
                 from .session_files import insert_session
                 placed = insert_session(document, node['params']['session_file'], x, y)
+                if task:
+                    placed['workshopTask'] = task
                 node['id'] = placed['id']
                 return [placed['id']]
             from .canvas_documents import free_spot

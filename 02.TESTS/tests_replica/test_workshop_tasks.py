@@ -108,6 +108,120 @@ def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     assert rows[first_id]["status"] == "PLANNED" and rows[second_id]["status"] == "DONE"
 
 
+def test_native_canvas_tools_attribute_solved_count_to_selected_task(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from nodelang.canvas_tools import register_canvas_tools
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    tools = {}
+    class Server:
+        def tool(self, *, name, **unused):
+            def bind(fn):
+                tools[name] = fn
+                return fn
+            return bind
+    register_canvas_tools(Server())
+    def actor(name):
+        return SimpleNamespace(session=SimpleNamespace(client_params=SimpleNamespace(clientInfo=SimpleNamespace(name=name))))
+    with application_history() as history:
+        a = workshop_tasks.create(history, "Lists", "founder")
+        b = workshop_tasks.create(history, "Quantities", "founder", canvas_task=a["id"])
+        path = b["session_path"]
+        first, second = actor("Claude QA"), actor("Codex QA")
+        for row,owner in [(a,"Claude QA"),(b,"Codex QA")]:
+            assert workshop_tasks.claim(history,row["id"],owner,owner)
+        listing = tools["canvas.add_node"](path,"n_list",first,params={"value":"[1,2,3]"},task=a["id"])["node"]
+        count = tools["canvas.add_node"](path,"s_count",second,task=b["id"])["node"]
+        with pytest.raises(ValueError, match="Choose the task"):
+            tools["canvas.add_node"](path,"s_count",second)
+        tools["canvas.wire"](path,listing+".value",count+".items",second)
+        def read_count():
+            view=workshop_tasks.open_session(history,b["id"],select=False)
+            return next(n["output"]["count"] for n in view["activity"] if n["id"]==count)
+        assert read_count()==3
+        tools["canvas.set_param"](path,listing,"value","[1,2,3,4]",first)
+        assert read_count()==4
+        first_view=workshop_tasks.open_session(history,a["id"],select=False)
+        assert listing in {n["id"] for n in first_view["workflow"]}
+        assert count not in {n["id"] for n in first_view["workflow"]}
+        assert any(h["by"]=="agent:Codex QA" for h in tools["canvas.read"](path)["last_edits"])
+
+
+def test_shared_canvas_keeps_two_tasks_subtasks_and_agent_results_separate(tmp_path, monkeypatch):
+    from nodelang import canvas_documents as docs, session_files as files
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        a = workshop_tasks.create(history, "Doors", "founder")
+        b = workshop_tasks.create(history, "Schedules", "founder", canvas_task=a["id"])
+        path = a["session_path"]
+        assert b["session_path"] == path
+        child_a, child_b = [workshop_tasks.create(history, r["title"]+" subtask", "founder", parent=r["id"]) for r in (a,b)]
+        assert {r["session_path"] for r in (child_a,child_b)} == {path}
+        for row, peer in [(a,"peer-a"),(b,"peer-b")]:
+            assert workshop_tasks.claim(history, row["id"], peer, peer)
+            workshop_tasks.update_session(history, row["id"], {"plan":[row["title"]+" check"],
+                "messages":[{"text":peer}], "nodes":[{"id":"result-"+peer,"type":"note","title":"Found",
+                "result":{"status":"Done","output":peer}}]})
+            workshop_tasks.record_step(history,row["id"],peer,peer,"Review","working",result="Checked")
+        before = files.read_document(path)
+        a_step = next(n for n in before["nodes"] if n["title"] == "Doors check")
+        b_step = next(n for n in before["nodes"] if n["title"] == "Schedules check")
+        workshop_tasks.update_session(history, b["id"], {"plan":["Revised schedule"]})
+        with pytest.raises(ValueError,match="another task"):
+            workshop_tasks.update_session(history, b["id"], {"parameters":[{"id":a_step["id"],"params":{"value":"wrong"}}]})
+        assert next(n for n in files.read_document(path)["nodes"] if n["id"]==a_step["id"]) == a_step
+        for row, peer, plan in [(a,"peer-a","Doors check"),(b,"peer-b","Revised schedule")]:
+            view = workshop_tasks.open_session(history,row["id"],select=False)
+            assert view["plan"] == [plan] and [m["text"] for m in view["messages"]] == [peer]
+            assert {r["output"] for r in view["activity"] if r.get("output")} == {peer}
+        docs.edit(path,"Reviewer","remove selected step",lambda d:d.update(nodes=[n for n in d["nodes"] if n["id"]!=b_step["id"]]),solve_changed=False)
+        assert workshop_tasks.handover(history,b["id"])["plan"] == []
+        docs.undo_last(path,"Reviewer")
+        assert workshop_tasks.handover(history,b["id"])["plan"] == ["Revised schedule"]
+        assert workshop_tasks.handover(history,a["id"])["plan"] == ["Doors check"]
+        assert files.read_document(path)["properties"]["taskContext"]["task"] == a["id"]
+        workshop_tasks.set_status(history, b["id"], "DONE")
+        assert files.session_fields(files.read_document(path),roots={})["state"] == "open"
+        for removed_row in (a,b):
+            rid = removed_row["id"]
+            def remove_task(document):
+                document["nodes"] = [n for n in document["nodes"] if n["id"] != rid]
+                document["wires"] = [w for w in document["wires"] if rid not in (w["from"]["node"],w["to"]["node"])]
+            docs.edit(path,"Reviewer","remove selected task",remove_task,solve_changed=False)
+            with pytest.raises(ValueError,match="no longer"):
+                workshop_tasks.open_session(history,rid,select=False)
+            docs.undo_last(path,"Reviewer")
+            assert workshop_tasks.open_session(history,rid,select=False)["taskId"] == rid
+        assert workshop_tasks.bound_session_path(a["id"]) == path
+
+
+def test_plan_steps_survive_edit_remove_undo_and_reopen(tmp_path, monkeypatch):
+    from nodelang import canvas_documents as docs, session_files as files
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Shared canvas", "founder")
+        identity, path = task["id"], task["session_path"]
+        def legacy(document):
+            document["properties"]["taskContext"]["plan"] = ["Check doors", "Check walls"]
+        docs.edit(path, "fixture", "older plan", legacy, solve_changed=False)
+        workshop_tasks.update_session(history, identity, {"materializePlan": ["Check doors", "Check walls"]})
+        docs.undo_last(path, "Reviewer")
+        assert files.read_document(path)["properties"]["taskContext"]["plan"] == ["Check doors", "Check walls"]
+        workshop_tasks.update_session(history, identity, {"plan": ["Check doors", "Check walls"]})
+        def steps():
+            return {n["title"]: n["id"] for n in files.read_document(path)["nodes"] if "plan_order" in n["params"]}
+        original = steps()
+        workshop_tasks.update_session(history, identity, {"plan": ["Check fire doors", "Check walls"]})
+        assert steps()["Check fire doors"] == original["Check doors"]
+        selected = original["Check doors"]
+        def remove(document):
+            document["nodes"] = [n for n in document["nodes"] if n["id"] != selected]
+        docs.edit(path, "Reviewer", "remove selected step", remove, solve_changed=False)
+        assert workshop_tasks.open_session(history, identity, select=False)["plan"] == ["Check walls"]
+        docs.undo_last(path, "Reviewer")
+        assert workshop_tasks.open_session(history, identity, select=False)["plan"] == ["Check fire doors", "Check walls"]
+        assert steps()["Check walls"] == original["Check walls"]
+
+
 def test_rename_records_the_title_the_founder_typed(tmp_path, monkeypatch):
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
     with application_history() as history:
@@ -192,3 +306,26 @@ def test_third_run_waits_when_capacity_is_reached(tmp_path, monkeypatch):
     from nodelang import nograph_server
     shown = {row["id"]: row for row in nograph_server._list_tasks()}
     assert shown[ids[2]]["status"] == "WIP"
+
+
+def test_continue_uses_current_claimant_when_a_former_member_is_still_online(tmp_path, monkeypatch):
+    from nodelang import workshop_live, workshop_mailbox
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        row = workshop_tasks.create(history, "Review", "founder")
+        task = row["id"]
+        for owner in ["former", "current"]:
+            assert workshop_tasks.claim(history, task, owner, owner)
+        history._db.execute("UPDATE workshop_tasks SET members=json_set(members,'$[0].lease_until',0) WHERE id=?", (task,))
+    peers = [dict(session=k, agent=k, handle=k, name=k, app="test", native_session_id=k) for k in ["former", "current"]]
+    monkeypatch.setattr(workshop_live, "live_agents", lambda: peers)
+    sent = []
+    def record(history, message, identity, **options):
+        sent.append((message["to"], options["queued"]))
+        return {"message_id": "recorded"}
+    monkeypatch.setattr(workshop_mailbox, "_send", record)
+    monkeypatch.setattr(workshop_live, "deliver", lambda history, message, recipients, *a, **kw:
+                        [{"state":"pending", "agent":r["session"]} for r in recipients])
+    receipt = workshop_live.send_as_founder("Continue", [], task=task, task_peer=True)
+    assert sent == [("current", (task,))]
+    assert receipt["deliveries"] == [{"state":"pending", "agent":"current"}]

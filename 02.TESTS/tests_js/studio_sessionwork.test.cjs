@@ -22,7 +22,7 @@ test('SESSIONWORK: one card per piece of work, lead and member avatars, interrup
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
-    await page.goto('http://sessionwork.test');
+    await page.goto('http://127.0.0.1');
     await page.addStyleTag({path: path.join(studio, 'style.css')});
     await page.addStyleTag({content: 'html,body,#root{height:100%;margin:0}'});
     for (const name of ['react.js', 'react-dom.js']) await page.addScriptTag({path: path.join(studio, 'vendor', name)});
@@ -32,6 +32,8 @@ test('SESSIONWORK: one card per piece of work, lead and member avatars, interrup
     await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
     await page.evaluate(() => {
       const s = window.structuredClone(window.ArchHubAPI.getSnapshot());
+      s.desktopAccess = {ready:true, admitted:true, subject:'home-test'};
+      window.ArchHubCommandRegistry = {palette_order:[], commands:[]};
       const now = new Date().toISOString();
       s.tasks = [
         {id: 'session-review', title: 'Drawing set review', status: 'WIP', sessionPath: 'review.archhub', messages: [], updated_at: now,
@@ -45,7 +47,7 @@ test('SESSIONWORK: one card per piece of work, lead and member avatars, interrup
         {id: 'live-a', name: 'Drawing coordinator', status: 'working', task: 'session-review'},
         {id: 'live-b', name: 'Site reviewer', status: 'working', task: 'session-review'}]};
       s.focusedTask = '';
-      window.selected = [];
+      window.sent = [];
       window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
         executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
         setActiveSurface: () => {}, supportsAction: () => true,
@@ -55,7 +57,9 @@ test('SESSIONWORK: one card per piece of work, lead and member avatars, interrup
         setSessionListFilter: async () => ({ok: true}),
         readHomeLayout: async () => ({homeLayout: {width: 300, collapsed: false, resume: '', order: [], hidden: []},
           homeMap: {group: ['Project'], order: ['Needs you first'], card: ['Steps and state'], density: ['Comfortable'], done: ['Show'], filter: ['All']}}),
-        setHomeLayout: async layout => { if (layout && layout.resume) window.selected.push(layout.resume); return {ok: true}; },
+        setHomeLayout: async () => ({ok:true}), listSessionModel: async () => ({groups:[]}),
+        listTasks: async () => s.tasks,
+        sendChatTurn: async (turn,reply,id) => {window.sent.push({id,taskPeer:turn.taskPeer});return {provider:'Workshop',answer:'Delivery pending'};},
         refreshAgentSurface: async () => null, openTaskGraph: async () => ({ok: true})};
     });
     for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
@@ -75,14 +79,15 @@ test('SESSIONWORK: one card per piece of work, lead and member avatars, interrup
     assert.equal(await more.locator(':scope > *').count(), 3);
     assert.equal(await card('Site reviewer').count(), 0, 'a second live agent on the work is no second card');
     assert.equal(await card('Drawing coordinator').count(), 0);
-    // Interrupted work stays open with Continue; Continue selects it (the Home owner's record).
+    // Continue dispatches through the selected task. The recording transport returns a pending receipt.
+    // An old per-agent run offers no Continue.
+    assert.equal(await card('Old agent run').getByRole('button', {name: 'Continue'}).count(), 0);
     const library = card('Details library');
     assert.equal(await library.count(), 1);
     assert.match(await library.locator('.home-card-need span').textContent(), /^Interrupted · waiting for an agent$/);
     await library.getByRole('button', {name: 'Continue', exact: true}).click();
-    await page.waitForFunction(() => window.selected.includes('session-library'));
-    // An old per-agent run offers no Continue.
-    assert.equal(await card('Old agent run').getByRole('button', {name: 'Continue'}).count(), 0);
+    await page.waitForFunction(() => window.sent.length > 0);
+    assert.deepEqual(await page.evaluate(()=>window.sent),[{id:'session-library',taskPeer:true}]);
     assert.deepEqual(errors, []);
     console.log('PASS sessionwork Home cards: lead + members, interrupted Continue, no Continue on old runs');
     await page.close();

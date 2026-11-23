@@ -144,8 +144,26 @@
     };
     // A held run names its session by task id or by the session file it runs in.
     const held = (s.approvals || []).filter(c => c.status === 'pending');
-    const namesOf = c => [c.taskId,c.task_id,c.work,...(c.taskIds||[]),c.path,...(c.canvasNodes||[]).flatMap(ref=>[ref.taskId,ref.path])].filter(Boolean);
-    const waiting = new Set(held.flatMap(namesOf).flatMap(name => [name,...(s.tasks||[]).filter(t=>t.sessionPath===name).map(t=>t.id)]));
+    const tasksAtPath = new Map();
+    for (const row of s.tasks || []) {
+      const path = api.sessionPathKey(row.sessionPath);
+      if (path) tasksAtPath.set(path, tasksAtPath.has(path) ? null : row.id);
+    }
+    const ownersOf = card => {
+      const refs = card.canvasNodes || [];
+      const ids = new Set([card.taskId, card.task_id, ...(card.taskIds || []), ...refs.map(ref=>ref.taskId)].filter(Boolean));
+      if (card.work && card.work !== card.id && !sameHomePath(card.work,card.path)) ids.add(card.work);
+      const paths = refs.filter(ref=>!ref.taskId && !refs.some(other=>other.taskId && sameHomePath(other.path,ref.path))).map(ref=>ref.path);
+      if (!refs.length && !ids.size) paths.push(card.path);
+      for (const path of paths.filter(Boolean)) {
+        const key = api.sessionPathKey(path);
+        if (!tasksAtPath.has(key)) ids.add(path);
+        else if (tasksAtPath.get(key)) ids.add(tasksAtPath.get(key));
+      }
+      return ids;
+    };
+    const owners = new Map(held.map(card=>[card,ownersOf(card)]));
+    const waiting = new Set([...owners.values()].flatMap(ids=>[...ids]));
     const rank=id=>{const index=order.indexOf(id);return index<0?order.length:index;};
     const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED' && !registration(t)).sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
     const sessionRows = [
@@ -159,7 +177,7 @@
     }
     // A held run that belongs to no listed session is a row too: it needs him, so it is shown and counted.
     for(const card of held.filter((card,index)=>held.findIndex(other=>(other.input_digest||other.id)===(card.input_digest||card.id))===index))
-      if(!namesOf(card).some(name=>sessionRows.some(row=>!registration(row)&&(row.id===name||row.sessionPath===name))))
+      if(!sessionRows.some(row=>!registration(row)&&owners.get(card).has(row.id)))
         sessionRows.unshift({id:'approval:'+card.id,title:card.title||'A run waits for your approval',kind:'agent-session',approval:card.id,who:card.who||''});
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
@@ -184,7 +202,7 @@
     // The header, the map's bar and its cards read these: what needs him, and what an agent works on now that does not.
     const needs = row => sectionOf(row) === 'Needs you', working = row => sectionOf(row) === 'Working now';
     // The held run of a row, when it has one (the card's "needs your approval" line opens it).
-    const heldOf = row => held.find(card => namesOf(card).some(name => name === row.id || name === row.sessionPath));
+    const heldOf = row => held.find(card => owners.get(card).has(row.id) || row.approval === card.id);
     return {waiting, tasks, list, resumed, sessionRows, sectionOf, needs, working, heldOf, interruptedWork,
       projectLabel, needsYou: sessionRows.filter(row => !registration(row) && needs(row)).length,
       running: sessionRows.filter(row => !registration(row) && working(row)).length};
@@ -223,7 +241,7 @@
     // A card is a piece of work (founder 2026-11-19): agents are members of it, never cards. A session whose task row is
     // archived (the one-time retire of declare-made sessions, or his own archive) is no card; its file stays where it is.
     const files = (listed?.groups || []).flatMap(group => group.sessions).map(session => {
-      const row = rows.sessionRows.find(item => (session.task && item.id === session.task) || sameHomePath(item.sessionPath, session.path));
+      const row = rows.sessionRows.find(item => session.task ? item.id === session.task : sameHomePath(item.sessionPath, session.path));
       const archived = session.state === 'archived' || row?.status === 'ARCHIVED';
       const fact = facts(row, session.context?.plan, Array.isArray(row?.members) ? row.members : session.members || []);
       const declared = registration(row || {id:session.task});
@@ -237,7 +255,7 @@
     });
     const filed = new Set(files.map(card => card.taskIdentity).filter(Boolean));
     const loose = rows.sessionRows.filter(row => !registration(row) && !filed.has(row.id) &&
-      !files.some(card => sameHomePath(card.path, row.sessionPath || row.path)) &&
+      !files.some(card => (row.fileOnly || !card.taskIdentity) && sameHomePath(card.path, row.sessionPath || row.path)) &&
       (row.status !== 'ARCHIVED' || row.sessionPath)).map(row => ({id: row.approval ? row.id : 'row:' + row.id, path: row.sessionPath || '',
       task: row.fileOnly || row.approval || row.status === 'ARCHIVED' ? '' : row.id,
       taskIdentity: row.id, archived: row.status === 'ARCHIVED', parent: row.parent || '', title: row.approval ? row.title : titleOf(row),
@@ -253,15 +271,16 @@
     const chainUp = card => { const chain = []; for (let up = above(card); up && !chain.includes(up) && chain.length < 32; up = above(up)) chain.push(up); return chain; };
     const rootOf = card => chainUp(card).at(-1) || card;
     for (const card of every) { card.subtasks = every.filter(other => above(other) === card).length; card.subtasksFolded = card.subtasks > 0 && p.collapsed.includes('task:' + card.task); }
-    const selected = card => (!!focus && card.task === focus) || sameHomePath(card.path, focusPath);
+    const selected = card => focus && card.task ? card.task === focus : sameHomePath(card.path, focusPath);
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
       (card.need?.approval || (!card.archived && (card.pinned || selected(card) ||
         ['Failed','Working','Needs you','Paused'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
     const available = (history ? every : active).filter(card => !chainUp(card).some(up => up.subtasksFolded));
-    const cards = available.filter(card =>
+    const matches = card =>
       (p.done === 'Show' || !card.finished || card.pinned || card.need?.approval) &&
       (p.filter === 'All' || card.state === (p.filter === 'Running' ? 'Working' : 'Needs you')) &&
-      (kind === 'all' || card.kind === kind));
+      (kind === 'all' || card.kind === kind);
+    const cards = available.filter(matches);
     // Old runs keep their own section, folded until he opens it (the list's Older / archived), whatever the grouping.
     const ownKey = card => history && card.older ? 'Older / archived' :
       p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state :
@@ -295,9 +314,16 @@
     for (const group of laid) {
       const id = 'group:' + group.key;
       if (room && x > 0 && x + group.w > limit) { x = 0; y += band + 40; band = 0; }  // in a measured room a group that would cross the edge starts the next row
-      groups.push({key: group.key, count: group.members.length, collapsed: group.collapsed});
+      const counted = (history ? every : active).filter(card => matches(card) && keyOf(card) === group.key);
+      const canvases = new Set(counted.map(card => api.sessionPathKey(card.path)).filter(Boolean)).size;
+      const work = counted.filter(card => !card.registration && (card.task || card.archived && card.taskIdentity));
+      const children = work.filter(card => card.parent).length;
+      const counts = [[canvases, 'canvas', 'canvases'], [work.length-children, 'task', 'tasks'], [children, 'subtask', 'subtasks']];
+      const countText = counts.filter(([count])=>count).map(([count,one,many])=>count+' '+(count===1?one:many)).join(' · ')
+        || (counted.length === 1 ? '1 item' : counted.length+' items');
+      groups.push({key: group.key, count: group.members.length, countText, collapsed: group.collapsed});
       for (const card of group.members) inside.set(card.id, group.collapsed ? id : card.id);
-      nodes.push({id, group: true, collapsed: group.collapsed, title: group.key, count: group.members.length, x, y, w: group.w, h: group.h});
+      nodes.push({id, group: true, collapsed: group.collapsed, title: group.key, count: group.members.length, countText, x, y, w: group.w, h: group.h});
       if (!group.collapsed) for (const {card, column, row} of group.cells) nodes.push({...card, x: x + 24 + column * (wide + gapX), y: y + 46 + row * (group.tall + gapY), w: wide, h: group.tall});
       x += group.w + 40; band = Math.max(band, group.h);
       if (x > limit) { x = 0; y += band + 40; band = 0; }
@@ -306,7 +332,7 @@
     const wires = links.map(wire => ({...wire, from: inside.get(wire.from), to: inside.get(wire.to)})).filter(wire => wire.from !== wire.to);
     const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
     return {params: p, nodes, wires, groups, total: every.length, available: available.length, armed: every.reduce((sum, card) => sum + card.armed, 0), layout,
-      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.state, node.agent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
+      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.countText, node.state, node.agent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
   // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
   // sessions, run budget. Done when and input links are the session model's (POST /api/session-model); read-only agents and
@@ -770,7 +796,7 @@
       return true;
     };
     // A card's session: its task, else the task whose session file it is (one file, however its path is spelled).
-    const cardTask = card => card && !card.archived && !card.registration ? tasks.find(t => card.task && t.id === card.task) || tasks.find(t => sameHomePath(t.sessionPath, card.path)) || null : null;
+    const cardTask = card => card && !card.archived && !card.registration ? (card.task ? tasks.find(t => t.id === card.task) : tasks.find(t => sameHomePath(t.sessionPath, card.path))) || null : null;
     // Selection belongs to the Home owner (its resume record and the open session); the layout is never touched by it.
     // Only a card with no task (a live agent, a held run) is held here; 'none' is an explicit empty pick (the pane).
     const pick = card => {
@@ -780,6 +806,24 @@
       u.setTask(id);
       return saveHome({resume: id});
     };
+    const continuing = React.useRef(new Set());
+    const continueCard = card => u.act(async () => {
+      if (continuing.current.has(card.task)) return;
+      continuing.current.add(card.task);
+      try {
+        return await continueHomeWork(card, tasks, u.openTaskFile, row => {
+          const prompt = 'Continue task ' + row.id + ' in its existing canvas. Report your next change or why you cannot run.';
+          const target = window.UI.threadDefault(s, row);
+          if (target?.startsWith('chat:')) {
+            const turn = window.UI.chatTurn(window.UI.threadChoices(s, row, []), target, prompt);
+            if (turn.resume) return turn;
+          }
+          return {agent: 'BABOOM', prompt, taskPeer: true};
+        }, api.sendChatTurn, u.setToast, api.listTasks);
+      } finally {
+        continuing.current.delete(card.task);
+      }
+    });
     const openCard = card => {
       // The card's own task id opens it: never the current selection, and never waiting for the task list to catch up with the map.
       const id = card.task || cardTask(card)?.id;
@@ -831,16 +875,16 @@
             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
           </div>}
           {pickedTask && <><details className="dx-fact dx-edit-field"><summary><span>Project</span><span className="dx-edit-label">Edit</span><b>{task?.project || ''}</b></summary><select aria-label="Project" key={(task?.id || '') + ':project:' + (task?.workspace || '')} defaultValue={task?.workspace || ''} onChange={e => { if (e.target.value === task?.workspace) return false; return saveSession({project: e.target.value}); }}><option value="">No project</option>{projectChoices.map(c => <option key={c.key} value={c.value}>{c.name}</option>)}</select></details><div className="dx-fact" aria-label="Task participants"><span>Participants</span><b>{taskMembers.length ? taskMembers.map(member => humanLabel(member.name)).join(' · ') : 'No agent yet'}</b></div></>}
-          {/* A subtask is a task of its own (its own session file) whose row names this task as its parent. */}
-          {pickedTask && <form className="dx-preview-actions" data-home-subtask-form="" onSubmit={event => { event.preventDefault(); const form = event.currentTarget, title = String(new FormData(form).get('subtask') || '').trim();
-            return title && executeAction('ui.select', () => u.act(async () => { const made = await api.createTask(title, '', '', task.id); form.reset(); u.setToast('Subtask added under ' + (task.sessionTitle || task.title) + '.'); return made; }), event); }}>
-            <input name="subtask" aria-label="New subtask" placeholder="New subtask" maxLength={2000} /><button type="submit" className="dx-quiet">Add subtask</button></form>}</div>
+          {/* Create work on this selected canvas; a subtask also names this task as its parent. */}
+          {pickedTask && <form className="dx-preview-actions" data-home-subtask-form="" onSubmit={event => { event.preventDefault(); const form = event.currentTarget, sibling = event.nativeEvent.submitter?.value === 'task', title = String(new FormData(form).get('subtask') || '').trim();
+            return title && executeAction('ui.select', () => u.act(async () => { const made = await api.createTask(title, '', task.workspace || '', sibling ? '' : task.id, task.id); form.reset(); u.setToast('Added to ' + (task.sessionTitle || task.title) + '.'); return made; }), event); }}>
+            <input name="subtask" aria-label="New subtask" placeholder="New subtask" maxLength={2000} /><button type="submit" value="subtask" className="dx-quiet">Add subtask</button><button type="submit" value="task" className="dx-quiet">Add task on canvas</button></form>}</div>
       </> : <>
         <header className="shared-properties-head"><span className="properties-eyebrow">HOME</span><h2>Map of the work</h2><p className="muted">Every value here is a parameter of Home. Change one and the map re-arranges. Select a session for its own properties.</p></header>
         <div className="shared-properties-task">
           {Object.entries(mapChoices || {}).map(([key, options]) => <label className="dx-fact" key={key}><span>{fieldLabels[key] || key}</span><select aria-label={fieldLabels[key] || key} value={chart.params[key]} onChange={event => { const value = event.target.value; return executeAction('ui.select', () => changeMap({[key]: value})); }}>{options.map(option => <option key={option}>{option}</option>)}</select></label>)}
           <h3>{chart.params.group === 'Agent' ? 'Agents' : chart.params.group === 'State' ? 'States' : 'Projects'}</h3>
-          {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.count}</span><button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></div>)}
+          {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.countText}</span><button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></div>)}
           {!history && !!homeLayout.hidden.length && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
           {!history && <button type="button" data-design="home1.reset" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>}
         </div>
@@ -867,7 +911,7 @@
               panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} onAdd={startSessionWith} />, insp: mapInspector}}>
               <div className="dx-col dx-task-column home-map-stage">
                 {listing.status === 'error' ? <p role="alert">{listing.error} <button type="button" onClick={() => executeAction('ui.select', () => setAttempt(attempt + 1))}>Retry</button></p> : null}
-                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
+                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onContinue={continueCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
                   : mapChoices && listing.status === 'loaded' && (request === 'empty' || request === 'loaded') ? <main className="resume-main">{chart.total ? <section className="resume-zero">
                     <h1>{chart.params.filter === 'Running' ? '0 running' : chart.params.filter === 'Needs you' ? '0 need you' : 'No sessions match your filters'}</h1>
                     {!history && chart.available ? <button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
@@ -898,7 +942,7 @@
             <window.UI.Dock face={face} rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
               panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane}}>
               <div className="dx-col dx-task-column">
-                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={canvasSteps} planned={canvasPlanned} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={resetDock} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
+                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={canvasSteps} planned={canvasPlanned} onEditPlan={plan.length && plan.every(step=>typeof step==='string') ? ()=>saveSession({materializePlan:plan}) : undefined} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={resetDock} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
                   <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
@@ -951,6 +995,20 @@
   }
   window.UI.Home = Home;
   window.UI.homeShown = () => homeShown;  // the session Home shows selected now (its own optimistic list), '' if none
+  async function continueHomeWork(card, tasks, open, turnFor, send, show, refresh) {
+    // Cards sharing a file still identify different work. Only the selected task may receive this turn.
+    const row = tasks.find(item => card.task && item.id === card.task);
+    if (!row?.sessionPath) throw Error('The selected task is unavailable. Refresh Home and choose it again.');
+    if (!await open(row.id, 'split')) return;
+    const turn = turnFor(row);
+    const reply = await send(turn, undefined, row.id);
+    show((reply.provider || turn.agent) + ' · ' + (reply.answer || 'No result was returned.'));
+    // A settled turn has already been sent. Refresh failure must never turn it into a retry.
+    // The receipt remains visible in this thread; the failed refresh is logged, never retried as a send.
+    try { await refresh(); } catch (error) { console.warn('Home refresh after Continue failed:', error.message); }
+    return reply;
+  }
+  window.UI.continueHomeWork = continueHomeWork;
   window.UI.homeRows = homeRows;
   window.UI.homeMap = homeMap;
   window.UI.Sheet = Sheet;

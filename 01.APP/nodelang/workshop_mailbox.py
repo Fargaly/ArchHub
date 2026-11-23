@@ -75,15 +75,19 @@ def _addresses_founder(target, reply, history):
 
 
 @contextmanager
-def application_history(source=None, *, read_only=False, busy_timeout_seconds: float = 2.0, database=None):
+def application_history(source=None, *, read_only=False, busy_timeout_seconds: float = 2.0, database=None, existing_only=False):
     """One local Workshop file; source is retained only for existing caller compatibility."""
     path = Path(database) if database is not None else profile_database()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path, isolation_level=None, timeout=busy_timeout_seconds)) as connection:
+    if existing_only and not read_only:
+        raise ValueError('An existing-only Workshop reader cannot write.')
+    if not existing_only:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    target = path.resolve().as_uri() + '?mode=ro' if existing_only else path
+    with closing(sqlite3.connect(target, uri=existing_only, isolation_level=None, timeout=busy_timeout_seconds)) as connection:
         connection.execute("PRAGMA busy_timeout=%d" % (busy_timeout_seconds * 1000))
-        if connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+        if not existing_only and connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
             connection.execute("PRAGMA journal_mode=WAL")
-        with ConversationHistoryStore(path, instance_id=ROOM, connection=connection,
+        with ConversationHistoryStore(path, instance_id=ROOM, connection=connection, create=not existing_only,
                 busy_timeout_seconds=busy_timeout_seconds) as selected:
             if not read_only:
                 if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
@@ -1103,6 +1107,7 @@ class WorkshopInjection:
         self._owns_transport = transport is not None and callable(getattr(transport, "create_channel", None))
         self.transport = transport.create_channel() if self._owns_transport else transport
         self.tick_seconds = tick_seconds
+        self._next_task_maintenance = 0.0
         self.injection_timeout_seconds, self.coordinator_title = injection_timeout_seconds, coordinator_title
         self._coordinator_native_id = None
         self._stop, self._wake = threading.Event(), threading.Event()
@@ -1381,6 +1386,11 @@ class WorkshopInjection:
         with self._tick_lock, application_history() as history:
             self._flush_reads(history)
             self._tick(history, now)
+            if now >= self._next_task_maintenance:
+                from .library_engines import LIBRARY_ITEM_ENGINES
+                from .workshop_tasks import maintain_tasks
+                maintain_tasks(history)
+                self._next_task_maintenance = now + 60 * float(LIBRARY_ITEM_ENGINES['tool_workshop']['params']['tick_cadence_minutes'])
 
     def _tick(self, history, now, *, message_id=None):
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")

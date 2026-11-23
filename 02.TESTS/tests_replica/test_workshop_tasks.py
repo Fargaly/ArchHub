@@ -416,3 +416,20 @@ def test_continue_uses_current_claimant_when_a_former_member_is_still_online(tmp
     receipt = workshop_live.send_as_founder("Continue", [], task=task, task_peer=True)
     assert sent == [("current", (task,))]
     assert receipt["deliveries"] == [{"state":"pending", "agent":"current"}]
+
+
+def test_column_reads_committed_state_with_writer_active(tmp_path, monkeypatch):
+    import sqlite3
+    from nodelang import nograph_server, workshop_mailbox
+
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    assert nograph_server._list_tasks(True) == []
+    assert not workshop_mailbox.profile_database().exists()
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Committed title", "qa")["id"]
+    with sqlite3.connect(workshop_mailbox.profile_database()) as writer:
+        writer.execute("UPDATE workshop_tasks SET title=? WHERE id=?", ("Pending title", task))
+        rows = {row["id"]: row for row in nograph_server._list_tasks(True)}
+        assert rows[task]["title"] == "Committed title"
+        writer.rollback()
+    writer.close()

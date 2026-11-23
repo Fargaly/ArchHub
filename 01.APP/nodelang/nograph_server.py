@@ -1563,6 +1563,9 @@ def _list_tasks(include_archived=False):
     import copy
     from .workshop_mailbox import application_history
     from .workshop_tasks import column
+    from .workshop_mailbox import profile_database
+    if not profile_database().is_file():
+        return []
     key, version = include_archived is True, _store_version()
     with _COLUMN_LOCK:
         held = _COLUMN.get(key)
@@ -1570,8 +1573,8 @@ def _list_tasks(include_archived=False):
         if held and version is not None and held[2] == version and time.monotonic() - held[0] < COLUMN_SHARE_S:
             return copy.deepcopy(held[1])
         generation = _COLUMN_GENERATION[0]
-    with application_history() as history:
-        rows = column(history, include_archived=key)
+    with application_history(read_only=True, existing_only=True) as history:
+        rows = column(history, include_archived=key, settle=False)
     with _COLUMN_LOCK:
         if generation == _COLUMN_GENERATION[0] and version is not None:
             _COLUMN[key] = (time.monotonic(), copy.deepcopy(rows), version)

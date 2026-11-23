@@ -655,3 +655,14 @@ Replaces: Setup's own unconditional marker write as the first connector step. Se
 Budgets (disposable folders, this PC): admission with no supervisor returns at once; with one current supervisor and a 3 s call in flight it returned after the call answered (about 3 s); a legacy 665c785f supervisor holds Setup without waiting. The compiled Inno court (real ISCC, real Setup /VERYSILENT) installs, refuses or holds in under 10 s per case. Not measured: many concurrent agent connectors on the founder's machine.
 
 Verification: tests_replica/test_setup_admission.py, 21 cases including the compiled installer path: the live legacy supervisor call keeps its real answer and no file or marker is written; the drain is owned during the install and reopened after; the updater's drain is kept; malformed, empty and stale requests are left untouched; a fresh install with an empty runtime folder proceeds.
+## D-049 Home reads the Workshop read-only; task upkeep moves to the Workshop tick (2026-11-23)
+
+Request: F337 (SESSION-IS-THE-WORK, SESSIONWORK) and the founder's 2026-11-23 reports of Home lag and agents seeing "database is locked". Home's task list (listTasks) settled lapsed claims, reaped stalled work and folded old declarations on every 5 s read, inside a write transaction; behind any other writer that read waited about 2.26 s on both the Nov 20 build and 50d908cd (reproduced by Codex e988 in a disposable two-connection WAL test).
+
+Prior art: SQLite WAL -> readers never block writers and writers never block readers, so long as readers do not write. PostgreSQL autovacuum -> housekeeping runs on its own schedule, never inside a user's query. Git -> git status reads, git gc tidies on a separate trigger. Fit: the interactive read opens the existing database read-only (mode=ro, nothing created) and changes nothing; the same upkeep (reap, settle, fold) runs on the Workshop's existing periodic tick at its configured cadence.
+
+Replaces: listTasks' settle/reap/fold inside the read. The read-only connection is the same Workshop store (workshop/messages.sqlite3), opened through application_history(read_only=True, existing_only=True); no new store or file. A missing database returns no tasks instead of creating one.
+
+Budgets (disposable profiles): with an unrelated writer holding the lock, Home's task read returns at once instead of waiting about 2.26 s. Not measured: the founder's live store under several agents.
+
+Verification: tests_replica/test_workshop_tasks.py, plus the session, model, hierarchy and Watch suites (104 passed); the Home read leaves a held writer untouched and returns the task.

@@ -1115,13 +1115,23 @@ def _declaration_for(row, declarations, index=None):
     return (current or matched or [None])[0]
 
 
-def column(history, project=None, stale_hours=None, *, include_archived=False):
+def maintain_tasks(history):
+    if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
+        from .workshop_mailbox import read_declarations
+        _ensure(history)
+        reap_stalled(history)
+        _settle_lapsed(history)
+        fold_declarations(history, read_declarations(history._db, include_archived=True))
+
+
+def column(history, project=None, stale_hours=None, *, include_archived=False, settle=True):
     """Studio Work rows. Declaration fields fill the view. A project shows only its own tasks.
     Stale declared work leaves in-progress."""
     from .workshop_mailbox import read_declarations
     hours = TASKS_NODE["params"]["stale_hours"] if stale_hours is None else stale_hours
     declarations = read_declarations(history._db, include_archived=True)
-    fold_declarations(history, declarations)
+    if settle:
+        fold_declarations(history, declarations)
     live = {}
     for item in declarations:
         if not item.get("current"):
@@ -1145,7 +1155,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
     current = _current_session()
     built = []
     threads, last = _task_threads(history)
-    listed = rows(history, include_archived=include_archived)
+    listed = rows(history, include_archived=include_archived, settle=settle)
     index = _declaration_index(declarations)
     by_owner = {}
     for item in declarations:
@@ -1289,13 +1299,18 @@ def rows(history, task=None, *, include_archived=True, settle=True):
     if settle:
         reap_stalled(history)
         _settle_lapsed(history)
-    _ensure(history)
+        _ensure(history)
+    # A reader can see an older schema until the next writer migrates it.
+    present = {row[1] for row in history._db.execute("PRAGMA table_info(workshop_tasks)")}
+    defaults = {'archived': '0', 'revision': '0', 'write_open': '0'}
+    fields = ','.join(name if name in present else defaults.get(name, 'NULL') for name in COLUMNS)
+    archived = 'IFNULL(archived,0)' if 'archived' in present else '0'
     now = time.time()
     # A lookup by id still finds an archived task. A list hides it unless asked.
     show = 1 if include_archived or task is not None else 0
     found = [dict(zip(COLUMNS, row)) for row in history._db.execute(
-        "SELECT " + ",".join(COLUMNS) + " FROM workshop_tasks WHERE (? IS NULL OR id=?) "
-        "AND (? OR IFNULL(archived,0)=0) ORDER BY created_at DESC LIMIT 500", (task, task, show))]
+        f"SELECT {fields} FROM workshop_tasks WHERE (? IS NULL OR id=?) "
+        f"AND (? OR {archived}=0) ORDER BY created_at DESC LIMIT 500", (task, task, show))]
     for row in found:
         row["lease_expired"] = row["status"] == "claimed" and not _lease_active(row["lease_until"], now)
         row["members"] = _member_list(row["members"], row["owner"], row["owner_label"], row["lease_until"])

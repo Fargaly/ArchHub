@@ -12046,7 +12046,9 @@
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/mcp_supervisor.py",
         "02.TESTS/tests_replica/test_mcp_supervisor.py",
-        "03.TOOLS/installer/ArchHub.iss"
+        "03.TOOLS/installer/ArchHub.iss",
+        ".github/workflows/release.yml",
+        "03.TOOLS/packaging/windows/check_update_offer.py"
       ]
     },
     "MEETINGAGENT": {

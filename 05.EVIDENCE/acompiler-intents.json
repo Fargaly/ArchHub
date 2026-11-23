@@ -12066,7 +12066,8 @@
         "02.TESTS/tests_replica/test_mcp_supervisor.py",
         "03.TOOLS/installer/ArchHub.iss",
         ".github/workflows/release.yml",
-        "03.TOOLS/packaging/windows/check_update_offer.py"
+        "03.TOOLS/packaging/windows/check_update_offer.py",
+        "02.TESTS/tests_js/newapp_account.test.cjs"
       ]
     },
     "MEETINGAGENT": {

@@ -158,6 +158,7 @@
         "01.APP/nodelang/studio/ds/index.jsx",
         "01.APP/nodelang/studio/ds_library.jsx",
         "01.APP/nodelang/library_engines.py",
+        "02.TESTS/tests_replica/test_designv22g.py",
         "01.APP/nodelang/command_registry.py",
         "01.APP/nodelang/canvas_documents.py",
         "01.APP/nodelang/canvas_tools.py",

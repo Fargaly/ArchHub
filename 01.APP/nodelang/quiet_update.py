@@ -503,41 +503,26 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
         if channel == "preview":
             if not isinstance(data, list):
                 return None
-            data = next((item for item in data if isinstance(item, dict) and not item.get("draft")), None)
+            # GitHub's list order is not build order (an older stable was listed before a newer pre-release):
+            # the newest validated build wins; a release without a valid identity or date is never chosen.
+            dated = [(_utc_build_time(found["built_at"]), index, item, found) for index, item in enumerate(data)
+                     if isinstance(item, dict) and not item.get("draft")
+                     for found in [_release_identity(item, channel)] if found is not None
+                     and _utc_build_time(found["built_at"]) is not None]
+            if not dated:
+                return None
+            _when, _index, item, found = max(dated, key=lambda row: (row[0], -row[1]))
+            read_latest_release.saw_prerelease = item.get("prerelease") is True
+            read_latest_release.cause = ""
+            return found
         read_latest_release.saw_prerelease = (
             isinstance(data, dict) and data.get("prerelease") is True and not data.get("draft"))
-        if not isinstance(data, dict) or data.get("draft") or (channel == "stable" and data.get("prerelease")):
+        if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
             return None
-        body, assets, tag = data.get("body"), data.get("assets"), data.get("tag_name")
-        if (not isinstance(body, str) or not isinstance(assets, list)
-                or not isinstance(tag, str) or not 0 < len(tag) <= 256):
-            return None
-        builds, hashes = _BUILD_RE.findall(body), _SHA_RE.findall(body)
-        build_fields = re.findall(r"(?m)^[ \t]*BUILD_ID\b[^\r\n]*", body)
-        hash_fields = re.findall(r"(?m)^[ \t]*SHA256 " + re.escape(ASSET_NAME) + r"\b[^\r\n]*", body)
-        assets = [a for a in assets if isinstance(a, dict) and a.get("name") == ASSET_NAME]
-        if (len(builds) != 1 or len(hashes) != 1 or len(assets) != 1
-                or len(build_fields) != 1 or len(hash_fields) != 1):
-            return None
-        dates = re.findall(r"(?m)^[ \t]*BUILT_AT\b[^\r\n]*", body)
-        if dates:
-            if len(dates) != 1 or not dates[0].startswith("BUILT_AT: "):
-                return None
-            built_at = dates[0][len("BUILT_AT: "):]
-            if _utc_build_time(built_at) is None:
-                return None
-        else:
-            built_at = _legacy_built_at(builds[0])
-        asset = assets[0]
-        url = asset.get("browser_download_url")
-        stable_feed = release_feed_url() if channel == "stable" else RELEASE_API
-        size = asset.get("size")
-        if (not _asset_url_allowed(url, tag, stable_feed=stable_feed)
-                or (size is not None and (type(size) is not int or not 0 < size <= _INSTALLER_BYTES))):
-            return None
-        read_latest_release.cause = ""
-        return {"build_id": builds[0], "built_at": built_at,
-                "sha256": hashes[0].lower(), "url": url, "tag": tag}
+        found = _release_identity(data, channel)
+        if found is not None:
+            read_latest_release.cause = ""
+        return found
     except OSError as exc:
         read_latest_release.saw_prerelease = False
         read_latest_release.cause, read_latest_release.transient = _read_cause(exc), _transient(exc)
@@ -545,6 +530,39 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
     except (ValueError, TypeError):
         read_latest_release.saw_prerelease = False
         return None
+
+
+def _release_identity(data, channel):
+    """One release's validated identity (build id, built_at, installer digest, asset URL, tag), or None."""
+    body, assets, tag = data.get("body"), data.get("assets"), data.get("tag_name")
+    if (not isinstance(body, str) or not isinstance(assets, list)
+            or not isinstance(tag, str) or not 0 < len(tag) <= 256):
+        return None
+    builds, hashes = _BUILD_RE.findall(body), _SHA_RE.findall(body)
+    build_fields = re.findall(r"(?m)^[ \t]*BUILD_ID\b[^\r\n]*", body)
+    hash_fields = re.findall(r"(?m)^[ \t]*SHA256 " + re.escape(ASSET_NAME) + r"\b[^\r\n]*", body)
+    assets = [a for a in assets if isinstance(a, dict) and a.get("name") == ASSET_NAME]
+    if (len(builds) != 1 or len(hashes) != 1 or len(assets) != 1
+            or len(build_fields) != 1 or len(hash_fields) != 1):
+        return None
+    dates = re.findall(r"(?m)^[ \t]*BUILT_AT\b[^\r\n]*", body)
+    if dates:
+        if len(dates) != 1 or not dates[0].startswith("BUILT_AT: "):
+            return None
+        built_at = dates[0][len("BUILT_AT: "):]
+        if _utc_build_time(built_at) is None:
+            return None
+    else:
+        built_at = _legacy_built_at(builds[0])
+    asset = assets[0]
+    url = asset.get("browser_download_url")
+    stable_feed = release_feed_url() if channel == "stable" else RELEASE_API
+    size = asset.get("size")
+    if (not _asset_url_allowed(url, tag, stable_feed=stable_feed)
+            or (size is not None and (type(size) is not int or not 0 < size <= _INSTALLER_BYTES))):
+        return None
+    return {"build_id": builds[0], "built_at": built_at,
+            "sha256": hashes[0].lower(), "url": url, "tag": tag}
 
 
 def _published_prerelease(opener, channel="stable") -> bool:

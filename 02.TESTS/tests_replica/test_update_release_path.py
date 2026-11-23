@@ -2053,3 +2053,43 @@ def test_clean_windows_verify_checks_the_installed_update_controller():
     assert "real_app_check/update_controller_check.py" in workflow
     assert "archhub-verify-published/update-controller.json" in workflow   # uploaded beside install.json
     assert (ROOT / "03.TOOLS/tools/real_app_check/update_controller_check.py").is_file()
+
+
+def test_preview_channel_picks_the_newest_validated_build_whatever_the_list_order():
+    """e988 d50e5d09: GitHub listed stable 0ea5038, then 50d908c, then the new 9864 pre-release; the first
+    non-draft was taken, so the preview channel offered the old stable. The newest validated build wins."""
+    import io
+
+    def release(build_id, built_at, prerelease, *, draft=False, body_extra=""):
+        tag = "build-" + build_id
+        digest = hashlib.sha256(build_id.encode()).hexdigest()
+        body = ("## Build\nBUILD_ID: %s\n" % build_id + ("BUILT_AT: %s\n" % built_at if built_at else "")
+                + "SHA256 %s: %s\n" % (qu.ASSET_NAME, digest) + body_extra)
+        return {"tag_name": tag, "draft": draft, "prerelease": prerelease, "body": body, "assets": [
+            {"name": qu.ASSET_NAME, "size": 5,
+             "browser_download_url": "https://github.com/Fargaly/ArchHub/releases/download/%s/%s" % (tag, qu.ASSET_NAME)}]}
+
+    def read(items):
+        payload = json.dumps(items).encode()
+        return qu.read_latest_release(lambda _request, timeout: io.BytesIO(payload), channel="preview")
+
+    stable_old = release("20261123-2137-0ea5038", "2026-11-23T17:37:19Z", False)
+    stable_older = release("20261123-1723-50d908c", "2026-11-23T13:23:00Z", False)
+    newest = release("20261124-0112-9864b61", "2026-11-23T21:12:00Z", True)
+    found = read([stable_old, stable_older, newest])
+    assert found["build_id"] == "20261124-0112-9864b61" and qu.read_latest_release.saw_prerelease is True
+    assert read([newest, stable_old])["build_id"] == "20261124-0112-9864b61"
+    # Once the stable is newer than every pre-release, the preview channel follows it.
+    later_stable = release("20261125-0900-aaaaaaa", "2026-11-25T09:00:00Z", False)
+    assert read([newest, later_stable])["build_id"] == "20261125-0900-aaaaaaa"
+    assert qu.read_latest_release.saw_prerelease is False
+    # Drafts and releases with an invalid identity never win, even when their date is newest.
+    draft = release("20261130-0000-bbbbbbb", "2026-11-30T00:00:00Z", True, draft=True)
+    broken = release("20261129-0000-ccccccc", "2026-11-29T00:00:00Z", True, body_extra="BUILT_AT: twice\n")
+    assert read([draft, broken, stable_old])["build_id"] == "20261123-2137-0ea5038"
+    assert read([draft, broken]) is None
+    # The stable channel is unchanged: the latest-release object, never a pre-release.
+    payload = json.dumps(stable_old).encode()
+    assert qu.read_latest_release(lambda _r, timeout: io.BytesIO(payload))["build_id"] == "20261123-2137-0ea5038"
+    payload = json.dumps(newest).encode()
+    assert qu.read_latest_release(lambda _r, timeout: io.BytesIO(payload)) is None

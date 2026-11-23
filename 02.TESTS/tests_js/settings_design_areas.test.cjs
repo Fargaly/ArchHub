@@ -19,7 +19,12 @@ async function mount(page,profile,extra){
   window.fixture={profile,settings:[],hosts:[],agents:[],providers:[],workspaces:[{id:'example',name:'Example workspace',folder:'C:\\Example',path:'C:\\Example',available:true}],activeWorkspace:'example',workspaceHealth:{state:'ready'},graph:{workspaceIds:[]},connections:[],capabilities:[],pages:['Account','Appearance','Workshop','Privacy'],settingsScope:'User',settingsDestination:{scope:'User',workspace:'example',session:'fixture'},keyboardCommands:[{id:'keyboard.save',label:'Save workflow',contexts:['canvas'],value:'Ctrl S'}],sessionsFolder:'Sessions',runtimeParameters:{},update:{state:'idle',installed:'fixture-build',available:null},router:{default_model:'free',models:['free','other'],fallback_models:[],requests:[],free_first:true,live_agents:{complete:true,processes:[]}},...extra};
   window.writes=[];const listeners=new Set();
   window.ArchHubAPI={subscribe:f=>{listeners.add(f);return()=>listeners.delete(f);},getSnapshot:()=>window.fixture,supportsAction:()=>true,
-   refreshRouter:async()=>({default_model:'free',models:['free','other'],fallback_models:[],requests:[],free_first:true}),readHostAvailability:async()=>[],listAgentsWorking:async()=>[],refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
+   refreshRouter:async()=>({default_model:'free',models:['free','other'],fallback_models:[],requests:[],free_first:true}),readHostAvailability:async()=>[],listAgentsWorking:async()=>{
+     if(!extra?.holdAgentRead)return [];
+     await new Promise(resolve=>{window.releaseAgentRead=resolve;});
+     window.fixture={...window.fixture,agents:[{id:'qa',name:'QA Agent',presence:'working',status_text:'Working'}]};
+     listeners.forEach(f=>f());return window.fixture.agents;
+   },refreshSettingsControls:async()=>({}),readSessionsFolder:async()=> 'Sessions',
    setSetting:async(id,value)=>{window.writes.push({id,value});window.fixture={...window.fixture,settings:window.fixture.settings.map(r=>r.id===id?{...r,value}:r)};listeners.forEach(f=>f());return {ok:true};},
   };
   window.ArchHubAPI.setKeybinding=async(id,value,destination)=>{
@@ -331,5 +336,30 @@ test('register field previews apply project formats only to declared angles and 
    await out.waitFor({timeout:4000});
    assert.equal((await out.textContent()).trim(),expected+'  ›');
   }
+ }finally{await browser.close();}
+});
+
+
+test('Look owner controls and model choices are usable while the Workshop agent read is pending', async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage({viewport:{width:1360,height:930}});
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await mount(page,{name:'Reviewer',signedIn:false,checking:false},{holdAgentRead:true,settings:[
+   {id:'Appearance.Theme',page:'Appearance',group:'Theme and colour',label:'Theme',type:'enum',options:['Dark','Light','System'],value:'Dark',default:'Dark'},
+   {id:'Appearance.Text scale',page:'Appearance',group:'Size and density',label:'Text scale',type:'number',value:100,default:100}
+  ]});
+  await page.evaluate(()=>window.goSettings('settings/Look'));
+  const theme=page.locator('[data-setting="Appearance.Theme"]');
+  await page.getByRole('heading',{name:'Theme and colour',exact:true}).waitFor();
+  await theme.waitFor({state:'visible'});
+  await page.evaluate(()=>window.goSettings('settings/Models'));
+  await page.getByLabel('Default model',{exact:true}).selectOption('other');
+  assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{router:{default_model:'other'}});
+  await page.evaluate(()=>window.goSettings('settings/Agents'));
+  await page.getByText('Reading agents…',{exact:true}).waitFor();
+  await page.evaluate(()=>window.releaseAgentRead());
+  await page.getByText('QA Agent',{exact:true}).waitFor();
+  assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 });

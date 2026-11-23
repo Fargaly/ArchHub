@@ -1162,6 +1162,68 @@ def drain_connectors(app_dir: Path, attempt: str, *, acknowledgements=connector_
         waited += poll
 
 
+def _setup_ancestors(depth=4):
+    """The pids above this process: Setup, then the updater that launched it."""
+    import psutil
+    pids, process = [], psutil.Process()
+    for _ in range(depth):
+        try:
+            process = process.parent()
+        except psutil.Error:
+            break
+        if process is None:
+            break
+        pids.append(process.pid)
+    return pids
+
+
+def setup_admission(app_dir: Path, build_id: str, *, expected: str | None = None,
+                    acknowledgements=connector_acknowledgements, drain=drain_connectors, clock=time.time_ns,
+                    ancestors=_setup_ancestors) -> tuple:
+    """Setup's own entry into the same drain, before its marker or any program file: ("existing"|"owned", attempt).
+
+    Setup inherits a drain request only from the updater invocation that launched it: the attempt it was handed
+    (/ARCHHUBDRAIN), or, for an older updater that passes none, an attempt named for this build and a live
+    ancestor pid ("<build>-<pid>-<ns>", apply_staged's form), and only when every supervisor confirms it idle.
+    Any other request (malformed, empty, foreign, a stale earlier Setup's) holds Setup and is left as it is. With
+    no request, a Setup run by hand closes admission under its own attempt and waits for every supervisor to
+    confirm idle; a supervisor that cannot report (an older script, an unreadable report) holds it first. Holding
+    raises ValueError with nothing touched. The caller reopens an owned attempt when Setup ends.
+    """
+    request = _runtime_connectors(app_dir) / DRAIN_REQUEST
+    try:
+        data = json.loads(request.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = None
+    except (OSError, ValueError) as error:
+        raise ValueError(_CONNECTOR_DEFERRED + "the connector drain request is unreadable (%s); it was left as it is"
+                         % type(error).__name__) from None
+    if data is not None:
+        held = data.get("attempt") if isinstance(data, dict) and set(data) == {"attempt"} else None
+        if not isinstance(held, str) or not held.strip():
+            raise ValueError(_CONNECTOR_DEFERRED + "the connector drain request names no install attempt; it was left as it is")
+        ours = (held == expected) if expected else any(held.startswith("%s-%d-" % (build_id, pid)) for pid in ancestors())
+        if not ours:
+            raise ValueError(_CONNECTOR_DEFERRED + "a connector drain request from another install attempt (%s) is in place; "
+                             "it was left as it is" % held[:80])
+        reasons = acknowledgements(app_dir, held)
+        if reasons:
+            raise ValueError(_CONNECTOR_DEFERRED + "agent connectors have not confirmed this install attempt idle (%s); "
+                             "nothing touched" % "; ".join(reasons)[:400])
+        return "existing", held
+    if expected:
+        raise ValueError(_CONNECTOR_DEFERRED + "the updater's connector drain request is missing; nothing touched")
+    unknown = [reason for reason in acknowledgements(app_dir, None)
+               if "no report" in reason or "unreadable" in reason or "no call count" in reason]
+    if unknown:
+        raise ValueError(_CONNECTOR_DEFERRED + "%d agent connector(s) cannot confirm they are idle (%s); close and reopen "
+                         "that agent's ArchHub connection, then run Setup again. Nothing touched"
+                         % (len(unknown), "; ".join(unknown)[:400]))
+    attempt = "setup-%s-%d-%d" % (build_id, os.getpid(), clock())
+    drain(Path(app_dir), attempt)  # raises and reopens when a call does not finish in time
+    return "owned", attempt
+
+
 def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, before_apply=None,
                  stop_runtime=stop_runtime_processes, drain=drain_connectors, expect=None) -> dict:
     """Call before_apply() under staging ownership, then attempt once; retain package.
@@ -1227,7 +1289,8 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             # its bridge DLL there; that flag closed the founder's Revit.
             result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
                              "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
-                             "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)
+                             "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir),
+                             *(["/ARCHHUBDRAIN=" + attempt] if drain is not None else [])], **options)
             if drain is not None:
                 reopen_connectors(Path(app_dir), attempt)  # Setup has ended; its own marker is gone too
             exit_code = getattr(result, "returncode", 1)
@@ -1682,9 +1745,22 @@ def main(argv=None):
     parser.add_argument("--expect-build", help="With --apply-staged: install only this staged build id.")
     parser.add_argument("--expect-sha256", help="With --expect-build: and only with this installer SHA-256.")
     parser.add_argument("--state-dir", type=Path)
+    parser.add_argument("--setup-admission", type=Path, help="Setup: drain agent connectors of this application directory.")
+    parser.add_argument("--build-id", help="With --setup-admission: the build Setup installs.")
+    parser.add_argument("--expect-attempt", help="With --setup-admission: the updater's drain attempt (/ARCHHUBDRAIN).")
     args = parser.parse_args(argv)
     if args.state_dir is not None:
         os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
+    if args.setup_admission is not None:
+        if not args.build_id:
+            parser.error("--setup-admission needs --build-id")
+        try:
+            mode, attempt = setup_admission(args.setup_admission, args.build_id, expected=args.expect_attempt or None)
+        except (OSError, ValueError) as held:
+            print("ArchHub connector admission held: %s" % held, flush=True)
+            return 3
+        print("ARCHHUB-ADMISSION %s %s" % (mode, attempt), flush=True)
+        return 0
     if args.apply_staged is not None:
         expect = None
         if args.expect_build or args.expect_sha256:

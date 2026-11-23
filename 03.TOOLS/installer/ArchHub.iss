@@ -437,12 +437,70 @@ begin
   Sleep(2500);
 end;
 
+{ BEGIN connector admission (the court harness compiles exactly this block) }
+{ Agent connector admission for Setup (quiet_update.setup_admission), shared by ArchHub.iss and its court harness.
+  Before the .archhub-installing marker or any program file: an updater-launched Setup (/ARCHHUBDRAIN=<attempt>)
+  inherits only that updater's confirmed drain; a Setup run by hand drains under its own attempt; an older or
+  unreadable supervisor, a malformed or foreign drain request, or a call that does not finish holds Setup with
+  nothing touched. DeinitializeSetup reopens only this Setup's own attempt. }
+
+var
+  SetupDrainAttempt: String;
+  AdmissionHeld: String;
+
+procedure ReleaseSetupDrain(Runtime: String);
+var
+  Request: String;
+  Held: AnsiString;
+begin
+  if SetupDrainAttempt = '' then Exit;
+  Request := Runtime + '\connectors\drain-request.json';
+  if LoadStringFromFile(Request, Held) and (Pos('"' + SetupDrainAttempt + '"', String(Held)) > 0) then
+    DeleteFile(Request);
+  SetupDrainAttempt := '';
+end;
+
+procedure OnAdmissionLog(const S: String; const Error, FirstLine: Boolean);
+begin
+  Log(S);
+  if Pos('ARCHHUB-ADMISSION owned ', S) = 1 then
+    SetupDrainAttempt := Trim(Copy(S, 25, Length(S)));
+  if Pos('ArchHub connector admission held: ', S) = 1 then
+    AdmissionHeld := Trim(Copy(S, 35, Length(S)));
+end;
+
+function AdmitConnectors(AppDir, Runtime, Python, CodeDir, BuildId, Expected: String): String;
+var
+  AdmissionCode: Integer;
+  Arguments: String;
+begin
+  Result := '';
+  { No supervisor script, no supervisor: a fresh install, or an empty runtime folder an uninstall left behind. }
+  if not FileExists(Runtime + '\mcp_supervisor.py') then
+    Exit;
+  if not FileExists(Python) then
+  begin
+    Result := 'Agent connections could not be checked because the installed Python environment is missing. Your installed files were kept.';
+    Exit;
+  end;
+  AdmissionHeld := '';
+  Arguments := '-u -E -s -B -m nodelang.quiet_update --setup-admission "' + AppDir + '" --build-id ' + BuildId;
+  if Expected <> '' then
+    Arguments := Arguments + ' --expect-attempt "' + Expected + '"';
+  if not ExecAndLogOutput(Python, Arguments, CodeDir, SW_HIDE, ewWaitUntilTerminated, AdmissionCode, @OnAdmissionLog) then
+    Result := 'Agent connections could not be checked. Your installed files were kept.'
+  else if AdmissionCode <> 0 then
+    Result := 'An agent is still using ArchHub (' + AdmissionHeld + '). Your installed files were kept.';
+end;
+{ END connector admission }
+
 procedure DeinitializeSetup();
 begin
   { An unfinished setup puts back every host file it set aside. }
   RestoreRetiredHostFiles();
   { Connectors come back whether setup finished or not. }
   DeleteFile(ExpandConstant('{app}\.archhub-installing'));
+  ReleaseSetupDrain(ExtractFileDir(ExpandConstant('{app}')) + '\ArchHub-Runtime');
 end;
 
 var
@@ -606,6 +664,9 @@ begin
         Result := 'Assistant connector preflight could not start. Your installed files were kept.'
       else if BackupCode <> 0 then
         Result := 'Assistant connector preflight refused. Your installed files were kept.';
+      if Result = '' then
+        Result := AdmitConnectors(ExpandConstant('{app}'), ExtractFileDir(ExpandConstant('{app}')) + '\ArchHub-Runtime',
+          ExpandConstant('{app}\.venv\Scripts\python.exe'), ConnectorTemp, '{#BuildId}', ExpandConstant('{param:ARCHHUBDRAIN|}'));
     finally
       BackupProgress.Hide();
     end;

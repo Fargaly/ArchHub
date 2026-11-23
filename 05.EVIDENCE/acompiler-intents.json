@@ -12459,7 +12459,7 @@
     },
     "SETTINGSAREAS": {
       "source": "The founder requires at most five top-level Settings pages. The approved design groups all 43 sections under Account, Projects, Agents, Connections and This PC. Keep existing deep links, search, Changed and the User, Workspace and Session preference owners. Verify the same destinations through the installed application.",
-      "scope": [
+      "scope": ["01.APP/nodelang/studio/ui.jsx", 
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests_js/settings_design_areas.test.cjs",

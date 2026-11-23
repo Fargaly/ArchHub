@@ -1121,6 +1121,7 @@ class WorkshopInjection:
         # Older notes stay readable; only recent ones are injected on first delivery.
         self.backfill_seconds = float(backfill_minutes) * 60
         self._settled = set()
+        self._replies_done = set()  # replies whose "answered" receipts are written; never re-read per tick
         self._tick_lock = threading.Lock()
         self.last_error = None
         self._reads, self._reads_lock = {}, threading.Lock()
@@ -1421,12 +1422,18 @@ class WorkshopInjection:
             if (agent_addressed(message) and (message["id"] not in self._settled or message["id"] in waiting_ids)
                     and (str(message.get("created_at") or "") >= cutoff or message["id"] in waiting_ids)):
                 self._pending[message["id"]] = message["sequence"]
+        replies = [raw for raw in [*rows, *latest] if raw["reply_to"] is not None and raw["id"] not in self._replies_done]
+        if not (direct or replies or self._pending or now - self._watched_at >= WATCH_NODE["params"]["check_seconds"]):
+            # Idle: no new reply, nothing pending, no watcher pass due. The roster scan probes every declared process.
+            if rows:
+                self._cursor = rows[-1]["sequence"]
+            return
         # Process liveness probes must not keep SQLite readers blocking a sender's COMMIT.
         declarations = read_declarations(history._db, include_archived=True)
+        if len(self._replies_done) > 10000:
+            self._replies_done.clear()  # shortcut: bounded memory; a cleared reply is only re-checked once
         # Replies are new room notes even when their parent has settled.
-        for raw in [*rows, *latest]:
-            if raw["reply_to"] is None:
-                continue
+        for raw in replies:
             reply = history._message(raw)
             parent = history.get(ROOM, reply["reply_to"], principal=DELIVERY_AUTHOR)
             label, separator, session = reply["author"].removesuffix("]").rpartition(" [")
@@ -1440,6 +1447,7 @@ class WorkshopInjection:
                             continue
                         _delivery_receipt(history, parent, recipient,
                             "answered", reply_message_id=reply["id"])
+                self._replies_done.add(raw["id"])
         if rows:
             self._cursor = rows[-1]["sequence"]
         if not direct and self._watch(history, now, declarations):

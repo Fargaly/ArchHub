@@ -379,6 +379,30 @@ print(json.dumps({'lock_errors':0}))
         self.assertTrue(probes)
         self.assertNotIn(True, probes)  # every liveness read happened outside a transaction
 
+    def test_an_idle_tick_does_not_scan_the_roster_and_new_work_still_delivers(self):
+        sent = []
+
+        class Transport:
+            def inject(self, recipient, text, **kwargs):
+                sent.append(recipient['id'])
+                return {'status': 'injected', 'dispatch_attempted': True}
+        mailbox.call('declare', {'task': 'recipient', 'paths': [str(Path.cwd())], 'status': 'working',
+                                 'request_id': 'unassigned'}, {'claude/sessionID': 'recipient-one'})
+        worker = mailbox.WorkshopInjection(None, Transport())
+        real, scans = mailbox.read_declarations, []
+        with patch.object(mailbox, 'read_declarations', side_effect=lambda *a, **k: scans.append(1) or real(*a, **k)):
+            worker.tick(now=1000.0)   # the first pass is a watcher pass
+            scans.clear()
+            worker.tick(now=1001.0)
+            worker.tick(now=1002.0)
+            self.assertEqual(scans, [])   # idle: no roster scan
+            with mailbox.application_history(None) as history:
+                identity, _runtime, _peer = mailbox._identity(self.context, None)
+                mailbox._send(history, {'to': 'recipient-one', 'text': 'No reply needed.'}, identity)
+            worker.tick(now=time.time())
+        self.assertTrue(scans)
+        self.assertEqual(sent, ['recipient-one'])
+
     def test_a_busy_activity_line_never_turns_a_committed_send_into_an_error(self):
         import sqlite3
         busy = sqlite3.OperationalError('database is locked')

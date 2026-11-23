@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261123-2137-0ea5038
+
+- Published build 20261123-2137-0ea5038 (source 0ea5038).
+- Installer SHA-256: `6fccc11e7af901fea71ccc5492344c7ace13ab687bbc70d256a32ce346e54ad6`.
+- Built at 2026-11-23T17:37:19Z.
+
+Source: 0ea50380.
+
 ## 20261123-1723-50d908c
 
 - Published build 20261123-1723-50d908c (source 50d908c).

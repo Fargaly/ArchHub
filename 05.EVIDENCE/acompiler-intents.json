@@ -160,6 +160,7 @@
         "01.APP/nodelang/library_engines.py",
         "02.TESTS/tests_replica/test_designv22g.py",
         "02.TESTS/tests_replica/test_session_files.py",
+        "02.TESTS/tests_replica/test_session_model.py",
         "01.APP/nodelang/command_registry.py",
         "01.APP/nodelang/canvas_documents.py",
         "01.APP/nodelang/canvas_tools.py",

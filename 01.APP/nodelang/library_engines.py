@@ -25,6 +25,7 @@ into it rather than keeping a second copy that will drift.
 from __future__ import annotations
 
 from typing import Mapping
+import copy
 import json
 import math
 import re
@@ -2683,6 +2684,22 @@ def _skill_entry(loaded, items):
     }
 
 
+_SKILL_CARDS = {}  # one entry: the saved-file stamp -> the finished skill cards built from those exact files
+
+
+def _skill_stamp(base_ids):
+    """Every saved session file's path, mtime and size, plus the cards built before the skills."""
+    from .session_files import sessions_directory
+    files = []
+    for path in sorted(sessions_directory().glob('*.archhub')):
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        files.append((str(path), info.st_mtime_ns, info.st_size))
+    return tuple(files), base_ids
+
+
 def _complete_library(groups):
     """One catalogue: existing cards, every pipeline engine, every host tool, every skill file."""
     from .canvas_documents import node_contract
@@ -2735,13 +2752,25 @@ def _complete_library(groups):
         if engine not in covered:
             add(_engine_entry(engine))
             covered.add(engine)
-    for loaded in load_skills():
-        add(_skill_entry(loaded, items))
+    # Saved skills cost two document reads each (sockets, then purity through linked_session). Their finished
+    # cards are reused while every saved file keeps its size and mtime; any edit, add or delete rebuilds them.
+    stamp = _skill_stamp(tuple(sorted(seen)))
+    cached = _SKILL_CARDS.get(stamp)
+    built = []
+    for entry in copy.deepcopy(cached) if cached is not None else ():
+        add(entry)
+    for loaded in load_skills() if cached is None else ():
+        entry = _skill_entry(loaded, items)
+        add(entry)
+        built.append(entry)
     for item in items:
         item.update(node_contract(item.get("engine")))
-        if item.get('engine') in ('script.python', 'skill'):
+        if item.get('engine') == 'script.python' or (item.get('engine') == 'skill' and cached is None):
             from .canvas_documents import is_pure
             item['pure'] = is_pure(item['engine'], item.get('params'))
+    if cached is None:
+        _SKILL_CARDS.clear()
+        _SKILL_CARDS[stamp] = copy.deepcopy(built)
     categories = engine_categories([{'items': items}])
     buckets = {category: [] for category, _rows in LIBRARY_PRESENTATION}
     for item in items:

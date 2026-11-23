@@ -455,7 +455,7 @@ def native_application(cache):
 
 
 def native_folder_action(request):
-    """Invoke only a folder dialog owned by this rig, on this hidden desktop."""
+    """Operate only the requested native dialog in this rig on its hidden desktop."""
     user = ctypes.windll.user32
     user.GetThreadDesktop.argtypes, user.GetThreadDesktop.restype = (w.DWORD,), w.HANDLE
     user.GetUserObjectInformationW.argtypes = (w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD))
@@ -468,6 +468,9 @@ def native_folder_action(request):
         raise RuntimeError("Cannot verify the native worker desktop")
     if name.value.casefold() != request['desktop'].split('\\')[-1].casefold() or name.value.casefold() == 'default':
         raise RuntimeError("Native worker is outside the rig desktop")
+    cancel_save = request.get('kind') == 'cancel-save'
+    if cancel_save and request['title'] != 'Save session':
+        raise ValueError('Only the Save session dialog may be cancelled')
     allowed = set(request['pids'])
     handles = []
     callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
@@ -478,12 +481,36 @@ def native_folder_action(request):
         title = ctypes.create_unicode_buffer(user.GetWindowTextLengthW(handle) + 1)
         user.GetWindowTextW(handle, title, len(title))
         if pid.value in allowed and title.value == request['title']:
+            if cancel_save:
+                kind = ctypes.create_unicode_buffer(80)
+                user.GetClassNameW(w.HWND(handle), kind, len(kind))
+                if kind.value != '#32770' or not user.IsWindowVisible(w.HWND(handle)):
+                    return True
             handles.append(handle)
         return True
     user.EnumDesktopWindows.argtypes = (w.HANDLE, callback, w.LPARAM)
-    user.EnumDesktopWindows(desktop, callback(visit), 0)
+    deadline = time.monotonic() + (5 if cancel_save else 0)
+    while True:
+        user.EnumDesktopWindows(desktop, callback(visit), 0)
+        if handles or time.monotonic() >= deadline:
+            break
+        time.sleep(min(.05, max(0, deadline - time.monotonic())))
     if len(handles) != 1:
-        raise RuntimeError("Expected one folder dialog owned by the rig")
+        raise RuntimeError("Expected one matching native dialog owned by the rig")
+    if cancel_save:
+        dialog = w.HWND(handles[0])
+        user.GetDlgItem.argtypes, user.GetDlgItem.restype = (w.HWND, ctypes.c_int), w.HWND
+        cancel = user.GetDlgItem(dialog, 2)
+        if not cancel or not user.GetDlgItem(dialog, 1):
+            raise RuntimeError('Expected Save and Cancel in the file dialog')
+        if not user.PostMessageW(dialog, 0x0111, 2, w.LPARAM(cancel)):  # WM_COMMAND, IDCANCEL
+            raise ctypes.WinError()
+        deadline = time.monotonic() + 5
+        while user.IsWindow(dialog) and time.monotonic() < deadline:
+            time.sleep(min(.05, max(0, deadline - time.monotonic())))
+        if user.IsWindow(dialog):
+            raise RuntimeError('The native Save session dialog did not close')
+        return {'title': request['title'], 'cancelled': True, 'closed': True}
     Application = native_application(Path(os.environ['LOCALAPPDATA']) / 'comtypes')
     dialog = Application(backend='uia').connect(handle=handles[0]).window(handle=handles[0])
     edits = dialog.descendants(control_type='Edit')
@@ -547,9 +574,9 @@ def window_frame(desktop: HiddenDesktop) -> dict:
             user.SetThreadDpiAwarenessContext(previous)
 
 
-def pick_folder(desktop: HiddenDesktop, python: str, title: str, folder: str, evidence: Path, env) -> dict:
+def pick_folder(desktop: HiddenDesktop, python: str, title: str, folder: str, evidence: Path, env, *, kind='pick-folder') -> dict:
     request = evidence / 'native-folder-request.json'
-    request.write_text(json.dumps({'title': title, 'folder': folder, 'desktop': desktop.name,
+    request.write_text(json.dumps({'kind': kind, 'title': title, 'folder': folder, 'desktop': desktop.name,
                                   'pids': desktop.job.pids()}), encoding='utf-8')
     command = subprocess.list2cmdline([python, str(HERE / 'real_app_check.py'), '--native-folder', str(request)])
     return json_tail(desktop.run(command, 30, env=env, cwd=str(evidence)))
@@ -690,6 +717,8 @@ def main(argv=None) -> int:
                                      stderr=subprocess.STDOUT, env=env)
             job.adopt(int(probe._handle))
             scenario_input = json.loads(args.input.read_text(encoding="utf-8")) if args.input else None
+            if args.scenario.name == 'settings.mjs':
+                scenario_input = {**(scenario_input or {}), 'installedPython': str(python)}
             probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input}) + "\n")
             probe.stdin.flush()
             natives, sink = [], queue.Queue()
@@ -713,6 +742,8 @@ def main(argv=None) -> int:
                     request = json.loads(line[len("NATIVE "):])
                     if request.get("kind") == "pick-folder":
                         answer = pick_folder(desktop, str(python), request["title"], request["folder"], out, env)
+                    elif request.get("kind") == "cancel-save":
+                        answer = pick_folder(desktop, str(python), request["title"], "", out, env, kind="cancel-save")
                     elif request.get("kind") == "window-frame":
                         answer = window_frame(desktop)
                     elif request.get("kind") == "reopen-rig-window":

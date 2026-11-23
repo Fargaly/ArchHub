@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +39,7 @@ export const steps=[
  'Installed Settings recovers a stale scope without replaying a write',
  'Installed Projects creates the selected Office folder tree through its native picker',
  'Installed Canvas saves the selected Session Project folder from its native picker',
+ 'Installed Projects restores revision and naming controls, protects both files on refused Save As, and resumes autosave after native Cancel',
 ];
 const declaredSteps=steps;
 export default async function({input,label,shot,step:recordStep,js,until,clickText,rectOf,mouse,cdp,out,native}){
@@ -508,5 +510,81 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert.equal(await preference(),relative);assert.deepEqual(json(workspaceFile).roots,registration);
    return {pass:true,got:{node:target.id,file:destination,projectFolder:chosen,nativePicker:dialog,savedAndReopened:true}};
   }finally{await call('openSession',previous);assert.deepEqual(fs.readFileSync(previous),previousBytes);}
+ });
+ await step(steps[11],async()=>{
+  const call=(name,...args)=>js('window.ArchHubAPI['+JSON.stringify(name)+'](...'+JSON.stringify(args)+')');
+  const previous=await call('getSessionPath'),previousScope=(await snapshot()).scope;
+  const previousProject=await js('window.ArchHubAPI.getSnapshot().activeWorkspace');
+  const source=path.join(folder,'Naming check.archhub'),issued=path.join(folder,'Issued naming check');
+  const target=path.join(issued,'Unassigned.archhub');
+  fs.mkdirSync(issued,{recursive:true});
+  const register=async (number,values)=>js('(async()=>{const api=window.ArchHubAPI,w=api.getSnapshot().workspaces.find(w=>w.id==='+JSON.stringify(workspaceId)+');return api.updateProjectRegister(w,'+JSON.stringify(number)+',w.register.override,'+JSON.stringify(values)+');})()');
+  const readControl=label=>js('window.ArchHubAPI.getSnapshot().settings.find(row=>row.label==='+JSON.stringify(label)+')?.value');
+  const toggle='Check names before saving';
+  const switchValue=async value=>{
+   if(await readControl(toggle)!==value){
+    const clicked=await js("(()=>{const e=document.querySelector('[role=switch][aria-label=\"Check names before saving\"]');if(!e||e.disabled||!e.getClientRects().length)return false;e.click();return true;})()");
+    assert.equal(clicked,true);
+   }
+   assert.equal(await until(()=>readControl(toggle),v=>v===value),value);
+  };
+  let originalRegister;
+  try{
+   await call('newSession','Naming check');await call('saveSession',source);
+   await call('setSessionModel',source,{project:workspaceId});await call('selectWorkspace',workspaceId);
+   await js("document.querySelector('nav button[aria-label=\"Settings\"]').click()");
+   assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);
+   assert.equal(await clickText('Projects'),true);await scope('Session');
+   const revision=await readControl('Revisions'),initialCheck=await readControl(toggle);
+   assert.equal(typeof initialCheck,'boolean');
+   for(const value of ['P01, C01 (ISO 19650)','A, B, C','Rev 0, 1, 2',revision]){
+    await select('Revisions',value);
+    assert.equal(await until(()=>readControl('Revisions'),v=>v===value),value);
+   }
+   await switchValue(!initialCheck);await switchValue(initialCheck);await switchValue(true);
+   await call('saveSession');
+   originalRegister=await js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>w.id==='+JSON.stringify(workspaceId)+').register');
+   const naming='Naming QA.xlsx',containers='Issued QA.xlsx',assigned=path.join(issued,'A01.archhub');
+   execFileSync(input.installedPython,['-I','-B','-c',[
+    'from pathlib import Path','import sys','from openpyxl import Workbook',
+    'folder = Path(sys.argv[1])','rules = Workbook()', "sheet = rules.active; sheet.title = 'Adoptions'",
+    "sheet.append(['StandardID','Edition','Incorporation decision','Token order'])",
+    "sheet.append(['QA',1,'Adopted','SERIAL'])","codes = rules.create_sheet('Codes')",
+    "codes.append(['Token','Code','ProjectID','Authority','State'])","codes.append(['SERIAL','A01','QA','QA','Approved'])",
+    'rules.save(folder/sys.argv[2]); rules.close()','issued = Workbook()', "sheet = issued.active; sheet.title = 'Container template'",
+    "sheet.append(['ContainerID','Revision','Permitted use'])","sheet.append(['A01',0,'ARCHHUB'])",
+    'issued.save(folder/sys.argv[3]); issued.close()'
+   ].join('\n'),folder,naming,containers],{windowsHide:true});
+   await register('QA',{issuedDestination:issued,namingRegister:naming,issuedRegister:containers});
+   await select('Revisions','Rev 0, 1, 2');assert.equal(await until(()=>readControl('Revisions'),v=>v==='Rev 0, 1, 2'),'Rev 0, 1, 2');
+   await call('saveSession');
+   fs.copyFileSync(source,target,fs.constants.COPYFILE_EXCL);
+   const sourceBytes=fs.readFileSync(source),targetBytes=fs.readFileSync(target);
+   const refusal=await js('(async()=>{try{await window.ArchHubAPI.saveSession('+JSON.stringify(target)+',true);return "";}catch(error){return error.message;}})()');
+   assert.match(refusal,/assigned ContainerID.*ARCHHUB permitted use.*exact name/i);
+   assert.deepEqual(fs.readFileSync(source),sourceBytes);assert.deepEqual(fs.readFileSync(target),targetBytes);
+   assert.equal(path.normalize(await call('getSessionPath')),path.normalize(source));
+   const saved=await call('saveSession',assigned,true);
+   assert.equal(saved.issueRevision,'Rev 0');assert.equal(path.normalize(saved.path),path.normalize(assigned));
+   assert.equal(json(assigned).id,saved.document.id);
+   await call('openSession',assigned);assert.equal((await call('getSessionDocument')).id,saved.document.id);
+   await call('openSession',source);await call('refreshPreferences');
+   await select('Revisions',revision);assert.equal(await until(()=>readControl('Revisions'),v=>v===revision),revision);
+   await switchValue(initialCheck);
+   const x=(await call('getSessionDocument')).viewport.x+53;
+   await js('(()=>{const a=window.ArchHubAPI;a.setSessionViewport({...a.getSessionDocument().viewport,x:'+JSON.stringify(x)+'});window.__archhubNamingCancel=a.saveSessionAs();return true;})()');
+   const cancel=await native({kind:'cancel-save',title:'Save session'});
+   assert.equal(cancel.closed,true,cancel.error);
+   assert.equal(await js('window.__archhubNamingCancel.then(r=>r.cancelled)'),true);
+   assert.equal(await until(async()=>json(source).viewport.x,v=>v===x),x);
+   assert.equal(path.normalize(await call('getSessionPath')),path.normalize(source));
+   assert.deepEqual(fs.readFileSync(target),targetBytes);
+   return {pass:true,got:{revisionRestored:revision,nameCheckRestored:initialCheck,refusal,assignedRevision:saved.issueRevision,bothFilesPreserved:true,nativeCancel:cancel,autosaveReadBack:true}};
+  }finally{
+   if(originalRegister)await register(originalRegister.number,{issuedDestination:originalRegister.issuedDestination||'',namingRegister:originalRegister.namingRegister||'',issuedRegister:originalRegister.issuedRegister||''});
+   if(previousScope)await scope(previousScope);
+   if(previousProject&&previousProject!==workspaceId)await call('selectWorkspace',previousProject);
+   await call('openSession',previous);
+  }
  });
 }

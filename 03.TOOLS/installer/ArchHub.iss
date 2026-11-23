@@ -320,18 +320,89 @@ const
   CleanCoordinationTask = 'ArchHub Clean Coordination';
   UniversalRuntimeTask = 'ArchHub Universal Runtime';
 
+  SchedulerWaitMs = 15000;
+
+type
+  { Setup is a 32-bit process: pointers and handles are 4 bytes. }
+  TBoundedStartupInfo = record
+    cb: Cardinal;
+    lpReserved, lpDesktop, lpTitle: Longint;
+    dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags: Cardinal;
+    wShowWindow, cbReserved2: Word;
+    lpReserved2, hStdInput, hStdOutput, hStdError: Longint;
+  end;
+  TBoundedProcessInfo = record
+    hProcess, hThread: Longint;
+    dwProcessId, dwThreadId: Cardinal;
+  end;
+
+function CreateProcessBounded(lpApplicationName, lpCommandLine: String; lpProcessAttributes, lpThreadAttributes: Longint;
+  bInheritHandles: BOOL; dwCreationFlags: Cardinal; lpEnvironment: Longint; lpCurrentDirectory: String;
+  var lpStartupInfo: TBoundedStartupInfo; var lpProcessInformation: TBoundedProcessInfo): BOOL;
+  external 'CreateProcessW@kernel32.dll stdcall';
+function WaitForProcessBounded(hHandle: Longint; dwMilliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function TerminateProcessBounded(hProcess: Longint; uExitCode: Cardinal): BOOL;
+  external 'TerminateProcess@kernel32.dll stdcall';
+function GetExitCodeProcessBounded(hProcess: Longint; var lpExitCode: Cardinal): BOOL;
+  external 'GetExitCodeProcess@kernel32.dll stdcall';
+function CloseHandleBounded(hObject: Longint): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+{ Runs Exe hidden and waits at most WaitMs. Returns its exit code, -1 when it
+  was stopped at the limit, -2 when it could not start. }
+function RunBounded(Exe, Params: String; WaitMs: Cardinal): Integer;
+var
+  Startup: TBoundedStartupInfo;
+  Process: TBoundedProcessInfo;
+  Code: Cardinal;
+begin
+  Result := -2;
+  Startup.cb := 68;
+  Startup.dwFlags := 1; { STARTF_USESHOWWINDOW }
+  Startup.wShowWindow := SW_HIDE;
+  if not CreateProcessBounded(Exe, '"' + Exe + '" ' + Params, 0, 0, False, $08000000 { CREATE_NO_WINDOW }, 0,
+      ExpandConstant('{sys}'), Startup, Process) then
+    exit;
+  try
+    if WaitForProcessBounded(Process.hProcess, WaitMs) = $102 { WAIT_TIMEOUT } then
+    begin
+      TerminateProcessBounded(Process.hProcess, 1);
+      WaitForProcessBounded(Process.hProcess, 2000);
+      Result := -1;
+    end
+    else if GetExitCodeProcessBounded(Process.hProcess, Code) then
+      Result := Code;
+  finally
+    CloseHandleBounded(Process.hThread);
+    CloseHandleBounded(Process.hProcess);
+  end;
+end;
+
 { The old task is removed at the next installed upgrade. It must never start
-  a second application owner. No task is created or refreshed. }
+  a second application owner. No task is created or refreshed. The Task
+  Scheduler can stop answering (a 50d908c upgrade hung 17 minutes in
+  schtasks /End on a task that was already gone), so a missing task is left
+  alone and every request is bounded. }
 procedure RemoveRetiredRuntimeTask(TaskName: String);
 var
+  Scheduler: String;
   Code: Integer;
 begin
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "' + TaskName + '"', '',
-       SW_HIDE, ewWaitUntilTerminated, Code);
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "' + TaskName + '" /F', '',
-       SW_HIDE, ewWaitUntilTerminated, Code);
+  Scheduler := ExpandConstant('{sys}\schtasks.exe');
+  Code := RunBounded(Scheduler, '/Query /TN "' + TaskName + '"', SchedulerWaitMs);
   if Code <> 0 then
-    Log('Retired runtime task absent or unavailable (exit ' + IntToStr(Code) + ').');
+  begin
+    if Code = -1 then
+      Log('Task Scheduler did not answer for ' + TaskName + '; left for the next upgrade.')
+    else
+      Log('Retired runtime task ' + TaskName + ' absent (query exit ' + IntToStr(Code) + ').');
+    exit;
+  end;
+  RunBounded(Scheduler, '/End /TN "' + TaskName + '"', SchedulerWaitMs);
+  Code := RunBounded(Scheduler, '/Delete /TN "' + TaskName + '" /F', SchedulerWaitMs);
+  if Code <> 0 then
+    Log('Retired runtime task ' + TaskName + ' not removed (exit ' + IntToStr(Code) + ').');
 end;
 
 

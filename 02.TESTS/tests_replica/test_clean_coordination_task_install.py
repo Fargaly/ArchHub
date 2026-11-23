@@ -46,7 +46,58 @@ def test_retirement_does_not_require_a_developer_or_installed_python():
     _, body = _retirement()
     assert 'python' not in body.casefold()
     assert "{sys}\\schtasks.exe" in body
-    assert 'SW_HIDE, ewWaitUntilTerminated' in body
+    assert "RunBounded(Scheduler, '/Query /TN" in body
+    assert body.index('/Query /TN') < body.index('/End /TN')
+    assert 'ewWaitUntilTerminated' not in body
+
+
+def test_scheduler_requests_are_bounded_and_a_missing_task_is_left_alone(tmp_path):
+    """Compile the production RunBounded/RemoveRetiredRuntimeTask and run them: a hung child is
+    stopped at its limit, exit codes come back, and the real scheduler query skips an absent task."""
+    import sys, time, uuid
+    compiler = Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe")
+    source = ISS.read_text(encoding='utf-8')
+    start = source.index('type\n  { Setup is a 32-bit')
+    end = source.index('\nend;', source.index('procedure RemoveRetiredRuntimeTask(')) + 5
+    absent = 'ArchHub Court Absent ' + uuid.uuid4().hex
+    out, log = tmp_path / 'result.txt', tmp_path / 'setup.log'
+    script = tmp_path / 'bounded.iss'
+    script.write_text(r'''[Setup]
+AppName=Bounded court
+AppVersion=1
+DefaultDirName={tmp}\court
+PrivilegesRequired=lowest
+Uninstallable=no
+CreateUninstallRegKey=no
+OutputBaseFilename=bounded-court
+[Code]
+const
+  SchedulerWaitMs = 15000;
+''' + source[start:end] + r'''
+function InitializeSetup(): Boolean;
+var
+  Python: String;
+begin
+  Python := ExpandConstant('{param:python}');
+  SaveStringToFile(ExpandConstant('{param:out}'),
+    IntToStr(RunBounded(Python, '-c "import time;time.sleep(60)"', 1500)) + ' ' +
+    IntToStr(RunBounded(Python, '-c "import sys;sys.exit(3)"', 15000)), False);
+  RemoveRetiredRuntimeTask(ExpandConstant('{param:task}'));
+  Result := False;
+end;
+''', encoding='utf-8')
+    built = subprocess.run([str(compiler), '/Q', '/O' + str(tmp_path), str(script)], capture_output=True, text=True)
+    assert built.returncode == 0, built.stdout + built.stderr
+    began = time.monotonic()
+    subprocess.run([str(tmp_path / 'bounded-court.exe'), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/python=' + sys.executable,
+                    '/out=' + str(out), '/task=' + absent, '/LOG=' + str(log)], timeout=60)
+    assert time.monotonic() - began < 30
+    assert out.read_text() == '-1 3'
+    text = log.read_text(errors='replace')
+    # A healthy scheduler says the task is absent; a hung one (seen on the founder PC) is bounded and skipped.
+    assert ('Retired runtime task ' + absent + ' absent (query exit 1).' in text
+            or 'Task Scheduler did not answer for ' + absent + '; left for the next upgrade.' in text), text
+    assert 'not removed' not in text
 
 
 def test_all_shortcuts_use_the_same_installed_qt_launcher():

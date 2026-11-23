@@ -409,7 +409,7 @@ def test_the_task_binding_lookup_reads_the_workshop_strictly_read_only(tmp_path)
         have = {row[1] for row in db.execute("PRAGMA table_info(workshop_tasks)")}
         for column in workshop_tasks.COLUMNS:
             if column not in have:
-                db.execute("ALTER TABLE workshop_tasks ADD COLUMN %s" % column)
+                db.execute("ALTER TABLE workshop_tasks ADD COLUMN %s ANY" % column)  # a strict table needs a type
         now = clock_time.time()
         db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,revision) "
                    "VALUES('t-a','A','open','founder',?,?,?,0)", (now, now, str(tmp_path / "A.archhub")))

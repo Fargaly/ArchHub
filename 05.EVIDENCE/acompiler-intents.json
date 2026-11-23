@@ -12051,7 +12051,7 @@
     },
     "UPDATERWORKS": {
       "source": "Founder 2026-11-19: the most important thing is that the updater works. Restart and Quit hand off to one detached helper that waits for the desktop to exit, installs quietly, reopens on the new build and rolls back on failure; release reads retry with the cause logged; proven by a real hand-off court and on his machine with no hand install.",
-      "scope": ["04.DOCS/DECISIONS.md", "03.TOOLS/installer/connector_admission.iss", "03.TOOLS/installer/build_release.ps1", "02.TESTS/tests_replica/test_setup_admission.py", 
+      "scope": ["03.TOOLS/tools/real_app_check/update_controller_check.py", "04.DOCS/DECISIONS.md", "03.TOOLS/installer/connector_admission.iss", "03.TOOLS/installer/build_release.ps1", "02.TESTS/tests_replica/test_setup_admission.py", 
         "01.APP/nodelang/quiet_update.py",
         "01.APP/nodelang/nograph_launcher.py",
         "02.TESTS/tests_replica/test_update_real_handoff.py",

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {mkdtempSync, readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import settings, {steps as settingsSteps} from './settings.mjs';
@@ -50,6 +51,41 @@ export async function rightClicks({step, js, until, rectOf, mouse, cdp, clickTex
     return {menu, actions};
   };
 
+  // With live watch routes: a disposable Internal project and its own Home task, right-clicked; the dialog
+  // must name that task, and cancelling must create no grant. No invitation is ever sent.
+  const inviteDialogOnly = async ({menu, watchButton, before}) => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'archhub-watch-check-'));
+    const watched = title + ' watch';
+    const made = await js(`(async()=>{const api=window.ArchHubAPI;
+      const added=await api.addWorkspace({folder:${JSON.stringify(folder)}}), root=added?.root?.root_id;
+      if(!root)return {error:'not registered'};
+      await api.setWorkspaceRules(root,{privacy:'Internal'});
+      const task=await api.createTask(${JSON.stringify(watched)},'',root);
+      await api.listTasks();
+      return {root,id:task.taskId,path:task.path};})()`);
+    assert.ok(made?.root && made.id, 'Disposable Internal project was not created: ' + JSON.stringify(made));
+    try {
+      const card = `[data-design="home.card"][data-home-task=${JSON.stringify(made.id)}] .home-card-head b`;
+      assert.ok(await until(() => visible(card), Boolean), 'Disposable watch task missing from Home All');
+      await press(card, 'right');
+      const enabled = await watchButton();
+      assert.equal(enabled?.disabled, false, 'Invite to watch is not enabled for an eligible session');
+      await press(menu + ' [data-design^="menu.invite-to-watch"]');  // data-design comes from the label
+      const form = '[role="dialog"] [data-watch-invite]';
+      assert.ok(await until(() => visible(form), Boolean), 'Invite to watch dialog missing');
+      assert.equal(await js(`document.querySelector(${JSON.stringify(form+' p b')})?.textContent.trim()`), watched,
+        'The dialog does not name the right-clicked session');
+      assert.equal(await js(`document.querySelector(${JSON.stringify(form+' input[aria-label="Watcher email"]')}).value`), '');
+      await shot('Invite to watch dialog for disposable Internal task');
+      await escape(form);
+      const after = await js(`window.ArchHubAPI.readWatchGrants().then(w=>(w.grants||[]).map(g=>g.id))`);
+      assert.deepEqual([...after].sort(), [...before].sort(), 'Cancelling Invite to watch created a grant');
+      return {...enabled, dialogTarget:watched, cancelled:true, grantsUnchanged:true};
+    } finally {
+      await js(`window.ArchHubAPI.removeWorkspace(${JSON.stringify(made.root)}).then(()=>true,()=>false)`);
+    }
+  };
+
   await check(home, async () => {
     if (!await visible('[data-home-page] [data-home-ready]')) assert.ok(await clickText('Home'), 'Home navigation missing');
     assert.ok(await until(() => visible('[data-home-page] [data-home-ready]'), Boolean));
@@ -79,13 +115,28 @@ export async function rightClicks({step, js, until, rectOf, mouse, cdp, clickTex
     assert.ok(await until(() => visible(target), Boolean), 'Unselected task missing from Home All');
     const state = target.replace(' .home-card-head b', ' .home-card-state');
     assert.equal(await js(`document.querySelector(${JSON.stringify(state)}).textContent.trim()`), 'Planned');
-    const {menu, actions} = await inspectMenu(target, 'Home session menu', ['Open session','Open the thread','Run','Add to another task','Make this an automation',
-      'Settings for this session','Rename','Duplicate','Keep at the top','Archive'], ['Fork','Rerun','Invite to watch…']);
-    await press(target, 'right');
-    const watch=await js(`(()=>{const button=[...document.querySelectorAll(${JSON.stringify(menu+' button')})]
+    // Invite to watch follows the cloud: disabled with the owner's reason until the watch routes answer.
+    const watchState = await js(`(async()=>{const api=window.ArchHubAPI;
+      const w=api.readWatchGrants?await api.readWatchGrants().catch(()=>null):null;
+      return {capability:w?.capability===true,reason:w?.reason||'',grants:(w?.grants||[]).map(g=>g.id)};})()`);
+    const sessionActions = ['Open session','Open the thread','Run','Add to another task','Make this an automation',
+      'Settings for this session','Rename','Duplicate','Keep at the top','Archive'];
+    const {menu, actions} = await inspectMenu(target, 'Home session menu',
+      watchState.capability ? [...sessionActions,'Invite to watch…'] : sessionActions,
+      watchState.capability ? ['Fork','Rerun'] : ['Fork','Rerun','Invite to watch…']);
+    const watchButton = () => js(`(()=>{const button=[...document.querySelectorAll(${JSON.stringify(menu+' button')})]
       .find(b=>b.querySelector('span')?.textContent.trim()==='Invite to watch…');
       return button && {disabled:button.disabled,reason:button.title};})()`);
-    assert.deepEqual(watch,{disabled:true,reason:'Read-only watcher invitations are unavailable.'});
+    let watch;
+    if (!watchState.capability) {
+      await press(target, 'right');
+      watch = await watchButton();
+      assert.deepEqual(watch,{disabled:true,reason:watchState.reason||'Read-only watcher invitations are unavailable.'});
+      await escape(menu);
+    } else {
+      watch = await inviteDialogOnly({menu, watchButton, before:watchState.grants});
+    }
+    await press(target, 'right');
     await press(menu + ' [data-design="menu.rename"]');
     const input = '[role="dialog"] input[aria-label="Task name"]';
     assert.ok(await until(() => visible(input), Boolean));

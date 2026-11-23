@@ -32,6 +32,7 @@ function fixture(storage=new Map(),previousView=null){
    else if(url==='/api/session-files'&&['save','autosave'].includes(body?.action))data={ok:true,document:body.document,path:body.path||'C:/fixture/new.archhub',revision:2};
    else if(url==='/api/universal/settings-action'&&body?.function==='readLibraryCollapsed')data={ok:true,result:{libraryCollapsed:[]}};
    else if(url==='/api/universal/settings-action'&&body?.function==='readKeybindings')data={ok:true,result:{keybindings:{},keyboardCommands:[]}};
+   else if(url==='/api/universal/settings-action'&&body?.function==='readWatching')data={ok:true,result:{capability:true,reason:'',watching:access.subject==='A'?[{id:'grant-0001-abcdef',state:'shared',updated:null,expires:null}]:[]}};
    if(url==='/api/router/chat'&&status===200)return {ok:true,status,body:new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({result:{ok:true,answer:'Fixture streamed answer'}})+'\n\n'));controller.close();}})};
    return {ok:status<400,status,headers:new Headers(),json:async()=>data};
   }};
@@ -104,4 +105,18 @@ test('locked sign-in reports dispatch failure safely and retries without grantin
  f.signin({phase:'failed',error:'private provider details'});
  await f.api.refreshDesktopAccess(true);
  assert.equal(access().notice,'Sign-in failed. Choose Retry to sign in again.');
+});
+
+test('first admitted Home reads shared-with-you once per account, and an account switch reads again',async()=>{
+ const f=fixture();f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;await settle();await settle();
+ const reads=()=>f.calls.filter(call=>call.body?.function==='readWatching');
+ assert.equal(reads().length,1,'first Home must read shared sessions without opening Account');
+ assert.equal(reads()[0].headers.get('X-ArchHub-Desktop-Subject'),'A');
+ assert.deepEqual(f.api.getSnapshot().watching.watching.map(row=>row.id),['grant-0001-abcdef']);
+ await f.api.refreshDesktopAccess(true);await f.api.refreshDesktopAccess(true);await settle();
+ assert.equal(reads().length,1,'the same account does not read again in the background');
+ f.set('B');await f.api.refreshDesktopAccess(true);await f.api.ready;await settle();await settle();
+ assert.equal(reads().length,2);assert.equal(reads()[1].headers.get('X-ArchHub-Desktop-Subject'),'B');
+ assert.deepEqual(f.api.getSnapshot().watching.watching,[],'B never sees A\'s shared sessions');
+ f.close();
 });

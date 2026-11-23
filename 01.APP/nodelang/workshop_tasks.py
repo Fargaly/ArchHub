@@ -1222,6 +1222,32 @@ def get(history, task):
     return next(iter(rows(history, task)), None)
 
 
+def bound_session_path(task, database=None):
+    """The session file a task row owns, read strictly read-only: no settle, reap, create or migrate.
+    A missing mailbox, table or task gives None."""
+    import sqlite3
+    from contextlib import closing
+    from pathlib import Path
+    if not isinstance(task, str) or not task:
+        return None
+    if database is None:
+        from .workshop_mailbox import profile_database
+        database = profile_database()
+    path = Path(database)
+    if not path.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workshop_tasks'").fetchone():
+                return None
+            row = connection.execute("SELECT session_path FROM workshop_tasks WHERE id=?", (task,)).fetchone()
+    except sqlite3.Error as unreadable:  # fail closed: no binding, and nothing written
+        import logging
+        logging.getLogger(__name__).warning("Workshop task binding unreadable: %s", unreadable)
+        return None
+    return (row[0] if row else None) or None
+
+
 def _current_session():
     """The file the founder has open. SessionFiles is the only owner of that choice."""
     from .session_files import SessionFiles

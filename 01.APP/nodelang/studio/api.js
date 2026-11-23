@@ -1379,17 +1379,27 @@ api.exportData=async(name,nodeId)=>{
  return settingsExport(name,nodeId);
 };
 const settingsAccountRefresh=refreshAccount;
-let settingsAccountIdentity='',settingsProfile={};
+let settingsAccountIdentity='',settingsProfile={},watchingIdentity='';
 refreshAccount=async()=>{
  const profile=await settingsAccountRefresh();
  if(profile.id!==settingsAccountIdentity){
   settingsAccountIdentity=profile.id;settingsProfile={};
-  publish({profile:{...state.profile,firm:'',plan:''},firms:[],activeFirm:'',people:[],officeInvitations:[],controlErrors:{},settingsScope:'User',activeWorkspace:'',activeDevice:'',devices:[],backups:[],workspaces:[],graph:{...state.graph,workspaceIds:[]},billing:{status:'',requestedPlan:'',cycle:'',checkout:null,invoices:[],plans:[]}});
+  publish({watching:undefined,profile:{...state.profile,firm:'',plan:''},firms:[],activeFirm:'',people:[],officeInvitations:[],controlErrors:{},settingsScope:'User',activeWorkspace:'',activeDevice:'',devices:[],backups:[],workspaces:[],graph:{...state.graph,workspaceIds:[]},billing:{status:'',requestedPlan:'',cycle:'',checkout:null,invoices:[],plans:[]}});
  }else if(profile.signedIn){publish({profile:{...state.profile,...settingsProfile}});}
  if(profile.signedIn)await api.refreshSettingsAccount().catch(error=>publish({connectionNotice:error.message}));
+ // Shared-with-you count for Home: once per admitted account, in the background; an account switch reads again.
+ if(profile.signedIn&&profile.id&&watchingIdentity!==profile.id){watchingIdentity=profile.id;void api.readWatching().catch(()=>{watchingIdentity='';});}
+ if(!profile.signedIn)watchingIdentity='';
  return copy(state.profile);
 };
-api.syncAccount=async()=>{await refreshAccount();if(state.profile.signedIn){await api.refreshSettingsAccount();await api.listWorkspaces();}return copy(state.profile);};
+api.syncAccount=async()=>{await refreshAccount();if(state.profile.signedIn){await api.refreshSettingsAccount();await api.listWorkspaces();void api.readWatchGrants().catch(()=>{});}return copy(state.profile);};
+// Invite to watch (watch_grants.py through the Settings owner): capability, the owner's grants, invite and stop.
+api.readWatchGrants=async()=>{const watch=await settingsAction('readWatchGrants');publish({watch});return watch;};
+api.inviteWatcher=async(path,email,ends)=>{const result=await settingsAction('inviteWatcher',[path,email,ends]);void api.readWatchGrants().catch(()=>{});return result;};
+api.stopWatcher=async id=>{const result=await settingsAction('stopWatcher',[id]);void api.readWatchGrants().catch(()=>{});return result;};
+// The recipient side: sessions shared with this account, and one read-only view (no document, no Run, no Save).
+api.readWatching=async()=>{const asked=settingsAccountIdentity,watching=await settingsAction('readWatching');if(asked===settingsAccountIdentity)publish({watching});return watching;};
+api.readWatchedSession=id=>settingsAction('readWatchedSession',[id]);
 // WIRE-settings end
 // WIRE-rest
 // Resolve the current graph's admitted commands; never guess an HTTP operation.

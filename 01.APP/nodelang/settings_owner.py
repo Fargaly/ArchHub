@@ -162,6 +162,7 @@ class SettingsOwner:
     PUBLIC = ('read', 'updateProfile', 'invitePerson', 'selectFirm', 'setTeamAccess',
               'setBilling', 'refreshBilling', 'prepareCheckout', 'completeCheckout',
               'retryPayment', 'downgradeBilling', 'manageDependency', 'checkDependencies',
+              'readWatchGrants', 'inviteWatcher', 'stopWatcher', 'readWatching', 'readWatchedSession',
               'acceptOfficeInvitation', 'declineOfficeInvitation', 'archiveActivity',
               'readOperations', 'setWorkspaceRules', 'setSettingsScope', 'setGraphWorkspaces', 'ensureDependency',
               'selectDevice', 'grantAccess', 'backUpNow', 'rollBack',
@@ -592,7 +593,38 @@ class SettingsOwner:
 
     ACCOUNT = ('read', 'updateProfile', 'invitePerson', 'selectFirm', 'setTeamAccess', 'setBilling', 'refreshBilling',
                'prepareCheckout', 'completeCheckout', 'retryPayment', 'downgradeBilling', 'acceptOfficeInvitation',
-               'declineOfficeInvitation', 'manageDependency', 'ensureDependency', 'checkDependencies')
+               'declineOfficeInvitation', 'manageDependency', 'ensureDependency', 'checkDependencies',
+               'readWatchGrants', 'inviteWatcher', 'stopWatcher', 'readWatching', 'readWatchedSession')
+
+    # Invite to watch (watch_grants.py): one named account, one saved session, read-only, owner-revocable.
+    def _watch(self):
+        from .watch_grants import WatchGrants
+        me, root = self._account()
+        return WatchGrants(
+            cloud=self.cloud, account=lambda: me, workspace=self._workspace,
+            policy=lambda id: (self._preferences(root).get('workspacePolicies', {}).get(id) or {}).get('privacy'),
+            read_prefs=lambda: self._preferences(root), save_prefs=lambda values: self._save(root, values))
+
+    def readWatchGrants(self):
+        try:
+            return self._watch().capability()
+        except ValueError as refused:
+            return {'capability': False, 'reason': str(refused), 'grants': []}
+
+    def inviteWatcher(self, session_path, email, ends):
+        return self._watch().invite(session_path, email, ends)
+
+    def stopWatcher(self, grant_id):
+        return self._watch().stop(grant_id)
+
+    def readWatching(self):
+        try:
+            return self._watch().watching()
+        except ValueError as refused:
+            return {'capability': False, 'reason': str(refused), 'watching': []}
+
+    def readWatchedSession(self, grant_id):
+        return self._watch().view(grant_id)
 
     def manageDependency(self, id, action):
         return self.dependencies.manage(id, action)
@@ -623,7 +655,11 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
         with urlopen(request, timeout=timeout_seconds) as response:
             result = json.loads(response.read(1024 * 1024))
     except HTTPError as error:
-        if error.code == 404 and method == 'GET' and path == '/v1/companies/invites/mine':
+        if error.code == 410 and method == 'GET' and path.startswith('/v1/watching/'):
+            from .watch_grants import WatchEnded
+            raise WatchEnded('This shared session cannot be shown now.') from None
+        if error.code == 404 and ((method == 'GET' and path == '/v1/companies/invites/mine')
+                                  or path.startswith(('/v1/watch-grants', '/v1/watching'))):
             raise CloudRouteUnavailable('Cloud feature unavailable. Update the cloud service and retry.') from None
         raise ValueError('Cloud backend refused (HTTP %s). Refresh account status and retry.' % error.code) from None
     except OSError:

@@ -297,7 +297,9 @@
             if (result?.approvalId) u.show('Approve', {id: result.approvalId});
           })),
           choice('menu.home.add', addTo, null, !source ? 'Save this session first.' : !destinations.length && 'There is no other task to add it to.'),
-          sessionTask && choice('menu.home.watch', null, null, 'Read-only watcher invitations are unavailable.'),
+          // Invite to watch: the right-clicked session only; disabled until the cloud serves watch grants.
+          sessionTask && choice('menu.home.watch', () => u.show('Invite to watch', {path: source, title: task?.title}), null,
+            !s.watch?.capability ? (s.watch?.reason || 'Read-only watcher invitations are unavailable.') : !source && 'Save this session first.'),
           sessionTask && choice('menu.home.automate', () => onCard(async () => {
             const result = await api.addAutomation({trigger:'schedule',armed:false});
             if (!result?.cancelled && api.getSessionDocument()?.properties?.taskContext?.task === id) u.setHomeInspector({id,tab:'Automate'});

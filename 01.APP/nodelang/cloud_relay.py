@@ -492,8 +492,11 @@ class CloudRelay:
         environment: Optional[Mapping[str, str]] = None,
         app_kinds: tuple[str, ...] = APP_KINDS,
         desktop_access=None,
+        watch_pusher: Optional[Callable[[], object]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
+        # Invite to watch: each idle cycle re-pushes (or heartbeats) the owner's active watch grants.
+        self.watch_pusher = watch_pusher
         # A remote read runs this: host_read, unless a caller supplies its own.
         self.host_reader = host_reader or host_read
         if host_effect is None and desktop_access is not None:
@@ -756,6 +759,18 @@ class CloudRelay:
         self._map_digest = digest
         return answer
 
+    def push_watch(self) -> object:
+        """Push the owner's watch projections; consent is the same as the map's. A failure stays local."""
+        if self._stop.is_set() or self.watch_pusher is None:
+            return None
+        if callable(self.consent) and self.consent() is not True:
+            return None
+        try:
+            return self.watch_pusher()
+        except Exception as refused:  # noqa: BLE001 - one watch push never stops the relay
+            self.last_error = "watch: %s: %s" % (type(refused).__name__, refused)
+            return None
+
     def _with_control(self, body: str) -> str:
         """Add the CONTROL block the cockpit's domain panel drives from.
 
@@ -848,6 +863,7 @@ class CloudRelay:
                 if worked is not None:
                     continue  # drain the queue before sleeping
                 self.push_map()
+                self.push_watch()
             except urllib.error.HTTPError as exc:
                 if exc.code in (401, 403):
                     stop.wait(self._after_session_refused(exc))
@@ -953,8 +969,22 @@ def start_cloud_relay(
         session_caller=session_caller,
         app_kinds=app_kinds,
         desktop_access=desktop_access,
+        watch_pusher=_watch_pusher(state_dir),
     )
     return relay.start()
+
+
+def _watch_pusher(state_dir, *, cloud=None):
+    """The signed-in account's own watch grants, through its Settings owner (account preferences file)."""
+    account_file = Path(state_dir) / "settings" / "account.json"
+
+    def push():
+        from .settings_owner import AccountFiles, SettingsOwner
+        from .watch_grants import has_local_shares
+        if not has_local_shares(account_file):
+            return None  # nothing shared: no cloud call this cycle
+        return SettingsOwner(AccountFiles(account_file), cloud=cloud, dependencies=object())._watch().push()
+    return push
 
 
 __all__ = [

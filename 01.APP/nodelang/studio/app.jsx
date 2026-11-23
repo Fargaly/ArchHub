@@ -989,7 +989,7 @@
         m,
         saved,
         text
-      }, event)}>Add comment</Btn>}</>;else if (k === 'Comment') body = <p>{m.text}</p>;else if (k === 'Invite') body = <><label className="grid">Email<input type="email" aria-label="Teammate email" value={text} placeholder="colleague@office.com" onChange={e => setText(e.target.value)} /></label><Btn p disabled={!text.includes('@')} onClick={event => executeAction("appShell.Invite.78", {
+      }, event)}>Add comment</Btn>}</>;else if (k === 'Comment') body = <p>{m.text}</p>;else if (k === 'Invite to watch') body = <window.UI.WatchInvite path={m.path} title={m.title} />;else if (k === 'Watching') body = <window.UI.WatchView grant={m.grant} />;else if (k === 'Invite') body =<><label className="grid">Email<input type="email" aria-label="Teammate email" value={text} placeholder="colleague@office.com" onChange={e => setText(e.target.value)} /></label><Btn p disabled={!text.includes('@')} onClick={event => executeAction("appShell.Invite.78", {
         api,
         saved,
         text

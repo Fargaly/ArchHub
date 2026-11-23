@@ -338,3 +338,34 @@ print(json.dumps(SessionFiles().dispatch(json.load(sys.stdin))))
   assert.equal(copy.nodes.find(n=>n.id==='clicked-step').params.text,'from B');
   assert.deepEqual(fs.readFileSync(fixture.path),before);
 });
+
+
+test('Running filter and count use live work and held runs; interrupted work still offers recovery', () => {
+  const tasks = [task('lost',{status:'WIP',outcome:'interrupted',stale:false,members:[{live:false}]}),
+    task('worker',{status:'WIP',members:[{live:true}]}),task('paused',{status:'WIP',outcome:'paused',members:[{live:true}]}),
+    task('approval',{status:'WIP',members:[{live:true}]})];
+  for(const activity of ['resting','stopped','idle']){
+    tasks.push(task(activity,{status:'WIP',members:[{id:activity,live:true}]}));
+  }
+  const sessions=['worker','resting','stopped','idle','paused','approval'].map(id=>({
+    id,task:'t-'+id,status:['worker','paused','approval'].includes(id)?'working':id}));
+  const rows = homeRows({tasks,agentGraph:{sessions},approvals:[{id:'gate',status:'pending',taskId:'t-approval'}]}, {});
+  const build = filter => cards(homeMap({listed:{groups:[]},rows,params:{...DEFAULT,filter},titleOf:r=>r.title,olderOpen:true}));
+  const items = build('All');
+  assert.equal(items.find(c=>c.task==='t-lost').need.resume,true);
+  assert.equal(items.find(c=>c.task==='t-lost').state,'Needs you');
+  assert.equal(items.find(c=>c.task==='t-paused').state,'Paused');
+  assert.equal(items.find(c=>c.task==='t-approval').state,'Needs you');
+  assert.deepEqual(plain(build('Running').map(c=>c.task)),['t-worker']);
+  assert.equal(rows.running,build('Running').length);
+});
+
+test('History opens the edited declaration canvas at its file path and omits an automatic registration', () => {
+  const files = [false,true].map((authored,i)=>session('old'+i,'Earlier '+i,'Office',{
+    task:'declared-'+i, authoredRegistration:authored}));
+  const tasks = files.map(item=>({id:item.task,sessionPath:item.path,status:'WIP'}));
+  const rows=homeRows({tasks},{}),listed={groups:[{sessions:files}]};
+  const build = history => cards(homeMap({listed,rows,params:DEFAULT,titleOf:r=>r.title,history,olderOpen:true}));
+  assert.equal(build(false).length,0);
+  assert.deepEqual(plain(build(true).map(c=>[c.path,c.task])),[[files[1].path,'']]);
+});

@@ -2447,6 +2447,40 @@ def _pinned_of(props):
     return props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True
 
 
+def authored_registration(document):
+    """Distinguish edited declaration canvases from the Workshop's generated registration wiring."""
+    if document.get('notes') or document.get('groups'):
+        return True
+    fixed = {'start':'thing.session', 'fixed-agent':'thing.agent', 'fixed-you':'thing.you', 'fixed-workshop':'thing.workshop'}
+    steps = set()
+    for node in document['nodes']:
+        identity, kind, params = node['id'], node['type'], node['params']
+        work = node.get('agentWork') or {}
+        if kind == 'thing.agent' and params.get('workshop_step') is True and re.fullmatch(r'step-[0-9a-f]{24}', identity):
+            steps.add(identity)
+        elif fixed.get(identity) == kind and node.get('fixed'):
+            continue
+        elif identity == 'start' and kind == 'param.value' and params == {'type':'text','value':document['title']}:
+            continue
+        elif work.get('role') != 'step' or work.get('runnable') is not False:
+            return True
+    for wire in document['wires']:
+        source, target = wire['from'], wire['to']
+        if wire.get('rule'):
+            return True
+        if wire.get('agentOwner'):
+            continue
+        if (target['node'] in steps and wire['id'] == 'wire-' + target['node'] and target['socket'] == 'task'
+                and (source == {'node':'start','socket':'value'} or source['node'] in steps and source['socket'] == 'result')):
+            continue
+        if (target['node'] == 'start' and target['socket'] in ('agent','profile','rules')
+                and wire['id'] == 'fixed-' + target['socket'] and source['socket'] == target['socket']
+                and source['node'] == {'agent':'fixed-agent','profile':'fixed-you','rules':'fixed-workshop'}[target['socket']]):
+            continue
+        return True
+    return False
+
+
 def session_fields(document, path=None, *, roots=None, task_row=None):
     """Every session-model field with its default; reads only, never writes."""
     props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
@@ -2459,6 +2493,7 @@ def session_fields(document, path=None, *, roots=None, task_row=None):
                   for node in document['nodes'] if node['type'].startswith('trigger.')]
     return {'id': document['id'], 'title': document['title'], 'path': str(path) if path else '',
             'kind': document_kind(document), 'task': held.get('task') or '',
+            **({'authoredRegistration': authored_registration(document)} if str(held.get('task') or '').startswith('declared-') else {}),
             'revision': canvas_documents.revision(document),
             'project': _project_of(props, roots, task_row), 'state': state, 'pinned': pinned,
             'onHome': pinned or state == 'open',

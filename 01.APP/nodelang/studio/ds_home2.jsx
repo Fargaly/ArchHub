@@ -11,7 +11,7 @@
     const bounds = points.length ? [Math.min(...xs), Math.min(...ys), Math.max(1, Math.max(...xs) - Math.min(...xs)), Math.max(1, Math.max(...ys) - Math.min(...ys))] : [0, 0, 1, 1];
     return <svg width={large ? '100%' : 86} height={large ? 112 : 60} viewBox={bounds.join(' ')} aria-label={w.host || 'Source preview'} style={{borderRadius: 6, background: 'var(--current-color-ce7e3db)', display: 'block'}}><g fill="none" stroke={mark ? 'var(--color-accent)' : 'var(--current-color-c6b675f)'} strokeWidth="1" vectorEffect="non-scaling-stroke">{w.geometry.walls.map(([x1, y1, x2, y2], i) => <path key={i} d={`M${x1} ${y1}L${x2} ${y2}`} />)}</g></svg>;
   }
-  const statusText = st => ({'IN REVIEW': 'Needs you', WIP: 'Working', PLANNED: 'Planned', DONE: 'Done', ARCHIVED: 'Archived', STOPPED: 'Blocked'})[st] || st || '';
+  const statusText = st => ({'IN REVIEW': 'Needs you', WIP: 'In progress', PLANNED: 'Planned', DONE: 'Done', ARCHIVED: 'Archived', STOPPED: 'Blocked'})[st] || st || '';
   const KEY = 'archhub.home.layout.v1';
   const writeInspectorWidth = value => api.setInspectorWidth(value);
   const describe = value => {
@@ -164,13 +164,17 @@
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
     // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
-    const interruptedWork=row=>pieceOfWork(row)&&(row.outcome==='interrupted'||row.outcome==='unknown'||!!row.stale);
+    const paused=row=>row.paused===true||[row.status,row.outcome,row.rowState].some(value=>String(value).toLowerCase()==='paused');
+    const interruptedWork=row=>!row.workingNow&&!paused(row)&&row.status!=='DONE'&&row.status!=='ARCHIVED'&&
+      (row.outcome==='interrupted'||window.UI.taskRowReason?.(row)==='interrupted'||pieceOfWork(row)&&(row.outcome==='unknown'||!!row.stale));
     const sectionOf=row=>{
       if(row.approval||waiting.has(row.id))return 'Needs you';  // a held run needs him, whoever is working
-      if(row.workingNow)return 'Working now';
+      if(paused(row))return 'Paused';
+      if(row.status==='IN REVIEW')return 'Needs you';
+      if(['failed','error'].includes(row.outcome))return 'Failed';
+      if(row.workingNow&&!['DONE','ARCHIVED','STOPPED','FAILED','ERROR'].includes(row.status))return 'Working now';
       if(interruptedWork(row)&&!row.stale)return 'Needs you';
       if(row.status==='ARCHIVED'||row.stale||row.status==='stale'||['interrupted','unknown'].includes(row.outcome)||window.UI.taskRowReason(row)==='interrupted')return 'Older / archived';
-      if(row.status==='IN REVIEW')return 'Needs you';
       const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);
       return date>=today?'Today':'Older / archived';
     };
@@ -183,10 +187,10 @@
     const heldOf = row => held.find(card => namesOf(card).some(name => name === row.id || name === row.sessionPath));
     return {waiting, tasks, list, resumed, sessionRows, sectionOf, needs, working, heldOf, interruptedWork,
       projectLabel, needsYou: sessionRows.filter(row => !registration(row) && needs(row)).length,
-      running: sessionRows.filter(row => !registration(row) && (row.status === 'WIP' || working(row))).length};
+      running: sessionRows.filter(row => !registration(row) && working(row)).length};
   };
   // Home shows actionable work. Session history is an explicit view of the same saved files and task rows.
-  const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Planned', 'Idle'];
+  const MAP_STATES = ['Needs you', 'Failed', 'Working', 'Paused', 'Planned', 'Idle'];
   const openHistoryView = () => ({map: {filter: 'All', done: 'Show', collapsed: []}, kind: 'all', olderOpen: false});
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
@@ -209,12 +213,11 @@
           : row && window.UI.taskRowReason?.(row) ? 'Stopped: ' + window.UI.taskRowReason(row) : 'No steps yet',
         // Work that lost its agent (F337) stays open with Continue: any agent picks it up on the same graph and thread.
         need: held ? {text: (held.title || 'A run') + ' needs your approval', approval: held.id} : failed ? {text: failed.title + ' failed', failed: true}
-          : row && rows.interruptedWork(row) && !row.stale ? {text: 'Interrupted · waiting for an agent', resume: true} : null,
+          : row && rows.interruptedWork(row) ? {text: 'Interrupted · waiting for an agent', resume: true} : null,
         // The lead is the card's agent; everyone else on this piece of work is a small avatar on the same card, never a second card.
         agent: humanLabel(members[0]?.name || ''),
         members: members.slice(1).map(member => member.name).filter(Boolean),
-        state: held ? 'Needs you' : failed ? 'Failed' :
-          row && (row.status === 'WIP' || rows.working(row)) || steps.some(step => step.kind === 'working') ? 'Working' :
+        state: held ? 'Needs you' : row && rows.working(row) ? 'Working' : failed ? 'Failed' : row && rows.sectionOf(row) === 'Paused' ? 'Paused' :
           row && rows.needs(row) ? 'Needs you' : row?.status === 'PLANNED' ? 'Planned' : 'Idle'};
     };
     // A card is a piece of work (founder 2026-11-19): agents are members of it, never cards. A session whose task row is
@@ -223,11 +226,12 @@
       const row = rows.sessionRows.find(item => (session.task && item.id === session.task) || sameHomePath(item.sessionPath, session.path));
       const archived = session.state === 'archived' || row?.status === 'ARCHIVED';
       const fact = facts(row, session.context?.plan, Array.isArray(row?.members) ? row.members : session.members || []);
-      return {id: session.id, path: session.path, task: archived ? '' : session.task || row?.id || '',
-        taskIdentity: session.task || row?.id || '', archived, registration: registration(row || {id: session.task}),
+      const declared = registration(row || {id:session.task});
+      return {id: session.id, path: session.path, task: archived || declared ? '' : session.task || row?.id || '',
+        taskIdentity: session.task || row?.id || '', archived, registration: declared, authoredRegistration: session.authoredRegistration === true,
         parent: row?.parent || '', title: session.title,
         project: rows.projectLabel(session.project?.id, session.project?.label),
-        kind: row?.kind || session.kind || 'agent-session', older: archived || (!!row && rows.sectionOf(row) === 'Older / archived'),
+        kind: declared && session.authoredRegistration ? 'workflow' : row?.kind || session.kind || 'agent-session', older: archived || (!!row && rows.sectionOf(row) === 'Older / archived'),
         pinned: !!session.pinned, ...fact,
         finished: fact.finished || session.state === 'done' || row?.status === 'DONE', armed: (session.automation || []).filter(trigger => trigger.armed).length, links: session.inputLinks || []};
     });
@@ -241,7 +245,7 @@
       pinned: !!row.homePinned, ...facts(row, null, row.approval && row.who ? [{name: row.who}] : row.members || []), armed: 0, links: [],
       kind: row.kind || 'agent-session', older: !row.approval && rows.sectionOf(row) === 'Older / archived',
       ...(row.approval ? {state: 'Needs you', need: {text: row.title + ' needs your approval', approval: row.approval}} : {}), ...(row.status === 'DONE' ? {finished: true} : {})}));
-    const every = [...files.filter(card => !card.registration), ...loose];
+    const every = [...files.filter(card => !card.registration || history && card.authoredRegistration), ...loose];
     // Projects > tasks > subtasks (one task owner, parent_id): a subtask sits in its top task's group, wired from its parent,
     // one column to the right; a parent folded with 'task:<id>' hides every subtask under it.
     const byTask = new Map(every.filter(card => card.task).map(card => [card.task, card]));
@@ -252,7 +256,7 @@
     const selected = card => (!!focus && card.task === focus) || sameHomePath(card.path, focusPath);
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
       (card.need?.approval || (!card.archived && (card.pinned || selected(card) ||
-        ['Failed','Working','Needs you'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
+        ['Failed','Working','Needs you','Paused'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
     const available = (history ? every : active).filter(card => !chainUp(card).some(up => up.subtasksFolded));
     const cards = available.filter(card =>
       (p.done === 'Show' || !card.finished || card.pinned || card.need?.approval) &&
@@ -766,7 +770,7 @@
       return true;
     };
     // A card's session: its task, else the task whose session file it is (one file, however its path is spelled).
-    const cardTask = card => card && !card.archived ? tasks.find(t => card.task && t.id === card.task) || tasks.find(t => sameHomePath(t.sessionPath, card.path)) || null : null;
+    const cardTask = card => card && !card.archived && !card.registration ? tasks.find(t => card.task && t.id === card.task) || tasks.find(t => sameHomePath(t.sessionPath, card.path)) || null : null;
     // Selection belongs to the Home owner (its resume record and the open session); the layout is never touched by it.
     // Only a card with no task (a live agent, a held run) is held here; 'none' is an explicit empty pick (the pane).
     const pick = card => {

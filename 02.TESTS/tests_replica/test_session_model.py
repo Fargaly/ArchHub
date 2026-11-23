@@ -446,3 +446,37 @@ def test_schedule_actions_persist_and_paused_schedule_can_resume(profile, monkey
         assert saved['wires'] == []
     finally:
         service.close()
+
+
+def test_registration_history_uses_authored_content_and_keeps_source_files(profile):
+    from nodelang.session_files import read_document, session_fields, write_document
+    step = 'step-' + 'a'*24
+    def node(identity, kind, params, **extra):
+        return {'id':identity,'type':kind,'params':params,'title':identity,'position':{'x':0,'y':0},**extra}
+    nodes = [node('start','param.value',{'type':'text','value':'Legacy'}),
+             node(step,'thing.agent',{'workshop_step':True},agentWork={'role':'session'})]
+    nodes.extend(node('note'+str(i),'note',{},agentWork={'role':'step','kind':'tool','tool':'wait' if i<13 else 'sleep',
+                                                       'runnable':False}) for i in range(16))
+    path, original = session('Legacy',nodes,[{'id':'wire-'+step,'from':{'node':'start','socket':'value'},
+        'to':{'node':step,'socket':'task'}}],{'taskContext':{'task':'declared-case'}})
+    def projection(doc):
+        write_document(path,doc)
+        before = Path(path).read_bytes()
+        fields = session_fields(read_document(path),path)
+        assert fields['path'] == path and Path(path).read_bytes() == before
+        return fields['authoredRegistration']
+    assert not projection(original)
+    edited = copy.deepcopy(original)
+    edited['wires'][0]['id'] = 'user-wire'
+    assert projection(edited)
+    edited = copy.deepcopy(original)
+    edited['nodes'].append(node('annotation','note',{'text':'Clear width'}))
+    assert projection(edited)
+    edited = copy.deepcopy(original)
+    edited['nodes'] = [node('v0','param.value',{'type':'number','value':1}),
+                       node('v1','param.value',{'type':'number','value':900})]
+    edited['wires'] = [{'id':'width','from':{'node':'v0','socket':'value'},'to':{'node':'v1','socket':'param:value'}}]
+    assert projection(edited)
+    edited = copy.deepcopy(original)
+    edited['notes'] = [{'text':'Clear width at entrance'}]
+    assert projection(edited)

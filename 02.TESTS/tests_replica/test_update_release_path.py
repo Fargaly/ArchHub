@@ -1293,8 +1293,38 @@ def test_review1_busy_desktop_refuses_every_restart_path(monkeypatch):
     update._request_restart = lambda: pytest.fail("restarted over live work")
     update._restart_refusal = lambda: _update_refusal(server)
     assert update.apply_on_quit() is False  # Quit and idle/tray auto-install wait too
+    update.state_dir = update.app_dir = None
+    monkeypatch.setattr(qu, "staged_update", lambda _s, _a: {"staged": True, "status": "staged", "build_id": "B"})
     with pytest.raises(UpdateRestartRefused, match="chat answer"):
         update.reload()
+
+
+@pytest.mark.parametrize("staged, busy, expected", [
+    ({"staged": False, "reason": "No verified update is ready."}, "2 calls in flight", "refused: No verified"),
+    ({"staged": True, "status": "confirmed", "build_id": "A"}, "2 calls in flight", "up to date"),
+    ({"staged": True, "status": "staged", "build_id": "B"}, "2 calls in flight", "refused: 2 calls"),
+    ({"staged": True, "status": "staged", "build_id": "B"}, None, "restarted"),
+])
+def test_reload_reads_the_package_before_the_busy_guard(monkeypatch, staged, busy, expected):
+    """e988 cc0f3cd1: an up-to-date or empty package showed the busy-agents refusal; the live guard runs last."""
+    import threading
+    from nodelang.application_update import ApplicationUpdate, UpdateRestartRefused
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update._closed, update._state, update._worker, update._lock = False, "ready", None, threading.RLock()
+    update.state_dir = update.app_dir = None
+    update._available, update._detail = "A", ""
+    update.status = lambda: {"state": update._state, "detail": update._detail}
+    restarts = []
+    update._request_restart = lambda: restarts.append(1)
+    update._restart_refusal = lambda: busy
+    monkeypatch.setattr(qu, "staged_update", lambda _s, _a: staged)
+    try:
+        result = update.reload()
+        outcome = "up to date" if "up to date" in result["detail"] else "restarted"
+    except UpdateRestartRefused as error:
+        outcome = "refused: " + str(error)
+    assert outcome.startswith(expected), outcome
+    assert restarts == ([1] if expected == "restarted" else [])
 
 
 def test_review2_helper_and_relaunch_break_away_from_the_job_with_a_fallback(monkeypatch):

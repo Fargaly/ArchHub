@@ -437,15 +437,19 @@ class ApplicationUpdate:
                 return self.status()
             if self._worker is not None and self._worker.is_alive():
                 raise UpdateRestartRefused("Wait for the update download to finish")
-            refusal = self._restart_refusal() if callable(self._restart_refusal) else None
-            if refusal:
-                raise UpdateRestartRefused(str(refusal))
+            # The package decides first: with nothing newer to install, busy agents are not the answer.
             staged = staged_update(self.state_dir, self.app_dir)
+            if staged.get("staged") and staged.get("status") == "confirmed":
+                return {**self.status(), "detail": "ArchHub is up to date."}
             if not staged.get("staged") or staged.get("status") != "staged":
                 self._state, self._detail = "failed", str(staged.get("reason") or "No verified update is ready.")
                 raise UpdateRestartRefused(self._detail)
             if expected_build is not None and str(staged["build_id"]) != str(expected_build):
                 raise StagedBuildChanged(str(expected_build), str(staged["build_id"]))
+            # The live guard runs immediately before the real restart.
+            refusal = self._restart_refusal() if callable(self._restart_refusal) else None
+            if refusal:
+                raise UpdateRestartRefused(str(refusal))
             self._available = str(staged["build_id"])
             self._restart_reason = ""
             # Carried to arm_update at close: the armed marker (which the next

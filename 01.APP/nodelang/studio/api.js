@@ -409,11 +409,20 @@ async function updateAction(action) {
  const generation=++updateGeneration;
  updateActionPending=true;
  publish({update:{...state.update,available:false,state:action==='reload'?'restarting':action==='check'?'checking':state.update.state}});
+ let refused=null;
  try{return projectUpdate(await request('/api/universal/application-update',{action}));}
  catch(error){
-  if(generation===updateGeneration)projectUpdate({state:'failed',current_build:state.update.installed,detail:error.message});
+  // A refused restart (agents busy, unsaved work) is temporary: re-read the guard so the offer and its Update
+  // control come back. Any other action's failure, or a status read that fails too, stays a failure.
+  if(generation===updateGeneration){if(action==='reload')refused=error;else projectUpdate({state:'failed',current_build:state.update.installed,detail:error.message});}
   throw error;
- }finally{updateActionPending=false;}
+ }finally{
+  updateActionPending=false;
+  if(refused)await refreshApplicationUpdate().catch(readError=>{
+   console.warn('Update status read after a refused restart failed',readError);
+   projectUpdate({state:'failed',current_build:state.update.installed,detail:refused.message});
+  });
+ }
 }
 window.addEventListener('archhub:update-ready',()=>{
  // Read failures belong to the retrying status owner, not a permanent toast.

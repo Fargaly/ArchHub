@@ -378,10 +378,16 @@ test('a refused restart clears the stale offer; each explicit retry asks the gua
  await api.refreshApplicationUpdate();
  for(let i=0;i<200&&api.getSnapshot().update.installed!=='installed';i++)await new Promise(resolve=>setTimeout(resolve,5));
  await assert.rejects(()=>api.installUpdate(),/Workshop job/);
- assert.equal(api.getSnapshot().update.available,false);
+ // A refusal is temporary: the guard is read again and the offer (and its Update control) stays reachable.
+ assert.equal(api.getSnapshot().update.available,true);
+ assert.notEqual(api.getSnapshot().update.state,'failed');
  // Still busy: the second click reaches the guard and shows its current reason, not a replayed one.
  await assert.rejects(()=>api.installUpdate(),/Workshop job/);
  assert.equal(requests.filter(r=>r.body?.action==='reload').length,2);
+ // A double click sends one restart request; the second waits behind the first.
+ const both=await Promise.allSettled([api.installUpdate(),api.installUpdate()]);
+ assert.equal(both.every(result=>result.status==='rejected'),true);
+ assert.equal(requests.filter(r=>r.body?.action==='reload').length,3);
 });
 
 test('after a busy refusal, the next click installs once the agents are idle',async()=>{

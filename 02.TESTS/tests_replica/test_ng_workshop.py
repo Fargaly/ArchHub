@@ -353,6 +353,47 @@ print(json.dumps({'lock_errors':0}))
         worker.tick()
         self.assertEqual(set(transport.sent), {'recipient-one', 'recipient-two'})
 
+    def test_the_injection_tick_never_probes_processes_while_holding_the_writer(self):
+        """0ea5038: claim_delivery re-read declarations (psutil liveness for every agent) inside the tick's write
+        transaction, holding the Workshop's only writer and refusing every sender."""
+        class Transport:
+            def inject(self, recipient, text, **kwargs):
+                return {'status': 'injected', 'dispatch_attempted': True}
+        mailbox.call('declare', {'task': 'recipient', 'paths': [str(Path.cwd())], 'status': 'working',
+                                 'request_id': 'unassigned'}, {'claude/sessionID': 'recipient-one'})
+        with mailbox.application_history(None) as history:
+            identity, _runtime, _peer = mailbox._identity(self.context, None)
+            mailbox._send(history, {'to': 'recipient-one', 'text': 'No reply needed.'}, identity)
+        real, probes = mailbox.read_declarations, []
+
+        def counted(connection, **kwargs):
+            probes.append(connection.in_transaction)
+            return real(connection, **kwargs)
+        sent = []
+        transport = Transport()
+        transport.inject = lambda recipient, text, **kwargs: sent.append(recipient['id']) or {
+            'status': 'injected', 'dispatch_attempted': True}
+        with patch.object(mailbox, 'read_declarations', side_effect=counted):
+            mailbox.WorkshopInjection(None, transport).tick()
+        self.assertEqual(sent, ['recipient-one'])
+        self.assertTrue(probes)
+        self.assertNotIn(True, probes)  # every liveness read happened outside a transaction
+
+    def test_a_busy_activity_line_never_turns_a_committed_send_into_an_error(self):
+        import sqlite3
+        busy = sqlite3.OperationalError('database is locked')
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        with patch.object(mailbox, 'record_activity', side_effect=busy):
+            sent = mailbox.call('send', {'to': 'founder', 'text': 'saved before its activity line'}, self.context)
+        rows = mailbox.call('read', {'since': 0}, self.context)['messages']
+        self.assertEqual([row['id'] for row in rows if 'saved before its activity line' in json.dumps(row)],
+                         [sent['message_id']])  # one message, and the caller has its id
+        broken = sqlite3.OperationalError('disk I/O error')
+        with patch.object(mailbox, 'record_activity', side_effect=broken):
+            with self.assertRaises(sqlite3.OperationalError):
+                mailbox.call('declare', {'task': 'x', 'paths': [str(Path.cwd())], 'status': 'working',
+                                         'request_id': 'X'}, self.context)
+
     def test_a_busy_receipt_never_turns_a_committed_send_into_an_error(self):
         import sqlite3
         sent = mailbox.call('send', {'to': 'founder', 'text': 'committed before the receipt'}, self.context)

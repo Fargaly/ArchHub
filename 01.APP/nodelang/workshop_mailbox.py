@@ -754,14 +754,17 @@ def legacy_state(events, step):
     return delivery_outcome(events[step].get("status"), events[step].get("dispatch_attempted")) if step in events else None
 
 
-def claim_delivery(history, message, recipient, step, holder, *, now=None):
+def claim_delivery(history, message, recipient, step, holder, *, now=None, declarations=None):
     """F320: the one arbitration before a Workshop delivery effect, shared by the sender push, the app's loop and the
     stall watcher. recipient is the resolved target (its native id already known). An atomic insert keyed on (message
     id, recipient_identity, step): the inserter wins and may dispatch; everyone else gets the step's state and does
     nothing. Receipts from before claims count as a taken step by their actual status (legacy_state), as does a
     delivered live push to this identity. The winner of an initial step also writes the attempt receipt the stall
-    watcher scans, so a sender-only delivery enters the retry chain. Returns (won, state)."""
-    declarations = read_declarations(history._db, include_archived=True)
+    watcher scans, so a sender-only delivery enters the retry chain. Returns (won, state).
+    declarations: a caller already inside a write transaction passes the ones it read before it, so process liveness
+    probes never run while the Workshop's only writer is held (they stalled every sender on 0ea5038)."""
+    if declarations is None:
+        declarations = read_declarations(history._db, include_archived=True)
     identity = recipient_identity(recipient, declarations)
     at = time.time() if now is None else now
     with history._transaction(write=True):
@@ -788,9 +791,11 @@ def claim_delivery(history, message, recipient, step, holder, *, now=None):
     return True, "in-flight"
 
 
-def record_claim_outcome(history, message_id, recipient, step, outcome, reason=""):
+def record_claim_outcome(history, message_id, recipient, step, outcome, reason="", *, declarations=None):
     """The winner's result on its claim, one of delivered / refused / uncertain; never overwritten."""
-    identity = recipient_identity(recipient, read_declarations(history._db, include_archived=True))
+    if declarations is None:
+        declarations = read_declarations(history._db, include_archived=True)
+    identity = recipient_identity(recipient, declarations)
     with history._transaction(write=True):
         history._db.execute(CLAIM_SCHEMA)
         history._db.execute("UPDATE workshop_claims SET outcome=?, reason=?, outcome_at=? WHERE message_id=? "
@@ -1278,7 +1283,7 @@ class WorkshopInjection:
                 "or reassign the work." % (recipient["agent"], message["id"], elapsed, len(WATCH_STEPS) - 1))
         key = _ESCALATION_KEY + sha256((message["id"] + "\0" + recipient["session"]).encode()).hexdigest()
         with history._transaction(write=True):
-            if not claim_delivery(history, message, target, "escalated", "watch", now=now)[0]:
+            if not claim_delivery(history, message, target, "escalated", "watch", now=now, declarations=declarations)[0]:
                 return False
             _delivery_receipt(history, message, recipient, "escalated", now=now, via="workshop", status="not-pushed",
                 elapsed_seconds=elapsed)
@@ -1287,7 +1292,7 @@ class WorkshopInjection:
             # The escalation prefix keeps this note out of the injection queue; it is pushed below instead.
             note = history.append(ROOM, author=DELIVERY_AUTHOR, content="To " + to + ":\n" + text, category=CATEGORY,
                 refs=(recipient["session"],), reply_to=message["id"], idempotency_key=key)
-            record_claim_outcome(history, message["id"], target, "escalated", "uncertain")
+            record_claim_outcome(history, message["id"], target, "escalated", "uncertain", declarations=declarations)
         self._push_escalation(history, note, declarations, now)
         return True
 
@@ -1524,7 +1529,8 @@ class WorkshopInjection:
                         continue  # held, not dropped: pushed once the agent is under its cap again
                     native_id, runtime = recipient.get("native_session_id"), recipient.get("runtime")
                     dispatch = self.transport is not None and runtime in ("claude", "codex", "opencode") and bool(native_id)
-                    if dispatch and not claim_delivery(history, message, recipient, "initial", "background", now=now)[0]:
+                    if dispatch and not claim_delivery(history, message, recipient, "initial", "background", now=now,
+                                                       declarations=declarations)[0]:
                         continue   # the sender push or another loop holds this step
                     if not dispatch:
                         _delivery_receipt(history, message, recipient, "attempt", now=now)
@@ -1906,8 +1912,15 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     result = _send(selected, body, identity, resolve_live=True, sender_binding={"session":identity["sender_key"],
                         "runtime":runtime, "native_session_id":next(iter(context.values()), None)})
                     target, detail = result["message_id"], {"to":result["to"], "repeat":result.get("repeat", False)}
-                with selected._transaction(write=True):
-                    record_activity(selected, identity["sender"], method, target, **detail)
+                try:
+                    with selected._transaction(write=True):
+                        record_activity(selected, identity["sender"], method, target, **detail)
+                except sqlite3.OperationalError as error:
+                    # A committed send is never reported as an error for its activity line: the caller would send a
+                    # second, distinct message. The activity row is a log entry and is skipped under contention.
+                    if (method != "send" or (getattr(error, "sqlite_errorcode", 0) & 0xff)
+                            not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)):
+                        raise
                 if method != "send":
                     return result
             break

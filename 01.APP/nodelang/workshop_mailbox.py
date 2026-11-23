@@ -244,8 +244,11 @@ def _header_targets(message):
 
 
 def agent_addressed(message):
-    """A named agent; room notes never inject into sessions."""
-    return any(target.casefold() not in _ROOM_TARGETS for target in _header_targets(message))
+    """A named agent, or agents the sender chose explicitly (@everyone); plain room notes never inject."""
+    if any(target.casefold() not in _ROOM_TARGETS for target in _header_targets(message)):
+        return True
+    routing = _routing(message) if message.get("evidence") else None
+    return bool(routing and routing.get("explicit") and routing.get("recipients"))
 
 
 def _session_tag(value, app=True):
@@ -2216,7 +2219,9 @@ def _task_refs(history, message_id):
                  and history._db.execute("SELECT 1 FROM workshop_tasks WHERE id=?", (ref,)).fetchone())
 
 
-def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_live=False):
+def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_live=False, explicit=None):
+    """explicit: recipient rows the caller chose (the composer's @everyone), stored on the one message so its
+    header stays short whatever the length of their labels."""
     target, text, control, reply, retry_key = _validate_send(body)
     retry_key = sha256((identity["sender_key"] + ":" + retry_key).encode()).hexdigest()
     declarations = read_declarations(history._db, include_archived=True)
@@ -2224,8 +2229,9 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
     project = sender.get("project") or (sender_binding or {}).get("project") or ""
     probe = {"content": "To " + target + ":\n" + text, "category": CATEGORY, "author": identity["sender"],
              "reply_to": reply, "evidence": [ROUTING_EVIDENCE, json.dumps({"project": project})]}
-    recipients = _resolve(history, probe, declarations)
-    targets = [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
+    recipients = [dict(row) for row in explicit] if explicit else _resolve(history, probe, declarations)
+    # Explicit recipients are already resolved: the header is display only (no waiting, no "no match" notice).
+    targets = [] if explicit else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
 
     def names(part, row):
         # A name or a session token, never a short id: a short id does not wait for, or bind to, an ended session.
@@ -2264,6 +2270,7 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
             ("session", "agent", "runtime", "native_session_id")} for row in recipients],
             "project": project,
             "native_control":control,
+            **({"explicit": True} if explicit else {}),
             "sender": {key: value for key, value in (sender_binding or sender).items()
                 if key in ("session", "runtime", "native_session_id", "project")}}
         encoded = json.dumps(routing, ensure_ascii=True)
@@ -2285,7 +2292,7 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
         if waiting:
             history._db.execute("INSERT OR IGNORE INTO workshop_waiting VALUES(?,?)", (message["id"], target))
-        missing = [] if reply else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS and part not in waiting and part not in resolved
+        missing = [] if reply or explicit else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS and part not in waiting and part not in resolved
                    and not _recipient_rows({"content": "To " + part + ":\nx", "category": CATEGORY,
                        "author": identity["sender"], "evidence": probe["evidence"]}, declarations)]
         if missing:

@@ -399,15 +399,18 @@ def send_as_founder(text, handles, *, reply_to=None, task=None, task_peer=False)
         raise ValueError('No live agent matches %s. Mention one of: %s' % (
             ', '.join('@' + h for h in handles), ', '.join('@' + a['handle'] for a in agents) or 'none joined'))
     identity = {'sender_key': 'founder', 'sender_label': FOUNDER, 'sender': FOUNDER}
-    # @everyone names each joined agent chosen now: "To Everyone" is a room header, so the routing loop and the
-    # agents' own pending reads skipped it, and a later joiner must not receive it.
-    target = ', '.join(a['agent'] for a in chosen)
+    # The agents chosen now are stored on the one message (explicit routing), for @everyone and for named groups: a
+    # joined label header can pass the 512-byte limit, a bare room header reached nobody, and a later joiner must not
+    # receive it. The header is only the display: full labels when they fit, else the @handles typed.
+    labels = ', '.join(a['agent'] for a in chosen)
+    target = ('Everyone' if 'everyone' in handles else labels if len(labels.encode('utf-8')) <= 512
+              else ', '.join('@' + a['handle'] for a in chosen))
+    picked = [{'session': a['session'], 'agent': a['name'], 'runtime': a['app'],
+               'native_session_id': a['native_session_id']} for a in chosen]
     with application_history() as history:
         sent = _send(history, {'to': target, 'text': text, **({'reply_to': reply_to} if reply_to else {})}, identity,
-                     queued=(task,) if task else (), sender_binding={'session': 'founder'})
-        rows = deliver(history, sent['message_id'], [{'session': a['session'], 'agent': a['name'], 'runtime': a['app'],
-                                                       'native_session_id': a['native_session_id']} for a in chosen],
-                       FOUNDER, text, permission_mode='bypass')
+                     queued=(task,) if task else (), sender_binding={'session': 'founder'}, explicit=picked)
+        rows = deliver(history, sent['message_id'], picked, FOUNDER, text, permission_mode='bypass')
     return {'message_id': sent['message_id'], 'deliveries': rows, 'unknown': unknown}
 
 

@@ -543,15 +543,36 @@ def test_everyone_is_addressed_to_each_chosen_agent_not_the_room(monkeypatch):
     from nodelang import workshop_live
     from nodelang.workshop_mailbox import DELIVERY_AUTHOR, ROOM, agent_addressed, application_history
     monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: ('queued', 'hook', 'queued for next turn via hook'))
-    seats = [{'handle': h, 'session': h + '-session', 'name': h, 'agent': 'Cursor / .cursor / session-%s' % h,
-              'app': 'cursor', 'native_session_id': h + '-native'} for h in ('aaaaaaaaaaaa', 'bbbbbbbbbbbb')]
+    from nodelang.workshop_mailbox import _routing
+    # e988 b9513c40: twelve seats with long labels (a joined header passed the 512-byte limit and was refused).
+    seats = [{'handle': 'seat-%02d' % i, 'session': 'seat-%02d-session' % i, 'name': 'Seat %02d' % i,
+              'agent': 'Cursor / %s / session-%012x' % ('x' * 40, i), 'app': 'cursor', 'native_session_id': 'native-%02d' % i}
+             for i in range(12)]
     monkeypatch.setattr(workshop_live, 'live_agents', lambda: seats)
     sent = workshop_live.send_as_founder('@everyone hi', ['everyone'])
     with application_history() as history:
         message = history.get(ROOM, sent['message_id'], principal=DELIVERY_AUTHOR)
-    header = message['content'].partition('\n')[0]
-    assert agent_addressed(message)
-    assert header == 'To Cursor / .cursor / session-aaaaaaaaaaaa, Cursor / .cursor / session-bbbbbbbbbbbb:'
+    routing = _routing(message)
+    assert agent_addressed(message) and routing['explicit'] is True
+    assert message['content'].partition('\n')[0] == 'To Everyone:'
+    assert sorted(row['session'] for row in routing['recipients']) == sorted(s['session'] for s in seats)
+    # e988 de80e642: a named group of the same twelve (167 bytes of handles, 766 of labels) is one saved message too.
+    group = workshop_live.send_as_founder('group hi', [s['handle'] for s in seats])
+    with application_history() as history:
+        grouped = history.get(ROOM, group['message_id'], principal=DELIVERY_AUTHOR)
+    assert grouped['content'].partition('\n')[0] == 'To ' + ', '.join('@' + s['handle'] for s in seats) + ':'
+    assert sorted(row['session'] for row in _routing(grouped)['recipients']) == sorted(s['session'] for s in seats)
+    two = workshop_live.send_as_founder('pair hi', ['seat-00', 'seat-01'])
+    with application_history() as history:
+        pair = history.get(ROOM, two['message_id'], principal=DELIVERY_AUTHOR)
+    assert pair['content'].partition('\n')[0] == 'To ' + seats[0]['agent'] + ', ' + seats[1]['agent'] + ':'
+    # A plain room note stays room-only.
+    from nodelang.workshop_mailbox import _send
+    with application_history() as history:
+        note = _send(history, {'to': 'Everyone', 'text': 'room notice'},
+                     {'sender_key': 'founder', 'sender_label': 'Ahmed', 'sender': 'Ahmed'})
+        stored = history.get(ROOM, note['message_id'], principal=DELIVERY_AUTHOR)
+    assert not agent_addressed(stored)
 
 
 def test_the_composer_reports_queued_as_waiting_and_only_a_refusal_as_failed(monkeypatch):

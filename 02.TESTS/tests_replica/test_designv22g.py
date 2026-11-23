@@ -470,3 +470,80 @@ def test_failed_linked_target_marks_caller_error_and_blocks_its_downstream(tmp_p
     assert held['nodes'][0]['result']['status'] == 'Error'
     assert held['nodes'][1]['result']['status'] == 'Blocked'
     assert not (tmp_path / 'caller.txt').exists()
+
+
+def test_reused_library_cards_keep_saved_skill_purity_and_see_edits():
+    """A cached skill card keeps the saved purity on the next read, and an edit to effect is seen at once."""
+    from nodelang import library_engines
+    document = session_files.new_document('Pure value')
+    document['nodes'] = [{'id': 'value', 'type': 'param.value', 'params': {'type': 'number', 'value': 2},
+                          'position': {'x': 0, 'y': 0}}]
+    saved = session_files.node_type_document(document, ['value'], 'Pure value')
+    saved['properties']['nodeType']['kind'] = 'pure'
+    path = session_files.document_path(session_files.sessions_directory(), saved)
+    session_files.write_document(path, saved)
+    params = {'skill': saved['id'], 'session_file': str(path)}
+    assert canvas_documents.is_pure('skill', params) is True
+
+    def card():
+        return next(item for group in library_engines.library_catalogue() for item in group['items']
+                    if item['id'] == 'skill:' + saved['id'])
+
+    library_engines._SKILL_CARDS.clear()
+    assert [card()['pure'], card()['pure']] == [True, True]  # cold build, then the reused card
+    saved['properties']['nodeType']['kind'] = 'effect'
+    session_files.write_document(path, saved)
+    assert canvas_documents.is_pure('skill', params) is False
+    assert [card()['pure'], card()['pure']] == [False, False]
+
+
+def test_reused_library_cards_see_edits_to_linked_files_outside_the_library(tmp_path):
+    """A Library skill that links a file elsewhere is re-read when only that outside file changes."""
+    from nodelang import library_engines
+    inner = session_files.new_document('Outside step')
+    inner['nodes'] = [{'id': 'value', 'type': 'param.value', 'params': {'type': 'number', 'value': 1},
+                       'position': {'x': 0, 'y': 0}}]
+    outside = session_files.node_type_document(inner, ['value'], 'Outside step')
+    outside['properties']['nodeType']['kind'] = 'effect'
+    outside_path = tmp_path / 'outside.archhub'
+    session_files.write_document(outside_path, outside)
+    parent = session_files.new_document('Uses outside')
+    parent['nodes'] = [{'id': 'link', 'type': 'skill', 'item': 'skill:' + outside['id'],
+                        'params': {'skill': outside['id'], 'session_file': str(outside_path)},
+                        'position': {'x': 0, 'y': 0}}]
+    parent['properties']['nodeType'] = {'kind': 'pure', 'public': []}
+    parent_path = session_files.document_path(session_files.sessions_directory(), parent)
+    session_files.write_document(parent_path, parent)
+
+    def card():
+        return next(item for group in library_engines.library_catalogue() for item in group['items']
+                    if item['id'] == 'skill:' + parent['id'])
+
+    library_engines._SKILL_CARDS.clear()
+    assert [card()['pure'], card()['pure']] == [False, False]
+    outside['properties']['nodeType']['kind'] = 'pure'
+    session_files.write_document(outside_path, outside)
+    assert card()['pure'] is True  # warm read, only the outside file changed
+
+
+def test_saving_one_canvas_rebuilds_only_its_own_library_card(monkeypatch):
+    """A save to one Library file re-reads that file only; every other saved card is reused."""
+    from nodelang import library_engines
+    paths = []
+    for index in range(3):
+        document = session_files.new_document('Saved %d' % index)
+        path = session_files.document_path(session_files.sessions_directory(), document)
+        session_files.write_document(path, document)
+        paths.append((path, document))
+    library_engines._SKILL_CARDS.clear()
+    library_engines.library_catalogue()
+    reads, read = [], session_files.read_document
+    monkeypatch.setattr(session_files, 'read_document', lambda path, *a, **k: (reads.append(str(path)), read(path, *a, **k))[1])
+    library_engines.library_catalogue()
+    assert reads == []
+    edited_path, edited = paths[1]
+    edited['title'] = 'Saved 1 (edited)'
+    session_files.write_document(edited_path, edited)
+    titles = [item['title'] for group in library_engines.library_catalogue() for item in group['items']]
+    assert 'Saved 1 (edited)' in titles
+    assert set(reads) == {str(edited_path)}

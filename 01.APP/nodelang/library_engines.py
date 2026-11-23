@@ -27,7 +27,9 @@ from __future__ import annotations
 from typing import Mapping
 import copy
 import json
+import logging
 import math
+import os
 import re
 
 from .stem_graph_evaluation import (
@@ -2684,20 +2686,48 @@ def _skill_entry(loaded, items):
     }
 
 
-_SKILL_CARDS = {}  # one entry: the saved-file stamp -> the finished skill cards built from those exact files
+# Per saved file: (its size+mtime, the cards built before the skills, its finished card, its linked files' stamps).
+_SKILL_CARDS = {}
+_LOG = logging.getLogger(__name__)
 
 
-def _skill_stamp(base_ids):
-    """Every saved session file's path, mtime and size, plus the cards built before the skills."""
-    from .session_files import sessions_directory
-    files = []
-    for path in sorted(sessions_directory().glob('*.archhub')):
-        try:
-            info = path.stat()
-        except OSError:
-            continue
-        files.append((str(path), info.st_mtime_ns, info.st_size))
-    return tuple(files), base_ids
+def _file_stamp(path):
+    try:
+        info = os.stat(path)
+    except OSError as missing:
+        # A missing file has no stamp; its return or replacement changes the stamp and rebuilds the card.
+        _LOG.debug("no stamp for %s: %s", path, missing)
+        return None
+    return info.st_mtime_ns, info.st_size
+
+
+def _linked_files(skills):
+    """Every file a skill links, followed through linked files (bounded like check_session_links), with its stamp.
+
+    A linked file may live outside the Library folder; its edits change the skill's purity and sockets."""
+    from .session_files import local_path, read_document
+    found, queue = {}, list(skills)
+    while queue and len(found) < 128:
+        document = queue.pop()
+        for node in document.get('nodes') or []:
+            target = (node.get('params') or {}).get('session_file') if node.get('type') == 'skill' else None
+            if not target:
+                continue
+            path = str(local_path(target))
+            if path in found:
+                continue
+            found[path] = _file_stamp(path)
+            try:
+                queue.append(read_document(path))
+            except (OSError, ValueError) as unreadable:
+                # Its stamp is still recorded, so the card is rebuilt once the file is readable again.
+                _LOG.debug("linked file %s not followed: %s", path, unreadable)
+    return found
+
+
+def _skill_card_reusable(held, mark, base):
+    return (held is not None and held[0] == mark and held[1] == base
+            and all(_file_stamp(path) == stamp for path, stamp in held[3].items()))
 
 
 def _complete_library(groups):
@@ -2705,7 +2735,6 @@ def _complete_library(groups):
     from .canvas_documents import node_contract
     from .native_host_tools import HOST_TOOLS
     from .pipeline_engines import PIPELINE_ENGINES
-    from .session_files import load_skills
 
     items = [item for group in groups for item in group["items"]]
     seen = {item["id"] for item in items}
@@ -2752,25 +2781,42 @@ def _complete_library(groups):
         if engine not in covered:
             add(_engine_entry(engine))
             covered.add(engine)
-    # Saved skills cost two document reads each (sockets, then purity through linked_session). Their finished
-    # cards are reused while every saved file keeps its size and mtime; any edit, add or delete rebuilds them.
-    stamp = _skill_stamp(tuple(sorted(seen)))
-    cached = _SKILL_CARDS.get(stamp)
-    built = []
-    for entry in copy.deepcopy(cached) if cached is not None else ():
+    # Saved skills cost two document reads each (sockets, then purity through linked_session). Each file's
+    # finished card is reused while that file, every file it links (inside or outside the Library folder) and the
+    # cards built before the skills are unchanged; saving one canvas rebuilds only that canvas's card.
+    from .session_files import read_document, sessions_directory
+    base = tuple(sorted(seen))
+    reused, fresh, present = set(), [], set()
+    for path in sorted(sessions_directory().glob('*.archhub')):
+        key, mark = str(path), _file_stamp(path)
+        present.add(key)
+        held = _SKILL_CARDS.get(key)
+        if _skill_card_reusable(held, mark, base):
+            entry = copy.deepcopy(held[2])
+            reused.add(id(entry))
+        else:
+            try:
+                skill = read_document(path)
+            except (OSError, ValueError) as unreadable:
+                _LOG.debug("saved session %s left out of the Library: %s", path, unreadable)
+                _SKILL_CARDS.pop(key, None)
+                continue
+            entry = _skill_entry({'path': path, 'skill': skill}, items)
+            fresh.append((key, mark, entry, skill))
         add(entry)
-    for loaded in load_skills() if cached is None else ():
-        entry = _skill_entry(loaded, items)
-        add(entry)
-        built.append(entry)
+    for gone in set(_SKILL_CARDS) - present:
+        del _SKILL_CARDS[gone]
     for item in items:
+        # A reused skill card keeps its saved, parameter-aware purity; the engine default must not replace it.
+        kept = item.get('pure') if id(item) in reused else None
         item.update(node_contract(item.get("engine")))
-        if item.get('engine') == 'script.python' or (item.get('engine') == 'skill' and cached is None):
+        if item.get('engine') == 'script.python' or (item.get('engine') == 'skill' and id(item) not in reused):
             from .canvas_documents import is_pure
             item['pure'] = is_pure(item['engine'], item.get('params'))
-    if cached is None:
-        _SKILL_CARDS.clear()
-        _SKILL_CARDS[stamp] = copy.deepcopy(built)
+        elif kept is not None:
+            item['pure'] = kept
+    for key, mark, entry, skill in fresh:
+        _SKILL_CARDS[key] = (mark, base, copy.deepcopy(entry), _linked_files([skill]))
     categories = engine_categories([{'items': items}])
     buckets = {category: [] for category, _rows in LIBRARY_PRESENTATION}
     for item in items:

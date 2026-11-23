@@ -74,7 +74,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   await page.evaluate(()=>window.update({settingsDestination:{scope:'Session',workspace:'example',session:'fixture'},settings:[{id:'Appearance.Theme',label:'Theme',page:'Appearance',type:'enum',options:['Dark','Light','System'],default:'Dark',value:'Dark'}]}));
   await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'This PC',exact:true}).click();
   await page.evaluate(()=>{window.queueSettingAct=true;});
-  await page.getByLabel('Theme',{exact:true}).selectOption('Light');
+  await page.getByRole('button',{name:'Light',exact:true}).click();
   await page.evaluate(()=>window.update({settingsScope:'User',settingsDestination:{scope:'User',workspace:'example',session:'fixture'},settings:[{id:'Appearance.Theme',label:'Theme',page:'Appearance',type:'enum',options:['Dark','Light','System'],default:'Dark',value:'Dark'}]}));
   const refusal=await page.evaluate(async()=>{try{await window.pendingSettingAct();return null;}catch(error){return error.message;}});
   assert.equal(refusal,'Settings destination changed');
@@ -160,7 +160,7 @@ test('pending scope disables its editors and keeps one read-only recovery beside
   await page.evaluate(()=>window.update({settingsScopePending:true}));
   await page.getByRole('status').filter({hasText:'Changing settings scope'}).waitFor();
   assert.equal(await page.getByLabel('Settings scope',{exact:true}).isDisabled(),true);
-  assert.equal(await page.getByLabel('Theme',{exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Light',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Import into Everywhere',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Reset Everywhere',exact:true}).isDisabled(),true);
   await page.evaluate(()=>{
@@ -173,7 +173,7 @@ test('pending scope disables its editors and keeps one read-only recovery beside
   await page.getByRole('alert').filter({has:recovery}).waitFor();
   await recovery.click();
   assert.equal(await page.getByLabel('Settings scope',{exact:true}).isEnabled(),true);
-  assert.equal(await page.getByLabel('Theme',{exact:true}).isEnabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Light',exact:true}).isEnabled(),true);
   assert.equal(await page.evaluate(()=>window.refreshCalls),1);
   assert.deepEqual(await page.evaluate(()=>window.writes),[],'read-only recovery did not replay a preference write');
  }finally{await browser.close();}

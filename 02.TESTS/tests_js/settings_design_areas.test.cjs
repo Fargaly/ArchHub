@@ -136,7 +136,7 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    await nav.getByRole('button',{name:'This PC',exact:true}).click();
    await page.locator('[data-screen="settings/Appearance"]').waitFor();
    assert.equal(await page.locator('.sheet-page-heading h2').innerText(),'This PC');
-   await page.getByLabel('Theme',{exact:true}).selectOption('Light');
+   await page.getByRole('button',{name:'Light',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'Light'});
    await page.getByRole('button',{name:'Reset Theme',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'Dark'});
@@ -353,6 +353,10 @@ test('Look owner controls and model choices are usable while the Workshop agent 
   const theme=page.locator('[data-setting="Appearance.Theme"]');
   await page.getByRole('heading',{name:'Theme and colour',exact:true}).waitFor();
   await theme.waitFor({state:'visible'});
+  assert.deepEqual(await theme.locator('button[data-theme-option]').allTextContents(),['Dark','Light','System']);
+  await theme.getByRole('button',{name:'System',exact:true}).press('Enter');
+  await theme.getByRole('button',{name:'System',exact:true,pressed:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'System'});
   await page.evaluate(()=>window.goSettings('settings/Models'));
   await page.getByLabel('Default model',{exact:true}).selectOption('other');
   assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{router:{default_model:'other'}});

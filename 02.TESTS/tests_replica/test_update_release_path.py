@@ -663,6 +663,25 @@ def test_stable_coverage_refuses_one_missing_dll_or_year(tmp_path, omit, missing
     assert str(error.value) == f"stable release would drop supported native host payloads: {missing}"
 
 
+def test_missing_host_sdks_names_each_absent_year_before_any_compile(tmp_path):
+    good = tmp_path / "cad-host"
+    for host, years in offer_check.STABLE_HOST_YEARS.items():
+        product, names = offer_check.HOST_SDK_FILES[host]
+        for year in years:
+            folder = good / "Autodesk" / f"{product} {year}"
+            folder.mkdir(parents=True)
+            for name in names:
+                (folder / name).write_bytes(b"sdk")
+    assert offer_check.missing_host_sdks(good) == []
+    (good / "Autodesk/Revit 2027/RevitAPIUI.dll").unlink()
+    assert offer_check.missing_host_sdks(good) == ["revit 2027 (RevitAPIUI.dll)"]
+    hosted = tmp_path / "hosted"
+    hosted.mkdir()
+    missing = offer_check.missing_host_sdks(hosted)
+    assert len(missing) == 6 and missing[0] == "revit 2020 (RevitAPI.dll, RevitAPIUI.dll)"
+    assert missing[-1] == "autocad 2026 (acmgd.dll, acdbmgd.dll, accoremgd.dll)"
+
+
 class _Body(io.BytesIO):
     def __enter__(self):
         return self

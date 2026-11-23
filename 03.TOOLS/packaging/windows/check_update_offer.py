@@ -89,6 +89,24 @@ def _valid_build_notes(notes: str, build_id: str, built_at: str, asset_sha: str)
             and ("SHA256 %s: %s\n" % (qu.ASSET_NAME, asset_sha)) in tail)
 
 
+# The API assemblies build_host_bridges.ps1 compiles each stable year against.
+HOST_SDK_FILES = {"revit": ("Revit", ("RevitAPI.dll", "RevitAPIUI.dll")),
+                  "autocad": ("AutoCAD", ("acmgd.dll", "acdbmgd.dll", "accoremgd.dll"))}
+
+
+def missing_host_sdks(program_files) -> list:
+    """Each stable host year whose SDK this machine lacks, checked before any long compile."""
+    missing = []
+    for host, years in STABLE_HOST_YEARS.items():
+        product, names = HOST_SDK_FILES[host]
+        for year in years:
+            folder = Path(program_files) / "Autodesk" / f"{product} {year}"
+            absent = [name for name in names if not (folder / name).is_file()]
+            if absent:
+                missing.append(f"{host} {year} ({', '.join(absent)})")
+    return missing
+
+
 def check_host_payloads(manifest: Path, build_id: str) -> None:
     """Apply the stable coverage floor to the same file inventory Setup prunes against."""
     # The install manifest inventories program files. The broker review checks host JSON.

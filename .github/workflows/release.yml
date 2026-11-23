@@ -10,7 +10,7 @@ on:
         required: false
         type: string
       mode:
-        description: 'release (build and publish), build (installer and Goose artifacts), check (Goose cargo check only), goose (Goose runtime artifacts only), or verify-published (install the pinned public release)'
+        description: 'release (build and publish) and build (installer and Goose artifacts) need every supported Autodesk SDK and stop at once on a runner without them (build the full installer with 03.TOOLS/installer/build_release.ps1 on the CAD-capable Windows host); on hosted windows-2025 use goose (engine only) or check (Goose cargo check only); verify-published installs the pinned public release'
         required: false
         type: choice
         options: [release, check, build, goose, verify-published]
@@ -176,6 +176,15 @@ jobs:
           if (-not (Test-Path -LiteralPath $iscc)) {
             choco install innosetup --no-progress -y
             if ($LASTEXITCODE -ne 0) { throw 'Inno Setup 6 did not install.' }
+          }
+      - name: Name missing Autodesk SDKs before the engine compile
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'goose' }}
+        shell: pwsh
+        run: |
+          $check = 'import runpy,sys; m=runpy.run_path(sys.argv[1])["missing_host_sdks"](sys.argv[2]); print("; ".join(m)); raise SystemExit(1 if m else 0)'
+          $missing = python -E -s -B -c $check selected/03.TOOLS/packaging/windows/check_update_offer.py $env:ProgramFiles
+          if ($LASTEXITCODE -ne 0) {
+            throw "This runner lacks the Autodesk SDKs a stable installer needs: $missing. Build the full installer on the CAD-capable Windows host (03.TOOLS/installer/build_release.ps1); on a hosted runner use mode goose for the engine only."
           }
       - name: Supply the runner's Rust toolchain to the ArchHub compiler
         shell: pwsh

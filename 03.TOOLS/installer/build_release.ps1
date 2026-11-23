@@ -728,6 +728,14 @@ if (-not $PythonPath) {
 if (-not $RuntimePythonPath) { $RuntimePythonPath = $PythonPath }
 & $RuntimePythonPath -I -B -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 14))'
 if ($LASTEXITCODE -ne 0) { throw 'The packed connector runtime requires CPython 3.14; pass -RuntimePythonPath.' }
+if (-not $isCandidate) {
+    # A stable installer needs every supported Autodesk SDK; name the missing ones before any compile.
+    $sdkCheck = 'import runpy,sys; m=runpy.run_path(sys.argv[1])["missing_host_sdks"](sys.argv[2]); print("; ".join(m)); raise SystemExit(1 if m else 0)'
+    $missingSdks = & $PythonPath -E -s -B -c $sdkCheck (Join-Path $selectedRoot 'packaging/windows/check_update_offer.py') $env:ProgramFiles
+    if ($LASTEXITCODE -ne 0) {
+        throw "Stable release needs Autodesk SDKs this machine lacks: $missingSdks. Build the full installer on the CAD-capable Windows host; no installer was compiled."
+    }
+}
 
 Assert-BuildSnapshot $snapshot
 $candidateClock.Stop()

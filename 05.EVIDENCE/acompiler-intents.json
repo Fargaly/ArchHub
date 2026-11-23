@@ -155,6 +155,7 @@
       "source": "Founder F337 SESSION-IS-THE-WORK (T0), 2026-11-12, res-039 and res-038: a session is a piece of work with one task id; whoever starts an agent passes it and the agent joins; no id joins the single open session of its registered project active in 24 h, else a new one, never a guess; sub-agents inherit the starter's session; several agents are members of one session and write steps into the one file through the canvas_documents merge; interruption keeps the session open, it ends only by done or archive; the session carries plan and handover note; Home rows are pieces of work per frozen design v50. Existing per-run files and task rows are not merged or rewritten. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
       "scope": [
         "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/command_registry.py",
         "01.APP/nodelang/canvas_documents.py",
         "01.APP/nodelang/canvas_tools.py",
         "01.APP/nodelang/hook_decision.py",

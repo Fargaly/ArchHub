@@ -637,17 +637,6 @@ jobs:
           $evidence = Join-Path $env:RUNNER_TEMP 'archhub-verify-published'
           New-Item -ItemType Directory -Path $evidence | Out-Null
           "VERIFY_EVIDENCE=$evidence" >> $env:GITHUB_ENV
-          $source = Get-Content -Raw selected/03.TOOLS/tools/real_app_check/scenarios/settings.mjs
-          $block = [regex]::Match($source, '(?s)export const steps=\[(.*?)\];').Groups[1].Value
-          $names = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value })
-          if ($names.Count -ne 12) { throw 'Declare desktop admission, six Settings cases, startup, Projects, scope recovery, Office and Session folder.' }
-          $names[0] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-admission.json') -Encoding utf8
-          $names[1..6] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-settings.json') -Encoding utf8
-          $names[7] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-startup.json') -Encoding utf8
-          $names[8] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-projects.json') -Encoding utf8
-          $names[9] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-scope.json') -Encoding utf8
-          $names[11] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-session-folder.json') -Encoding utf8
-          $names[10] | ConvertTo-Json | Set-Content (Join-Path $evidence 'declared-office.json') -Encoding utf8
           @{repository=$env:PUBLISHED_REPOSITORY;build=$env:PUBLISHED_BUILD;workflow_source=$env:GITHUB_SHA;setup_verified=$false;setup_sha256=$null;setup_bytes=$null;install_exit=$null;installed_root=$null;installed_build=$null;first_run_python=$null;first_run_python_version=$null;first_run_exit=$null;ui_exit=$null} |
             ConvertTo-Json | Set-Content (Join-Path $evidence 'install.json') -Encoding utf8
           function Read-Pin([string]$json) {
@@ -949,38 +938,42 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $evidence = Join-Path $env:RUNNER_TEMP 'archhub-verify-published'
-          $declared = Join-Path $evidence 'declared-settings.json'
-          if (-not (Test-Path -LiteralPath $declared)) { throw 'Verification initialization did not produce declared Settings evidence.' }
+          $optional = $env:VERIFY_UI_CONTRACT -ceq 'stable-optional-sign-in'
+          $scenario = 'settings.mjs'
+          if ('${{ inputs.verify_operations }}' -eq 'true' -and $env:VERIFY_UI_CONTRACT -ceq 'gated') { $scenario = 'settings_right_click.mjs' }
+          $inventory = node --input-type=module -e "import {steps} from './selected/03.TOOLS/tools/real_app_check/scenarios/$scenario'; console.log(JSON.stringify(steps))"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the declared installed checks.' }
+          $names = @($inventory | ConvertFrom-Json)
+          if (-not $names.Count -or @($names | Where-Object {$_ -isnot [string] -or -not $_.Trim()}).Count -or
+              @($names | Sort-Object -CaseSensitive -Unique).Count -ne $names.Count) { throw 'Installed check names must be present and unique.' }
           $stepsFile = Join-Path $evidence 'settings/steps.json'
           $actual = @()
           if (Test-Path -LiteralPath $stepsFile) { $actual = @(Get-Content -Raw $stepsFile | ConvertFrom-Json) }
-          $rows = @(Get-Content -Raw $declared | ConvertFrom-Json | ForEach-Object {
-            $asked = $_
+          $rows = @(foreach ($asked in $names) {
             $found = @($actual | Where-Object { $_.asked -ceq $asked })
             if ($found.Count -eq 1) { $found[0] }
-            else { @{asked=$asked;result='NOT EXERCISED';did='Install or actual-window check did not reach this case; no pass claimed.'} }
+            elseif ($found.Count -gt 1) { @{asked=$asked;result='FAIL';did='More than one outcome was recorded for this check.'} }
+            else { @{asked=$asked;result='NOT EXERCISED';did='The installed witness did not reach this case.'} }
           })
-          $rows | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'settings-results.json') -Encoding utf8
-          $startup = Get-Content -Raw (Join-Path $evidence 'declared-startup.json') | ConvertFrom-Json
-          $found = @($actual | Where-Object { $_.asked -ceq $startup })
-          $startupResult = if ($found.Count -eq 1) { $found[0] } else { @{asked=$startup;result='NOT EXERCISED';did='The actual-window check did not reach the startup witness; no pass claimed.'} }
-          $startupResult | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence 'startup-result.json') -Encoding utf8
-          $extendedCases = [ordered]@{
-            projects = 'The actual-window check did not reach the Projects case.'
-            scope = 'The actual-window check did not reach scope recovery.'
-            office = 'The actual-window check did not reach Office creation.'
-            'session-folder' = 'The installed window did not reach the signed-in Session folder picker.'
-            admission = 'The actual installed sign-in window was not reached.'
+          ConvertTo-Json -InputObject $rows -Depth 12 | Set-Content (Join-Path $evidence 'settings-results.json') -Encoding utf8
+          # Preserve the names of published per-case receipts consumed by installer and operations checks.
+          $receipts = [ordered]@{
+            admission='Installed desktop starts locked*'; startup='Late startup preserves*'
+            projects='Installed Projects preserves workspace selection*'; scope='Installed Settings recovers a stale scope*'
+            office='Installed Projects creates the selected Office folder*'; 'session-folder'='Installed Canvas saves the selected Session Project folder*'
+            'issued-save'='Installed Projects restores revision and naming controls*'
           }
-          $optional = $env:VERIFY_UI_CONTRACT -ceq 'stable-optional-sign-in'
-          foreach ($case in $extendedCases.Keys) {
-            $asked = Get-Content -Raw (Join-Path $evidence "declared-$case.json") | ConvertFrom-Json
-            $found = @($actual | Where-Object { $_.asked -ceq $asked })
-            $row = if ($optional) {
-              @{asked=$asked;result='NOT EXERCISED';did='This case is outside the pinned optional-sign-in release witness.'}
-            } elseif ($found.Count -eq 1) { $found[0] }
-            else { @{asked=$asked;result='NOT EXERCISED';did=$extendedCases[$case]} }
+          foreach ($case in $receipts.Keys) {
+            $matching = @($rows | Where-Object { $_.asked -clike $receipts[$case] })
+            if ($matching.Count -ne 1) { throw "Missing or ambiguous installed case declaration for $case." }
+            $row = $matching[0]
+            if ($optional -and $case -ne 'startup') {
+              $row = @{asked=$row.asked;result='NOT EXERCISED';did='Outside the pinned optional-sign-in witness.'}
+            }
             $row | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $evidence "$case-result.json") -Encoding utf8
+          }
+          if (-not $optional -and @($rows | Where-Object {$_.result -cne 'PASS'}).Count) {
+            throw 'The installed witness did not pass every declared case. See settings-results.json.'
           }
       - name: Verify operations using only the selected installed engine and dependencies
         if: ${{ !cancelled() && inputs.verify_operations }}
@@ -1035,6 +1028,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/scope-result.json
             ${{ runner.temp }}/archhub-verify-published/office-result.json
             ${{ runner.temp }}/archhub-verify-published/session-folder-result.json
+            ${{ runner.temp }}/archhub-verify-published/issued-save-result.json
             ${{ runner.temp }}/archhub-verify-published/admission-result.json
             ${{ runner.temp }}/archhub-verify-published/canvas/report.json
             ${{ runner.temp }}/archhub-verify-published/canvas/steps.json

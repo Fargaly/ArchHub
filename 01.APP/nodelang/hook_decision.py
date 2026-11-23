@@ -444,9 +444,7 @@ def classify(event: dict, environment) -> tuple[str, dict]:
 
 # Machine cleanup allowlist. Paths live in the file; this is only where to read them.
 # Override with the cleanup_candidates argument or ARCHHUB_CLEANUP_CANDIDATES.
-_CLEANUP_CANDIDATES = Path(
-    r"C:\Users\fargaly\00.ARCHUB\00.GOVERNANCE\05.WORKSPACE-REPORTS"
-    r"\machine-cleanup-candidates-2026-11-02.json")
+_CLEANUP_CANDIDATES = Path("00.ARCHUB/00.GOVERNANCE/05.WORKSPACE-REPORTS/machine-cleanup-candidates-2026-11-02.json")
 _DELETE_VERBS = {"rm", "del", "erase", "rmdir", "rd", "remove-item", "ri"}
 _LIST_VERBS = {"get-childitem", "gci", "ls", "dir"}
 _UNIX_SWITCHES = {
@@ -491,7 +489,12 @@ def _allowlist_entries(environment, cleanup_candidates) -> list[str]:
     if cleanup_candidates is not None:
         source = cleanup_candidates
     else:
-        source = environment.get("ARCHHUB_CLEANUP_CANDIDATES") or _CLEANUP_CANDIDATES
+        source = environment.get("ARCHHUB_CLEANUP_CANDIDATES")
+        if not source:
+            home = Path(environment.get("USERPROFILE") or environment.get("HOME") or Path.home())
+            if not home.is_absolute():
+                return []
+            source = home / _CLEANUP_CANDIDATES
     try:
         data = json.loads(Path(source).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, TypeError):

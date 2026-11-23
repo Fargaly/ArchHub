@@ -1312,8 +1312,8 @@ def test_reload_reads_the_package_before_the_busy_guard(monkeypatch, staged, bus
     update = ApplicationUpdate.__new__(ApplicationUpdate)
     update._closed, update._state, update._worker, update._lock = False, "ready", None, threading.RLock()
     update.state_dir = update.app_dir = None
-    update._available, update._detail = "A", ""
-    update.status = lambda: {"state": update._state, "detail": update._detail}
+    update._available, update._detail, update._restart_reason = "B", "Restart to update", "busy before"
+    update.status = lambda: {"state": update._state, "detail": update._detail, "available_build": update._available}
     restarts = []
     update._request_restart = lambda: restarts.append(1)
     update._restart_refusal = lambda: busy
@@ -1325,6 +1325,9 @@ def test_reload_reads_the_package_before_the_busy_guard(monkeypatch, staged, bus
         outcome = "refused: " + str(error)
     assert outcome.startswith(expected), outcome
     assert restarts == ([1] if expected == "restarted" else [])
+    if expected == "up to date":   # e988 0c3795b6: the next normal status read no longer offers the old build
+        assert update.status() == {"state": "idle", "detail": "ArchHub is up to date.", "available_build": ""}
+        assert update._restart_reason == ""
 
 
 def test_review2_helper_and_relaunch_break_away_from_the_job_with_a_fallback(monkeypatch):

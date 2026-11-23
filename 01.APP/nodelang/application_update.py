@@ -440,7 +440,9 @@ class ApplicationUpdate:
             # The package decides first: with nothing newer to install, busy agents are not the answer.
             staged = staged_update(self.state_dir, self.app_dir)
             if staged.get("staged") and staged.get("status") == "confirmed":
-                return {**self.status(), "detail": "ArchHub is up to date."}
+                # The same-build decision is kept: a stale offer or refusal must not come back on the next status read.
+                self._state, self._detail, self._available, self._restart_reason = "idle", "ArchHub is up to date.", "", ""
+                return self.status()
             if not staged.get("staged") or staged.get("status") != "staged":
                 self._state, self._detail = "failed", str(staged.get("reason") or "No verified update is ready.")
                 raise UpdateRestartRefused(self._detail)

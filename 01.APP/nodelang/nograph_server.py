@@ -1058,12 +1058,15 @@ def _inject(prompt, handles, reply_to=None, task=None, *, task_peer=False):
     from .workshop_live import send_as_founder
     started = time.monotonic()
     sent = send_as_founder(prompt, handles, reply_to=reply_to, task=task, **({'task_peer': True} if task_peer else {}))
+    # Queued for the agent's next turn, still in flight, or unconfirmed is not a failure; only a refusal is.
+    waiting = ('queued', 'pending', 'in-flight', 'uncertain')
     for row in sent['deliveries']:
         request_profiles({'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': str(row.get('agent')), 'model': 'agent session',
                           'provider': 'workshop:' + str(row.get('channel')), 'tokens': None, 'ms': row.get('ms') or 0,
-                          'outcome': row['state'] if row['state'] == 'delivered' else 'failed: ' + str(row.get('reason'))[:80]})
-    lines = ['%s %s%s' % ('✓' if r['state'] == 'delivered' else '✗', r.get('agent'),
-                          (' · %d ms' % r['ms']) if r['state'] == 'delivered' else ' · ' + str(r.get('reason')))
+                          'outcome': row['state'] if row['state'] == 'delivered' or row['state'] in waiting
+                          else 'failed: ' + str(row.get('reason'))[:80]})
+    lines = ['%s %s%s' % ('✓' if r['state'] == 'delivered' else '…' if r['state'] in waiting else '✗', r.get('agent'),
+                          (' · %d ms' % r['ms']) if r['state'] == 'delivered' else ' · ' + str(r.get('reason') or r['state']))
              for r in sent['deliveries']] + ['✗ @%s · no joined agent with this name' % h for h in sent['unknown']]
     return {'ok': True, 'answer': '\n'.join(lines), 'provider': 'Workshop', 'model': 'live injection',
             'request_id': sent['message_id'], 'applied': [], 'deliveries': sent['deliveries'],

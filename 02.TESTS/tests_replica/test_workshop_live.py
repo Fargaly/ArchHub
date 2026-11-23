@@ -481,3 +481,18 @@ def test_a_busy_store_after_the_push_never_makes_the_composer_send_twice(monkeyp
     assert len(pushes) == 1
     again = workshop_live.send_as_founder('@qa check', ['qa'])   # a deliberate second message is still its own
     assert again['message_id'] != sent['message_id'] and len(pushes) == 2
+
+
+def test_the_composer_reports_queued_as_waiting_and_only_a_refusal_as_failed(monkeypatch):
+    """e988 ae8b32a9: a Cursor hook-queue send returned ok but rendered a red cross and profiled as failed."""
+    from nodelang import model_router, nograph_server, workshop_live
+    profiled = []
+    monkeypatch.setattr(model_router, 'request_profiles', lambda row: profiled.append(row['outcome']))
+    rows = [{'agent': 'Cursor', 'state': 'queued', 'reason': 'queued for next turn via hook', 'channel': 'hook', 'ms': 0},
+            {'agent': 'Claude', 'state': 'delivered', 'reason': '', 'channel': 'pipe', 'ms': 12},
+            {'agent': 'Codex', 'state': 'refused', 'reason': 'session closed', 'channel': 'workshop', 'ms': 0}]
+    monkeypatch.setattr(workshop_live, 'send_as_founder',
+                        lambda *a, **k: {'message_id': 'm', 'deliveries': rows, 'unknown': []})
+    answer = nograph_server._inject('hi', ['cursor', 'claude', 'codex'])['answer'].splitlines()
+    assert answer == ['… Cursor · queued for next turn via hook', '✓ Claude · 12 ms', '✗ Codex · session closed']
+    assert profiled == ['queued', 'delivered', 'failed: session closed']

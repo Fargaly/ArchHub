@@ -85,7 +85,6 @@ def hosted_guest(app, evidence):
 
 
 LEGACY_RELAY_SHA256 = 'e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3'
-REPAIRED_RELAY_SHA256 = 'd81d990f2345f552f1b36082ae7f8294e2fd3a4fb6ad19cde2efc56b72077d80'
 
 
 def connector_snapshot(seed, app, run, before=None):
@@ -152,8 +151,7 @@ def connector_snapshot(seed, app, run, before=None):
             raise ValueError('Missing distinct stale connector witness before upgrade.')
         return result
     if (not before or before['run'] != run or before['config_files'] != records
-            or before['runtime_sha256'] != expected_seed or observed != shipped or digest(observed) == expected_seed
-            or (legacy and digest(shipped) != REPAIRED_RELAY_SHA256)):
+            or before['runtime_sha256'] != expected_seed or observed != shipped or digest(observed) == expected_seed):
         raise ValueError('Installed Setup or first-run failed to refresh the supervisor and preserve both client records.')
 
     # Exercise the installed readiness entry in a separate disposable profile,

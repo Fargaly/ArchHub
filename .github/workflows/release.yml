@@ -657,7 +657,7 @@ jobs:
               return @{build=$build.GetString(); sha256=$sha.GetString(); bytes=$length}
             } finally { $candidate.Dispose() }
           }
-          function Read-PublishedBuildTime($pin) {
+          function Read-PublishedBuildTime($pin, [switch]$legacyTarget) {
             $url = 'https://github.com/' + $env:PUBLISHED_REPOSITORY + '/releases/download/build-' + $pin.build + '/release.json'
             $response = Invoke-WebRequest -Uri $url
             $json = if ($response.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($response.Content) } else { [string]$response.Content }
@@ -674,6 +674,11 @@ jobs:
                   $revision -cnotmatch '\A[0-9a-f]{40}\z' -or $suffix -cnotmatch '\A[0-9a-f]{7,40}\z' -or
                   !$revision.StartsWith($suffix, [StringComparison]::Ordinal)) {
                 throw 'Published release metadata differs from the pinned Setup identity.'
+              }
+              if ($legacyTarget) {
+                $digest = $release.GetProperty('installed_source_manifest_sha256').GetString()
+                if ($digest -cnotmatch '\A[0-9a-f]{64}\z') { throw 'Missing selected installed manifest digest.' }
+                "LEGACY_TARGET_MANIFEST_SHA256=$digest" >> $env:GITHUB_ENV
               }
               return [DateTimeOffset]::ParseExact($release.GetProperty('built_at').GetString(), "yyyy-MM-dd'T'HH:mm:ss'Z'",
                 [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
@@ -707,7 +712,9 @@ jobs:
               $next = @{build=$env:PUBLISHED_BUILD; bytes=[long]$env:PUBLISHED_BYTES; sha256=$env:PUBLISHED_SHA256}
               if ($prior.build -ceq $next.build -or $prior.sha256 -ceq $next.sha256) { throw 'An upgrade requires distinct Setup identities.' }
               $old = Read-PublishedBuildTime $prior
-              $new = Read-PublishedBuildTime $next
+              $legacyRelay = $env:VERIFY_CONNECTORS -eq 'true' -and $prior.build -ceq '20261119-0904-665c785'
+              $new = Read-PublishedBuildTime $next -legacyTarget:$legacyRelay
+              "VERIFY_LEGACY_RELAY=$($legacyRelay.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
               if ($old -ge $new) { throw 'An upgrade requires an earlier previous published build time.' }
               $prior.built_at = $old.ToString('O')
               $prior.target_built_at = $new.ToString('O')
@@ -730,9 +737,7 @@ jobs:
           $pins = @()
           if ($upgrade) { $pins += Get-Content -Raw $previousPin | ConvertFrom-Json }
           $pins += @{build=$env:PUBLISHED_BUILD; bytes=[long]$env:PUBLISHED_BYTES; sha256=$env:PUBLISHED_SHA256}
-          $legacyRelay = $upgrade -and $env:VERIFY_CONNECTORS -eq 'true' -and
-            $pins[0].build -ceq '20261119-0904-665c785' -and $env:PUBLISHED_BUILD.EndsWith('-49e77d9a37eeace26b54b2e7b23d0ef95616393b')
-          $env:VERIFY_LEGACY_RELAY = $legacyRelay.ToString().ToLowerInvariant()
+          $legacyRelay = $env:VERIFY_LEGACY_RELAY -ceq 'true'
           foreach ($pin in $pins) {
             $previous = $pin.build -cne $env:PUBLISHED_BUILD
             $prefixLog = if ($previous) { 'previous-' } else { '' }
@@ -798,13 +803,21 @@ jobs:
                     $post.runtime_sha256 = (Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
                   }
                   if ($legacyRelay) {
+                    $manifestHash = (Get-FileHash -LiteralPath (Join-Path $app 'source-manifest.tsv') -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ($manifestHash -cne $env:LEGACY_TARGET_MANIFEST_SHA256) { throw 'Installed manifest differs from selected release receipt.' }
+                    $rows = @($manifest | Where-Object { $_ -clike "nodelang/mcp_supervisor.py`t*" })
+                    if ($rows.Count -ne 1 -or $rows[0] -cnotmatch '\Anodelang/mcp_supervisor\.py\t([0-9a-f]{64})\z') {
+                      throw 'Selected installed manifest must name one relay digest.'
+                    }
+                    $post.expected_relay_sha256 = $Matches[1]
+                    $post.installed_manifest_sha256 = $manifestHash
                     $restore = @(Select-String -LiteralPath $log -CaseSensitive -Pattern '\sConnector relay restored for this install\.$')
                     $firstFile = Select-String -LiteralPath $log -CaseSensitive -Pattern '\s-- File entry --$' | Select-Object -First 1
                     $post.before_setup_sha256 = $preSetupHash
                     $post.restore_line = $restore.LineNumber
                     $post.first_file_line = $firstFile.LineNumber
                     if ($restore.Count -ne 1 -or !$firstFile -or $restore[0].LineNumber -ge $firstFile.LineNumber -or
-                        $post.shipped_sha256 -cne 'd81d990f2345f552f1b36082ae7f8294e2fd3a4fb6ad19cde2efc56b72077d80') {
+                        $post.shipped_sha256 -cne $post.expected_relay_sha256) {
                       throw 'Setup did not prove the pinned legacy relay repair before file installation.'
                     }
                   }

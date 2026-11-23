@@ -176,13 +176,13 @@ def _supervisor_launch(install_root, state_root):
     return python, Path(state_root).parent / RUNTIME_FOLDER / "mcp_supervisor.py"
 
 
-def deploy_supervisor(install_root, state_root):
-    """Prepare the installed supervisor for future client launches."""
+def deploy_supervisor(install_root, state_root, source=None):
+    """Prepare the installed supervisor (or the given newer copy) for future client launches."""
     launch = _supervisor_launch(install_root, state_root)
     if launch is None:
         return None
     _, target = launch
-    source = Path(install_root) / "nodelang" / "mcp_supervisor.py"
+    source = Path(source) if source is not None else Path(install_root) / "nodelang" / "mcp_supervisor.py"
     _require_plain(source, "file")
     _require_plain(target, "file", may_be_absent=True)
     data = source.read_bytes()
@@ -206,20 +206,29 @@ def deploy_supervisor(install_root, state_root):
     return launch
 
 
-def refresh_legacy_supervisor(install_root, state_root):
-    """Upgrade the shipped pre-receipt runtime even for clients Setup does not configure."""
+# The exact deployed Windows script that predates connector drain receipts: (bytes, sha256).
+LEGACY_SUPERVISOR = (10895, "e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3")
+
+
+def refresh_legacy_supervisor(install_root, state_root, source=None):
+    """Upgrade the shipped pre-receipt runtime even for clients Setup does not configure.
+
+    Setup's preflight passes its own newer copy as `source`: the older installed app re-deploys its legacy script
+    on every status read, so the new relay is put back before admission, after that app has been stopped.
+    """
     launch = _supervisor_launch(install_root, state_root)
     if launch is None:
-        return
+        return False
     _, target = launch
     identity = _require_plain(target, "file", may_be_absent=True)
-    if identity is None or identity[2] != 10895:
-        return
-    # This exact deployed Windows script predates connector drain receipts.
+    if identity is None or identity[2] != LEGACY_SUPERVISOR[0]:
+        return False
     with target.open("rb") as previous:
         digest = hashlib.file_digest(previous, "sha256").hexdigest()
-    if digest == "e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3":
-        deploy_supervisor(install_root, state_root)
+    if digest != LEGACY_SUPERVISOR[1]:
+        return False
+    deploy_supervisor(install_root, state_root, source)
+    return True
 
 
 def previous_entry(install_root) -> dict:

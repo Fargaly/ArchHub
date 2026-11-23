@@ -893,6 +893,14 @@ def main(argv=None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if args[:1] == ['preflight-connectors'] and len(args) in (1, 2):
         preflight_install_connectors(install_root=args[1] if len(args) == 2 else None)
+        root, state = install_roots()
+        try:
+            # This package is the build Setup installs; its relay replaces only the exact legacy script.
+            if refresh_legacy_supervisor(Path(args[1]) if len(args) == 2 else root, state,
+                                         Path(__file__).with_name('mcp_supervisor.py')):
+                print('Connector relay restored for this install.', flush=True)
+        except (OSError, RegistrationRefused) as error:
+            print('Connector warning: the connector relay was left as it is (%s)' % type(error).__name__, flush=True)
         return 0
     if args == ['migrate-connectors']:
         rows = migrate_install_connectors(consent=True)

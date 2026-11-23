@@ -91,6 +91,36 @@ def test_setup_without_managed_records_preserves_absent_or_unrecognised_runtime(
         assert not machine.supervisor.parent.exists()
 
 
+def test_setup_preflight_restores_relay_an_older_status_read_put_back(machine, monkeypatch):
+    """The older installed app re-deploys its legacy relay on a status read; Setup's preflight puts its own back."""
+    import hashlib
+    from pathlib import Path
+    from nodelang import client_mcp_installation as installation
+    legacy = b"# legacy relay without drain receipts\n" * 7
+    monkeypatch.setattr(installation, "LEGACY_SUPERVISOR", (len(legacy), hashlib.sha256(legacy).hexdigest()))
+    machine.supervisor.parent.mkdir()
+    machine.supervisor.write_bytes(legacy)
+    staged = Path(registration.__file__).with_name("mcp_supervisor.py").read_bytes()
+    assert registration.main(["preflight-connectors", str(machine.install)]) == 0
+    assert machine.supervisor.read_bytes() == staged
+    stamp = machine.supervisor.stat().st_mtime_ns
+    assert registration.main(["preflight-connectors", str(machine.install)]) == 0  # already current: untouched
+    assert machine.supervisor.stat().st_mtime_ns == stamp
+    machine.supervisor.write_bytes(legacy + b"#")  # any other script, even one byte off, is left as it is
+    assert registration.main(["preflight-connectors", str(machine.install)]) == 0
+    assert machine.supervisor.read_bytes() == legacy + b"#"
+
+
+def test_preflight_package_carries_the_relay_it_restores():
+    from pathlib import Path
+    import importlib.util
+    root = Path(registration.__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("preflight_imports", root / "03.TOOLS/packaging/preflight_imports.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert Path("01.APP/nodelang/mcp_supervisor.py") in module.import_closure(root)
+
+
 def test_inline_runpy_loader_is_recognised_but_extra_code_is_refused():
     code = "import sys,runpy;sys.path.insert(0,r'C:\\ArchHub');runpy.run_module('nodelang.clean_coordination_mcp',run_name='__main__')"
     assert registration._retired_runpy_args(['-c', code])

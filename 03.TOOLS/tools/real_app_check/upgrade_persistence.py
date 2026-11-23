@@ -84,6 +84,10 @@ def hosted_guest(app, evidence):
         raise RuntimeError('Unexpected hosted guest profile or upgrade evidence location.')
 
 
+LEGACY_RELAY_SHA256 = 'e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3'
+REPAIRED_RELAY_SHA256 = 'd81d990f2345f552f1b36082ae7f8294e2fd3a4fb6ad19cde2efc56b72077d80'
+
+
 def connector_snapshot(seed, app, run, before=None):
     import tempfile
     from nodelang import assistant_registration as registration
@@ -103,6 +107,7 @@ def connector_snapshot(seed, app, run, before=None):
     _require_plain(runtime, 'file', may_be_absent=seed)
     for path in configs.values():
         _require_plain(path, 'file', may_be_absent=seed)
+    legacy = os.environ.get('VERIFY_LEGACY_RELAY') == 'true'
     shipped = source.read_bytes()
     def digest(data):
         return hashlib.sha256(data).hexdigest()
@@ -111,6 +116,11 @@ def connector_snapshot(seed, app, run, before=None):
             raise RuntimeError('Refusing to replace any pre-existing client config or unmanaged supervisor.')
         # The previous installed owner supplies its exact registered entries.
         # No credentials, actual vendor process, or network session are involved.
+        if legacy:
+            # This previous release deploys its own relay through readiness.
+            registration.readiness()
+            if len(shipped) != 10895 or digest(shipped) != LEGACY_RELAY_SHA256 or runtime.read_bytes() != shipped:
+                raise ValueError('Previous installed readiness did not supply the pinned 10895-byte legacy relay.')
         codex = registration.codex_entry(root, state)
         gemini = registration.mcp_server_spec('gemini-cli')['add']
         texts = {'codex': registration._codex_block(codex),
@@ -121,25 +131,29 @@ def connector_snapshot(seed, app, run, before=None):
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open('x', encoding='utf-8') as stream:
                 stream.write(texts[vendor])
-        runtime.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=runtime.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(STALE_CONNECTOR)
-        try:
-            os.replace(temporary, runtime)
-        finally:
-            temporary.unlink(missing_ok=True)
+        if not legacy:
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=runtime.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(STALE_CONNECTOR)
+            try:
+                os.replace(temporary, runtime)
+            finally:
+                temporary.unlink(missing_ok=True)
     observed = runtime.read_bytes()
     records = {key: {'sha256': digest(path.read_bytes()), 'mtime_ns': path.stat().st_mtime_ns}
                for key, path in configs.items()}
     result = {'fixture': 'Synthetic enrolled Codex and Gemini records on a hosted Windows guest', 'run': run,
               'config_files': records, 'shipped_sha256': digest(shipped), 'runtime_sha256': digest(observed)}
+    expected_seed = LEGACY_RELAY_SHA256 if legacy else digest(STALE_CONNECTOR)
+    result['runtime_bytes'] = len(observed)
     if seed:
-        if observed != STALE_CONNECTOR or shipped == observed:
+        if digest(observed) != expected_seed or (not legacy and shipped == observed):
             raise ValueError('Missing distinct stale connector witness before upgrade.')
         return result
     if (not before or before['run'] != run or before['config_files'] != records
-            or before['runtime_sha256'] != digest(STALE_CONNECTOR) or observed != shipped or observed == STALE_CONNECTOR):
+            or before['runtime_sha256'] != expected_seed or observed != shipped or digest(observed) == expected_seed
+            or (legacy and digest(shipped) != REPAIRED_RELAY_SHA256)):
         raise ValueError('Installed Setup or first-run failed to refresh the supervisor and preserve both client records.')
 
     # Exercise the installed readiness entry in a separate disposable profile,

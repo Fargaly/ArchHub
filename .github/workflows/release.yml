@@ -730,6 +730,9 @@ jobs:
           $pins = @()
           if ($upgrade) { $pins += Get-Content -Raw $previousPin | ConvertFrom-Json }
           $pins += @{build=$env:PUBLISHED_BUILD; bytes=[long]$env:PUBLISHED_BYTES; sha256=$env:PUBLISHED_SHA256}
+          $legacyRelay = $upgrade -and $env:VERIFY_CONNECTORS -eq 'true' -and
+            $pins[0].build -ceq '20261119-0904-665c785' -and $env:PUBLISHED_BUILD.EndsWith('-49e77d9a37eeace26b54b2e7b23d0ef95616393b')
+          $env:VERIFY_LEGACY_RELAY = $legacyRelay.ToString().ToLowerInvariant()
           foreach ($pin in $pins) {
             $previous = $pin.build -cne $env:PUBLISHED_BUILD
             $prefixLog = if ($previous) { 'previous-' } else { '' }
@@ -754,6 +757,15 @@ jobs:
               $state.setup_verified = $true
               $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
               $log = Join-Path $env:VERIFY_EVIDENCE ($prefixLog + 'setup.log')
+              if (!$previous -and $legacyRelay) {
+                $runtime = Get-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'ArchHub-Runtime/mcp_supervisor.py') -ErrorAction Stop
+                $seed = Get-Content -Raw (Join-Path $env:VERIFY_EVIDENCE 'upgrade-seed.json') | ConvertFrom-Json
+                $preSetupHash = (Get-FileHash -LiteralPath $runtime.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($seed.result -cne 'PASS' -or $seed.connectors.runtime_sha256 -cne $preSetupHash -or
+                    $runtime.Length -ne 10895 -or $preSetupHash -cne 'e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3') {
+                  throw 'The exact previous installed relay is required immediately before Setup.'
+                }
+              }
               $process = Start-Process -FilePath $setup -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/RESTARTEXITCODE=3010', '/TASKS="desktopicon"', ('/LOG="' + $log + '"')) -WindowStyle Hidden -PassThru -Wait
               $state.install_exit = $process.ExitCode
               $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
@@ -784,6 +796,17 @@ jobs:
                   $post.shipped_sha256 = (Get-FileHash -LiteralPath $shipped -Algorithm SHA256).Hash.ToLowerInvariant()
                   if (Test-Path -LiteralPath $runtime -PathType Leaf) {
                     $post.runtime_sha256 = (Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
+                  }
+                  if ($legacyRelay) {
+                    $restore = @(Select-String -LiteralPath $log -CaseSensitive -Pattern '\sConnector relay restored for this install\.$')
+                    $firstFile = Select-String -LiteralPath $log -CaseSensitive -Pattern '\s-- File entry --$' | Select-Object -First 1
+                    $post.before_setup_sha256 = $preSetupHash
+                    $post.restore_line = $restore.LineNumber
+                    $post.first_file_line = $firstFile.LineNumber
+                    if ($restore.Count -ne 1 -or !$firstFile -or $restore[0].LineNumber -ge $firstFile.LineNumber -or
+                        $post.shipped_sha256 -cne 'd81d990f2345f552f1b36082ae7f8294e2fd3a4fb6ad19cde2efc56b72077d80') {
+                      throw 'Setup did not prove the pinned legacy relay repair before file installation.'
+                    }
                   }
                   if ($seed.result -ceq 'PASS' -and $seed.connectors.run -ceq $post.run -and
                       $post.seeded_sha256 -cmatch '^[0-9a-f]{64}$' -and

@@ -1072,6 +1072,7 @@ jobs:
             ${{ runner.temp }}/archhub-verify-published/previous-*
             ${{ runner.temp }}/archhub-verify-published/upgrade-*.json
             ${{ runner.temp }}/archhub-verify-published/install.json
+            ${{ runner.temp }}/archhub-verify-published/update-controller.json
             ${{ runner.temp }}/archhub-verify-published/dwg-results.log
             ${{ runner.temp }}/archhub-verify-published/pdf-results.log
             ${{ runner.temp }}/archhub-verify-published/operations-results.log

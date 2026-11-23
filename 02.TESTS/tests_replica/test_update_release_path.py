@@ -2051,4 +2051,5 @@ def test_clean_windows_verify_checks_the_installed_update_controller():
     """e988 eb8390bd: the published-installer run clicks and re-reads the shipped update controller."""
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "real_app_check/update_controller_check.py" in workflow
+    assert "archhub-verify-published/update-controller.json" in workflow   # uploaded beside install.json
     assert (ROOT / "03.TOOLS/tools/real_app_check/update_controller_check.py").is_file()

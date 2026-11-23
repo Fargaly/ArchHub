@@ -154,11 +154,13 @@ def _lease_active(until, now):
     return type(until) in (int, float) and now <= until < float('inf')
 
 
-def member_presence(members, declarations=()):
+def member_presence(members, declarations=(), by_owner=None):
+    """by_owner: the caller's one index of declarations by session, reused across every row it lists."""
     now = time.time()
-    by_owner = {}
-    for row in declarations:
-        by_owner.setdefault(row.get('session'), []).append(row)
+    if by_owner is None:
+        by_owner = {}
+        for row in declarations:
+            by_owner.setdefault(row.get('session'), []).append(row)
     shown = {}
     for member in members:
         rows = by_owner.get(member['owner'], [])
@@ -1141,6 +1143,9 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
     threads, last = _task_threads(history)
     listed = rows(history, include_archived=include_archived)
     index = _declaration_index(declarations)
+    by_owner = {}
+    for item in declarations:
+        by_owner.setdefault(item.get('session'), []).append(item)
     working = {m["owner"] for row in listed if not row["id"].startswith("declared-") and row["status"] != "done"
                and not row.get("archived") for m in _live(row.get("members") or [])}
     from .session_files import _registered_roots
@@ -1185,7 +1190,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
              # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
-             'members': member_presence(row.get('members') or [], declarations),
+             'members': member_presence(row.get('members') or [], declarations, by_owner),
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
              'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
@@ -1198,16 +1203,23 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
 
 
 def fold_declarations(history, declarations):
-    """Hide superseded declare rows using only the reversible archive flag."""
+    """Hide superseded declare rows using only the reversible archive flag.
+
+    One pass per owner over prebuilt indexes: Home calls this on every refresh, and a quadratic scan
+    over thousands of declarations took over 20 s on a real store."""
     held = rows(history, settle=False)
-    for declaration in declarations:
-        owner = declaration.get('session')
-        if not owner:
-            continue
+    by_id = {r['id']: r for r in held}
+    declared, legacy_ids = {}, {}
+    for r in held:
+        if r['id'].startswith('declared-') and r.get('owner'):
+            declared.setdefault(r['owner'], []).append(r)
+    for d in declarations:
+        if d.get('session') and d.get('root') and d.get('request_id'):
+            legacy_ids.setdefault(d['session'], set()).add(_declaration_task_id(d))
+    for owner in {d.get('session') for d in declarations if d.get('session')}:
         canonical = _declared_id(owner)
-        legacy = {_declaration_task_id(d) for d in declarations if d.get('session') == owner and d.get('root') and d.get('request_id')}
-        candidates = [r for r in held if r['id'] == canonical or r['id'] in legacy or
-                      (r['id'].startswith('declared-') and r.get('owner') == owner)]
+        ids = {canonical} | legacy_ids.get(owner, set())
+        candidates = [by_id[i] for i in ids if i in by_id] + [r for r in declared.get(owner, []) if r['id'] not in ids]
         if not candidates:
             continue
         keep = next((r['id'] for r in candidates if r['id'] == canonical),

@@ -387,8 +387,8 @@
       return result;
     };
     const pickFile = () => act(async () => { const file = await api.addFile(); if (file) return api.addComposerAttachment(file.id); return null; });
-    const openSavedSession = async path => {
-      const opened = await act(() => api.openSession(path));
+    const openSavedSession = async (path, linkedParams) => {
+      const opened = await act(() => api.openSession(path,false,linkedParams));
       if (opened && !opened.cancelled) await go('canvas', api.getSessionPath?.() || path);
       return opened || null;
     };
@@ -813,23 +813,6 @@
           }, event)}><span>{item.label}</span><span className="muted" style={{
               fontSize: 'calc(11px * var(--text-scale,1))'
             }}>{item.group}</span></button>)}{!items.length && <Empty>No results.</Empty>}</div></>;
-    }
-    else if (k === 'Move to canvas') {
-      const source = s.tasks.find(t => t.id === m.id);
-      const choices = source ? s.tasks.filter(t => !t.direct && t.status !== 'ARCHIVED' && t.sessionPath
-        && t.project === source.project && !api.sameSessionPath(t.sessionPath, source.sessionPath)) : [];
-      const move = async () => {
-        await api.joinLegacyChild(m.id, text, extra === 'subtask');
-        close();
-        u.setToast({text:m.title + ' moved.', label:'Undo', open:() => u.act(() => api.restoreLegacyChild(m.id))});
-      };
-      body = <><label className="grid">Destination task<select value={text} onChange={e => setText(e.target.value)}>
-        <option value="">Choose a task</option>{choices.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
-      </select></label><label><input type="checkbox" checked={extra === 'subtask'}
-        onChange={e => setExtra(e.target.checked ? 'subtask' : '')} /> Make it a subtask of the destination</label>
-        <div className="flex"><Btn onClick={event => executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn>
-        <Btn p disabled={!choices.some(t => t.id === text)} onClick={event => executeAction('projects.controls.activate',
-          {handler:() => u.act(move)},event)}>Move task</Btn></div></>;
     }
     else if (k === 'Rename task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const result=await api.renameTask(m.id,text.trim());if(result)close();return result;})},event)}>Rename</Btn></div></>;
     else if (k === 'Attach meeting notes') body = <><label className="grid">Meeting notes<textarea aria-label="Meeting notes" rows={8} maxLength={4000} value={text} onChange={e=>setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(async()=>{const result=await api.attachMeetingNotes(u.task,text);if(result)close();return result;})},event)}>Attach to thread</Btn></div></>;

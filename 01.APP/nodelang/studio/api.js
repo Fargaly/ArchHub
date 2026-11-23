@@ -1743,8 +1743,9 @@ api.enterSession=async id=>{
  await flushAutosave();
  const parent={path:sessionPath,title:sessionDocument.title};
  const resolved=await sessionRequest('resolve-session',{params:node.params});
- await api.openSession(resolved.path,true);
- sessionBreadcrumbs.push(parent);publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});
+ const opened=await api.openSession(resolved.path,true);
+ if(!opened?.cancelled){sessionBreadcrumbs.push(parent);publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});}
+ return opened;
 };
 api.leaveSession=async()=>{
  const parent=sessionBreadcrumbs.at(-1);if(!parent)return;
@@ -2249,8 +2250,12 @@ api.newSession=async title=>{
  const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
  return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom},properties:{viewportSaved:false}});
 };
-api.openSession=async(path,linked=false)=>{
+api.openSession=async(path,linked=false,linkedParams=null)=>{
  refuseUnresolvedSave();
+ if(linkedParams){
+  const resolved=await sessionRequest('resolve-session',{params:linkedParams});
+  path=resolved.path;
+ }
  if(!path&&typeof window.ARCHHUB_WINDOW_ACTION!=='function')return new Promise((resolve,reject)=>{
   const picker=document.createElement('input');picker.type='file';picker.accept='.archhub';picker.hidden=true;
   picker.onchange=()=>{const file=picker.files[0];picker.remove();if(file)api.importSession(file).then(resolve,reject);else resolve({cancelled:true});};

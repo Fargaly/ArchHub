@@ -282,12 +282,24 @@
           ? api.getSessionDocument()?.properties?.taskContext?.task === id : api.sameSessionPath(api.getSessionPath(),path), action);
         const source = path || task?.sessionPath;
         const destinations = s.tasks.filter(t => !t.direct && t.id !== id && t.status !== 'ARCHIVED' && (!source || !api.sameSessionPath(t.sessionPath,source)));
-        const addTo = () => u.show('Surface menu', {anchor: {x:event.clientX,y:event.clientY}, restoreFocus:session,
-          surface:{label:'Add to another task', groups:commandGroups('session',[destinations.map(t =>
-            choice('menu.home.add', () => onDocument(() => u.openTaskFile(t.id,'canvas'),
-              () => api.getSessionDocument()?.properties?.taskContext?.task === t.id && !api.sameSessionPath(api.getSessionPath(),source),
-              () => api.insertSession(source)), t.title))])}});
         const sessionTask = task && !task.direct;
+        const moveTargets = sessionTask ? destinations.filter(t => t.sessionPath && t.project === task.project) : [];
+        const submenu = (label, groups) => u.show('Surface menu', {anchor:{x:event.clientX,y:event.clientY},
+          restoreFocus:session, surface:{label,groups:commandGroups('session',groups)}});
+        const move = (target, asSubtask) => u.act(async () => {
+          const result = await api.joinLegacyChild(id,target.id,asSubtask);
+          u.setToast({text:task.title+' moved.',label:'Undo',open:()=>u.act(()=>api.restoreLegacyChild(id))});
+          return result;
+        });
+        const moveTo = asSubtask => submenu(asSubtask ? 'Move as subtask' : 'Move task',[moveTargets.map(t =>
+          choice('menu.home.move',()=>move(t,asSubtask),asSubtask ? 'Move under '+t.title : 'Move to '+t.title))]);
+        const addTo = () => submenu('Add to another task',[
+          destinations.map(t => choice('menu.home.add', () => onDocument(() => u.openTaskFile(t.id,'canvas'),
+            () => api.sameSessionPath(api.getSessionPath(),t.sessionPath) && !api.sameSessionPath(api.getSessionPath(),source),
+            () => api.insertSession(source)), 'Add to '+t.title)),
+          ...(moveTargets.length ? [[choice('menu.home.move',()=>moveTo(false),'Move task…'),
+            choice('menu.home.move',()=>moveTo(true),'Move as subtask…')]] : [])
+        ]);
         const isStep = n => !n.fixed && !n.type?.startsWith('trigger.') && n.type !== 'thing.session' && !['fixed-agent','fixed-workshop','fixed-you','start'].includes(n.id);
         const emptyWorkflow = Array.isArray(task?.workflow) && !task.workflow.some(isStep);
         rows = [choice('menu.item', () => open()),
@@ -296,8 +308,6 @@
             const result = await api.runNode();
             if (result?.approvalId) u.show('Approve', {id: result.approvalId});
           })),
-          sessionTask && choice('menu.home.move', () => u.show('Move to canvas', {id, title:task.title}),
-            null, !source && 'Save this task first.'),
           choice('menu.home.add', addTo, null, !source ? 'Save this session first.' : !destinations.length && 'There is no other task to add it to.'),
           // Invite to watch: the right-clicked session only; disabled until the cloud serves watch grants.
           sessionTask && choice('menu.home.watch', () => u.show('Invite to watch', {path: source, title: task?.title}), null,

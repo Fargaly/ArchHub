@@ -323,7 +323,7 @@
     const band = Math.max(ins.length, outs.length) > 0 && <div ref={bandRef} data-port-band="" style={{
       position: 'relative',
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
+      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
       height: renderPort ? Math.max(ins.length, outs.length) * 22 + 8 : undefined,
       boxSizing: 'border-box',
       borderTop: `1px solid ${A.line}`,

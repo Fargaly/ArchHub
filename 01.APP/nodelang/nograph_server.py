@@ -2872,7 +2872,8 @@ def r_session_model(s, req):
     from . import session_files as files
     action, body = _action(req)
     if action == 'list':
-        listed, live = files.list_sessions(), _live_triggers(s)
+        listed = files.list_sessions(active_paths=_workflow_activity(getattr(s, 'triggers', None)))
+        live = _live_triggers(s)
         for group in listed['groups']:
             for row in group['sessions']:
                 _mark_live(row, live)

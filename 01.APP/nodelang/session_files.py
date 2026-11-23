@@ -2769,7 +2769,7 @@ def set_session_fields(path, values, by='You', *, expected_revision=None):
     return session_fields(document, path, roots=roots)
 
 
-def list_sessions(directory=None):
+def list_sessions(directory=None, *, active_paths=()):
     """Home and the Sessions panel: every session file with its fields, grouped by project.
 
     One directory scan, one workspace read and one task-table read; no polling (the caller refreshes on
@@ -2788,7 +2788,9 @@ def list_sessions(directory=None):
         logging.getLogger(__name__).debug('Session list without task rows: %s', error)
     groups = {}
     resumable = {}
-    for path in sorted((Path(directory) if directory else sessions_directory()).glob('*.archhub')):
+    paths = set((Path(directory) if directory else sessions_directory()).glob('*.archhub'))
+    paths.update(Path(path) for path in active_paths)
+    for path in sorted(paths):
         try:
             document = read_document(path)
         except (OSError, ValueError):

@@ -501,6 +501,31 @@ def test_history_recognises_parameter_only_edits_to_declared_sessions(profile, o
     assert session_fields(reopened, path)['authoredRegistration']
 
 
+def test_session_list_includes_only_scheduler_active_external_files(profile):
+    from nodelang import nograph_server as server, session_files as files
+    from nodelang.canvas_triggers import TriggerService
+    from types import SimpleNamespace
+    from pathlib import Path
+    path = Path(trigger_session())
+    external = profile / 'External timer.archhub'
+    path.replace(external)
+    unrelated = profile / 'Unopened sibling.archhub'
+    files.write_document(unrelated, files.new_document('Unopened sibling'))
+    owner = files.SessionFiles()
+    owner.remember(str(external), files.read_document(external))
+    service = TriggerService(owner)
+    def paths():
+        result = server.r_session_model(SimpleNamespace(triggers=service), SimpleNamespace(body={'action':'list'}))
+        return [Path(row['path']) for group in result['groups'] for row in group['sessions']]
+    try:
+        assert external not in paths()
+        service.refresh()
+        assert paths().count(external) == 1
+        assert unrelated not in paths()
+    finally:
+        service.close()
+
+
 def test_home_activity_reads_scheduler_eligibility_and_inflight_work(profile):
     from nodelang.canvas_triggers import TriggerService
     from nodelang.nograph_server import _workflow_activity

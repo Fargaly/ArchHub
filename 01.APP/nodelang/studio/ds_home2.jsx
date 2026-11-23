@@ -763,7 +763,8 @@
       <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u}>{inspectedNode.fixed && inspectedNode.type === 'thing.workshop' && <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />}</window.UI.NodeInspector> : task ? <>{taskParameters}<window.UI.GraphProperties g={s.graph} s={s} u={u}/></> : <p>Select a node or wire.</p>}</div>
     </aside>;
     // The sessions are read from their owner when Home opens and when the set of sessions or a state changes: never on a timer.
-    const sessionsStamp = fileWorkspace ? '' : (s.tasks || []).map(t => t.id + ':' + t.status + ':' + (t.sessionPath || '')).join('|') + '#' + (s.graphs || []).length;
+    const sessionsStamp = fileWorkspace ? '' : (s.tasks || []).map(t => t.id + ':' + t.status + ':' + (t.sessionPath || '')).join('|') + '#' + (s.graphs || []).length
+      + '#' + JSON.stringify(Object.keys(s.desktop?.workflowActivity || {}).sort());
     React.useEffect(() => {
       if (fileWorkspace) return undefined;
       let live = true;

@@ -2036,11 +2036,19 @@ def _sender_may_push(peer, wait=None):
 def _receipt(database, result, body, state, reason, waited=0):
     """A one-shot sender's persisted receipt (failed or uncertain) for a push that did not report back: never "sent"."""
     from .workshop_live import SCHEMA
-    with application_history(database=database) as selected:
-        selected._db.execute(SCHEMA)
-        selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (result["message_id"], body["to"], body["to"], "", "", "workshop", state, reason,
-             datetime.now(timezone.utc).isoformat(), int(waited * 1000)))
+    try:
+        with application_history(database=database) as selected:
+            selected._db.execute(SCHEMA)
+            selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (result["message_id"], body["to"], body["to"], "", "", "workshop", state, reason,
+                 datetime.now(timezone.utc).isoformat(), int(waited * 1000)))
+    except sqlite3.OperationalError as error:
+        # The message is already committed: a busy store only delays its receipt, and an agent told "database is
+        # locked" sends the same message again. The delivery recovery worker settles it; nothing is re-pushed here.
+        if (getattr(error, "sqlite_errorcode", 0) & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            raise
+        return [{"agent": body["to"], "state": "pending", "reason": "Recorded; do not send it again. "
+                 "Its delivery receipt waits for a busy Workshop store."}]
     return [{"agent": body["to"], "state": state, "reason": reason}]
 
 

@@ -353,6 +353,29 @@ print(json.dumps({'lock_errors':0}))
         worker.tick()
         self.assertEqual(set(transport.sent), {'recipient-one', 'recipient-two'})
 
+    def test_a_busy_receipt_never_turns_a_committed_send_into_an_error(self):
+        import sqlite3
+        sent = mailbox.call('send', {'to': 'founder', 'text': 'committed before the receipt'}, self.context)
+        database = mailbox.profile_database()
+        holder = sqlite3.connect(database, isolation_level=None, timeout=1)
+        self.addCleanup(holder.close)
+        holder.execute('BEGIN IMMEDIATE')  # another process holds the only writer
+        started = time.perf_counter()
+        rows = mailbox._receipt(None, sent, {'to': 'recipient'}, 'uncertain', 'push did not finish')
+        self.assertLess(time.perf_counter() - started, 10)
+        self.assertEqual(rows[0]['state'], 'pending')
+        self.assertIn('do not send it again', rows[0]['reason'])
+        holder.execute('ROLLBACK')
+        self.assertEqual(mailbox._receipt(None, sent, {'to': 'recipient'}, 'uncertain', 'later')[0]['state'], 'uncertain')
+        with mailbox.application_history(None) as history:
+            saved = [tuple(row) for row in history._db.execute(
+                'SELECT state FROM workshop_live_deliveries WHERE message_id=?', (sent['message_id'],))]
+        self.assertEqual(saved, [('uncertain',)])  # exactly one receipt once the writer is gone
+        # A failure that is not a busy store still fails.
+        with patch.object(mailbox, 'application_history', side_effect=sqlite3.OperationalError('disk I/O error')):
+            with self.assertRaises(sqlite3.OperationalError):
+                mailbox._receipt(None, sent, {'to': 'recipient'}, 'failed', 'x')
+
 
 if __name__ == '__main__':
     unittest.main()

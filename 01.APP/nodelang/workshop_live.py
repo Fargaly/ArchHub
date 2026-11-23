@@ -164,7 +164,18 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
         if runtime == 'opencode' and not native:
             native = opencode_session(_seat_pids(history, key))
         target = {**row, 'runtime': runtime, 'native_session_id': native or None}
-        won, claimed = claim_delivery(history, stored or {'id': message}, target, 'initial', 'sender')
+        try:
+            won, claimed = claim_delivery(history, stored or {'id': message}, target, 'initial', 'sender')
+        except sqlite3.OperationalError as error:
+            # The message is saved and earlier recipients may already have it: restarting the whole send repeated
+            # their pushes. This recipient stays unclaimed on the same message; the app's delivery loop (or the
+            # recipient's own pending read) claims and delivers it once the store frees.
+            if (getattr(error, 'sqlite_errorcode', 0) & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                raise
+            rows.append({'recipient': key, 'agent': row.get('display_name') or row.get('agent'), 'state': 'pending',
+                         'channel': 'workshop', 'reason': 'Recorded; delivery continues when the Workshop store frees.',
+                         'at': None, 'ms': 0})
+            continue
         if not won:
             rows.append({'recipient': key, 'agent': row.get('agent'), 'state': claimed, 'channel': 'workshop',
                          'reason': 'claimed by another delivery path', 'at': None, 'ms': 0, 'repeat': True})

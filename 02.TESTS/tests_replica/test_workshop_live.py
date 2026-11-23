@@ -483,6 +483,38 @@ def test_a_busy_store_after_the_push_never_makes_the_composer_send_twice(monkeyp
     assert again['message_id'] != sent['message_id'] and len(pushes) == 2
 
 
+def test_a_busy_store_between_recipients_never_repeats_an_earlier_push(monkeypatch):
+    """e988 6511391d: @everyone to two seats; the writer was taken after the first push, the second recipient's claim
+    raised SQLITE_BUSY, the composer retried and the first seat got the message twice. Same id, one push per seat."""
+    import sqlite3
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import application_history, profile_database
+    pushes, holder = [], {}
+
+    def push(runtime, native, *args, **kwargs):
+        pushes.append(native)
+        if 'db' not in holder:
+            holder['db'] = sqlite3.connect(profile_database(), isolation_level=None, timeout=1)
+            holder['db'].execute('BEGIN IMMEDIATE')
+        return 'queued', 'hook', 'queued for next turn via hook'
+    monkeypatch.setattr(workshop_live, 'push', push)
+    seats = [{'handle': h, 'session': h + '-session', 'name': h, 'agent': h, 'app': 'cursor', 'native_session_id': h + '-native'}
+             for h in ('one', 'two')]
+    monkeypatch.setattr(workshop_live, 'live_agents', lambda: seats)
+    sent = workshop_live.send_as_founder('@everyone hi', ['everyone'])
+    states = {row['recipient']: row['state'] for row in sent['deliveries']}
+    assert sent['message_id'] and pushes == ['one-native'] and states['two-session'] == 'pending'
+    holder['db'].execute('ROLLBACK')
+    holder['db'].close()
+    # The remaining seat is delivered on the same message, never by resending it.
+    with application_history() as history:
+        again = workshop_live.deliver(history, sent['message_id'], [
+            {'session': s['session'], 'agent': s['name'], 'runtime': s['app'], 'native_session_id': s['native_session_id']}
+            for s in seats], 'Ahmed', 'hi')
+    assert pushes == ['one-native', 'two-native']
+    assert {row['recipient']: row.get('repeat', False) for row in again} == {'one-session': True, 'two-session': False}
+
+
 def test_the_composer_reports_queued_as_waiting_and_only_a_refusal_as_failed(monkeypatch):
     """e988 ae8b32a9: a Cursor hook-queue send returned ok but rendered a red cross and profiled as failed."""
     from nodelang import model_router, nograph_server, workshop_live

@@ -1060,11 +1060,20 @@ def _inject(prompt, handles, reply_to=None, task=None, *, task_peer=False):
     sent = send_as_founder(prompt, handles, reply_to=reply_to, task=task, **({'task_peer': True} if task_peer else {}))
     # Queued for the agent's next turn, still in flight, or unconfirmed is not a failure; only a refusal is.
     waiting = ('queued', 'pending', 'in-flight', 'uncertain')
+    import sqlite3
     for row in sent['deliveries']:
-        request_profiles({'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': str(row.get('agent')), 'model': 'agent session',
-                          'provider': 'workshop:' + str(row.get('channel')), 'tokens': None, 'ms': row.get('ms') or 0,
-                          'outcome': row['state'] if row['state'] == 'delivered' or row['state'] in waiting
-                          else 'failed: ' + str(row.get('reason'))[:80]})
+        try:
+            request_profiles({'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': str(row.get('agent')), 'model': 'agent session',
+                              'provider': 'workshop:' + str(row.get('channel')), 'tokens': None, 'ms': row.get('ms') or 0,
+                              'outcome': row['state'] if row['state'] == 'delivered' or row['state'] in waiting
+                              else 'failed: ' + str(row.get('reason'))[:80]})
+        except sqlite3.OperationalError as error:
+            # The message is saved and pushed: a busy profile store must not hide its id (the composer then sent it
+            # again). The profile row is skipped and named in the log.
+            if (getattr(error, 'sqlite_errorcode', 0) & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                raise
+            logging.getLogger(__name__).warning('Request profile for Workshop message %s skipped: %s',
+                                                sent['message_id'], error)
     lines = ['%s %s%s' % ('✓' if r['state'] == 'delivered' else '…' if r['state'] in waiting else '✗', r.get('agent'),
                           (' · %d ms' % r['ms']) if r['state'] == 'delivered' else ' · ' + str(r.get('reason') or r['state']))
              for r in sent['deliveries']] + ['✗ @%s · no joined agent with this name' % h for h in sent['unknown']]

@@ -399,7 +399,9 @@ def send_as_founder(text, handles, *, reply_to=None, task=None, task_peer=False)
         raise ValueError('No live agent matches %s. Mention one of: %s' % (
             ', '.join('@' + h for h in handles), ', '.join('@' + a['handle'] for a in agents) or 'none joined'))
     identity = {'sender_key': 'founder', 'sender_label': FOUNDER, 'sender': FOUNDER}
-    target = 'Everyone' if 'everyone' in handles else ', '.join(a['agent'] for a in chosen)
+    # @everyone names each joined agent chosen now: "To Everyone" is a room header, so the routing loop and the
+    # agents' own pending reads skipped it, and a later joiner must not receive it.
+    target = ', '.join(a['agent'] for a in chosen)
     with application_history() as history:
         sent = _send(history, {'to': target, 'text': text, **({'reply_to': reply_to} if reply_to else {})}, identity,
                      queued=(task,) if task else (), sender_binding={'session': 'founder'})

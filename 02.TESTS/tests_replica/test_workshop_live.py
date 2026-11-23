@@ -515,6 +515,45 @@ def test_a_busy_store_between_recipients_never_repeats_an_earlier_push(monkeypat
     assert {row['recipient']: row.get('repeat', False) for row in again} == {'one-session': True, 'two-session': False}
 
 
+def test_a_busy_profile_store_never_hides_the_saved_send(monkeypatch):
+    """e988 c15677de: router.sqlite held by another process made request_profiles raise after the send; no id reached
+    the composer and its retry sent twice."""
+    import sqlite3
+    from nodelang import model_router, nograph_server, workshop_live
+    busy = sqlite3.OperationalError('database is locked')
+    busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+
+    def profile(row):
+        raise busy
+    monkeypatch.setattr(model_router, 'request_profiles', profile)
+    rows = [{'agent': 'Cursor', 'state': 'queued', 'reason': 'queued for next turn via hook', 'channel': 'hook', 'ms': 0}]
+    monkeypatch.setattr(workshop_live, 'send_as_founder', lambda *a, **k: {'message_id': 'm-saved', 'deliveries': rows,
+                                                                            'unknown': []})
+    result = nograph_server._inject('hi', ['cursor'])
+    assert result['ok'] is True and result['request_id'] == 'm-saved'
+    broken = sqlite3.OperationalError('disk I/O error')
+    monkeypatch.setattr(model_router, 'request_profiles', lambda row: (_ for _ in ()).throw(broken))
+    import pytest
+    with pytest.raises(sqlite3.OperationalError):
+        nograph_server._inject('hi', ['cursor'])
+
+
+def test_everyone_is_addressed_to_each_chosen_agent_not_the_room(monkeypatch):
+    """e988 e5bb241f: "To Everyone" was a room header, so neither selected hook reader ever saw the message."""
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import DELIVERY_AUTHOR, ROOM, agent_addressed, application_history
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: ('queued', 'hook', 'queued for next turn via hook'))
+    seats = [{'handle': h, 'session': h + '-session', 'name': h, 'agent': 'Cursor / .cursor / session-%s' % h,
+              'app': 'cursor', 'native_session_id': h + '-native'} for h in ('aaaaaaaaaaaa', 'bbbbbbbbbbbb')]
+    monkeypatch.setattr(workshop_live, 'live_agents', lambda: seats)
+    sent = workshop_live.send_as_founder('@everyone hi', ['everyone'])
+    with application_history() as history:
+        message = history.get(ROOM, sent['message_id'], principal=DELIVERY_AUTHOR)
+    header = message['content'].partition('\n')[0]
+    assert agent_addressed(message)
+    assert header == 'To Cursor / .cursor / session-aaaaaaaaaaaa, Cursor / .cursor / session-bbbbbbbbbbbb:'
+
+
 def test_the_composer_reports_queued_as_waiting_and_only_a_refusal_as_failed(monkeypatch):
     """e988 ae8b32a9: a Cursor hook-queue send returned ok but rendered a red cross and profiled as failed."""
     from nodelang import model_router, nograph_server, workshop_live

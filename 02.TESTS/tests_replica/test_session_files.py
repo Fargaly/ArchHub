@@ -270,11 +270,19 @@ def test_errors_and_rules_preserve_per_node_results():
 
 
 def test_recovery_is_per_session(tmp_path):
-    owner=SessionFiles(tmp_path);first=definition();second=new_document('Second')
-    owner.dispatch({'action':'autosave','document':first})
-    owner.dispatch({'action':'autosave','document':second})
-    assert read_document(tmp_path/(first['title']+'.archhub'))==first
-    assert owner.dispatch({'action':'initial'})['document']==second
+    owner = SessionFiles(tmp_path)
+    first, second = definition(), new_document('Second')
+    saved = [owner.dispatch({'action': 'autosave', 'document': doc}) for doc in (first, second)]
+    assert saved[0]['path'] != saved[1]['path']
+    reopened = SessionFiles(tmp_path)
+    assert reopened.dispatch({'action': 'initial'})['document'] == saved[1]['document']
+    for original, receipt in zip((first, second), saved):
+        on_disk = read_document(receipt['path'])
+        assert on_disk == receipt['document']
+        properties = dict(on_disk['properties'])
+        assert properties.pop('revision') == receipt['revision'] == 1
+        assert properties.pop('history')[-1]['revision'] == receipt['revision']
+        assert {**on_disk, 'properties': properties} == original
 
 
 def test_file_route_does_not_read_or_write_graph(tmp_path, monkeypatch):

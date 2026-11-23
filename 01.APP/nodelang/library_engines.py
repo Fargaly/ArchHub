@@ -2083,7 +2083,7 @@ LIBRARY_ITEM_ENGINES.update({
 LIBRARY_PRESENTATION = (
     ("trigger", (
         ("tr_manual", "Manual run", "starts when you press Run"),
-        ("tr_schedule", "Schedule", "clock trigger"),
+        ("tr_schedule", "Schedule trigger", "clock trigger"),
         ("tr_file", "File change", "folder and pattern watcher"),
         ("tr_host", "Host event", "event from Revit or another host"),
         ("tr_approval", "Approval", "runs after approval grant"),

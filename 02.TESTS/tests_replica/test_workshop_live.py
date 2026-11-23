@@ -447,3 +447,37 @@ def test_a_discovered_session_is_addressable_by_its_app_name_before_it_declares(
     assert [r['native_session_id'] for r in workshop_live.discover_target('ping')] == ['t1']
     assert workshop_live.discover_target('Nobody') == []
     assert 'cursor' in asked['apps']
+
+
+def test_a_busy_store_after_the_push_never_makes_the_composer_send_twice(monkeypatch):
+    """e988 98e9a068: the push happened, then the receipt INSERT met another process's writer and raised; the composer
+    retried and sent a second message and a second push. The message id comes back; the receipt lands once freed."""
+    import sqlite3
+    import time
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import application_history, profile_database
+    pushes, holder = [], {}
+
+    def push(*args, **kwargs):
+        pushes.append(args)
+        holder['db'] = sqlite3.connect(profile_database(), isolation_level=None, timeout=1)
+        holder['db'].execute('BEGIN IMMEDIATE')   # a second process takes the writer as the push returns
+        return 'delivered', 'claude-peer-pipe', ''
+    monkeypatch.setattr(workshop_live, 'push', push)
+    monkeypatch.setattr(workshop_live, 'live_agents', lambda: [{'handle': 'qa', 'session': 'qa-session', 'name': 'QA',
+        'agent': 'QA', 'app': 'claude', 'native_session_id': 'qa-native'}])
+    sent = workshop_live.send_as_founder('@qa check', ['qa'])
+    assert sent['message_id'] and len(pushes) == 1
+    holder['db'].execute('ROLLBACK')
+    holder['db'].close()
+    for _ in range(40):
+        with application_history() as history:
+            rows = history._db.execute('SELECT state FROM workshop_live_deliveries WHERE message_id=?',
+                                       (sent['message_id'],)).fetchall()
+        if rows:
+            break
+        time.sleep(0.25)
+    assert [tuple(row) for row in rows] == [('delivered',)]   # one receipt, recovered after the contention
+    assert len(pushes) == 1
+    again = workshop_live.send_as_founder('@qa check', ['qa'])   # a deliberate second message is still its own
+    assert again['message_id'] != sent['message_id'] and len(pushes) == 2

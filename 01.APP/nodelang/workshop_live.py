@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,8 +141,7 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
     mid-turn instead of holding it for approval (Claude Code permission-mode parity)."""
     if not recipients:
         return []
-    from .workshop_mailbox import (DELIVERY_AUTHOR, ROOM, claim_delivery, delivery_outcome, record_claim_outcome,
-                                   recipient_identity)
+    from .workshop_mailbox import DELIVERY_AUTHOR, ROOM, claim_delivery, delivery_outcome, recipient_identity
     history._db.execute(SCHEMA)
     stored = history.get(ROOM, message, principal=DELIVERY_AUTHOR)
     rows = []
@@ -177,12 +177,45 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
         at = datetime.now(timezone.utc).isoformat()
         outcome = delivery_outcome(state)
         state = state if outcome == 'delivered' else outcome   # the live row says refused or uncertain, never 'failed'
-        history._db.execute('INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)',
-                            (message, key, row.get('agent'), runtime, native or None, channel, state, reason, at, ms))
-        record_claim_outcome(history, message, target, 'initial', outcome, reason)
+        receipt = (message, key, row.get('agent'), runtime, native or None, channel, state, reason, at, ms)
+        try:
+            _record_push(history, receipt, target, outcome)
+        except sqlite3.OperationalError as error:
+            # The message is saved and the push happened: a busy store only delays its receipt. Raising here made the
+            # composer send the same text again (a second message, a second push). The receipt is written once the
+            # store frees; the push is never repeated.
+            if (getattr(error, 'sqlite_errorcode', 0) & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                raise
+            _record_push_later(history, receipt, target, outcome)
         rows.append({'recipient': key, 'agent': row.get('display_name') or row.get('agent'), 'state': state, 'channel': channel,
                      'reason': reason, 'at': at, 'ms': ms})
     return rows
+
+
+def _record_push(history, receipt, target, outcome):
+    from .workshop_mailbox import record_claim_outcome
+    history._db.execute(SCHEMA)
+    history._db.execute('INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)', receipt)
+    record_claim_outcome(history, receipt[0], target, 'initial', outcome, receipt[7])
+
+
+def _record_push_later(history, receipt, target, outcome, attempts=30, wait=2.0):
+    """Write a delayed push receipt beside the caller, retrying while the store stays busy (about a minute)."""
+    import threading
+    from .workshop_mailbox import application_history
+    database = history._db.execute('PRAGMA database_list').fetchone()[2]
+
+    def retry():
+        for _ in range(attempts):
+            time.sleep(wait)
+            try:
+                with application_history(database=database) as later:
+                    _record_push(later, receipt, target, outcome)
+                return
+            except sqlite3.OperationalError as error:
+                if (getattr(error, 'sqlite_errorcode', 0) & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                    return  # shortcut: a non-busy failure leaves the claim to settle as uncertain (never re-pushed)
+    threading.Thread(target=retry, name='archhub-workshop-receipt', daemon=True).start()
 
 
 def _seat_pids(history, session):

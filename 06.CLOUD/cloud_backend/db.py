@@ -199,6 +199,22 @@ CREATE TABLE IF NOT EXISTS users (
     msg_used      INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS watch_grants (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id),
+    grantee_id TEXT NOT NULL REFERENCES users(id),
+    session_id TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL,
+    revoked_at REAL,
+    updated_at REAL,
+    projection TEXT,
+    CHECK (owner_id != grantee_id)
+);
+CREATE INDEX IF NOT EXISTS watch_by_owner ON watch_grants(owner_id);
+CREATE INDEX IF NOT EXISTS watch_by_grantee ON watch_grants(grantee_id);
+CREATE INDEX IF NOT EXISTS watch_expiry ON watch_grants(expires_at) WHERE projection IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS codes (
     code            TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL,

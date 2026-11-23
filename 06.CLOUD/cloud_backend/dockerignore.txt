@@ -9,3 +9,14 @@
 !01.APP/
 !01.APP/nodelang/
 !01.APP/nodelang/openrouter_defaults.py
+# Static product library imports for the watch label export.
+!01.APP/nodelang/library_engines.py
+!01.APP/nodelang/stem_graph_evaluation.py
+!01.APP/nodelang/nodeslib_v2_engines.py
+!01.APP/nodelang/enforce.py
+!01.APP/nodelang/clean_office_adapter.py
+!01.APP/nodelang/decision_engines.py
+!01.APP/nodelang/user_paths.py
+!01.APP/nodelang/hook_decision.py
+!01.APP/nodelang/host_exec.py
+!01.APP/nodelang/node_params.py

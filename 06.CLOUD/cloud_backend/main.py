@@ -235,6 +235,10 @@ def _require_user(authorization: str | None) -> dict:
     return user
 
 
+import watch_grants
+watch_grants.install(app, _require_user)
+
+
 # Loopback hosts a desktop client's OAuth return server can legitimately
 # bind to. The Google start route only forwards the minted one-time code
 # to a redirect that resolves to one of these — never an arbitrary host.

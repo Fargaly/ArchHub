@@ -257,7 +257,7 @@ class WatchGrants:
             self._push_one(grant["id"], held, owner=me.get("user_id"))
         except ValueError:
             try:
-                self.cloud("DELETE", "/v1/watch-grants/" + grant["id"])
+                self.cloud("DELETE", "/v1/watch-grants/{grant_id}".format(grant_id=grant["id"]))
             finally:
                 _DIGESTS.pop((me.get("user_id"), grant["id"]), None)
             raise
@@ -271,7 +271,7 @@ class WatchGrants:
         if type(grant_id) is not str or not GRANT_ID.fullmatch(grant_id):
             raise ValueError("Choose a watcher from the list.")
         owner = self.account().get("user_id")
-        self.cloud("DELETE", "/v1/watch-grants/" + grant_id)
+        self.cloud("DELETE", "/v1/watch-grants/{grant_id}".format(grant_id=grant_id))
         sessions = {k: v for k, v in self.read_prefs().get("watchSessions", {}).items() if k != grant_id}
         self.save_prefs({"watchSessions": sessions})
         _DIGESTS.pop((owner, grant_id), None)
@@ -290,7 +290,7 @@ class WatchGrants:
         payload = ({"heartbeat": True, "session_id": held["session_id"], "privacy": SHARE_TIER}
                    if _DIGESTS.get(key) == digest else
                    {"projection": projection, "session_id": held["session_id"], "privacy": SHARE_TIER})
-        self.cloud("PUT", "/v1/watch-grants/%s/projection" % grant_id, payload)
+        self.cloud("PUT", "/v1/watch-grants/{grant_id}/projection".format(grant_id=grant_id), payload)
         _DIGESTS[key] = digest
         return "heartbeat" if "heartbeat" in payload else "projection"
 
@@ -312,7 +312,7 @@ class WatchGrants:
             except ValueError as refused:
                 outcome[row["id"]] = "stopped: %s" % refused
                 try:
-                    self.cloud("DELETE", "/v1/watch-grants/" + row["id"])
+                    self.cloud("DELETE", "/v1/watch-grants/{grant_id}".format(grant_id=row["id"]))
                 except ValueError as unconfirmed:
                     # Nothing more is pushed either way; the cloud's 30 s staleness rule ends the share.
                     outcome[row["id"]] += " (revoke not confirmed: %s)" % unconfirmed
@@ -344,7 +344,7 @@ class WatchGrants:
         if type(grant_id) is not str or not GRANT_ID.fullmatch(grant_id):
             raise ValueError("Choose a shared session from the list.")
         try:
-            answer = self.cloud("GET", "/v1/watching/" + grant_id)
+            answer = self.cloud("GET", "/v1/watching/{grant_id}".format(grant_id=grant_id))
         except WatchEnded:
             # The cloud answers one opaque 410 for stale, revoked, expired and unknown; the list tells them apart.
             listed = any(row["id"] == grant_id for row in self.watching()["watching"])

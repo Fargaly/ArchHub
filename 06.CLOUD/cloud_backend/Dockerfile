@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code.
 COPY 06.CLOUD/cloud_backend/ .
 COPY 01.APP/nodelang/openrouter_defaults.py .
+# Export only static product labels into the image; desktop engines are build inputs.
+RUN --mount=type=bind,source=01.APP/nodelang,target=/tmp/watch-source/nodelang,ro \
+    PYTHONPATH=/tmp/watch-source python watch_grants.py
 
 # Fly.io / Cloud Run / generic container.
 EXPOSE 8000

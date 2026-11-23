@@ -13,6 +13,7 @@
   "settings.ds_settings3.ConnectionsAction2": "ConnectionsAction2",
   "settings.ds_settings3.EditLocalClient": "EditLocalClient",
   "settings.ds_settings3.SaveProjectRegister": "SaveProjectRegister",
+  "settings.ds_settings3.PickProjectRegister": "PickProjectRegister",
   "settings.ds_settings3.WorkspaceRowsAction0": "WorkspaceRowsAction0",
   "settings.ds_settings3.WorkspaceRowsAction1": "WorkspaceRowsAction1",
   "settings.ds_settings3.WorkspaceRowsAction2": "WorkspaceRowsAction2",
@@ -247,12 +248,41 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
     const [number, setNumber] = React.useState(register?.number || '');
     const [override, setOverride] = React.useState(register?.override || false);
     const [saving, setSaving] = React.useState(false);
+    const [naming, setNaming] = React.useState(register?.namingRegister || '');
+    const [issued, setIssued] = React.useState(register?.issuedRegister || '');
+    // A saved or switched register shows its owner value (a picked path comes back project-relative).
+    React.useEffect(() => { setNaming(register?.namingRegister || ''); setIssued(register?.issuedRegister || ''); },
+      [workspace?.id, register?.namingRegister, register?.issuedRegister]);
+    const changed = register && (number !== register.number || override !== register.override
+      || naming !== (register.namingRegister || '') || issued !== (register.issuedRegister || ''));
     const saveRegister = async () => {
       if (saving) return;
       setSaving(true);
-      try { await u.act(()=>api.updateProjectRegister(workspace,number,override)); } finally { setSaving(false); }
+      try { await u.act(()=>api.updateProjectRegister(workspace,number,override,{namingRegister:naming.trim(),issuedRegister:issued.trim()})); } finally { setSaving(false); }
     };
-    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {SaveProjectRegister:saveRegister, EditLocalClient:()=>u.act(()=>api.editLocalProjectClient(workspace.id))});
+    // A picked file fills the field; a cancelled pick leaves it as it was. Saving still goes through the owner.
+    const [pick, setPick] = React.useState({state: 'empty', error: '', result: null, last: null});
+    const pickRegister = async (key, title) => {
+      setPick({state: 'waiting', error: '', result: null, last: [key, title]});
+      try {
+        const result = await api.pickProjectRegister(title);
+        if (result.path) (key === 'namingRegister' ? setNaming : setIssued)(result.path);
+        setPick({state: result.note ? 'error' : 'loaded', error: result.note || '', result, last: [key, title]});
+        return result;
+      } catch (failure) {
+        setPick({state: 'error', error: failure.message || String(failure), result: null, last: [key, title]});
+        return null;
+      }
+    };
+    pick.retry = () => pick.last && pickRegister(...pick.last);
+    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {SaveProjectRegister:saveRegister, PickProjectRegister:pickRegister, EditLocalClient:()=>u.act(()=>api.editLocalProjectClient(workspace.id))});
+    const files = workspace?.registerFiles || {};
+    const fileState = (key, value) => !value ? '' : value !== (register[key] || '') ? 'Checked when you save.'
+      : files[key] === 'usable' ? 'Found in this project.' : files[key] === 'missing' ? 'File not found in this project folder.' : 'No longer a valid register path; choose it again.';
+    const registerField = (key, label, value, setValue) => <div className="grid" data-register-field={key}>
+      <label>{label}<input aria-label={label} value={value} maxLength={240} placeholder="A file inside this project folder" onChange={event=>setValue(event.target.value)}/></label>
+      <button type="button" className="sheet-action" aria-label={'Choose ' + label.toLowerCase()} onClick={event=>runAction('settings.ds_settings3.PickProjectRegister', key, 'Choose the ' + label.toLowerCase(), event)}>Choose…</button>
+      {value && <small role="status" data-register-state={value !== (register[key] || '') ? 'pending' : files[key] || 'refused'}>{fileState(key, value)}</small>}</div>;
     return <section data-design-section="Project register"><h2>Project register</h2>
       <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>
       <label>Registered project<select aria-label="Registered project" value={workspace?.id || ''} onChange={event=>u.act(()=>api.selectWorkspace(event.target.value))}>
@@ -261,7 +291,14 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
         <label>Project number<input value={number} maxLength={80} onChange={event=>setNumber(event.target.value)}/></label>
         <label><input type="checkbox" checked={override} onChange={event=>setOverride(event.target.checked)}/>This project overrides office defaults</label>
         <small>Use this project’s saved Projects preferences over account defaults. A value set on the session still wins.</small>
-        <button type="submit" className="sheet-action" onClick={event=>{event.preventDefault();runAction('settings.ds_settings3.SaveProjectRegister',event);}} disabled={saving || (number===register.number && override===register.override)}>Save register</button>
+        {registerField('namingRegister', 'Naming register', naming, setNaming)}
+        {registerField('issuedRegister', 'Issued register', issued, setIssued)}
+        <small>The naming and issued-containers registers this project has adopted. ArchHub keeps only where they are, never their contents.</small>
+        <div aria-live="polite">{pick.state === 'waiting' && <p role="status">Choose the file in the window that opened…</p>}
+          {pick.state === 'error' && <div role="alert"><p>{pick.error}</p><window.UI.RegisteredActionStatus state={{status:'error',message:pick.error}} retry={()=>pick.retry()}/></div>}
+          {pick.state === 'empty' && <span className="visually-hidden">No file chosen.</span>}
+          {pick.state === 'loaded' && <span className="visually-hidden">{pick.result?.path ? 'Register chosen; save to keep it.' : 'Nothing chosen; the register is unchanged.'}</span>}</div>
+        <button type="submit" className="sheet-action" onClick={event=>{event.preventDefault();runAction('settings.ds_settings3.SaveProjectRegister',event);}} disabled={saving || !changed}>Save register</button>
       </form>}
       {workspace?.nativeClientEditor
         ? <button type="button" className="sheet-action" aria-label="Edit local client" onClick={event=>runAction('settings.ds_settings3.EditLocalClient',event)}>Edit client on this PC</button>

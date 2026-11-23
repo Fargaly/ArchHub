@@ -578,3 +578,165 @@ def test_generated_bcf_cannot_replace_a_racing_writer(tmp_path, bcf_xml_site, mo
     with zipfile.ZipFile(new_target) as archive:
         assert 'bcf.version' in archive.namelist()
     assert target.read_bytes()==b'Existing concurrent output'
+
+
+def test_assigned_bcf_uses_the_document_registers_and_one_approval(tmp_path, monkeypatch):
+    from openpyxl import Workbook, load_workbook
+    from nodelang import daily_work_nodes as daily, session_files as files
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    from nodelang.nograph_server import JsonFile
+    from nodelang.user_paths import state_directory
+    import os
+
+    site = os.environ.get('ARCHHUB_IFC_TEST_SITE')
+    if site:
+        monkeypatch.syspath_prepend(site)
+        monkeypatch.setattr(daily, 'ensure_runtime', lambda name, budget_s: Path(site).parent)
+    ifc = pytest.importorskip('ifcopenshell')
+    roots = []
+    def sheet(book, name, rows):
+        table = book.create_sheet(name)
+        for row in rows:
+            table.append(row)
+    def prepare(project):
+        folder = tmp_path / project
+        folder.mkdir()
+        rules = Workbook()
+        sheet(rules, 'Adoptions', [('StandardID', 'Edition', 'Incorporation decision', 'Token order'),
+                                  ('Annex', '1', 'Adopted', 'AREA-SERIAL')])
+        sheet(rules, 'Codes', [('Token', 'Code', 'ProjectID', 'Authority', 'State'),
+                               ('AREA', 'ZZ', project.upper(), 'Annex', 'Approved'),
+                               ('SERIAL', '007', project.upper(), 'Annex', 'Approved')])
+        rules.save(folder/'annex.xlsx')
+        issued = Workbook()
+        sheet(issued, 'Container template', [('ContainerID', 'Revision', 'Permitted use'), ('ZZ-007','R1','BCF'),
+                                            ('XX-009','R1','BCF')])
+        issued.save(folder/'records.xlsx')
+        model = ifc.file(schema='IFC4')
+        model.create_entity('IfcProject', GlobalId=ifc.guid.new(), Name='Disposable')
+        model.write(str(folder/'input.ifc'))
+        roots.append({'root_id':project,'project_number':project.upper(),'path':str(folder),'label':project,'naming_register':'annex.xlsx',
+                      'issued_register':'records.xlsx','privacy':'private'})
+        item = next(r for r in files.catalogue() if r['id']=='daily:ifc_check_bcf')
+        doc = files.new_document(project)
+        doc['properties']['project'] = project
+        doc['nodes'] = [{'id':'check','type':item['engine'],'item':item['id'],'position':{'x':0,'y':0},
+                        'ports':item['ports'],'paramDefs':item['paramDefs'],'params':{**item['params'],
+                        'ifc':str(folder/'input.ifc'),'name_source':'Assigned project container',
+                        'naming_annex':'Annex','container_id':'ZZ-007'}}]
+        files.write_document(folder/'workflow.archhub',doc)
+        return doc
+    north = prepare('north')
+    prepare('south')
+    owner = files.SessionFiles(tmp_path/'sessions')
+    store = JsonFile(state_directory() / 'settings/workspaces.json', {'roots':[]})
+    store.write({'roots':roots})
+    def card(project):
+        path = tmp_path/project/'workflow.archhub'
+        result = owner.dispatch({'action':'run','path':str(path),'document':files.read_document(path)})
+        return next(c for c in ask_reviews() if c['id']==result['approvalId'])
+    n = north['nodes'][0]['params']
+    with pytest.raises(ValueError,match='AREA: XX.*SERIAL: 009'):
+        daily.bcf_request({**n,'container_id':'XX-009'}, {}, north)
+    with pytest.raises(ValueError,match='Select the assigned BCF ContainerID'):
+        daily.bcf_request({**n,'container_id':''},{},north)
+    assert daily.bcf_request({**n,'name_source':'From Projects'}, {}, north)['_assigned_bcf']['edition']=='1'
+    with pytest.raises(ValueError,match='Select the adopted naming annex'):
+        daily.bcf_request({**n,'name_source':'From Projects','naming_annex':''},{},north)
+    original = (tmp_path/'north/input.ifc').read_bytes()
+    regs = tmp_path/'north/annex.xlsx'
+    before = regs.read_bytes()
+    a = card('north')
+    assert 'ZZ-007.bcf' in a['text'] and 'Annex 1' in a['text']
+    ask_apply(a['id'],a['input_digest'],'deny')
+    assert regs.read_bytes()==before and (tmp_path/'north/input.ifc').read_bytes()==original
+    assert not (tmp_path/'north/ZZ-007.bcf').exists()
+    a,b = card('north'),card('south')
+    changed = load_workbook(regs)
+    changed['Adoptions']['B2'] = '2'
+    changed.save(regs)
+    with pytest.raises(ValueError,match='changed after'):
+        ask_apply(a['id'],a['input_digest'],'approve')
+    assert not (tmp_path/'north/ZZ-007.bcf').exists()
+    ask_apply(b['id'],b['input_digest'],'approve')
+    with zipfile.ZipFile(tmp_path/'south/ZZ-007.bcf') as archive:
+        assert 'bcf.version' in archive.namelist()
+    result = files.read_document(tmp_path/'south/workflow.archhub')['nodes'][0]['result']
+    assert 'Annex 1' in result['display']
+    assert (tmp_path/'north/input.ifc').read_bytes()==original
+    regs.unlink()
+    with pytest.raises(ValueError,match='Cannot read the selected register: annex.xlsx'):
+        daily.bcf_request(n,{},north)
+
+
+@pytest.mark.parametrize('field', ['Edition', 'Revision'])
+def test_assigned_bcf_requires_recorded_register_values(tmp_path, monkeypatch, field):
+    from openpyxl import Workbook
+    from nodelang import daily_work_nodes as daily
+
+    project = {'root_id':'test', 'project_number':'P', 'path':str(tmp_path),
+               'naming_register':'annex.xlsx', 'issued_register':'containers.xlsx'}
+    monkeypatch.setattr(daily, 'bcf_project', lambda source, document: project)
+    annex = Workbook()
+    rules = annex.active
+    rules.title = 'Adoptions'
+    rules.append(['StandardID', 'Edition', 'Incorporation decision', 'Token order'])
+    rules.append(['Local', 'A', 'Adopted', 'SERIAL'])
+    codes = annex.create_sheet('Codes')
+    codes.append(['Token', 'Code', 'ProjectID', 'Authority', 'State'])
+    codes.append(['SERIAL', 'S01', 'P', 'Local', 'Approved'])
+    containers = Workbook()
+    items = containers.active
+    items.title = 'Container template'
+    items.append(['ContainerID', 'Revision', 'Permitted use'])
+    items.append(['S01', 'R01', 'BCF'])
+    def select():
+        annex.save(tmp_path/'annex.xlsx')
+        containers.save(tmp_path/'containers.xlsx')
+        return daily.assigned_bcf(tmp_path/'input.ifc', {'naming_annex':'Local','container_id':'S01'},
+                                  {}, {'properties':{'project':'test'}})[1]
+    cell = (rules if field == 'Edition' else items)['B2']
+    for invalid in (None, '   ', '=""', '=1+1', '#DIV/0!', False):
+        cell.value = invalid
+        with pytest.raises(ValueError, match=field.lower()):
+            select()
+    for value, expected in ((0, '0'), (' R00 ', 'R00')):
+        cell.value = value
+        assert select()[field.lower()] == expected
+
+
+@pytest.mark.parametrize(('naming','issued','message'), [
+    ('annex.csv','issued.xlsx','project naming register with Adoptions and Codes sheets'),
+    ('annex.xlsx','issued.csv','issued containers register with a Container template sheet'),
+    ('annex.xlsx','ISSUED.md','issued containers register with a Container template sheet'),
+])
+def test_bcf_explains_format_for_saved_registers(tmp_path, naming, issued, message):
+    from types import SimpleNamespace
+    from openpyxl import Workbook
+    from nodelang import daily_work_nodes as daily
+    from nodelang.nograph_server import JsonFile, r_workspace_roots
+    from nodelang.user_paths import state_directory
+
+    folder = tmp_path/'project'
+    folder.mkdir()
+    for name in (naming, issued):
+        path = folder/name
+        if path.suffix == '.xlsx':
+            Workbook().save(path)
+        else:
+            path.write_text('ID,Revision' if path.suffix == '.csv' else '# Issued containers', encoding='utf8')
+    roots = JsonFile(state_directory()/'settings/workspaces.json', {})
+    roots.write({'roots':[{'root_id':'sample','path':str(folder),'label':'Sample'}],'imported_legacy':True})
+    server = SimpleNamespace(files={'settings':JsonFile(state_directory()/'settings/settings.json', {}),
+                                    'workspaces':roots}, workspace_built_in=lambda:'')
+    def call(action, **body):
+        return r_workspace_roots(server, SimpleNamespace(body={'action':action, **body}))
+    call('select', id='sample')
+    call('update-register', id='sample', expected={'number':'','override':False}, number='Sample', override=False,
+         namingRegister=str(folder/naming), issuedRegister=str(folder/issued))
+    saved = call('list')['roots'][0]['register']
+    assert (saved['namingRegister'], saved['issuedRegister']) == (naming, issued)
+    with pytest.raises(ValueError, match=message):
+        daily.assigned_bcf(folder/'input.ifc', {'naming_annex':'Local','container_id':'S01'}, {},
+                           {'properties':{'project':'sample'}})
+    assert call('list')['roots'][0]['register'] == saved

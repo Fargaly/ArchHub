@@ -451,10 +451,9 @@ def validate_name_component(value, *, pattern=False):
     return value
 
 
-def generated_bcf_path(source, params, feeds, document):
-    from datetime import date
-    from .session_files import _registered_roots, _project_of, resolve_setting
-    from .workspace_roots_catalogue import project_register, folder_identity
+def bcf_project(source, document):
+    from .session_files import _registered_roots, _project_of
+    from .workspace_roots_catalogue import folder_identity
     roots = _registered_roots()
     project = roots.get(_project_of((document or {}).get('properties') or {}, roots)['id'])
     if not project or not source.is_relative_to(Path(project['path']).resolve()):
@@ -468,6 +467,115 @@ def generated_bcf_path(source, params, feeds, document):
         other_root = Path(other['path'])
         if other_root.is_relative_to(selected_root) and source.is_relative_to(other_root):
             raise ValueError('Select the registered project that owns this IFC input.')
+    return project
+
+
+def assigned_bcf(source, params, feeds, document):
+    from openpyxl import load_workbook
+    from .workspace_roots_catalogue import project_register, register_paths
+    project = bcf_project(source, document)
+    project_id = (document or {}).get('properties', {}).get('project')
+    if project_id != project.get('root_id'):
+        raise ValueError('Select the registered project on this document.')
+    project_code = project_register(project)['number']
+    refs = register_paths(project)
+    annex = feeds.get('naming_annex', params.get('naming_annex'))
+    container = feeds.get('container_id', params.get('container_id'))
+    missing = [label for value, label in ((project_code, 'Set the project number used in the naming register.'),
+               (annex, 'Select the adopted naming annex.'),
+               (container, 'Select the assigned BCF ContainerID.'),
+               (refs.get('namingRegister'), 'Select the project naming register.'),
+               (refs.get('issuedRegister'), 'Select the container register workbook.')) if not value]
+    if missing:
+        raise ValueError(' '.join(missing))
+    validate_name_component(container)
+    if refs['namingRegister'].suffix.lower() != '.xlsx':
+        raise ValueError('For BCF assignment, select an .xlsx project naming register with Adoptions and Codes sheets. '
+                         'The selected register format is ' + refs['namingRegister'].suffix.lower() + '.')
+    if refs['issuedRegister'].suffix.lower() != '.xlsx':
+        raise ValueError('For BCF assignment, select an .xlsx issued containers register with a Container template sheet. '
+                         'The selected register format is ' + refs['issuedRegister'].suffix.lower() + '.')
+    hashes = {}
+    def read(key, sheets):
+        path = refs[key]
+        try:
+            with path.open('rb') as stream:
+                raw = stream.read(8 * 1024 * 1024 + 1)
+            if len(raw) > 8 * 1024 * 1024:
+                raise ValueError('Register workbook exceeds 8 MiB.')
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                if sum(entry.file_size for entry in archive.infolist()) > 32 * 1024 * 1024:
+                    raise ValueError('Expanded register workbook exceeds 32 MiB.')
+            book = load_workbook(io.BytesIO(raw), read_only=True, data_only=False, keep_links=False)
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError('Cannot read the selected register: ' + path.name) from error
+        hashes[key] = hashlib.sha256(raw).hexdigest()
+        try:
+            tables = []
+            for sheet, fields in sheets:
+                if sheet not in book:
+                    raise ValueError('Missing register sheet: ' + sheet)
+                table = book[sheet]
+                if (table.max_row or 0) > 10000 or (table.max_column or 0) > 64:
+                    raise ValueError('Register table exceeds the supported size: ' + sheet)
+                rows = table.iter_rows(max_col=64)
+                header = tuple(cell.value for cell in next(rows, ()))
+                for field in fields:
+                    if header.count(field) != 1:
+                        raise ValueError('Missing or ambiguous register column: ' + sheet + ' / ' + field)
+                records = []
+                for index, row in enumerate(rows, 2):
+                    if index > 10000:
+                        raise ValueError('Register table exceeds the supported size: ' + sheet)
+                    record = {}
+                    for field in fields:
+                        cell = row[header.index(field)]
+                        value = None if cell.data_type in ('f', 'e') else cell.value
+                        if field in ('Edition', 'Revision'):
+                            value = str(value).strip() if type(value) in (int, float, str) else ''
+                        record[field] = value
+                    if any(record.values()):
+                        records.append(record)
+                tables.append(records)
+            return tables
+        finally:
+            book.close()
+    adoptions, codes = read('namingRegister', [('Adoptions', ('StandardID','Edition','Incorporation decision','Token order')),
+        ('Codes', ('Token','Code','ProjectID','Authority','State'))])
+    records, = read('issuedRegister', [('Container template', ('ContainerID','Revision','Permitted use'))])
+    selected = [r for r in adoptions if r['StandardID'] == annex and r['Incorporation decision'] == 'Adopted']
+    if len(selected) != 1 or not selected[0]['Edition']:
+        raise ValueError('Select one explicitly adopted naming annex with a recorded edition.')
+    rule = selected[0]
+    order = str(rule['Token order'] or '').split('-')
+    if any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', token) for token in order) or len(set(order)) != len(order):
+        raise ValueError('Specify the ordered token names in the adopted naming annex.')
+    matched = [r for r in records if r['ContainerID'] == container and r['Permitted use'] == 'BCF']
+    if len(matched) != 1 or not matched[0]['Revision']:
+        raise ValueError('Select one assigned ContainerID with a revision and BCF permitted use.')
+    parts = container.split('-')
+    errors = []
+    if len(parts) != len(order):
+        errors.append('ContainerID must follow ' + '-'.join(order) + '.')
+    for token, code in zip(order, parts):
+        if not any(r['Token'] == token and r['Code'] == code and r['ProjectID'] == project_code
+                   and r['Authority'] == annex and r['State'] == 'Approved' for r in codes):
+            errors.append(token + ': ' + code + ' is not approved for this project and annex.')
+    if errors:
+        raise ValueError(' '.join(errors))
+    target = source.with_name(container + '.bcf')
+    if target.exists() or target.is_symlink():
+        raise ValueError('The assigned output already exists. Choose an unused assigned record.')
+    return target, {'project': project_id, 'annex': annex, 'edition': str(rule['Edition']),
+                    'container': container, 'revision': str(matched[0]['Revision']), 'registerHashes': hashes,
+                    'registers': {key: value.relative_to(Path(project['path'])).as_posix() for key, value in refs.items()}}
+
+
+def generated_bcf_path(source, params, feeds, document):
+    from datetime import date
+    from .session_files import resolve_setting
+    from .workspace_roots_catalogue import project_register
+    project = bcf_project(source, document)
     pattern = validate_name_component(resolve_setting(document, 'Projects.Name pattern')['value'], pattern=True)
     values = {'project': project_register(project)['number'], 'type': 'BCF', 'YYYY-MM-DD': date.today().isoformat(),
               'role': feeds.get('role', params.get('role')), 'nnn': feeds.get('sequence', params.get('sequence'))}
@@ -494,7 +602,21 @@ def bcf_request(params, feeds, document=None):
     path = _local_file(source if is_archive else feeds.get('ifc') or params.get('ifc'), 'bcf' if is_archive else 'ifc', ('.bcf', '.bcfzip') if is_archive else ('.ifc',)).resolve()
     target = params.get('bcf_path')
     generated = not target and not is_archive and params.get('name_source') == 'From Projects'
+    naming = None
+    assigned = params.get('name_source') == 'Assigned project container' or bool(params.get('_assigned_bcf'))
     if generated:
+        from .workspace_roots_catalogue import project_register
+        register = project_register(bcf_project(path, document))
+        assigned = any(key in register for key in ('namingRegister', 'issuedRegister')) or any(
+            feeds.get(key) or params.get(key) for key in ('naming_annex', 'container_id'))
+    if assigned:
+        if is_archive:
+            raise ValueError('Assigned project containers require an IFC input.')
+        target_path, naming = assigned_bcf(path, params, feeds, document)
+        if target and (str(target_path) != target or params.get('_assigned_bcf') != naming):
+            raise ValueError('The assigned BCF output or adopted register changed. Run again.')
+        target = target_path
+    elif generated:
         target = generated_bcf_path(path, params, feeds, document)
     elif not target:
         target = '' if is_archive else path.with_suffix('.bcf')
@@ -506,7 +628,7 @@ def bcf_request(params, feeds, document=None):
             raise ValueError('BCF archive budgets must remain within their declared maximum.')
     if is_archive and path.stat().st_size > int(params.get('archive_bytes', spec['archive_bytes'])):
         raise ValueError('BCF input exceeds the compressed archive byte budget.')
-    return {**params, 'create_only': bool(generated or params.get('create_only')), 'bcf_version': resolve_bcf_version(params, feeds, document),
+    return {**params, **({'_assigned_bcf': naming} if assigned else {}), 'create_only': bool(assigned or generated or params.get('create_only')), 'bcf_version': resolve_bcf_version(params, feeds, document),
             'bcf': str(path) if is_archive else '', 'ifc': '' if is_archive else str(path), 'bcf_path': target}
 
 
@@ -541,6 +663,9 @@ def ifc_check_bcf(params, feeds, document=None):
                                       'tolerance': float(params.get('tolerance') or 0.002)}, site=site, budget_s=budget)
     summary = '%d clash(es), %d IDS failure(s), %d BCF topic(s) -> %s' % (
         len(answer['clashes']), len(answer['ids_failures']), answer['topics'], target.name)
+    if params.get('_assigned_bcf'):
+        evidence = params['_assigned_bcf']
+        summary += ' · ' + evidence['annex'] + ' ' + evidence['edition'] + ' · ' + evidence['container'] + ' ' + evidence['revision']
     return {'clashes': answer['clashes'], 'ids_failures': answer['ids_failures'], 'bcf': str(target),
             'issues': answer.get('issues', []), 'version': answer.get('version', version), 'summary': summary}, summary
 
@@ -663,14 +788,16 @@ DAILY_ENGINES = {
         'params': {'old': '', 'new': '', 'dpi': 100, 'threshold': 48, 'max_pages': 200, 'budget_s': 120}},
     'daily.ifc_check_bcf': {
         'engine': 'daily.ifc_check_bcf', 'pure': False, 'run': ifc_check_bcf,
-        'in': [_port('ifc', 'path'), _port('ids', 'path'), _port('bcf', 'path'), _port('bcf_version', 'string'), _port('role', 'string'), _port('sequence', 'string')],
+        'in': [_port('ifc', 'path'), _port('ids', 'path'), _port('bcf', 'path'), _port('bcf_version', 'string'), _port('role', 'string'), _port('sequence', 'string'), _port('naming_annex', 'string'), _port('container_id', 'string')],
         'out': [_port('clashes', 'list'), _port('ids_failures', 'list'), _port('bcf', 'path'), _port('summary', 'string'), _port('issues', 'list'), _port('version', 'string')],
         'title': 'Clash + IDS check to BCF', 'sub': 'IfcOpenShell clash and ifctester IDS, issues written as BCF',
-        'paramDefs': [{'id': 'name_source', 'name': 'Generated filename', 'type': 'choice', 'options': ['From Projects', 'IFC filename']},
+        'paramDefs': [{'id': 'name_source', 'name': 'Generated filename', 'type': 'choice', 'options': ['Assigned project container', 'From Projects', 'IFC filename']},
+                      {'id': 'naming_annex', 'name': 'Adopted naming annex ID', 'type': 'text'},
+                      {'id': 'container_id', 'name': 'Assigned BCF ContainerID', 'type': 'text'},
                       {'id': 'role', 'name': 'Drawing role', 'type': 'text'},
                       {'id': 'sequence', 'name': 'Three-digit sequence', 'type': 'text'},
                       {'id': 'bcf_version', 'name': 'BCF version', 'type': 'choice', 'options': ['From Projects', *BCF_VERSIONS]}],
-        'params': {'name_source': 'From Projects', 'role': '', 'sequence': '', 'archive_bytes': 64 * 1024 * 1024, 'archive_entries': 4096, 'ifc': '', 'ids': '', 'bcf': '', 'bcf_version': 'From Projects', 'bcf_path': '', 'clash_a': 'IfcWall',
+        'params': {'name_source': 'From Projects', 'naming_annex': '', 'container_id': '', 'role': '', 'sequence': '', 'archive_bytes': 64 * 1024 * 1024, 'archive_entries': 4096, 'ifc': '', 'ids': '', 'bcf': '', 'bcf_version': 'From Projects', 'bcf_path': '', 'clash_a': 'IfcWall',
                    'clash_b': 'IfcColumn, IfcBeam, IfcSlab, IfcDuctSegment, IfcPipeSegment', 'tolerance': 0.002,
                    'budget_s': 900}},
     'daily.arabic_ocr': {

@@ -427,3 +427,68 @@ def test_local_client_dialog_expires_and_cancel_is_distinct(monkeypatch):
     assert edit_project_client(None, 'Fixture', 'Existing value') is None
 
 
+
+
+def test_project_register_keeps_adopted_register_references_inside_the_selected_project(tmp_path, monkeypatch):
+    import os
+    import pytest
+    from nodelang.nograph_server import JsonFile, Refused, r_workspace_roots
+    from nodelang.user_paths import state_directory
+    from nodelang.workspace_roots_catalogue import register_paths
+
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path))
+    prefs = JsonFile(state_directory() / 'settings/settings.json', {})
+    roots = JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []})
+    rows = []
+    for key in ('first', 'second'):
+        (tmp_path / key).mkdir()
+        rows.append({'root_id': key, 'path': str(tmp_path / key), 'label': key})
+    roots.write({'roots': rows, 'imported_legacy': True})
+    server = SimpleNamespace(files={'settings': prefs, 'workspaces': roots}, workspace_built_in=lambda: '')
+    def call(action, **body):
+        return r_workspace_roots(server, SimpleNamespace(body={'action': action, **body}))
+
+    call('select', id='first')
+    legacy = call('list')['roots'][0]['register']
+    assert legacy == {'number': '', 'override': False}  # unchanged shape while no reference is set
+    saved = call('update-register', id='first', expected=legacy, number='P-1', override=False,
+                 namingRegister='Registers/P001-naming-register.xlsx', issuedRegister='Issue/ISSUED.md')['register']
+    assert saved == {'number': 'P-1', 'override': False, 'namingRegister': 'Registers\\P001-naming-register.xlsx', 'issuedRegister': 'Issue\\ISSUED.md'}
+    assert register_paths(roots.read()['roots'][0]) == {'namingRegister': tmp_path / 'first' / 'Registers' / 'P001-naming-register.xlsx',
+                                                        'issuedRegister': tmp_path / 'first' / 'Issue' / 'ISSUED.md'}
+    kept = call('update-register', id='first', expected=saved, number='P-2', override=False)['register']  # legacy caller
+    assert kept['namingRegister'] == 'Registers\\P001-naming-register.xlsx' and kept['issuedRegister'] == 'Issue\\ISSUED.md'
+    for bad in ('..\\second\\naming.xlsx', 'C:\\naming.xlsx', '\\\\server\\share\\naming.xlsx', '\\naming.xlsx', 'REGISTER.md', 'a/../../x.xlsx', 'naming.pdf', None, False, 0):
+        with pytest.raises(Refused):  # a folder inventory is not the naming register; only '' clears
+            call('update-register', id='first', expected=kept, number='P-2', override=False, namingRegister=bad)
+    for bad in ('ISSUED.txt', None, False):
+        with pytest.raises(Refused):
+            call('update-register', id='first', expected=kept, number='P-2', override=False, issuedRegister=bad)
+    assert call('list')['roots'][0]['register'] == kept
+    try:
+        os.symlink(tmp_path / 'second', tmp_path / 'first' / 'linked', target_is_directory=True)
+    except OSError:
+        pass  # no symlink privilege on this machine; the other refusals still cover escape
+    else:
+        with pytest.raises(Refused):
+            call('update-register', id='first', expected=kept, number='P-2', override=False, issuedRegister='linked\\ISSUED.md')
+    call('select', id='second')
+    with pytest.raises(Refused):  # a switched project never takes the edit
+        call('update-register', id='first', expected=kept, number='P-2', override=False, namingRegister='naming.xlsx')
+    call('select', id='first')
+    from nodelang.workspace_roots_catalogue import register_files
+    row = next(r for r in call('list')['roots'] if r['root_id'] == 'first')
+    assert row['registerFiles'] == {'namingRegister': 'missing', 'issuedRegister': 'missing'}
+    (tmp_path / 'first' / 'Registers').mkdir()
+    (tmp_path / 'first' / 'Registers' / 'P001-naming-register.xlsx').write_bytes(b'register')
+    assert register_files(roots.read()['roots'][0]) == {'namingRegister': 'usable', 'issuedRegister': 'missing'}
+    chosen = str(tmp_path / 'first' / 'Registers' / 'P001-naming-register.xlsx')  # a picked absolute path
+    picked = call('update-register', id='first', expected=kept, number='P-2', override=False, namingRegister=chosen)['register']
+    assert picked['namingRegister'] == 'Registers\\P001-naming-register.xlsx'
+    with pytest.raises(Refused):  # a picked file in another project
+        elsewhere = str(tmp_path / 'second' / 'n.xlsx')
+        call('update-register', id='first', expected=picked, number='P-2', override=False, namingRegister=elsewhere)
+    kept = picked
+    cleared = call('update-register', id='first', expected=kept, number='', override=False, namingRegister='', issuedRegister='')['register']
+    assert cleared == legacy
+    assert call('list')['roots'][1]['register'] == {'number': '', 'override': False}

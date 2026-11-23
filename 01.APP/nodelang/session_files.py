@@ -256,7 +256,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
                 digest = hashlib.file_digest(stream, 'sha256').hexdigest()
             continuation = {**continuation, 'bcf_binding': {'node': node['id'], 'source': source,
                             'digest': digest, 'version': params['bcf_version'], 'output': params['bcf_path'],
-                            'version_input': version_input, **({'naming_inputs': [original_bcf_params, feeds]} if params['create_only'] else {})}}
+                            'version_input': version_input, 'assigned': params.get('_assigned_bcf'), **({'naming_inputs': [original_bcf_params, feeds]} if params['create_only'] else {})}}
     if not _RELEASING.get(False) and (engine == 'approval.gate' or not pure and (work.get('role') == 'step' or node.get('approvalRequired') or bcf_write or export or sheet_write or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
@@ -1474,7 +1474,8 @@ def approval_current(document, continuation, identity):
                 return False
             if 'naming_inputs' in binding:
                 from .daily_work_nodes import bcf_request
-                if bcf_request(*binding['naming_inputs'], document)['bcf_path'] != binding['output']:
+                resolved = bcf_request(*binding['naming_inputs'], document)
+                if resolved['bcf_path'] != binding['output'] or resolved.get('_assigned_bcf') != binding.get('assigned'):
                     return False
             with open(binding['source'], 'rb') as stream:
                 if hashlib.file_digest(stream, 'sha256').hexdigest() != binding['digest']:

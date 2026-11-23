@@ -178,3 +178,39 @@ test('pending scope disables its editors and keeps one read-only recovery beside
   assert.deepEqual(await page.evaluate(()=>window.writes),[],'read-only recovery did not replay a preference write');
  }finally{await browser.close();}
 });
+
+test('project registers are picked inside the project, a cancelled pick keeps the value, and missing files are told apart',async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:executable()});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.setDefaultTimeout(3000);page.on('pageerror',error=>errors.push(error.message));
+  await mount(page,{name:'Register reviewer',email:'register@example.test',signedIn:false,checking:false},{workspaces:[{id:'example',name:'Example workspace',folder:'C:\\Example',path:'C:\\Example',available:true,
+   register:{number:'P-1',override:false,namingRegister:'Registers\\naming.xlsx'},registerFiles:{namingRegister:'missing'}}]});
+  await page.evaluate(()=>{window.registerCalls=[];window.picks=[];
+   window.ArchHubAPI.pickProjectRegister=async title=>{window.picks.push(title);return window.nextPick;};
+   window.ArchHubAPI.updateProjectRegister=async(workspace,number,override,references)=>{window.registerCalls.push({id:workspace.id,number,override,references});return {ok:true};};});
+  await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Projects',exact:true}).click();
+  await page.waitForFunction(()=>typeof window.finishInitialSettingsRead==='function');
+  await page.evaluate(()=>window.finishInitialSettingsRead());
+  const naming=page.getByLabel('Naming register',{exact:true}),field=page.locator('[data-register-field="namingRegister"]');
+  await naming.waitFor();
+  assert.equal(await naming.inputValue(),'Registers\\naming.xlsx');
+  assert.equal(await field.getByRole('status').textContent(),'File not found in this project folder.');
+  await page.evaluate(()=>{window.nextPick={cancelled:true};});
+  await page.getByRole('button',{name:'Choose naming register',exact:true}).click();
+  await page.waitForFunction(()=>window.picks.length===1);
+  assert.equal(await naming.inputValue(),'Registers\\naming.xlsx','a cancelled pick leaves the value');
+  await page.evaluate(()=>{window.nextPick={path:'C:\\Example\\Registers\\naming-r02.xlsx'};});
+  await page.getByRole('button',{name:'Choose naming register',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[data-register-field="namingRegister"] input').value.endsWith('naming-r02.xlsx'));
+  assert.equal(await field.getByRole('status').textContent(),'Checked when you save.');
+  await page.getByRole('button',{name:'Save register',exact:true}).click();
+  await page.waitForFunction(()=>window.registerCalls.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.registerCalls[0]),{id:'example',number:'P-1',override:false,
+   references:{namingRegister:'C:\\Example\\Registers\\naming-r02.xlsx',issuedRegister:''}});
+  await page.evaluate(()=>window.update({workspaces:[{...window.fixture.workspaces[0],register:{number:'P-1',override:false,namingRegister:'Registers\\naming-r02.xlsx'},registerFiles:{namingRegister:'usable'}}]}));
+  await page.waitForFunction(()=>document.querySelector('[data-register-field="namingRegister"] input').value==='Registers\\naming-r02.xlsx');
+  assert.equal(await field.getByRole('status').textContent(),'Found in this project.');
+  assert.equal(await page.locator('[data-design-section="Project register"]').getByText(/BA-STD/).count(),0,'no single office standard is described to every user');
+  assert.deepEqual(errors,[]);
+ }finally{await browser.close();}
+});

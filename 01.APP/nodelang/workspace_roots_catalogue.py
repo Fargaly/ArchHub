@@ -190,7 +190,68 @@ def default_snapshot_path():
 def project_register(row):
     settings = row.get('settings', {})
     legacy_override = any(key.startswith('Projects.') for key in settings) if isinstance(settings, dict) else False
-    return {'number': row.get('project_number', ''), 'override': row.get('project_override', legacy_override)}
+    register = {'number': row.get('project_number', ''), 'override': row.get('project_override', legacy_override)}
+    for key, field in REGISTER_REFERENCES.items():
+        if row.get(field):
+            register[key] = row[field]
+    return register
+
+
+# The project's own adopted registers: its naming register (grammar and code lists, e.g. a register workbook;
+# never a folder inventory) and its issued-containers register. The row keeps only a relative reference, never
+# contents; which standard a register follows is the project's, not ArchHub's.
+REGISTER_REFERENCES = {'namingRegister': 'naming_register', 'issuedRegister': 'issued_register'}
+REGISTER_FORMS = {'namingRegister': ('.xlsx', '.xlsm', '.csv'), 'issuedRegister': ('.md', '.xlsx', '.xlsm', '.csv')}
+
+
+def register_reference(root, value, key='issuedRegister'):
+    """A project-relative path (a picked absolute path inside the folder becomes relative) in a register form
+    that stays inside the folder, or ValueError."""
+    if not isinstance(value, str) or len(value) > 240 or any(not c.isprintable() for c in value):
+        raise ValueError('Use a register path of up to 240 printable characters.')
+    relative = PureWindowsPath(value.strip().replace('/', '\\'))
+    if relative.drive or relative.root:  # a file picker answers with an absolute path
+        try:
+            relative = PureWindowsPath(Path(str(relative)).resolve().relative_to(Path(root).resolve()))
+        except (OSError, ValueError):
+            raise ValueError('Choose a register file inside this project folder.') from None
+    forms = REGISTER_FORMS[key]
+    if (relative.drive or relative.root or not relative.parts or any(part in ('.', '..') for part in relative.parts)
+            or relative.suffix.lower() not in forms):
+        raise ValueError('Choose the register file inside this project folder (%s).' % ' or '.join(forms))
+    base = Path(root).resolve()
+    target = base / Path(*relative.parts)
+    probe = target
+    while probe != base:  # no link or junction anywhere between the project folder and the register
+        if probe.is_symlink() or probe.is_junction():
+            raise ValueError('The register path passes through a link; choose a file inside this project folder.')
+        probe = probe.parent
+    if not target.resolve().is_relative_to(base):
+        raise ValueError('The register path leaves this project folder.')
+    return str(relative)
+
+
+def register_paths(row):
+    """Owner read contract: each set register as an absolute path inside the row's folder, re-checked now.
+
+    Pass the row of the document's own registered project (its properties.project), not the active one.
+    """
+    return {key: Path(row['path']) / register_reference(row['path'], row[field], key)
+            for key, field in REGISTER_REFERENCES.items() if row.get(field)}
+
+
+def register_files(row):
+    """For Settings: each set register 'usable' (a file there now), 'missing' or 'refused' (no longer valid)."""
+    states = {}
+    for key, field in REGISTER_REFERENCES.items():
+        if row.get(field):
+            try:
+                path = Path(row['path']) / register_reference(row['path'], row[field], key)
+            except ValueError:
+                states[key] = 'refused'
+            else:
+                states[key] = 'usable' if path.is_file() else 'missing'
+    return states
 
 
 def applied_workspace_settings(row):

@@ -1666,6 +1666,12 @@ def _ask_who(event, data) -> str:
 
 def _ask_text(action, data):
     if isinstance(data, dict) and isinstance(data.get('node'), dict) and isinstance(data.get('feeds'), dict):
+        if data['node'].get('type') == 'daily.ifc_check_bcf':
+            params = data['node'].get('params', {})
+            naming = params.get('_assigned_bcf')
+            if naming:
+                return '\n'.join(('Proposed output: ' + params['bcf_path'], 'Assigned container: ' + naming['container'],
+                                  'Container revision: ' + naming['revision'], 'Naming annex: ' + naming['annex'] + ' ' + naming['edition'])), 'Create BCF'
         if data['node'].get('type') == 'revit.create_sheets':
             request = data['node'].get('params', {}).get('_sheet_effect') or {}
             target = request.get('sheet_target') or {}

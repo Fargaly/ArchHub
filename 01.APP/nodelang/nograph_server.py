@@ -2317,7 +2317,7 @@ def r_settings_action(s, req):
 
 
 def r_workspace_roots(s, req):
-    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity, project_register
+    from .workspace_roots_catalogue import create_project_folder, project_folder_layout, read_project_template, folder_identity, project_register, REGISTER_REFERENCES, register_reference, register_files
     action, body = _action(req, 'list')
     if action == 'browse':
         window = body.get('template_window')
@@ -2433,12 +2433,24 @@ def r_workspace_roots(s, req):
             number, override = body.get('number'), body.get('override')
             if not isinstance(number, str) or len(number) > 80 or any(not c.isprintable() for c in number) or type(override) is not bool:
                 raise Refused('Enter a project number of up to 80 printable characters and choose the override setting.')
+            references = {}
+            for key, field in REGISTER_REFERENCES.items():  # absent keeps the reference; only '' clears it
+                if key in body:
+                    try:
+                        references[field] = None if body[key] == '' else register_reference(row['path'], body[key], key)
+                    except ValueError as refused:
+                        raise Refused(str(refused)) from None
             if number.strip():
                 row['project_number'] = number.strip()
             else:
                 row.pop('project_number', None)
             if override != old['override']:
                 row['project_override'] = override
+            for field, value in references.items():
+                if value:
+                    row[field] = value
+                else:
+                    row.pop(field, None)
             store.write(held)
             return {'ok': True, 'register': project_register(row)}
         if action == 'select':
@@ -2490,7 +2502,7 @@ def r_workspace_roots(s, req):
             store.write(held)
             return {'ok': True}
         built_in = s.workspace_built_in()
-        roots = [{**r, 'register': project_register(r), 'available': Path(r['path']).is_dir(), 'project_template': project_folder_layout(r['path'], built_in)} for r in held['roots']]
+        roots = [{**r, 'register': project_register(r), 'registerFiles': register_files(r), 'available': Path(r['path']).is_dir(), 'project_template': project_folder_layout(r['path'], built_in)} for r in held['roots']]
         return {'ok': True, 'roots': roots, 'revision': len(roots),
                 'native_client_editor': callable(getattr(s, 'native_project_client_editor', None)),
                 'built_in': {'id': 'workspace:archhub', 'label': 'ArchHub', 'path': built_in, 'removable': False,

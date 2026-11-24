@@ -151,6 +151,34 @@ def test_tasks_sharing_one_canvas_read_it_once(tmp_path, monkeypatch):
     os.utime(shared, (old, old))
     real, reads = session_files.read_document, []
     monkeypatch.setattr(session_files, 'read_document', lambda path: reads.append(path) or real(path))
+    monkeypatch.setitem(workshop_tasks._DOCUMENTS_PASS, 'on', True)   # inside one column() list
     titles = [workshop_tasks._session_context(str(shared), roots={}, task_row={'id': 'task-%d' % i}).get('sessionTitle')
               for i in range(18)]
     assert titles == ['Child %d' % i for i in range(18)] and len(reads) == 1   # per-task values kept, one read
+
+
+def test_a_same_tick_atomic_save_is_never_served_from_the_cache(tmp_path, monkeypatch):
+    """e988 9ecccd2b: 'Zone A' -> 'Zone B' saved atomically within one coarse timestamp tick (same size, same mtime)
+    was served as A from the cache, even by a fresh process."""
+    import os, time
+    from nodelang import session_files, workshop_tasks
+    monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: tmp_path / 'cache' / 'session-contexts.json')
+    monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+    monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+    canvas = tmp_path / 'zone.archhub'
+    session_files.write_document(canvas, session_files.new_document('Zone A'))
+    old = time.time() - 60
+    os.utime(canvas, ns=(int(old * 1e9), int(old * 1e9)))
+    assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Zone A'
+    workshop_tasks._save_session_contexts()
+    session_files.write_document(canvas, session_files.new_document('Zone B'))        # atomic replace, same size
+    os.utime(canvas, ns=(int(old * 1e9), int(old * 1e9)))                             # the coarse tick hides it
+    assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Zone B'
+    monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})                       # a fresh process
+    monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+    assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Zone B'
+    # A file still settling (written under 2 s ago) is read but never kept.
+    fresh = tmp_path / 'fresh.archhub'
+    session_files.write_document(fresh, session_files.new_document('Just saved'))
+    assert workshop_tasks._session_context(str(fresh), roots={})['sessionTitle'] == 'Just saved'
+    assert not any(key[0] == str(fresh) for key in workshop_tasks._SESSION_CONTEXTS)

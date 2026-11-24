@@ -959,8 +959,9 @@ def _root_task_id(root, request_id):
 _SESSION_CONTEXTS = {}
 
 
-_DOCUMENTS = {}   # path -> (stamp, parsed document): shared canvases are read once per change
-_CONTEXTS_VERSION = 1
+_DOCUMENTS = {}   # path -> (stamp, parsed document), only while one column() list is being built
+_DOCUMENTS_PASS = {'on': False}
+_CONTEXTS_VERSION = 2   # stamps carry the file id since version 2
 _CONTEXTS_LOADED = set()
 _CONTEXTS_DIRTY = {'value': False}
 
@@ -1017,19 +1018,23 @@ def _session_context(path, *, roots=None, task_row=None):
         from .session_files import read_document, _project_of, _registered_roots
         roots = _registered_roots() if roots is None else roots
         stat = os.stat(path)
-        stamp = (stat.st_mtime_ns, stat.st_size)
+        # The file id is part of the stamp: an atomic save replaces the file (new id) even when a coarse FAT/SMB
+        # timestamp tick and the size stay the same.
+        stamp = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        # Only a context read once the file had been still for 2 s is kept: a file may change again within one tick.
+        settled = time.time() - stat.st_mtime >= 2
         cache_key = (path, (task_row or {}).get('id'))
         held = _SESSION_CONTEXTS.get(cache_key)
-        # A recently written file may change again within one coarse FAT/SMB timestamp tick.
-        if held and held[0] == stamp and time.time() - stat.st_mtime >= 2:
+        if held and held[0] == stamp and settled:
             context, choice = copy.deepcopy(held[1:])
         else:
-            # One read per canvas file and stamp: many tasks share one .archhub (24 tasks re-read it 18 times).
-            parsed = _DOCUMENTS.get(path)
+            # One read per canvas file within one list (column() opens and closes the pass): many tasks share one
+            # .archhub (24 tasks re-read it 18 times). Nothing is reused across lists.
+            parsed = _DOCUMENTS.get(path) if _DOCUMENTS_PASS['on'] else None
             if parsed is None or parsed[0] != stamp:
-                if len(_DOCUMENTS) >= 256:
-                    _DOCUMENTS.clear()   # shortcut: bounded memory; the next list rereads each file once
-                parsed = _DOCUMENTS[path] = (stamp, read_document(path))
+                parsed = (stamp, read_document(path))
+                if _DOCUMENTS_PASS['on']:
+                    _DOCUMENTS[path] = parsed
             document = copy.deepcopy(parsed[1])
             root = (document.get('properties', {}).get('taskContext') or {}).get('task')
             identity = (task_row or {}).get('id')
@@ -1049,8 +1054,11 @@ def _session_context(path, *, roots=None, task_row=None):
                 context['anchorTitle'] = anchor['title']
             context['sessionTitle'] = anchor['title'] if anchor else document['title']
             context['fileMessages'] = _file_messages(document, (task_row or {}).get('id'))
-            _SESSION_CONTEXTS[cache_key] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
-            _CONTEXTS_DIRTY['value'] = True
+            if settled:
+                _SESSION_CONTEXTS[cache_key] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
+                _CONTEXTS_DIRTY['value'] = True
+            else:
+                _SESSION_CONTEXTS.pop(cache_key, None)
         project = _project_of(choice, roots, task_row)
         context.update(project=project['label'], workspace=project['id'])
         return context
@@ -1183,7 +1191,18 @@ def maintain_tasks(history):
 
 def column(history, project=None, stale_hours=None, *, include_archived=False, settle=True):
     """Studio Work rows. Declaration fields fill the view. A project shows only its own tasks.
-    Stale declared work leaves in-progress."""
+    Stale declared work leaves in-progress. Within one list each shared canvas file is read once."""
+    _DOCUMENTS.clear()
+    _DOCUMENTS_PASS['on'] = True
+    try:
+        return _column(history, project, stale_hours, include_archived=include_archived, settle=settle)
+    finally:
+        _DOCUMENTS_PASS['on'] = False
+        _DOCUMENTS.clear()
+        _save_session_contexts()
+
+
+def _column(history, project=None, stale_hours=None, *, include_archived=False, settle=True):
     from .workshop_mailbox import read_declarations
     hours = TASKS_NODE["params"]["stale_hours"] if stale_hours is None else stale_hours
     declarations = read_declarations(history._db, include_archived=True)
@@ -1270,7 +1289,6 @@ def column(history, project=None, stale_hours=None, *, include_archived=False, s
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
              'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
              'inProgress': shown in ("WIP", "IN REVIEW")})
-    _save_session_contexts()
     return built
 
 

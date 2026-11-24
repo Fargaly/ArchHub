@@ -4,17 +4,18 @@
 
 ## 20261124-0344-a4980b0
 
-- Published build 20261124-0344-a4980b0 (source a4980b0).
-- Installer SHA-256: `094d3dc01a317b029bef343612ce08337340eb6df00ee76ea4a8b3e1f0c73202`.
-- Built at 2026-11-23T23:44:46Z.
+- Workshop now keeps the message ID when its delivery receipt or request profile is busy. The composer shows which agents are still waiting.
+- Select several agents by name or use @everyone. Each selected agent can receive the message on its next turn. Agents joining later can still read the room.
+- Verification scope: In an isolated Windows profile, twelve selected Cursor hook recipients each received one copy on their first check. An interrupted group send left zero partial messages. Signed-in Home and Settings layout verification remains open.
 
 Source: a4980b0c.
 
 ## 20261124-0112-9864b61
 
-- Published build 20261124-0112-9864b61 (source 9864b61).
-- Installer SHA-256: `2566e2c80975ed61f56215ac4242a97b97e167498545a0b8922dbb44f9b43eff`.
-- Built at 2026-11-23T21:13:10Z.
+- ArchHub checks that a newer installer is ready before reporting busy connectors. When the installed build is current, the Update button clears. A real update still waits for work in progress.
+- Workshop sends keep their delivery receipt if another writer is busy. A message delivered to a native agent is counted once, and checking for waiting work releases the database for other agents.
+- Settings lets you pick a named project or Canvas session for scoped preferences.
+- Verification scope: The twelve protected Settings checks and the named project/session picker have not been exercised in a signed-in Windows installation. The picker passed 34 browser checks and seven scoped-preference checks.
 
 Source: 9864b61e.
 

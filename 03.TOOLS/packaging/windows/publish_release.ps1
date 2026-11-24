@@ -259,11 +259,16 @@ if ($mode) {
         # Create-only ref: a competing tag must never silently select different bytes.
         & gh api "repos/$Repository/git/refs" --method POST -f "ref=refs/tags/$tag" -f "sha=$ExpectedSourceRevision" --silent
         if ($global:LASTEXITCODE -ne 0) { throw 'Could not reserve exact tag; draft retained.' }
-        & gh api $endpoint --method PATCH -F draft=false -F prerelease=true -f make_latest=false --silent
+        $patch = @('-F', 'draft=false', '-F', 'prerelease=true', '-f', 'make_latest=false')
     } else {
-        & gh api $endpoint --method PATCH -F prerelease=false -f make_latest=true --silent
+        $patch = @('-F', 'prerelease=false', '-f', 'make_latest=true')
     }
-    if ($global:LASTEXITCODE -ne 0) {
+    # A failed PATCH must reach the after check below: with native-command errors escalated, a non-zero exit threw
+    # before it (e988 9e38ad7d). Only this one invocation is exempted.
+    $PSNativeCommandUseErrorActionPreference = $false
+    try { & gh api $endpoint --method PATCH @patch --silent; $patchExit = $global:LASTEXITCODE }
+    finally { $PSNativeCommandUseErrorActionPreference = $true }
+    if ($patchExit -ne 0) {
         # A timed-out PATCH may have succeeded (456140451 did): the read-only after check decides once; the mutation is
         # never replayed, and an unverifiable state stays reported as unknown.
         try { $null = Read-PublicationState 'after' } catch {

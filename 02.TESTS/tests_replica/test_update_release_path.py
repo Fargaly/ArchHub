@@ -2116,11 +2116,25 @@ def test_publisher_resumes_a_timed_out_preview_draft_instead_of_creating_another
         assert done.returncode != 0 and "Choose one release operation" in (done.stdout + done.stderr)
 
 
-def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check():
-    """e988 be0aad49: the publish PATCH on 456140451 timed out but had succeeded; the after check alone decides."""
+def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check(tmp_path):
+    """e988 be0aad49: the publish PATCH on 456140451 timed out but had succeeded; the after check alone decides.
+    e988 9e38ad7d: with native errors escalated, a non-zero PATCH threw before reaching that check."""
     source = (ROOT / "03.TOOLS/packaging/windows/publish_release.ps1").read_text(encoding="utf-8")
-    start = source.index("if ($global:LASTEXITCODE -ne 0) {\n        # A timed-out PATCH")
+    start = source.index("if ($patchExit -ne 0) {")
     body = source[start:source.index('Write-Output "Verified $mode of release', start)]
     assert body.count("Read-PublicationState 'after'") == 2                 # once on the uncertain path, once normally
     assert "gh api" not in body                                              # the mutation is never replayed
     assert "Publication response uncertain and not verified" in body         # unverifiable stays unknown, never success
+    # Run the publisher's exact PATCH lines against a real native gh that exits 17, under the publisher's preferences.
+    invoke = source[source.index("    $PSNativeCommandUseErrorActionPreference = $false"):start]
+    (tmp_path / "gh.cmd").write_text("@exit /b 17\r\n", encoding="ascii")
+    probe = tmp_path / "probe.ps1"
+    probe.write_text("$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n"
+                     "$env:PATH = '" + str(tmp_path) + ";' + $env:PATH\n$endpoint = 'x'\n$patch = @()\n"
+                     + invoke + "\"after_reached=$patchExit escalation=$PSNativeCommandUseErrorActionPreference\"\n",
+                     encoding="utf-8")
+    pwsh7 = shutil.which("pwsh") or PWSH
+    done = subprocess.run([pwsh7, "-NoProfile", "-NonInteractive", "-File", str(probe)],
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "after_reached=17 escalation=True" in done.stdout                  # reached, and the preference restored

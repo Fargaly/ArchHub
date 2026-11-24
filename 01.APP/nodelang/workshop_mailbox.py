@@ -546,6 +546,16 @@ def _reply_binding(history, reply, identity):
     return sender if sender.get("session") == identity["sender_key"] else _declaration(history, identity)
 
 
+def _receipt_recorded(history, message, recipient, event):
+    """True when this message already has this event receipt under this recipient key (its idempotency key), however
+    receipts() groups it. A legacy note can group a native addressee as ('session', 'native:codex:<id>') while the reply
+    resolves it as ('native', 'codex', <id>): the identity check missed the first answer and a second reply then hit
+    the same key ("idempotency conflict" on every tick)."""
+    digest = sha256((message["id"] + "\0" + recipient["session"] + "\0" + event).encode()).hexdigest()
+    return history._db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND idempotency_key=?",
+                               (ROOM, DELIVERY_PREFIX + digest)).fetchone() is not None
+
+
 def _delivery_receipt(history, message, recipient, event, *, now=None, **details):
     payload = {"recipient":recipient["session"], "label":recipient["agent"], "event":event, **details}
     digest = sha256((message["id"] + "\0" + recipient["session"] + "\0" + event).encode()).hexdigest()
@@ -1469,8 +1479,9 @@ class WorkshopInjection:
                 for recipient in _reply_recipients(history, parent, identity, declaration, declarations, reply):
                     with history._transaction(write=True):
                         if "answered" in receipts(history, parent, declarations)[0].get(
-                                recipient_identity(recipient, declarations), {}):
-                            continue
+                                recipient_identity(recipient, declarations), {}) or _receipt_recorded(
+                                history, parent, recipient, "answered"):
+                            continue   # the first answer stands; a later reply is still its own note
                         _delivery_receipt(history, parent, recipient,
                             "answered", reply_message_id=reply["id"])
                 self._replies_done.add(raw["id"])
@@ -1538,7 +1549,7 @@ class WorkshopInjection:
                         _delivery_receipt(history, message, recipient, "attempt",
                             now=datetime.fromisoformat(control["created_at"]).timestamp(), via="workshop", status="caller-owned")
                         events = receipts(history, message, declarations)[0].get(recipient_identity(recipient, declarations), {})
-                    if "answered" not in events:
+                    if "answered" not in events and not _receipt_recorded(history, message, recipient, "answered"):
                         replies = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND reply_to=? "
                             "AND category=? ORDER BY sequence", (ROOM, message["id"], CATEGORY)).fetchall()
                         for raw in replies:

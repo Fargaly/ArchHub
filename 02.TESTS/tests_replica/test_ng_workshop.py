@@ -603,3 +603,33 @@ def test_two_live_role_holders_keep_exact_session_addresses(database):
         assert {m['id'] for m in mb._pending(history, ident(older), 'codex')['pending']} == {
             exact['message_id'], session['message_id']}
         assert {m['id'] for m in mb._pending(history, ident(newer), 'codex')['pending']} == {role['message_id']}
+
+
+class LegacyAnswerCourt(unittest.TestCase):
+    def test_a_second_reply_to_a_legacy_native_note_never_conflicts_on_every_tick(self):
+        """e988 cc31c6f0: a legacy note grouped its native addressee as ('session', 'native:codex:<id>') while the reply
+        resolved to ('native', 'codex', <id>); the tick missed the first answer and the second reply hit its key."""
+        import json
+        from nodelang.conversation_history import ConversationHistoryStore
+        seat = {'session': 'native:codex:test-uuid', 'agent': 'Reviewer', 'runtime': 'codex', 'native_session_id': 'test-uuid'}
+        registered = {**seat, 'session': 'reviewer-registration', 'current': True}
+
+        def routing(**fields):
+            return [mailbox.ROUTING_EVIDENCE, json.dumps(fields)]
+        with ConversationHistoryStore(':memory:', instance_id=mailbox.ROOM) as history:
+            history.ensure_conversation(mailbox.ROOM)
+
+            def note(key, author, **fields):
+                return history.append(mailbox.ROOM, author=author, content='Example', category=mailbox.CATEGORY,
+                                      idempotency_key=key, **fields)
+            parent = note('p', 'Coordinator [q]', evidence=routing(recipients=[seat]))
+            replies = [note(key, 'Reviewer [reviewer-registration]', reply_to=parent['id'],
+                            evidence=routing(sender=registered, recipients=[])) for key in ('r1', 'r2')]
+            with patch.object(mailbox, 'read_declarations', return_value=[registered]):
+                worker = mailbox.WorkshopInjection(None, None)
+                for _ in range(2):
+                    worker._tick(history, time.time())   # raised ValueError('idempotency conflict') on every tick
+            answer = mailbox.delivery_events(history, parent)[seat['session']]['answered']
+            self.assertEqual(answer['reply_message_id'], replies[0]['id'])        # the first answer stands
+            self.assertEqual([history.get(mailbox.ROOM, r['id'], principal=mailbox.DELIVERY_AUTHOR)['id'] for r in replies],
+                             [r['id'] for r in replies])                          # both reply notes kept

@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261124-0654-c0fa09d
+
+- Update now tells you when an agent has unfinished requests and when to try again. Long lists of requests get a short message.
+- Workshop keeps processing when an agent replies twice to an older message. The first reply remains the answer, and both replies stay readable.
+- Verification scope: The older installed mailbox reproduced the duplicate-reply error. The corrected mailbox preserved both replies through two delivery passes. Full signed-in Settings checks require a dedicated QA account.
+
+Source: c0fa09da.
+
 ## 20261124-0344-a4980b0
 
 - Workshop now keeps the message ID when its delivery receipt or request profile is busy. The composer shows which agents are still waiting.

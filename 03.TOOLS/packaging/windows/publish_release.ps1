@@ -263,8 +263,16 @@ if ($mode) {
     } else {
         & gh api $endpoint --method PATCH -F prerelease=false -f make_latest=true --silent
     }
-    if ($global:LASTEXITCODE -ne 0) { throw 'Publication response uncertain; inspect release IDs before retrying.' }
-    $null = Read-PublicationState 'after'
+    if ($global:LASTEXITCODE -ne 0) {
+        # A timed-out PATCH may have succeeded (456140451 did): the read-only after check decides once; the mutation is
+        # never replayed, and an unverifiable state stays reported as unknown.
+        try { $null = Read-PublicationState 'after' } catch {
+            throw "Publication response uncertain and not verified ($($_.Exception.Message)); inspect release IDs before retrying."
+        }
+        Write-Output "Publication response was lost; the after check verified release $PreviewReleaseId."
+    } else {
+        $null = Read-PublicationState 'after'
+    }
     Write-Output "Verified $mode of release $PreviewReleaseId through the installed updater parser."
     return
 }

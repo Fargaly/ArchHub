@@ -2114,3 +2114,13 @@ def test_publisher_resumes_a_timed_out_preview_draft_instead_of_creating_another
                                "-ExpectedSourceRevision", "a" * 40, "-StableReleaseId", "5", "-ResumeDraftId", "9",
                                "-PythonPath", sys.executable, *extra], capture_output=True, text=True, timeout=60)
         assert done.returncode != 0 and "Choose one release operation" in (done.stdout + done.stderr)
+
+
+def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check():
+    """e988 be0aad49: the publish PATCH on 456140451 timed out but had succeeded; the after check alone decides."""
+    source = (ROOT / "03.TOOLS/packaging/windows/publish_release.ps1").read_text(encoding="utf-8")
+    start = source.index("if ($global:LASTEXITCODE -ne 0) {\n        # A timed-out PATCH")
+    body = source[start:source.index('Write-Output "Verified $mode of release', start)]
+    assert body.count("Read-PublicationState 'after'") == 2                 # once on the uncertain path, once normally
+    assert "gh api" not in body                                              # the mutation is never replayed
+    assert "Publication response uncertain and not verified" in body         # unverifiable stays unknown, never success

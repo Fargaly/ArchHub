@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261124-1020-c94004e
+
+- When an update is ready and you are away, ArchHub can install it in a short gap between agent requests.
+- Reopening ArchHub from the tray during an update check keeps the window open while you work.
+- Verification scope: Windows tests covered reopening the tray window, unsaved changes, a running canvas and short gaps between agent requests. Full signed-in Settings checks require a dedicated QA account.
+
+Source: c94004ea.
+
 ## 20261124-0654-c0fa09d
 
 - Update now tells you when an agent has unfinished requests and when to try again. Long lists of requests get a short message.

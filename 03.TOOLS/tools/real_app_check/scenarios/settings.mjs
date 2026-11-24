@@ -181,7 +181,9 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   for(const name of areas){
    assert.equal(await js(`(()=>{const e=[...document.querySelectorAll('nav[aria-label="Settings categories"] button')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)});if(!e)return false;e.click();return true;})()`),true);
    const selected=await until(()=>js(`(()=>{const e=document.querySelector('nav[aria-label="Settings categories"] button[aria-current="page"]');const heading=document.querySelector('.sheet-page-heading h2');return {selected:e?.getAttribute('aria-label'),heading:heading?.textContent,screen:document.querySelector('[data-settings-full]')?.getAttribute('data-screen')};})()`),s=>s.selected===name&&s.heading===name);
-   assert.equal(selected.selected,name);assert.equal(selected.heading,name);opened.push(selected);
+   assert.equal(selected.selected,name);assert.equal(selected.heading,name);
+   const screenshot = path.basename(await shot('Settings - ' + name));
+   opened.push({...selected, screenshot});
   }
   // Former areas are pages inside the five: each one is a real sub-page button that opens its own screen.
   const former=[['Agents','Models & BABOOM','BABOOM','select[aria-label="Default model"]'],['Agents','Hooks','Hooks','select[aria-label="Run mode"]'],['Agents','Workshop','Workshop'],['Agents','Automations','Automations'],['Agents','Library & Mods','Library & Mods'],['This PC','System','System graph'],['This PC','Updates & About','Updates & About'],['This PC','Workspaces & privacy','Privacy'],['This PC','Look','Appearance']];

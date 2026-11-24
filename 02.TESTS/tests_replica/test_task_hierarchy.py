@@ -220,8 +220,20 @@ def test_a_wrong_typed_cached_field_is_never_trusted(tmp_path, monkeypatch):
     os.utime(canvas, (old, old))
     stat = os.stat(canvas)
     stamp = [stat.st_mtime_ns, stat.st_size, stat.st_ino]
-    good = {'sessionTitle': 'Intact title', 'plan': [], 'handover': {}, 'homePinned': False}
+    good = {key: [] for key in workshop_tasks._CONTEXT_LISTS}
+    good.update({key: {} for key in workshop_tasks._CONTEXT_DICTS}, scope='', sessionTitle='Intact title', homePinned=False)
     assert workshop_tasks._context_shape_ok(good, {'taskContext': {}})
+    # e988 0032867f: a missing required key (scope) or an empty context blanked real work.
+    without_scope = {key: value for key, value in good.items() if key != 'scope'}
+    for context, choice in ((without_scope, {'taskContext': {}}), ({}, {'taskContext': {}}), (good, {})):
+        assert not workshop_tasks._context_shape_ok(context, choice)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({'version': workshop_tasks._CONTEXTS_VERSION,
+                                     'rows': [[str(canvas), None, stamp, context, choice]]}), encoding='utf-8')
+        monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+        monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+        assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Intact title'
+    assert workshop_tasks._context_shape_ok({**good, 'anchorTitle': 'Child'}, {'taskContext': {}})   # optional
     for context in ({**good, 'plan': 42}, {**good, 'handover': []}, {**good, 'plan': [42]}, {**good, 'unknown': 1},
                     {**good, 'homePinned': 'yes'}, {**good, 'sessionTitle': None}):
         assert not workshop_tasks._context_shape_ok(context, {'taskContext': {}}), context

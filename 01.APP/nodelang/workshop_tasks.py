@@ -973,6 +973,8 @@ _CONTEXT_LISTS = frozenset(('rules', 'pinnedMessages', 'agents', 'plan', 'workfl
                             'folders', 'references', 'checkpoints', 'fileMessages'))
 _CONTEXT_DICTS = frozenset(('handover', 'progress'))
 _CONTEXT_TEXTS = frozenset(('scope', 'sessionTitle', 'anchorTitle'))
+# What _session_context always writes; anchorTitle appears only for a task anchored on a shared canvas.
+_CONTEXT_REQUIRED = (_CONTEXT_LISTS | _CONTEXT_DICTS | _CONTEXT_TEXTS | {'homePinned'}) - {'anchorTitle'}
 
 
 def _json_value(value, depth=0):
@@ -991,6 +993,9 @@ def _context_shape_ok(context, choice):
     """The saved context a list consumes, field by field: every key known, every value of its type, list items
     objects or text (as the owner writes them). Anything else means the canvas is read again."""
     if not (isinstance(context, dict) and isinstance(choice, dict) and _json_value(context) and _json_value(choice)):
+        return False
+    # Every key the cache writer always emits must be there: a missing one silently blanked real work (scope).
+    if not _CONTEXT_REQUIRED <= set(context) or 'taskContext' not in choice:
         return False
     for key, value in context.items():
         if key in _CONTEXT_LISTS:

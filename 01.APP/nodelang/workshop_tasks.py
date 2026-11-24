@@ -959,8 +959,6 @@ def _root_task_id(root, request_id):
 _SESSION_CONTEXTS = {}
 
 
-_DOCUMENTS = {}   # path -> (stamp, parsed document), only while one column() list is being built
-_DOCUMENTS_PASS = {'on': False}
 _CONTEXTS_VERSION = 2   # stamps carry the file id since version 2
 _CONTEXTS_LOADED = set()
 _CONTEXTS_DIRTY = {'value': False}
@@ -1009,8 +1007,9 @@ def _save_session_contexts():
         logging.getLogger(__name__).debug('Session context file %s not saved: %s', path, unsaved)
 
 
-def _session_context(path, *, roots=None, task_row=None):
-    """Cache file-owned context; project names always come from the current roots."""
+def _session_context(path, *, roots=None, task_row=None, documents=None):
+    """Cache file-owned context; project names always come from the current roots. documents: the calling list's
+    own path -> (stamp, parsed canvas) memo, so overlapping lists never clear each other's reuse."""
     if not isinstance(path, str) or not path:
         return {}
     _load_session_contexts()
@@ -1030,11 +1029,11 @@ def _session_context(path, *, roots=None, task_row=None):
         else:
             # One read per canvas file within one list (column() opens and closes the pass): many tasks share one
             # .archhub (24 tasks re-read it 18 times). Nothing is reused across lists.
-            parsed = _DOCUMENTS.get(path) if _DOCUMENTS_PASS['on'] else None
+            parsed = documents.get(path) if documents is not None else None
             if parsed is None or parsed[0] != stamp:
                 parsed = (stamp, read_document(path))
-                if _DOCUMENTS_PASS['on']:
-                    _DOCUMENTS[path] = parsed
+                if documents is not None:
+                    documents[path] = parsed
             document = copy.deepcopy(parsed[1])
             root = (document.get('properties', {}).get('taskContext') or {}).get('task')
             identity = (task_row or {}).get('id')
@@ -1192,17 +1191,13 @@ def maintain_tasks(history):
 def column(history, project=None, stale_hours=None, *, include_archived=False, settle=True):
     """Studio Work rows. Declaration fields fill the view. A project shows only its own tasks.
     Stale declared work leaves in-progress. Within one list each shared canvas file is read once."""
-    _DOCUMENTS.clear()
-    _DOCUMENTS_PASS['on'] = True
     try:
-        return _column(history, project, stale_hours, include_archived=include_archived, settle=settle)
+        return _column(history, project, stale_hours, include_archived=include_archived, settle=settle, documents={})
     finally:
-        _DOCUMENTS_PASS['on'] = False
-        _DOCUMENTS.clear()
         _save_session_contexts()
 
 
-def _column(history, project=None, stale_hours=None, *, include_archived=False, settle=True):
+def _column(history, project=None, stale_hours=None, *, include_archived=False, settle=True, documents=None):
     from .workshop_mailbox import read_declarations
     hours = TASKS_NODE["params"]["stale_hours"] if stale_hours is None else stale_hours
     declarations = read_declarations(history._db, include_archived=True)
@@ -1244,7 +1239,7 @@ def _column(history, project=None, stale_hours=None, *, include_archived=False, 
         if row["id"].startswith("declared-") and row.get("owner") in working:
             continue
         declaration = _declaration_for(row, declarations, index)
-        session = _session_context(row.get("session_path"), roots=roots, task_row=row)
+        session = _session_context(row.get("session_path"), roots=roots, task_row=row, documents=documents)
         if session.get("removedFromCanvas"):
             continue
         if project and project not in (session.get("workspace"), session.get("project", row.get("project"))):

@@ -138,7 +138,6 @@ def test_tasks_sharing_one_canvas_read_it_once(tmp_path, monkeypatch):
     from nodelang import session_files, workshop_tasks
     monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: tmp_path / 'cache' / 'session-contexts.json')
     monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
-    monkeypatch.setattr(workshop_tasks, '_DOCUMENTS', {})
     monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
     shared = tmp_path / 'shared.archhub'
     canvas = session_files.new_document('Shared canvas')
@@ -151,10 +150,14 @@ def test_tasks_sharing_one_canvas_read_it_once(tmp_path, monkeypatch):
     os.utime(shared, (old, old))
     real, reads = session_files.read_document, []
     monkeypatch.setattr(session_files, 'read_document', lambda path: reads.append(path) or real(path))
-    monkeypatch.setitem(workshop_tasks._DOCUMENTS_PASS, 'on', True)   # inside one column() list
-    titles = [workshop_tasks._session_context(str(shared), roots={}, task_row={'id': 'task-%d' % i}).get('sessionTitle')
+    home, history = {}, {}   # two overlapping lists, each with its own memo (e988 8bd3702f)
+    first = workshop_tasks._session_context(str(shared), roots={}, task_row={'id': 'task-0'}, documents=home)
+    others = [workshop_tasks._session_context(str(shared), roots={}, task_row={'id': 'task-%d' % i}, documents=history)
               for i in range(18)]
-    assert titles == ['Child %d' % i for i in range(18)] and len(reads) == 1   # per-task values kept, one read
+    titles = [first.get('sessionTitle')] + [workshop_tasks._session_context(
+        str(shared), roots={}, task_row={'id': 'task-%d' % i}, documents=home).get('sessionTitle') for i in range(1, 18)]
+    assert titles == ['Child %d' % i for i in range(18)] and [o.get('sessionTitle') for o in others] == titles
+    assert len(reads) == 2   # one read per list, even when the lists overlap
 
 
 def test_a_same_tick_atomic_save_is_never_served_from_the_cache(tmp_path, monkeypatch):

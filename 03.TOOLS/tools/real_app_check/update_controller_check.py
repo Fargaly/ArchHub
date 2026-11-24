@@ -78,8 +78,24 @@ def main():
             raise SystemExit("A newer staged build restarted over busy work.")
         if calls != {"guard": 1, "restart": 0}:
             raise SystemExit("Newer busy build: expected one guard call and no restart, got %r" % calls)
+
+        # The founder's notice through the installed launcher: the real connector deferral wording.
+        from types import SimpleNamespace
+        from nodelang.nograph_launcher import _update_refusal
+        from nodelang.quiet_update import _CONNECTOR_DEFERRED
+        quiet = SimpleNamespace(busy_reason=lambda: None)
+
+        def notice(reason):
+            return _update_refusal(quiet, Path(folder), app, preflight=lambda _a, desktop_pids: reason, desktop_pids=set())
+        founder = notice(_CONNECTOR_DEFERRED + "pid 7888: 2 call(s) in flight; pid 45828: 1 call(s) in flight")
+        clipped = notice(_CONNECTOR_DEFERRED + "; ".join("pid %d: 1 call(s) in flight" % (50000 + i) for i in range(16))[:400])
+        if founder != "3 requests are in progress. Try Update again when they finish." or "pid" in founder:
+            raise SystemExit("Founder's two-plus-one notice is wrong: %r" % founder)
+        if any(ch.isdigit() for ch in clipped):
+            raise SystemExit("A clipped connector list reported a count: %r" % clipped)
     print(json.dumps({"result": "PASS", "installed": installed, "same_build": "up to date, no guard, no restart",
-                      "newer_busy": "refused, no restart"}))
+                      "newer_busy": "refused, no restart",
+                      "notice": {"two_plus_one": founder, "clipped_sixteen": clipped}}))
 
 
 if __name__ == "__main__":

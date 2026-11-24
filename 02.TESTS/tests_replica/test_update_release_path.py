@@ -2166,6 +2166,22 @@ def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(t
     assert pulse.index("install_if_safe") < pulse.index("interval = 2_000")
     # e988 3453226c / e2e727c5: the long cadence is restored before the held check and the page probe.
     callback = source[source.index("def consider_update():"):source.index("update_pulse = QTimer(app)")]
+    # 542e bb5df86a: a window reopened from the tray before the page answers is no longer 'closing'.
+    answered = callback[callback.index("def answered(live):"):callback.index("view.page().runJavaScript")]
+    assert answered.index("visible = window.isVisible()") < answered.index("_still_closing(") < \
+        answered.index("update.install_if_safe(closing=still_closing")
+    from nodelang.nograph_launcher import _still_closing
+    import threading
+    from nodelang.application_update import ApplicationUpdate
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update._lock, update._state, update._prerelease = threading.RLock(), "ready", False
+    update._policy = lambda: {"auto_apply_on_quit": True, "idle_minutes": 15}
+    update._restart_refusal, restarts = (lambda: None), []
+    update.reload = lambda: restarts.append(1)
+    # Hidden to the tray when asked, reopened and active when the page answers: no install.
+    assert update.install_if_safe(closing=_still_closing(True, True, True), user_idle=False) is False and restarts == []
+    # Still hidden when the page answers: the tray close installs as before.
+    assert update.install_if_safe(closing=_still_closing(True, True, False), user_idle=False) is True and restarts == [1]
     reset = callback.index("update_pulse.setInterval(60_000)")
     assert reset < callback.index("_auto_install_held(state_dir)") and reset < callback.index("runJavaScript")
     # e988 591a8075: an unsupervised connector has no call count; promise nothing that will not happen.

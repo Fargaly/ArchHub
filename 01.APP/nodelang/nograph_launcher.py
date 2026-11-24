@@ -434,8 +434,14 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
                     # Reconciled with the live Studio right before an automatic close: only a page that answers
                     # "nothing unsaved" lets it go on. No answer (a busy or broken page) holds the install.
                     server._connector_deferred = False
+                    # The page answers later: he may have reopened the window from the tray meanwhile. Visibility is
+                    # read again here, so a now-visible window is held to the idle check (542e bb5df86a).
+                    visible = window.isVisible()
+                    if visible:
+                        seen_open["value"] = True
+                    still_closing = _still_closing(closing, seen_open["value"], visible)
                     if _live_page_clean(live):
-                        update.install_if_safe(closing=closing, canvas_running=canvas_job_running(server))
+                        update.install_if_safe(closing=still_closing, canvas_running=canvas_job_running(server))
                     # Only agent requests stood in the way: their idle gaps last seconds, a 60 s pulse missed them
                     # (75 report changes in 100 s, longest gap 2.9 s). Recheck every 2 s while that holds; every
                     # other condition (idle, clean page, no canvas run, preflight, drain) is rechecked each time.
@@ -515,6 +521,12 @@ def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, de
                 calls, ' is' if calls == 1 else 's are')
         return "ArchHub is waiting for an agent connection to be ready. Try Update again later."
     return None
+
+
+def _still_closing(closing, seen_open, visible):
+    """Whether an install may treat ArchHub as closed to the tray, decided when the page answers, not when it was
+    asked: a window reopened meanwhile is held to the idle check."""
+    return bool(closing and seen_open and not visible)
 
 
 def _live_page_clean(live):

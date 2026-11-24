@@ -2126,7 +2126,10 @@ def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check(tmp_
     assert "gh api" not in body                                              # the mutation is never replayed
     assert "Publication response uncertain and not verified" in body         # unverifiable stays unknown, never success
     # Run the publisher's exact PATCH lines against a real native gh that exits 17, under the publisher's preferences.
-    invoke = source[source.index("    $PSNativeCommandUseErrorActionPreference = $false"):start]
+    # Anchor at the PATCH invocation itself: the checker call above it suspends escalation the same way.
+    patch_call = source.index("    try { & gh api $endpoint --method PATCH")
+    invoke = source[source.rindex("    $PSNativeCommandUseErrorActionPreference = $false", 0, patch_call):start]
+    assert "--method PATCH" in invoke and "$profileGuard" not in invoke
     (tmp_path / "gh.cmd").write_text("@exit /b 17\r\n", encoding="ascii")
     probe = tmp_path / "probe.ps1"
     probe.write_text("$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n"

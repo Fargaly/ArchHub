@@ -216,8 +216,12 @@ if ($mode) {
             $check += @('--draft-snapshot', $draftFile, '--live')
         }
         try {
-            $raw = (& $PythonPath $profileGuard --profile $checkProfile @check) -join [Environment]::NewLine
-            if ($global:LASTEXITCODE -ne 0) { throw "Publication $phase refused: $raw" }
+            # The checker's refusal text is the diagnostic: with native errors escalated a non-zero exit threw before
+            # $raw was kept (e988 2cf52b55). Only this invocation is exempted.
+            $PSNativeCommandUseErrorActionPreference = $false
+            try { $raw = (& $PythonPath $profileGuard --profile $checkProfile @check) -join [Environment]::NewLine; $checkExit = $global:LASTEXITCODE }
+            finally { $PSNativeCommandUseErrorActionPreference = $true }
+            if ($checkExit -ne 0) { throw "Publication $phase refused: $raw" }
             $result = $raw | ConvertFrom-Json
             if ($result.ok -isnot [bool] -or -not $result.ok) { throw "Publication $phase refused." }
             Assert-PublicationBinding $result.publication $PreviewReleaseId

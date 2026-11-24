@@ -2134,8 +2134,11 @@ def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check(tmp_
                      + invoke + "\"after_reached=$patchExit escalation=$PSNativeCommandUseErrorActionPreference\"\n",
                      encoding="utf-8")
     pwsh7 = shutil.which("pwsh") or PWSH
-    done = subprocess.run([pwsh7, "-NoProfile", "-NonInteractive", "-File", str(probe)],
-                          capture_output=True, text=True, timeout=60)
+    try:
+        done = subprocess.run([pwsh7, "-NoProfile", "-NonInteractive", "-File", str(probe)],
+                              capture_output=True, text=True, timeout=60)
+    except PermissionError:   # the Store pwsh alias cannot start inside a no-breakaway job here; CI has pwsh 7
+        pytest.skip("PowerShell 7 cannot be started from this sandbox")
     assert done.returncode == 0, done.stdout + done.stderr
     assert "after_reached=17 escalation=True" in done.stdout                  # reached, and the preference restored
 
@@ -2175,3 +2178,24 @@ def test_the_after_check_outlasts_the_releases_cache_without_replaying_the_patch
     body = source[source.index("function Read-AfterSettled {"):source.index("if ($patchExit -ne 0) {")]
     assert "foreach ($wait in 0, 35, 35)" in body and "Read-PublicationState 'after'" in body
     assert "gh api" not in body and "PATCH" not in body.replace("committed PATCH", "")   # read-only retries
+
+
+def test_a_refusing_publication_check_keeps_its_diagnostic(tmp_path):
+    """e988 2cf52b55: a checker exit 1 threw NativeCommandExitException before its refusal text was kept."""
+    source = (ROOT / "03.TOOLS/packaging/windows/publish_release.ps1").read_text(encoding="utf-8")
+    start = source.index("            $PSNativeCommandUseErrorActionPreference = $false\n            try { $raw")
+    lines = source[start:source.index("            $result = $raw | ConvertFrom-Json", start)]
+    checker = tmp_path / "checker.cmd"
+    checker.write_text("@echo binding mismatch for release 9\r\n@exit /b 1\r\n", encoding="ascii")
+    probe = tmp_path / "probe.ps1"
+    probe.write_text("$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n"
+                     "$PythonPath = '" + str(checker) + "'\n$profileGuard = 'g'\n$checkProfile = 'p'\n$check = @()\n"
+                     "$phase = 'after'\ntry {\n" + lines + "} catch { \"caught=$($_.Exception.Message) "
+                     "escalation=$PSNativeCommandUseErrorActionPreference\" }\n", encoding="utf-8")
+    try:
+        done = subprocess.run([shutil.which("pwsh") or PWSH, "-NoProfile", "-NonInteractive", "-File", str(probe)],
+                              capture_output=True, text=True, timeout=60)
+    except PermissionError:   # the Store pwsh alias cannot start inside a no-breakaway job here; CI has pwsh 7
+        pytest.skip("PowerShell 7 cannot be started from this sandbox")
+    assert "caught=Publication after refused: binding mismatch for release 9 escalation=True" in done.stdout, \
+        done.stdout + done.stderr

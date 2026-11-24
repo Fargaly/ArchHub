@@ -100,3 +100,57 @@ def test_an_old_task_table_gains_parent_id_and_keeps_its_rows(profile):
         names = {row[1] for row in history._db.execute("PRAGMA table_info(workshop_tasks)")}
     assert 'parent_id' in names
     assert [(row['id'], row['title'], row['parent_id']) for row in found] == [('old1', 'Old work', None)]
+
+
+def test_session_contexts_survive_a_restart_without_reopening_unchanged_files(tmp_path, monkeypatch):
+    """e988 e7bad9c9: the first Home/History read after a start reopened and validated every session file (1 s / 3 s
+    for 47 / 200 canvases). The disposable cache file skips unchanged files; a changed file is read again."""
+    import os, time
+    from nodelang import session_files, workshop_tasks
+    monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: tmp_path / 'cache' / 'session-contexts.json')
+    monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+    monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+    document = tmp_path / 'one.archhub'
+    session_files.write_document(document, session_files.new_document('Cached title'))
+    old = time.time() - 60
+    os.utime(document, (old, old))
+    first = workshop_tasks._session_context(str(document), roots={})
+    assert first['sessionTitle'] == 'Cached title'
+    workshop_tasks._save_session_contexts()
+    assert (tmp_path / 'cache' / 'session-contexts.json').is_file()
+    # A new process: empty memory, and reading the file would fail the test.
+    monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+    monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+    monkeypatch.setattr(session_files, 'read_document', lambda path: (_ for _ in ()).throw(AssertionError('reopened')))
+    assert workshop_tasks._session_context(str(document), roots={})['sessionTitle'] == 'Cached title'
+    # A changed file is read again.
+    monkeypatch.undo()
+    monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: tmp_path / 'cache' / 'session-contexts.json')
+    changed = session_files.new_document('Renamed title')
+    session_files.write_document(document, changed)
+    os.utime(document, (old + 5, old + 5))
+    assert workshop_tasks._session_context(str(document), roots={})['sessionTitle'] == 'Renamed title'
+
+
+def test_tasks_sharing_one_canvas_read_it_once(tmp_path, monkeypatch):
+    """e988 af92e1e1: 24 tasks on one .archhub made Home open that file 18 times."""
+    import os, time
+    from nodelang import session_files, workshop_tasks
+    monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: tmp_path / 'cache' / 'session-contexts.json')
+    monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+    monkeypatch.setattr(workshop_tasks, '_DOCUMENTS', {})
+    monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+    shared = tmp_path / 'shared.archhub'
+    canvas = session_files.new_document('Shared canvas')
+    for i in range(18):
+        canvas['nodes'].append({'id': 'task-%d' % i, 'type': 'note', 'title': 'Child %d' % i, 'params': {},
+                                'position': {'x': i * 10, 'y': 0}, 'workshopTask': 'task-%d' % i,
+                                'taskContext': {'task': 'task-%d' % i}})
+    session_files.write_document(shared, canvas)
+    old = time.time() - 60
+    os.utime(shared, (old, old))
+    real, reads = session_files.read_document, []
+    monkeypatch.setattr(session_files, 'read_document', lambda path: reads.append(path) or real(path))
+    titles = [workshop_tasks._session_context(str(shared), roots={}, task_row={'id': 'task-%d' % i}).get('sessionTitle')
+              for i in range(18)]
+    assert titles == ['Child %d' % i for i in range(18)] and len(reads) == 1   # per-task values kept, one read

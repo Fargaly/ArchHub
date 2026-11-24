@@ -959,10 +959,60 @@ def _root_task_id(root, request_id):
 _SESSION_CONTEXTS = {}
 
 
+_DOCUMENTS = {}   # path -> (stamp, parsed document): shared canvases are read once per change
+_CONTEXTS_VERSION = 1
+_CONTEXTS_LOADED = set()
+_CONTEXTS_DIRTY = {'value': False}
+
+
+def _contexts_file():
+    from .user_paths import state_directory
+    return state_directory() / 'cache' / 'session-contexts.json'
+
+
+def _load_session_contexts():
+    """Disposable acceleration (spec 3.1.5): the first Home and History read after a start reopened and validated every
+    session file (1 s / 3 s for 47 / 200 canvases). Each entry is still checked against its file's size and mtime, so
+    a missing, unreadable or older cache file only means the files are read once."""
+    import logging
+    path = _contexts_file()
+    if str(path) in _CONTEXTS_LOADED:
+        return
+    _CONTEXTS_LOADED.add(str(path))
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(data, dict) or data.get('version') != _CONTEXTS_VERSION or not isinstance(data.get('rows'), list):
+            raise ValueError('not a version %d context file' % _CONTEXTS_VERSION)
+        loaded = {(file, task): (tuple(stamp), context, choice) for file, task, stamp, context, choice in data['rows']}
+    except (OSError, ValueError, TypeError) as unusable:
+        logging.getLogger(__name__).debug('Session context file %s not used: %s', path, unusable)
+        return
+    for key, held in loaded.items():
+        _SESSION_CONTEXTS.setdefault(key, held)
+
+
+def _save_session_contexts():
+    import logging
+    if not _CONTEXTS_DIRTY['value']:
+        return
+    path = _contexts_file()
+    temporary = path.with_name(path.name + '.tmp')
+    rows = [[file, task, list(stamp), context, choice] for (file, task), (stamp, context, choice) in _SESSION_CONTEXTS.items()]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps({'version': _CONTEXTS_VERSION, 'rows': rows}), encoding='utf-8')
+        os.replace(temporary, path)
+        _CONTEXTS_DIRTY['value'] = False
+    except (OSError, TypeError, ValueError) as unsaved:
+        # The contexts stay in memory; the next start reads the files once.
+        logging.getLogger(__name__).debug('Session context file %s not saved: %s', path, unsaved)
+
+
 def _session_context(path, *, roots=None, task_row=None):
     """Cache file-owned context; project names always come from the current roots."""
     if not isinstance(path, str) or not path:
         return {}
+    _load_session_contexts()
     try:
         from .session_files import read_document, _project_of, _registered_roots
         roots = _registered_roots() if roots is None else roots
@@ -974,7 +1024,13 @@ def _session_context(path, *, roots=None, task_row=None):
         if held and held[0] == stamp and time.time() - stat.st_mtime >= 2:
             context, choice = copy.deepcopy(held[1:])
         else:
-            document = read_document(path)
+            # One read per canvas file and stamp: many tasks share one .archhub (24 tasks re-read it 18 times).
+            parsed = _DOCUMENTS.get(path)
+            if parsed is None or parsed[0] != stamp:
+                if len(_DOCUMENTS) >= 256:
+                    _DOCUMENTS.clear()   # shortcut: bounded memory; the next list rereads each file once
+                parsed = _DOCUMENTS[path] = (stamp, read_document(path))
+            document = copy.deepcopy(parsed[1])
             root = (document.get('properties', {}).get('taskContext') or {}).get('task')
             identity = (task_row or {}).get('id')
             if root and identity and (identity != root or document['properties']['taskContext'].get('anchor')) and not any(
@@ -994,6 +1050,7 @@ def _session_context(path, *, roots=None, task_row=None):
             context['sessionTitle'] = anchor['title'] if anchor else document['title']
             context['fileMessages'] = _file_messages(document, (task_row or {}).get('id'))
             _SESSION_CONTEXTS[cache_key] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
+            _CONTEXTS_DIRTY['value'] = True
         project = _project_of(choice, roots, task_row)
         context.update(project=project['label'], workspace=project['id'])
         return context
@@ -1213,6 +1270,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False, s
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
              'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
              'inProgress': shown in ("WIP", "IN REVIEW")})
+    _save_session_contexts()
     return built
 
 

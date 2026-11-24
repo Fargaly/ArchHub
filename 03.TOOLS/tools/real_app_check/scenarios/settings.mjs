@@ -74,22 +74,31 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   const originalPage=await js('performance.timeOrigin');
   function observeSignIn(){
    const browser=globalThis,original=browser.fetch;
-   const witness=browser.__archhubAdmissionWitness={signIns:0,postStatus:null,phase:null,restore(){browser.fetch=original;}};
+   const witness=browser.__archhubAdmissionWitness={signIns:0,postStatus:null,phase:null,failure:null,restore(){browser.fetch=original;}};
    browser.fetch=function(...args){
     const pending=Reflect.apply(original,this,args);
     const endpoint=new browser.URL(typeof args[0]==='string'?args[0]:args[0].url,browser.location.href).pathname;
     if(endpoint!=='/api/universal/cloud-signin')return pending;
     const post=args[1]?.method==='POST';
     if(post)witness.signIns++;
+    if(!witness.signIns)return pending;
     pending.then(async response=>{
      if(post)witness.postStatus=response.status;
-     const phase=(await response.clone().json()).phase;
+     const {phase,error_code}=await response.clone().json();
+     if(phase==='failed'&&!witness.failure){
+      // Keep the first terminal result even if a later status response arrives out of order.
+      const code=typeof error_code==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(error_code)?error_code:null;
+      witness.failure={code};
+     }
      if(['idle','starting','waiting','exchanging','done','failed'].includes(phase))witness.phase=phase;
     }).catch(()=>{});
     return pending;
    };
   }
-  const attempt=()=>js('(()=>{const w=globalThis.__archhubAdmissionWitness;return {calls:w.signIns,status:w.postStatus,phase:w.phase};})()');
+  const attempt=()=>js('(()=>{const w=globalThis.__archhubAdmissionWitness;return {calls:w.signIns,status:w.postStatus,phase:w.phase,failure:w.failure};})()');
+  const signInFailed=failure=>({pass:false,
+   why:failure.code?('Sign-in failed ('+failure.code+').'):'Sign-in failed without a reported error code.',
+   got:{authenticated:false,signInFailure:failure}});
   const retryPoint=()=>rectOf(`[...document.querySelectorAll('[data-desktop-admission] button[aria-label="Retry"]:enabled')].find(e=>e.getClientRects().length)`);
   const hasFailureNotice=()=>js("Boolean([...document.querySelectorAll('[data-desktop-admission] [role=status], [data-desktop-admission] [role=alert]')].find(e=>e.getClientRects().length&&/(sign.in failed|could not start sign.in|connection lost|check your connection)/i.test(e.textContent)))");
   await js('('+observeSignIn.toString()+')()');
@@ -113,18 +122,22 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert(retry,'Retry was unavailable after restoring the connection.');
    await mouse(retry);
    await mouse(retry);
-   const signin=await until(attempt,a=>a.status===200&&['waiting','exchanging','done'].includes(a.phase),80,500);
+   const signin=await until(attempt,a=>a.failure||(a.status===200&&['waiting','exchanging','done'].includes(a.phase)),80,500);
+   if(signin.failure)return signInFailed(signin.failure);
    assert(signin.calls>=1&&signin.calls<=2&&signin.status===200&&['waiting','exchanging','done'].includes(signin.phase),
     'Retry did not start a real sign-in attempt after restoring the connection.');
-   assert.equal(await until(launchCount,count=>count>0),1,'Overlapping Retry presses must produce one browser-open event.');
+   const launch=await until(async()=>({count:launchCount(),failure:(await attempt()).failure}),v=>v.failure||v.count>0);
+   if(launch.failure)return signInFailed(launch.failure);
+   assert.equal(launch.count,1,'Overlapping Retry presses must produce one browser-open event.');
    // Dedicated QA operators can use the full browser sign-in window.
    const waitMs = input?.waitForSignIn === true ? 300_000 : 10_000;
    const deadline = performance.now() + waitMs;
    const current = await until(
-    () => js('window.ArchHubAPI.getSnapshot().desktopAccess'),
-    value => value.admitted === true || performance.now() >= deadline,
+    () => js('({admitted:window.ArchHubAPI.getSnapshot().desktopAccess.admitted,failure:globalThis.__archhubAdmissionWitness.failure})'),
+    value => value.failure || value.admitted === true || performance.now() >= deadline,
     waitMs / 500 + 1, 500
    );
+   if(current.failure)return signInFailed(current.failure);
    if(!current.admitted)assert.deepEqual(await privateView(),hidden);
    assert.equal(await js('performance.timeOrigin'),originalPage,'Retry replaced the installed Studio page.');
    assert.equal(launchCount(),1,'The two Retry presses produced more than one browser-open event.');
@@ -141,7 +154,8 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   }
  });
  const steps=declaredSteps.slice(1),authenticated=entry?.got?.authenticated===true;
- const step=(asked,run)=>stopProtected?recordStep(asked,async()=>({not_exercised:'Outage exercise stopped before safe continuation.'})):authenticated?recordStep(asked,run):recordStep(asked,async()=>({not_exercised:'No legitimate QA account admitted this isolated installed window. Authenticated assertions remain unverified; no bypass or founder credentials were used.'}));
+ const missingAdmission=entry?.got?.signInFailure?entry.did:'No legitimate QA account admitted this isolated installed window. Authenticated assertions remain unverified; no bypass or founder credentials were used.';
+ const step=(asked,run)=>stopProtected?recordStep(asked,async()=>({not_exercised:'Outage exercise stopped before safe continuation.'})):authenticated?recordStep(asked,run):recordStep(asked,async()=>({not_exercised:missingAdmission}));
 
  const folder=path.join(isolated,'settings-fixture');fs.mkdirSync(folder,{recursive:true});
  const file=path.join(folder,'settings.archhub'),globalFile=path.join(isolated,'state/settings/settings.json'),workspaceFile=path.join(isolated,'state/settings/workspaces.json');

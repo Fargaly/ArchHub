@@ -492,9 +492,11 @@ def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, de
         import re
         logging.getLogger(__name__).info('Update waits for agent connectors: %s', refusal)
         calls = sum(int(n) for n in re.findall(r'(\d+) call', refusal))
-        return ("Agents are still working (%d request%s in progress). The update installs when they finish; "
-                "ArchHub stays open." % (calls, '' if calls == 1 else 's') if calls else
-                "Agents are still working. The update installs when they finish; ArchHub stays open.")
+        # Promise only what happens: nothing installs by itself here (automatic updates may be off).
+        if calls:
+            return "%d request%s in progress. Try Update again when they finish." % (
+                calls, ' is' if calls == 1 else 's are')
+        return "ArchHub is waiting for an agent connection to be ready. Try Update again later."
     return None
 
 

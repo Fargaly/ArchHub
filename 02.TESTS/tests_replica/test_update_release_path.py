@@ -2148,9 +2148,17 @@ def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(t
     deferred = "deferred: pid 7888: 2 call(s) in flight; pid 45828: 1 call(s) in flight"
     with caplog.at_level(logging.INFO, logger="nodelang.nograph_launcher"):
         notice = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: deferred, desktop_pids=set())
-    assert notice == ("Agents are still working (3 requests in progress). The update installs when they finish; "
-                      "ArchHub stays open.")
+    assert notice == "3 requests are in progress. Try Update again when they finish."
     assert "pid" not in notice and "7888" in caplog.text            # the guard holds; the ids stay in the log
+    # e988 591a8075: an unsupervised connector has no call count; promise nothing that will not happen.
+    from nodelang import quiet_update
+    unsupervised = quiet_update._CONNECTOR_DEFERRED + "an agent connector is not supervised yet"
+    waiting = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: unsupervised,
+                              desktop_pids=set())
+    assert waiting == "ArchHub is waiting for an agent connection to be ready. Try Update again later."
+    single = _update_refusal(server, tmp_path, tmp_path, desktop_pids=set(),
+                             preflight=lambda _a, desktop_pids: "deferred: pid 1: 1 call(s) in flight")
+    assert single == "1 request is in progress. Try Update again when they finish."
     hard = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: "installer bytes changed",
                            desktop_pids=set())
     assert hard == "The update would be refused (installer bytes changed); ArchHub stays open."

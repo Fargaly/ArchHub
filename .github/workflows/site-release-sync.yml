@@ -7,7 +7,8 @@ name: Sync public changelog from GitHub releases
 
 on:
   release:
-    types: [published]
+    # released: also fires when an opt-in pre-release is promoted to stable (456140451 was, with no changelog run).
+    types: [published, released]
   workflow_dispatch:
   # Releases created with GITHUB_TOKEN do not emit a follow-on workflow run.
   workflow_run:

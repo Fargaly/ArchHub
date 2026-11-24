@@ -486,7 +486,15 @@ def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, de
     if refusal:
         if not connector_install_deferred(refusal):
             hold_auto_install(Path(state_dir), refusal)
-        return "The update would be refused (%s); ArchHub stays open." % refusal
+            return "The update would be refused (%s); ArchHub stays open." % refusal
+        # Agents busy is a wait, not a refusal: plain words for the founder, process ids in diagnostics only.
+        import logging
+        import re
+        logging.getLogger(__name__).info('Update waits for agent connectors: %s', refusal)
+        calls = sum(int(n) for n in re.findall(r'(\d+) call', refusal))
+        return ("Agents are still working (%d request%s in progress). The update installs when they finish; "
+                "ArchHub stays open." % (calls, '' if calls == 1 else 's') if calls else
+                "Agents are still working. The update installs when they finish; ArchHub stays open.")
     return None
 
 

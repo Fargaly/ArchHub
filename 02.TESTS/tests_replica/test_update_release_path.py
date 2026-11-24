@@ -2138,3 +2138,19 @@ def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check(tmp_
                           capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "after_reached=17 escalation=True" in done.stdout                  # reached, and the preference restored
+
+
+def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(tmp_path, caplog):
+    """e988 ee757fd3: the founder's toast showed 'deferred: pid 7888: 2 call(s) in flight; pid 45828: ...'."""
+    import logging
+    from nodelang.nograph_launcher import _update_refusal
+    server = SimpleNamespace(busy_reason=lambda: None)
+    deferred = "deferred: pid 7888: 2 call(s) in flight; pid 45828: 1 call(s) in flight"
+    with caplog.at_level(logging.INFO, logger="nodelang.nograph_launcher"):
+        notice = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: deferred, desktop_pids=set())
+    assert notice == ("Agents are still working (3 requests in progress). The update installs when they finish; "
+                      "ArchHub stays open.")
+    assert "pid" not in notice and "7888" in caplog.text            # the guard holds; the ids stay in the log
+    hard = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: "installer bytes changed",
+                           desktop_pids=set())
+    assert hard == "The update would be refused (installer bytes changed); ArchHub stays open."

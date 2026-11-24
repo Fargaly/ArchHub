@@ -9,8 +9,8 @@ Set GH_TOKEN in the environment to use the authenticated GitHub API quota.
 Keeps the empty ``## Next build`` slot, writes every published stable build as a
 heading (newest first), and preserves older hand-written entries that are not
 on GitHub. Release bodies that only carry the Build block become honest
-published-build rows; ``## What changed`` / ``## Known gaps`` are copied when
-present. Source lines stay in CHANGELOG.md for the repository; the public site
+published-build rows. Changes, known gaps and verification scope are copied
+when present. Source lines stay in CHANGELOG.md for the repository; the public site
 strips them at build time.
 """
 from __future__ import annotations
@@ -60,17 +60,19 @@ def field(body: str, name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def section_lines(body: str, heading: str) -> list[str]:
+    match = re.search(rf"^## {re.escape(heading)}[ \t]*\r?\n(.*?)(?=^## |\Z)", body, re.M | re.S)
+    return match.group(1).splitlines() if match else []
+
+
 def section_bullets(body: str, heading: str) -> list[str]:
-    match = re.search(rf"## {re.escape(heading)}\s*\n(.*?)(?=\n## |\Z)", body, re.S)
-    if not match:
-        return []
-    return [line[2:].strip() for line in match.group(1).splitlines() if line.startswith("- ")]
+    return [line[2:].strip() for line in section_lines(body, heading) if line.startswith("- ")]
 
 
 def entry_from_release(release: dict) -> str:
     identity = build_id(release["tag_name"])
     body = release.get("body") or ""
-    changed = section_bullets(body, "What changed")
+    changed = section_bullets(body, "What changed") or section_bullets(body, "Changes")
     gaps = section_bullets(body, "Known gaps")
     lines = [f"## {identity}", ""]
     if changed:
@@ -87,6 +89,10 @@ def entry_from_release(release: dict) -> str:
             lines.append(f"- Installer SHA-256: `{sha.group(1).lower()}`.")
         if built:
             lines.append(f"- Built at {built}.")
+    verification = " ".join(line.strip().removeprefix("- ") for line in section_lines(body, "Verification scope")
+                            if line.strip())
+    if verification:
+        lines.append(f"- Verification scope: {verification}")
     source = field(body, "SOURCE_REVISION")
     if source:
         lines.extend(["", f"Source: {source[:8]}."])

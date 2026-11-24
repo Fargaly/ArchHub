@@ -94,6 +94,80 @@ class StaticSiteTest(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), result)
 
 
+    def test_published_changes_and_verification_reach_both_changelogs(self):
+        from build_site import CHANGELOG_SCRIPT
+
+        # Exact public release bodies, GitHub release IDs 456140451 and 456016882.
+        releases = [
+            {"tag_name": "build-20261124-0344-a4980b0", "body": (
+                "## Changes\n"
+                "\n"
+                "- Workshop now keeps the message ID when its delivery receipt or request profile is busy. The composer shows which agents are still waiting.\n"
+                "- Select several agents by name or use @everyone. Each selected agent can receive the message on its next turn. Agents joining later can still read the room.\n"
+                "\n"
+                "## Verification scope\n"
+                "\n"
+                "In an isolated Windows profile, twelve selected Cursor hook recipients each received one copy on their first check. An interrupted group send left zero partial messages. Signed-in Home and Settings layout verification remains open.\n"
+                "\n"
+                "## Build\n"
+                "BUILD_ID: 20261124-0344-a4980b0\n"
+                "BUILT_AT: 2026-11-23T23:44:46Z\n"
+                "SHA256 ArchHub-Setup-0.exe: 094d3dc01a317b029bef343612ce08337340eb6df00ee76ea4a8b3e1f0c73202\n"
+                "SOURCE_REVISION: a4980b0c3a298b5835fd29eb15c046c0cacbc86a\n"
+                "REQUIREMENTS_SHA256: 806bb1936f11af51092960fc804f6426c4103624c90770f7ddd79eff43180c84\n"
+            )},
+            {"tag_name": "build-20261124-0112-9864b61", "body": (
+                "## Changes\n"
+                "\n"
+                "- ArchHub checks that a newer installer is ready before reporting busy connectors. When the installed build is current, the Update button clears. A real update still waits for work in progress.\n"
+                "- Workshop sends keep their delivery receipt if another writer is busy. A message delivered to a native agent is counted once, and checking for waiting work releases the database for other agents.\n"
+                "- Settings lets you pick a named project or Canvas session for scoped preferences.\n"
+                "\n"
+                "## Verification scope\n"
+                "\n"
+                "The twelve protected Settings checks and the named project/session picker have not been exercised in a signed-in Windows installation. The picker passed 34 browser checks and seven scoped-preference checks.\n"
+                "\n"
+                "## Build\n"
+                "BUILD_ID: 20261124-0112-9864b61\n"
+                "BUILT_AT: 2026-11-23T21:13:10Z\n"
+                "SHA256 ArchHub-Setup-0.exe: 2566e2c80975ed61f56215ac4242a97b97e167498545a0b8922dbb44f9b43eff\n"
+                "SOURCE_REVISION: 9864b61eb4ba3a86b10c8a51663039b1ea1182d5\n"
+                "REQUIREMENTS_SHA256: 806bb1936f11af51092960fc804f6426c4103624c90770f7ddd79eff43180c84\n"
+            )},
+        ]
+        expected = []
+        for release in releases:
+            lines = release["body"].splitlines()
+            scope = lines.index("## Verification scope")
+            changes = [line[2:] for line in lines[:scope] if line.startswith("- ")]
+            expected.append([*changes, "Verification scope: " + lines[scope + 2]])
+
+        releases.append({"tag_name": "build-older", "body":
+                         "## What changed\r\n- A & B < 5\r\n## Known gaps\r\n- More checks pending\r\n"})
+        expected.append(["A & B < 5", "Known gaps: More checks pending"])
+        for release, items in zip(releases, expected):
+            with self.subTest(tag=release["tag_name"]):
+                entry = sync_changelog.entry_from_release(release)
+                self.assertEqual([line[2:] for line in entry.splitlines() if line.startswith("- ")], items)
+
+        script = """
+const {JSDOM} = require('jsdom');
+const {releases, markup} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const dom = new JSDOM('<main id="changelog-live"></main>' + markup, {
+  runScripts: 'dangerously',
+  beforeParse(window) { window.fetch = async () => ({ok: true, json: async () => releases}); }
+});
+setImmediate(() => {
+  const lists = Array.from(dom.window.document.querySelectorAll('#changelog-live ul'));
+  console.log(JSON.stringify(lists.map(list => Array.from(list.children, item => item.textContent))));
+  dom.window.close();
+});
+"""
+        rendered = subprocess.run(["node", "-e", script], cwd=ROOT, timeout=15, check=True,
+                                  input=json.dumps({"releases": releases, "markup": CHANGELOG_SCRIPT}),
+                                  capture_output=True, text=True)
+        self.assertEqual(json.loads(rendered.stdout), expected)
+
     def test_release_fetch_authentication_stays_on_the_initial_request(self):
         from urllib.request import HTTPRedirectHandler
 

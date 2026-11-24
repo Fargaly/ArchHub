@@ -367,10 +367,32 @@ CHANGELOG_SCRIPT = """<script>(()=>{const root=document.getElementById('changelo
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const bid=tag=>String(tag||'').replace(/^build-/,'');
 const text=body=>String(body||'').replace(/\\r\\n/g,'\\n');
-const section=(body,name)=>{const src=text(body);const mark='## '+name+'\\n';const i=src.indexOf(mark);if(i<0)return null;const rest=src.slice(i+mark.length);const j=rest.search(/\\n## /);const block=j<0?rest:rest.slice(0,j);return(block.match(/^- .+$/mg)||[]).map(l=>l.slice(2).trim())};
+const section=(body,name)=>{
+  const lines=text(body).split('\\n');
+  const start=lines.findIndex(line=>line.trimEnd()==='## '+name);
+  if(start<0)return [];
+  const rest=lines.slice(start+1),end=rest.findIndex(line=>line.startsWith('## '));
+  return end<0?rest:rest.slice(0,end);
+};
+const bullets=(body,name)=>section(body,name).filter(line=>line.startsWith('- ')).map(line=>line.slice(2).trim());
 const meta=body=>{const o={};text(body).split(/\\n/).forEach(line=>{const m=/^(BUILD_ID|BUILT_AT|SOURCE_REVISION):\\s*(.+)$/.exec(line);if(m)o[m[1]]=m[2].trim();const s=/^SHA256 ArchHub-Setup-0\\.exe:\\s*([0-9a-fA-F]{64})/.exec(line);if(s)o.SHA256=s[1].toLowerCase()});return o};
 const title=id=>{const d=/^(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})/.exec(id);return d?d[1]+'-'+d[2]+'-'+d[3]+' \\u00b7 '+d[4]+':'+d[5]:id};
-const entry=(id,body)=>{const changed=section(body,'What changed'),g=section(body,'Known gaps')||[],m=meta(body);let items;if(changed&&changed.length){items=changed.map(esc);if(g.length)items.push(esc('Known gaps: '+g.join('; ')));}else{items=['Published build '+esc(id)+(m.SOURCE_REVISION?' (source '+esc(m.SOURCE_REVISION.slice(0,7))+').':'')];if(m.SHA256)items.push('Installer SHA-256: '+esc(m.SHA256)+'.');if(m.BUILT_AT)items.push('Built at '+esc(m.BUILT_AT)+'.');}return '<h2>'+esc(title(id))+'</h2><ul>'+items.map(x=>'<li>'+x+'</li>').join('')+'</ul>'};
+const entry=(id,body)=>{
+  const original=bullets(body,'What changed');
+  const items=original.length?original:bullets(body,'Changes');
+  if(items.length){
+    const gaps=bullets(body,'Known gaps');
+    if(gaps.length)items.push('Known gaps: '+gaps.join('; '));
+  }else{
+    const m=meta(body);
+    items.push('Published build '+id+(m.SOURCE_REVISION?' (source '+m.SOURCE_REVISION.slice(0,7)+').':''));
+    if(m.SHA256)items.push('Installer SHA-256: '+m.SHA256+'.');
+    if(m.BUILT_AT)items.push('Built at '+m.BUILT_AT+'.');
+  }
+  const verification=section(body,'Verification scope').map(line=>line.trim().replace(/^- /,'')).filter(Boolean).join(' ');
+  if(verification)items.push('Verification scope: '+verification);
+  return '<h2>'+esc(title(id))+'</h2><ul>'+items.map(item=>'<li>'+esc(item)+'</li>').join('')+'</ul>';
+};
 let page=1,rows=[];const load=()=>fetch('https://api.github.com/repos/Fargaly/ArchHub/releases?per_page=100&page='+page).then(r=>r.ok?r.json():Promise.reject(r.status)).then(batch=>{rows.push(...(batch||[]).filter(x=>!x.draft&&!x.prerelease));if(batch&&batch.length===100){page+=1;return load()}return rows});
 load().then(list=>{if(!list.length)return;root.innerHTML=list.map(r=>entry(bid(r.tag_name),r.body||'')).join('')}).catch(()=>{})})()</script>"""
 

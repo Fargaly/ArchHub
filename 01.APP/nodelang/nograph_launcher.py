@@ -493,6 +493,10 @@ def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, de
         logging.getLogger(__name__).info('Update waits for agent connectors: %s', refusal)
         calls = sum(int(n) for n in re.findall(r'(\d+) call', refusal))
         # Promise only what happens: nothing installs by itself here (automatic updates may be off).
+        from .quiet_update import _CONNECTOR_DEFERRED
+        if calls and len(refusal) - len(_CONNECTOR_DEFERRED) >= 400:
+            # The diagnostic is clipped at 400 characters, so its count is partial (16 calls read as 12).
+            return "Requests are in progress. Try Update again when they finish."
         if calls:
             return "%d request%s in progress. Try Update again when they finish." % (
                 calls, ' is' if calls == 1 else 's are')

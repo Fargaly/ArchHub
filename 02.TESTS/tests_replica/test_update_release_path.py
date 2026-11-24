@@ -2159,6 +2159,11 @@ def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(t
     single = _update_refusal(server, tmp_path, tmp_path, desktop_pids=set(),
                              preflight=lambda _a, desktop_pids: "deferred: pid 1: 1 call(s) in flight")
     assert single == "1 request is in progress. Try Update again when they finish."
+    # e988 39e6fc31: sixteen one-call supervisors are clipped at 400 characters; never show a partial count.
+    many = quiet_update._CONNECTOR_DEFERRED + "; ".join("pid %d: 1 call(s) in flight" % (50000 + i)
+                                                        for i in range(16))[:400]
+    clipped = _update_refusal(server, tmp_path, tmp_path, desktop_pids=set(), preflight=lambda _a, desktop_pids: many)
+    assert clipped == "Requests are in progress. Try Update again when they finish."
     hard = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: "installer bytes changed",
                            desktop_pids=set())
     assert hard == "The update would be refused (installer bytes changed); ArchHub stays open."

@@ -2093,3 +2093,24 @@ def test_preview_channel_picks_the_newest_validated_build_whatever_the_list_orde
     assert qu.read_latest_release(lambda _r, timeout: io.BytesIO(payload))["build_id"] == "20261123-2137-0ea5038"
     payload = json.dumps(newest).encode()
     assert qu.read_latest_release(lambda _r, timeout: io.BytesIO(payload)) is None
+
+
+def test_publisher_resumes_a_timed_out_preview_draft_instead_of_creating_another(tmp_path):
+    """e988 2e8a46bb: GitHub timed out returning the create response, leaving draft 456140451 with no assets."""
+    script = ROOT / "03.TOOLS/packaging/windows/publish_release.ps1"
+    source = script.read_text(encoding="utf-8")
+    body = source[source.index("if ($CreatePreview -and $ResumeDraftId) {"):source.index("} elseif ($CreatePreview) {")]
+    assert '"repos/$Repository/releases/$ResumeDraftId"' in body
+    assert "$existing.draft -ne $true" in body and "$existing.tag_name -cne $tag" in body
+    assert "$existing.target_commitish -cne $offer.source_revision" in body
+    assert "gh release upload $tag @missing" in body and "--clobber" not in body   # never overwrite present bytes
+    assert "release create" not in body                                          # never a second draft
+    # The resumed draft goes through the same ready/after checks as a fresh one.
+    after = source[source.index("} elseif ($CreatePreview) {"):]
+    assert after.index("Read-PublicationState 'ready'") < after.index("Read-PublicationState 'after'")
+    # Resume belongs to -CreatePreview only.
+    for extra in (["-PromotePreview", "-PreviewReleaseId", "7"], []):
+        done = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script), "-ReleaseDirectory", str(tmp_path),
+                               "-ExpectedSourceRevision", "a" * 40, "-StableReleaseId", "5", "-ResumeDraftId", "9",
+                               "-PythonPath", sys.executable, *extra], capture_output=True, text=True, timeout=60)
+        assert done.returncode != 0 and "Choose one release operation" in (done.stdout + done.stderr)

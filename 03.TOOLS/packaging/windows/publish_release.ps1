@@ -15,6 +15,8 @@ param(
     [switch]$PromotePreview,
     [long]$StableReleaseId,
     [long]$PreviewReleaseId,
+    # With -CreatePreview: resume this existing draft (a create whose response timed out) instead of creating another.
+    [long]$ResumeDraftId,
     # Reconcile and print the exact publish plan; upload nothing.
     [switch]$DryRun
 )
@@ -45,6 +47,7 @@ if (($CreatePreview -and $PromotePreview) -or
         $StableReleaseId -le 0 -or $Repository -cne 'Fargaly/ArchHub')) -or
     ($PromotePreview -and ($PreviewReleaseId -le 0 -or $PreviewReleaseId -eq $StableReleaseId)) -or
     ($CreatePreview -and $PreviewReleaseId) -or
+    ($ResumeDraftId -and (-not $CreatePreview -or $ResumeDraftId -le 0 -or $ResumeDraftId -eq $StableReleaseId)) -or
     (-not $mode -and ($StableReleaseId -or $PreviewReleaseId))) {
     throw 'Choose one release operation. Preview publication requires the expected revision and stable ID; promotion also requires the approved preview ID.'
 }
@@ -225,7 +228,25 @@ if ($mode) {
     }
     Write-Output "PLAN: $mode preview $tag at $ExpectedSourceRevision against stable release $StableReleaseId."
     if ($DryRun) { return }
-    if ($CreatePreview) {
+    if ($CreatePreview -and $ResumeDraftId) {
+        # A create whose response timed out left a draft: resume that one, never a second. It must be an unpublished
+        # draft for this tag and revision; missing assets are uploaded without overwriting, and the same ready/after
+        # checks below decide whether its bytes are the reconciled ones.
+        $existing = (& gh api "repos/$Repository/releases/$ResumeDraftId") -join [Environment]::NewLine
+        if ($global:LASTEXITCODE -ne 0) { throw 'Cannot read the draft to resume; nothing was published.' }
+        $existing = $existing | ConvertFrom-Json
+        if ($existing.id -ne $ResumeDraftId -or $existing.draft -ne $true -or $existing.tag_name -cne $tag -or
+            $existing.target_commitish -cne $offer.source_revision) {
+            throw 'The draft to resume is not an unpublished draft of this tag and revision; nothing was published.'
+        }
+        $present = @($existing.assets | ForEach-Object { $_.name })
+        $missing = @($assets | Where-Object { $present -cnotcontains (Split-Path -Leaf $_) })
+        if ($missing.Count) {
+            & gh release upload $tag @missing --repo $Repository
+            if ($global:LASTEXITCODE -ne 0) { throw 'Resumed draft upload failed; draft retained.' }
+        }
+        $PreviewReleaseId = $ResumeDraftId
+    } elseif ($CreatePreview) {
         & gh @create --prerelease
         if ($global:LASTEXITCODE -ne 0) { throw 'Preview draft upload failed.' }
         $draftId = & gh release view $tag --repo $Repository --json databaseId --jq .databaseId

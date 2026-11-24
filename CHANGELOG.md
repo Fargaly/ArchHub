@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261124-1422-7a222b2
+
+- Home and History reuse task information from the same canvas. Reopening an unchanged list does less disk work.
+- If a cache entry is incomplete, ArchHub reads the saved canvas so the task keeps its scope and place in the project.
+- Verification scope: Windows checks compared task names, scope and parent links in Home and History. With 200 saved canvases, reopening unchanged lists in a fresh process required zero canvas-file reads. Full signed-in Settings checks require a dedicated QA account.
+
+Source: 7a222b21.
+
 ## 20261124-1020-c94004e
 
 - When an update is ready and you are away, ArchHub can install it in a short gap between agent requests.

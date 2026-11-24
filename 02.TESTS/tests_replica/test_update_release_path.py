@@ -2156,6 +2156,14 @@ def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(t
         notice = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: deferred, desktop_pids=set())
     assert notice == "3 requests are in progress. Try Update again when they finish."
     assert "pid" not in notice and "7888" in caplog.text            # the guard holds; the ids stay in the log
+    # e988 65716c34: a connector-only wait tells the update pulse to recheck soon; anything else does not.
+    assert server._connector_deferred is True
+    _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: "", desktop_pids=set())
+    assert server._connector_deferred is False
+    source = (ROOT / "01.APP/nodelang/nograph_launcher.py").read_text(encoding="utf-8")
+    pulse = source[source.index("server._connector_deferred = False"):source.index("update_pulse.setInterval(interval)")]
+    assert "2_000 if getattr(server, '_connector_deferred', False) else 60_000" in pulse
+    assert pulse.index("install_if_safe") < pulse.index("interval = 2_000")
     # e988 591a8075: an unsupervised connector has no call count; promise nothing that will not happen.
     from nodelang import quiet_update
     unsupervised = quiet_update._CONNECTOR_DEFERRED + "an agent connector is not supervised yet"

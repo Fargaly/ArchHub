@@ -429,8 +429,15 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
                 def answered(live):
                     # Reconciled with the live Studio right before an automatic close: only a page that answers
                     # "nothing unsaved" lets it go on. No answer (a busy or broken page) holds the install.
+                    server._connector_deferred = False
                     if _live_page_clean(live):
                         update.install_if_safe(closing=closing, canvas_running=canvas_job_running(server))
+                    # Only agent requests stood in the way: their idle gaps last seconds, a 60 s pulse missed them
+                    # (75 report changes in 100 s, longest gap 2.9 s). Recheck every 2 s while that holds; every
+                    # other condition (idle, clean page, no canvas run, preflight, drain) is rechecked each time.
+                    interval = 2_000 if getattr(server, '_connector_deferred', False) else 60_000
+                    if update_pulse.interval() != interval:
+                        update_pulse.setInterval(interval)
                 view.page().runJavaScript(
                     "window.__archhubEditState ? window.__archhubEditState() : null", answered)
             if QSystemTrayIcon.isSystemTrayAvailable():
@@ -483,6 +490,8 @@ def _update_refusal(server, state_dir=None, app_root=None, *, preflight=None, de
         me = psutil.Process()
         desktop_pids = {me.pid, *(p.pid for p in me.parents()), *(p.pid for p in me.children(recursive=True))}
     refusal = (preflight or preflight_refusal)(Path(app_root), desktop_pids=desktop_pids)
+    # Read by the update pulse: agent requests alone are a short wait worth rechecking soon.
+    server._connector_deferred = bool(refusal) and connector_install_deferred(refusal)
     if refusal:
         if not connector_install_deferred(refusal):
             hold_auto_install(Path(state_dir), refusal)

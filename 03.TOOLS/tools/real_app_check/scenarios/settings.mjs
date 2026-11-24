@@ -40,6 +40,7 @@ export const steps=[
  'Installed Projects creates the selected Office folder tree through its native picker',
  'Installed Canvas saves the selected Session Project folder from its native picker',
  'Installed Projects restores revision and naming controls, protects both files on refused Save As, and resumes autosave after native Cancel',
+ 'Installed named Settings pickers open their project and Canvas and refuse stale destinations',
 ];
 const declaredSteps=steps;
 export default async function({input,label,shot,step:recordStep,js,until,clickText,rectOf,mouse,cdp,out,native}){
@@ -585,6 +586,101 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    if(previousScope)await scope(previousScope);
    if(previousProject&&previousProject!==workspaceId)await call('selectWorkspace',previousProject);
    await call('openSession',previous);
+  }
+ });
+ await step(steps[12],async()=>{
+  const call=(method,...args)=>js('window.ArchHubAPI['+JSON.stringify(method)+'](...'+JSON.stringify(args)+')');
+  const previous=await js('(()=>{const a=window.ArchHubAPI,s=a.getSnapshot();return {path:a.getSessionPath(),scope:s.settingsScope,workspace:s.activeWorkspace};})()');
+  assert.ok(previous.path && workspaceId,'The saved Settings fixture and its project must exist.');
+  const projectName='Zinc project', sessionTitle='Zinc coordination';
+  const root=path.join(folder,projectName), {sessionsFolder:docs}=await call('readSessionsFolder');
+  const relative=path.relative(isolated,docs);
+  assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative),'Use the isolated QA sessions folder.');
+  const source=path.join(docs,'picker-source.archhub'), target=path.join(docs,'picker-target.archhub');
+  assert.ok(!fs.existsSync(source) && !fs.existsSync(target) && !fs.existsSync(root),'Named-picker fixture already exists.');
+  fs.mkdirSync(root);fs.mkdirSync(docs,{recursive:true});
+  const ownerBytes=()=>[globalFile,workspaceFile,source,target].map(p=>fs.existsSync(p)?fs.readFileSync(p):null);
+  async function saveCanvas(name,where,project){
+   await call('newSession',name);await call('saveSession',where);await call('setSessionModel',where,{project});
+   const saved=json(where);assert.equal(saved.properties.project,project);return saved.id;
+  }
+  // Both synthetic targets start with Z. A real select type-ahead commits once, without selecting intermediate owners.
+  async function pick(label,name){
+   const selector=JSON.stringify('select[aria-label="'+label+'"]');
+   const options=await until(()=>js('(()=>{const s=document.querySelector('+selector+');return s&&!s.disabled?[...s.options].filter(o=>!o.disabled&&o.text.trim().toLowerCase().startsWith("z")).map(o=>({name:o.text.trim(),value:o.value})):[];})()'),rows=>rows.length>0);
+   assert.deepEqual(options.map(o=>o.name),[name]);
+   assert.equal(await clickText(label,'select'),true);
+   await key('Escape','Escape',27);
+   assert.equal(await js('document.activeElement===document.querySelector('+selector+')'),true);
+   await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'z',code:'KeyZ',windowsVirtualKeyCode:90,text:'z'});
+   await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'z',code:'KeyZ',windowsVirtualKeyCode:90});
+   return options[0].value;
+  }
+  async function postSettings(operation,args,destination){
+   const lease=window.__archhubSession,subject=window.ArchHubAPI.getSnapshot().desktopAccess.subject;
+   const response=await fetch('/api/universal/settings-action',{method:'POST',cache:'no-store',
+    headers:{'Content-Type':'application/json','X-ArchHub-Session':lease.token,'X-ArchHub-CSRF':lease.csrf,'X-ArchHub-Desktop-Subject':subject},
+    body:JSON.stringify({function:operation,args,context:{surface:'settings',session:destination.session,settingsDestination:destination}})});
+   const body=await response.json();
+   return response.ok ? {status:response.status,destination:body.result?.settingsDestination} : {status:response.status,code:body.code};
+  }
+  const request=(operation,args,destination)=>js('('+postSettings.toString()+')(...'+JSON.stringify([operation,args,destination])+')');
+  async function conflict(operation,args,destination){
+   const before=ownerBytes();
+   const result=await request(operation,args,destination);
+   assert.deepEqual(result,{status:409,code:'settings_destination_changed'});
+   assert.deepEqual(ownerBytes(),before,'A refused '+operation+' changed a Settings or Canvas file.');
+   return result;
+  }
+  function projectView(){
+   const api=window.ArchHubAPI;
+   const heading=document.querySelector('[data-screen="settings/Projects"] .sheet-page-heading h2');
+   return {heading:heading?.getClientRects().length?heading.textContent.trim():null,
+    destination:api.getSnapshot().settingsDestination,path:api.getSessionPath()};
+  }
+  function canvasView(){
+   const api=window.ArchHubAPI,canvas=document.querySelector('[data-screen="canvas"]');
+   const control=document.querySelector('aside[aria-label="Session settings"] [aria-label="Done when"]');
+   return {canvas:!!canvas?.getClientRects().length,inspector:!!control?.getClientRects().length,
+    id:api.getSessionDocument()?.id,path:api.getSessionPath()};
+  }
+  let registered;
+  try{
+   await call('addWorkspace',{folder:root});
+   registered=await js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>window.ArchHubAPI.sessionPathKey(w.path||w.folder)===window.ArchHubAPI.sessionPathKey('+JSON.stringify(root)+'))');
+   assert.equal(registered?.name,projectName);assert.notEqual(registered.id,workspaceId);
+   const targetId=await saveCanvas(sessionTitle,target,workspaceId);
+   const sourceId=await saveCanvas('Source drawing',source,registered.id);
+   assert.notEqual(sourceId,targetId);
+   await call('openSession',source);
+   assert.equal(await clickText('Home'),true);
+   assert.equal(await until(()=>js('Boolean(document.querySelector("[data-home-page]"))'),Boolean),true);
+   assert.equal(await clickText('Settings'),true);
+   assert.equal(await until(()=>js('Boolean(document.querySelector("nav[aria-label=\\"Settings categories\\"]"))'),Boolean),true);
+   await call('refreshPreferences');await call('setSettingsScope','User');
+   assert.equal(await pick('Which project',projectName),registered.id);
+   const heading='Projects \u00b7 '+projectName;
+   const project=await until(()=>js('('+projectView.toString()+')()'),v=>v.heading===heading&&v.destination?.workspace===registered.id);
+   assert.equal(project.heading,heading);assert.equal(project.destination.scope,'Workspace');assert.equal(project.destination.session,sourceId);
+   assert.equal(path.normalize(project.path),path.normalize(source));
+   assert.deepEqual(await request('readPreferences',[],project.destination),{status:200,destination:project.destination});
+   const wrongProject=await conflict('setSettingsScope',['Workspace',workspaceId,sourceId],project.destination);
+   const wrongSession=await conflict('setSettingsScope',['Session',registered.id,targetId],project.destination);
+   assert.equal(path.normalize(await pick('Which session',sessionTitle)),path.normalize(target));
+   const opened=await until(()=>js('('+canvasView.toString()+')()'),v=>v.canvas&&v.inspector&&v.id===targetId);
+   assert.equal(opened.canvas,true);assert.equal(opened.inspector,true);assert.equal(opened.id,targetId);
+   assert.equal(path.normalize(opened.path),path.normalize(target));
+   const current=await request('readPreferences',[],project.destination);
+   assert.equal(current.status,200);assert.equal(current.destination.session,targetId);assert.equal(current.destination.workspace,workspaceId);
+   const staleEdit=await conflict('setAppearance',['Appearance.Theme','Dark'],project.destination);
+   return {pass:true,got:{projectHeading:project.heading,selectedProject:registered.id,canvas:opened,refusals:{wrongProject,wrongSession,staleEdit},unchangedFilesPerRefusal:4},expected_http:['409 /api/universal/settings-action']};
+  }finally{
+   await call('openSession',previous.path);await call('refreshPreferences');
+   if(previous.scope)await call('setSettingsScope',previous.scope);
+   if(previous.workspace)await call('selectWorkspace',previous.workspace);
+   if(registered)await call('removeWorkspace',registered.id);
+   assert.equal(path.normalize(await call('getSessionPath')),path.normalize(previous.path));
+   for(const created of [source,target])fs.rmSync(created,{force:true});
   }
  });
 }

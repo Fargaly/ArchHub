@@ -429,6 +429,41 @@ def composer_fanout_snapshot(app, run):
     return result
 
 
+def legacy_answer_snapshot(app):
+    """c0fa09da on the installed modules: a second reply to a legacy native note must not raise 'idempotency conflict'
+    on every tick; the first answer stands and both replies stay. Synthetic in-memory store only."""
+    import time
+    from unittest.mock import patch
+    from nodelang import workshop_mailbox as mailbox
+    from nodelang.conversation_history import ConversationHistoryStore
+
+    if Path(mailbox.__file__).resolve() != app / 'nodelang' / 'workshop_mailbox.py':
+        raise RuntimeError('Legacy answer witness requires the selected application modules.')
+    seat = {'session': 'native:codex:upgrade-uuid', 'agent': 'Reviewer', 'runtime': 'codex',
+            'native_session_id': 'upgrade-uuid'}
+    registered = {**seat, 'session': 'reviewer-registration', 'current': True}
+    with ConversationHistoryStore(':memory:', instance_id=mailbox.ROOM) as history:
+        history.ensure_conversation(mailbox.ROOM)
+
+        def note(key, author, **fields):
+            return history.append(mailbox.ROOM, author=author, content='Example', category=mailbox.CATEGORY,
+                                  idempotency_key=key, **fields)
+        parent = note('p', 'Coordinator [q]', evidence=[mailbox.ROUTING_EVIDENCE, json.dumps({'recipients': [seat]})])
+        replies = [note(key, 'Reviewer [reviewer-registration]', reply_to=parent['id'],
+                        evidence=[mailbox.ROUTING_EVIDENCE, json.dumps({'sender': registered, 'recipients': []})])
+                   for key in ('r1', 'r2')]
+        with patch.object(mailbox, 'read_declarations', return_value=[registered]):
+            worker = mailbox.WorkshopInjection(None, None)
+            for _ in range(2):
+                worker._tick(history, time.time())
+        answer = mailbox.delivery_events(history, parent)[seat['session']]['answered']
+        if answer['reply_message_id'] != replies[0]['id']:
+            raise ValueError('The first answer did not stand.')
+        if any(history.get(mailbox.ROOM, r['id'], principal=mailbox.DELIVERY_AUTHOR) is None for r in replies):
+            raise ValueError('A reply note is missing.')
+    return {'ticks': 2, 'conflicts': 0, 'first_answer_kept': True, 'replies_kept': 2}
+
+
 def main():
     phase, expected_build = sys.argv[1:]
     if (phase not in ('seed', 'verify') or os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'
@@ -517,6 +552,7 @@ def main():
                     'observations': workshop_reply_snapshot(app, run, seed['workshop_reply_messages']),
                 }
                 record['workshop_composer'] = composer_fanout_snapshot(app, run)
+                record['workshop_legacy_answer'] = legacy_answer_snapshot(app)
         record['preference_checks'] = {scope: 'PASS' if value is not None else 'NOT EXERCISED'
                                        for scope, value in data['values'].items()}
         record['result'] = 'PASS'

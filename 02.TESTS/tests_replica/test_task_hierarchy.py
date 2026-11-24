@@ -206,3 +206,33 @@ def test_a_damaged_cache_row_with_a_matching_stamp_rereads_the_canvas(tmp_path, 
         monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
         monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
         assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Intact title'
+
+
+def test_a_wrong_typed_cached_field_is_never_trusted(tmp_path, monkeypatch):
+    """542e 317ceafe: a matching-stamp row with context plan=42 passed and column() raised TypeError."""
+    import json, os, time
+    from nodelang import session_files, workshop_tasks
+    cache = tmp_path / 'cache' / 'session-contexts.json'
+    monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: cache)
+    canvas = tmp_path / 'intact.archhub'
+    session_files.write_document(canvas, session_files.new_document('Intact title'))
+    old = time.time() - 60
+    os.utime(canvas, (old, old))
+    stat = os.stat(canvas)
+    stamp = [stat.st_mtime_ns, stat.st_size, stat.st_ino]
+    good = {'sessionTitle': 'Intact title', 'plan': [], 'handover': {}, 'homePinned': False}
+    assert workshop_tasks._context_shape_ok(good, {'taskContext': {}})
+    for context in ({**good, 'plan': 42}, {**good, 'handover': []}, {**good, 'plan': [42]}, {**good, 'unknown': 1},
+                    {**good, 'homePinned': 'yes'}, {**good, 'sessionTitle': None}):
+        assert not workshop_tasks._context_shape_ok(context, {'taskContext': {}}), context
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({'version': workshop_tasks._CONTEXTS_VERSION,
+                                     'rows': [[str(canvas), None, stamp, context, {'taskContext': {}}]]}), encoding='utf-8')
+        monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+        monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+        assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Intact title'
+    # A held context that still breaks the list is replaced by one read of the canvas (the column() fallback).
+    monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {(str(canvas), None): (
+        tuple(stamp), {**good, 'plan': [{'title': 1}], 'agents': [{}]}, {'taskContext': {}})})
+    assert workshop_tasks._session_context(str(canvas), roots={}, fresh=True)['sessionTitle'] == 'Intact title'
+    assert (str(canvas), None) in workshop_tasks._SESSION_CONTEXTS

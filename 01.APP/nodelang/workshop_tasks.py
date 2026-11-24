@@ -969,6 +969,48 @@ def _contexts_file():
     return state_directory() / 'cache' / 'session-contexts.json'
 
 
+_CONTEXT_LISTS = frozenset(('rules', 'pinnedMessages', 'agents', 'plan', 'workflow', 'parameters', 'activity',
+                            'folders', 'references', 'checkpoints', 'fileMessages'))
+_CONTEXT_DICTS = frozenset(('handover', 'progress'))
+_CONTEXT_TEXTS = frozenset(('scope', 'sessionTitle', 'anchorTitle'))
+
+
+def _json_value(value, depth=0):
+    if depth > 32:
+        return False
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return True
+    if isinstance(value, list):
+        return all(_json_value(item, depth + 1) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _json_value(item, depth + 1) for key, item in value.items())
+    return False
+
+
+def _context_shape_ok(context, choice):
+    """The saved context a list consumes, field by field: every key known, every value of its type, list items
+    objects or text (as the owner writes them). Anything else means the canvas is read again."""
+    if not (isinstance(context, dict) and isinstance(choice, dict) and _json_value(context) and _json_value(choice)):
+        return False
+    for key, value in context.items():
+        if key in _CONTEXT_LISTS:
+            if not (isinstance(value, list) and all(isinstance(item, (dict, str)) for item in value)):
+                return False
+        elif key in _CONTEXT_DICTS:
+            if not isinstance(value, dict):
+                return False
+        elif key in _CONTEXT_TEXTS:
+            if not isinstance(value, str):
+                return False
+        elif key == 'homePinned':
+            if not isinstance(value, bool):
+                return False
+        else:
+            return False
+    held = choice.get('taskContext', {})
+    return isinstance(held, dict) and set(choice) <= {'taskContext', 'project'}
+
+
 def _load_session_contexts():
     """Disposable acceleration (spec 3.1.5): the first Home and History read after a start reopened and validated every
     session file (1 s / 3 s for 47 / 200 canvases). Each entry is still checked against its file's size and mtime, so
@@ -990,7 +1032,7 @@ def _load_session_contexts():
             file, task, stamp, context, choice = row
             if (isinstance(file, str) and (task is None or isinstance(task, str)) and isinstance(stamp, list)
                     and len(stamp) == 3 and all(type(part) is int for part in stamp)
-                    and isinstance(context, dict) and isinstance(choice, dict)):
+                    and _context_shape_ok(context, choice)):
                 loaded[(file, task)] = (tuple(stamp), context, choice)
     except (OSError, ValueError, TypeError) as unusable:
         logging.getLogger(__name__).debug('Session context file %s not used: %s', path, unusable)
@@ -1016,7 +1058,7 @@ def _save_session_contexts():
         logging.getLogger(__name__).debug('Session context file %s not saved: %s', path, unsaved)
 
 
-def _session_context(path, *, roots=None, task_row=None, documents=None):
+def _session_context(path, *, roots=None, task_row=None, documents=None, fresh=False):
     """Cache file-owned context; project names always come from the current roots. documents: the calling list's
     own path -> (stamp, parsed canvas) memo, so overlapping lists never clear each other's reuse."""
     if not isinstance(path, str) or not path:
@@ -1033,6 +1075,9 @@ def _session_context(path, *, roots=None, task_row=None, documents=None):
         settled = time.time() - stat.st_mtime >= 2
         cache_key = (path, (task_row or {}).get('id'))
         held = _SESSION_CONTEXTS.get(cache_key)
+        if fresh:
+            _SESSION_CONTEXTS.pop(cache_key, None)
+            held = None
         if held and held[0] == stamp and settled:
             context, choice = copy.deepcopy(held[1:])
         else:
@@ -1249,51 +1294,66 @@ def _column(history, project=None, stale_hours=None, *, include_archived=False, 
             continue
         declaration = _declaration_for(row, declarations, index)
         session = _session_context(row.get("session_path"), roots=roots, task_row=row, documents=documents)
-        if session.get("removedFromCanvas"):
-            continue
-        if project and project not in (session.get("workspace"), session.get("project", row.get("project"))):
-            continue
-        paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
-        shown = "ARCHIVED" if row.get("archived") else state(row)
-        result = recorded_result(row, last)
-        waiting = "limit reached" if row.get("capacity") == "LIMIT_REACHED" and shown == "PLANNED" else (
-            row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else "")
-        bound = threads.get(row["id"], [])
-        owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
-        agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
-        label = owner or ((declaration or {}).get("agent") if declaration else None)
-        if isinstance(label, str) and label and label not in agents:
-            agents.insert(0, label)
-        plan = list(session.get("plan") or [])
-        if not plan and (declaration or owner or shown in ("WIP", "IN REVIEW", "DONE")):
-            plan = [{"title": short_title(row["title"]), "status": {"WIP": "working", "IN REVIEW": "blocked", "DONE": "done"}.get(shown, "")}]
-        activity = list(session.get("activity") or [])
-        if not activity and (declaration or row.get("result") or owner):
-            activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
-        built.append({'id': row['id'], 'title': short_title(session.get('anchorTitle') or row['title']), 'description': session.get('anchorTitle') or row['title'],
-             'owner': owner, 'revision': row.get('revision') or 0,
-             'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
-             'capacity': row.get('capacity') or '',
-             'stale': shown == "stale", 'result': result, 'project': session.get('project', row.get('project') or ''), 'parent': row.get('parent_id') or '',
-             'summary': _summary(row['title'], shown, result),
-             'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
-             'declarations': [declaration] if declaration else [],
-             'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
-             'rules': list(session.get("rules") or []),
-             'pinnedMessages': list(session.get('pinnedMessages') or []),
-             'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
-             'agents': agents, 'folders': list(session.get("folders") or []) or paths,
-             # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
-             'members': member_presence(row.get('members') or [], declarations, by_owner),
-             'references': list(session.get("references") or []),
-             'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
-             'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
-             'checkpoints': list(session.get("checkpoints") or []),
-             'workflow': list(session.get("workflow") or []), 'activity': activity,
-             'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
-             'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
-             'inProgress': shown in ("WIP", "IN REVIEW")})
+        try:
+            item = _column_entry(row, session, declaration, project, state, last, threads, live, current,
+                                 declarations, by_owner)
+        except (TypeError, AttributeError, KeyError, ValueError):
+            # Anything unusable in a saved context: the authoritative canvas is read once and the row rebuilt.
+            session = _session_context(row.get("session_path"), roots=roots, task_row=row, documents=documents,
+                                       fresh=True)
+            item = _column_entry(row, session, declaration, project, state, last, threads, live, current,
+                                 declarations, by_owner)
+        if item is not None:
+            built.append(item)
     return built
+
+
+def _column_entry(row, session, declaration, project, state, last, threads, live, current, declarations, by_owner):
+    """One Work row from a task and its session context; None when the row is not shown."""
+    if session.get("removedFromCanvas"):
+        return None
+    if project and project not in (session.get("workspace"), session.get("project", row.get("project"))):
+        return None
+    paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
+    shown = "ARCHIVED" if row.get("archived") else state(row)
+    result = recorded_result(row, last)
+    waiting = "limit reached" if row.get("capacity") == "LIMIT_REACHED" and shown == "PLANNED" else (
+        row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else "")
+    bound = threads.get(row["id"], [])
+    owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
+    agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
+    label = owner or ((declaration or {}).get("agent") if declaration else None)
+    if isinstance(label, str) and label and label not in agents:
+        agents.insert(0, label)
+    plan = list(session.get("plan") or [])
+    if not plan and (declaration or owner or shown in ("WIP", "IN REVIEW", "DONE")):
+        plan = [{"title": short_title(row["title"]), "status": {"WIP": "working", "IN REVIEW": "blocked", "DONE": "done"}.get(shown, "")}]
+    activity = list(session.get("activity") or [])
+    if not activity and (declaration or row.get("result") or owner):
+        activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
+    return ({'id': row['id'], 'title': short_title(session.get('anchorTitle') or row['title']), 'description': session.get('anchorTitle') or row['title'],
+         'owner': owner, 'revision': row.get('revision') or 0,
+         'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
+         'capacity': row.get('capacity') or '',
+         'stale': shown == "stale", 'result': result, 'project': session.get('project', row.get('project') or ''), 'parent': row.get('parent_id') or '',
+         'summary': _summary(row['title'], shown, result),
+         'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
+         'declarations': [declaration] if declaration else [],
+         'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
+         'rules': list(session.get("rules") or []),
+         'pinnedMessages': list(session.get('pinnedMessages') or []),
+         'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
+         'agents': agents, 'folders': list(session.get("folders") or []) or paths,
+         # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
+         'members': member_presence(row.get('members') or [], declarations, by_owner),
+         'references': list(session.get("references") or []),
+         'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
+         'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
+         'checkpoints': list(session.get("checkpoints") or []),
+         'workflow': list(session.get("workflow") or []), 'activity': activity,
+         'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
+         'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
+         'inProgress': shown in ("WIP", "IN REVIEW")})
 
 
 def fold_declarations(history, declarations):

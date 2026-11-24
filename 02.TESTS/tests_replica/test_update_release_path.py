@@ -2122,7 +2122,7 @@ def test_an_uncertain_publish_patch_is_settled_by_the_read_only_after_check(tmp_
     source = (ROOT / "03.TOOLS/packaging/windows/publish_release.ps1").read_text(encoding="utf-8")
     start = source.index("if ($patchExit -ne 0) {")
     body = source[start:source.index('Write-Output "Verified $mode of release', start)]
-    assert body.count("Read-PublicationState 'after'") == 2                 # once on the uncertain path, once normally
+    assert body.count("Read-AfterSettled") == 2                             # once on the uncertain path, once normally
     assert "gh api" not in body                                              # the mutation is never replayed
     assert "Publication response uncertain and not verified" in body         # unverifiable stays unknown, never success
     # Run the publisher's exact PATCH lines against a real native gh that exits 17, under the publisher's preferences.
@@ -2167,3 +2167,11 @@ def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(t
     hard = _update_refusal(server, tmp_path, tmp_path, preflight=lambda _a, desktop_pids: "installer bytes changed",
                            desktop_pids=set())
     assert hard == "The update would be refused (installer bytes changed); ArchHub stays open."
+
+
+def test_the_after_check_outlasts_the_releases_cache_without_replaying_the_patch():
+    """e988 52788475: right after promotion releases/latest still served the previous ID (max-age=60)."""
+    source = (ROOT / "03.TOOLS/packaging/windows/publish_release.ps1").read_text(encoding="utf-8")
+    body = source[source.index("function Read-AfterSettled {"):source.index("if ($patchExit -ne 0) {")]
+    assert "foreach ($wait in 0, 35, 35)" in body and "Read-PublicationState 'after'" in body
+    assert "gh api" not in body and "PATCH" not in body.replace("committed PATCH", "")   # read-only retries

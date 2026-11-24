@@ -268,15 +268,25 @@ if ($mode) {
     $PSNativeCommandUseErrorActionPreference = $false
     try { & gh api $endpoint --method PATCH @patch --silent; $patchExit = $global:LASTEXITCODE }
     finally { $PSNativeCommandUseErrorActionPreference = $true }
+    # GitHub serves releases/latest with Cache-Control max-age=60: right after a committed PATCH the read-only after check
+    # can still see the previous release (456266664 did). It is retried, read-only, until that window has passed; the
+    # mutation is never replayed.
+    function Read-AfterSettled {
+        foreach ($wait in 0, 35, 35) {
+            if ($wait) { Start-Sleep -Seconds $wait }
+            try { return Read-PublicationState 'after' } catch { $last = $_ }
+        }
+        throw $last
+    }
     if ($patchExit -ne 0) {
-        # A timed-out PATCH may have succeeded (456140451 did): the read-only after check decides once; the mutation is
+        # A timed-out PATCH may have succeeded (456140451 did): the read-only after check decides; the mutation is
         # never replayed, and an unverifiable state stays reported as unknown.
-        try { $null = Read-PublicationState 'after' } catch {
+        try { $null = Read-AfterSettled } catch {
             throw "Publication response uncertain and not verified ($($_.Exception.Message)); inspect release IDs before retrying."
         }
         Write-Output "Publication response was lost; the after check verified release $PreviewReleaseId."
     } else {
-        $null = Read-PublicationState 'after'
+        $null = Read-AfterSettled
     }
     Write-Output "Verified $mode of release $PreviewReleaseId through the installed updater parser."
     return

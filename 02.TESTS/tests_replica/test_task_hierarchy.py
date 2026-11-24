@@ -185,3 +185,24 @@ def test_a_same_tick_atomic_save_is_never_served_from_the_cache(tmp_path, monkey
     session_files.write_document(fresh, session_files.new_document('Just saved'))
     assert workshop_tasks._session_context(str(fresh), roots={})['sessionTitle'] == 'Just saved'
     assert not any(key[0] == str(fresh) for key in workshop_tasks._SESSION_CONTEXTS)
+
+
+def test_a_damaged_cache_row_with_a_matching_stamp_rereads_the_canvas(tmp_path, monkeypatch):
+    """542e 0395cdf0: a valid v2 file whose row had a null context or choice raised AttributeError."""
+    import json, os, time
+    from nodelang import session_files, workshop_tasks
+    cache = tmp_path / 'cache' / 'session-contexts.json'
+    monkeypatch.setattr(workshop_tasks, '_contexts_file', lambda: cache)
+    canvas = tmp_path / 'intact.archhub'
+    session_files.write_document(canvas, session_files.new_document('Intact title'))
+    old = time.time() - 60
+    os.utime(canvas, (old, old))
+    stat = os.stat(canvas)
+    stamp = [stat.st_mtime_ns, stat.st_size, stat.st_ino]
+    for broken in ([str(canvas), None, stamp, None, {}], [str(canvas), None, stamp, {}, None],
+                   [str(canvas), None, stamp[:2], {}, {}], 'not a row'):
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({'version': workshop_tasks._CONTEXTS_VERSION, 'rows': [broken]}), encoding='utf-8')
+        monkeypatch.setattr(workshop_tasks, '_SESSION_CONTEXTS', {})
+        monkeypatch.setattr(workshop_tasks, '_CONTEXTS_LOADED', set())
+        assert workshop_tasks._session_context(str(canvas), roots={})['sessionTitle'] == 'Intact title'

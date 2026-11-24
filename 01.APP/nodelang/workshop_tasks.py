@@ -982,7 +982,16 @@ def _load_session_contexts():
         data = json.loads(path.read_text(encoding='utf-8'))
         if not isinstance(data, dict) or data.get('version') != _CONTEXTS_VERSION or not isinstance(data.get('rows'), list):
             raise ValueError('not a version %d context file' % _CONTEXTS_VERSION)
-        loaded = {(file, task): (tuple(stamp), context, choice) for file, task, stamp, context, choice in data['rows']}
+        loaded = {}
+        for row in data['rows']:
+            # Each row is checked on its own: a damaged entry is skipped and its canvas is simply read again.
+            if not (isinstance(row, list) and len(row) == 5):
+                continue
+            file, task, stamp, context, choice = row
+            if (isinstance(file, str) and (task is None or isinstance(task, str)) and isinstance(stamp, list)
+                    and len(stamp) == 3 and all(type(part) is int for part in stamp)
+                    and isinstance(context, dict) and isinstance(choice, dict)):
+                loaded[(file, task)] = (tuple(stamp), context, choice)
     except (OSError, ValueError, TypeError) as unusable:
         logging.getLogger(__name__).debug('Session context file %s not used: %s', path, unusable)
         return

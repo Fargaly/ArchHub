@@ -2164,6 +2164,10 @@ def test_busy_agents_read_as_a_plain_wait_with_process_ids_only_in_diagnostics(t
     pulse = source[source.index("server._connector_deferred = False"):source.index("update_pulse.setInterval(interval)")]
     assert "2_000 if getattr(server, '_connector_deferred', False) else 60_000" in pulse
     assert pulse.index("install_if_safe") < pulse.index("interval = 2_000")
+    # e988 3453226c / e2e727c5: the long cadence is restored before the held check and the page probe.
+    callback = source[source.index("def consider_update():"):source.index("update_pulse = QTimer(app)")]
+    reset = callback.index("update_pulse.setInterval(60_000)")
+    assert reset < callback.index("_auto_install_held(state_dir)") and reset < callback.index("runJavaScript")
     # e988 591a8075: an unsupervised connector has no call count; promise nothing that will not happen.
     from nodelang import quiet_update
     unsupervised = quiet_update._CONNECTOR_DEFERRED + "an agent connector is not supervised yet"
@@ -2210,3 +2214,22 @@ def test_a_refusing_publication_check_keeps_its_diagnostic(tmp_path):
         pytest.skip("PowerShell 7 cannot be started from this sandbox")
     assert "caught=Publication after refused: binding mismatch for release 9 escalation=True" in done.stdout, \
         done.stdout + done.stderr
+
+
+def test_an_active_desktop_never_runs_the_connector_scan(monkeypatch):
+    """e988 d95414e2: with the founder working, _auto_allowed's guard ran before the idle check, its connector-only
+    answer shortened the pulse to 2 s and the process scan repeated while he worked."""
+    import threading
+    from nodelang.application_update import ApplicationUpdate
+    update = ApplicationUpdate.__new__(ApplicationUpdate)
+    update._lock, update._state, update._prerelease, update._worker = threading.RLock(), "ready", False, None
+    update._policy = lambda: {"auto_apply_on_quit": True, "idle_minutes": 15}
+    scans, reloads = [], []
+    update._restart_refusal = lambda: scans.append(1) or "2 requests are in progress. Try Update again when they finish."
+    update.reload = lambda: reloads.append(1)
+    assert update.install_if_safe(user_idle=False) is False and scans == [] and reloads == []   # working: no scan
+    assert update.install_if_safe(user_idle=True) is False and scans == [1]                      # idle: guard asked
+    assert update.install_if_safe(closing=True, user_idle=False) is False and scans == [1, 1]    # closing still asks
+    assert update.install_if_safe(canvas_running=True, user_idle=True) is False and scans == [1, 1]
+    update._restart_refusal = lambda: None
+    assert update.install_if_safe(user_idle=True) is True and reloads == [1]

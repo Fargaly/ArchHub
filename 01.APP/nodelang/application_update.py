@@ -354,11 +354,16 @@ class ApplicationUpdate:
         Safe means no canvas job is running, and either the user is idle or ArchHub
         is closing to the tray or quitting. The header Update button is a separate path.
         """
-        if canvas_running or not self._auto_allowed():
+        if canvas_running:
             return False
-        if user_idle is None:
-            user_idle = self.user_is_idle()
-        if not closing and not user_idle:
+        # Activity first: while he works no connector scan runs and nothing installs (the guard in _auto_allowed
+        # scans processes, and its connector-only answer would shorten the update pulse).
+        if not closing:
+            if user_idle is None:
+                user_idle = self.user_is_idle()
+            if not user_idle:
+                return False
+        if not self._auto_allowed():
             return False
         try:
             self.reload()

@@ -419,6 +419,10 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             if window.isVisible():
                 seen_open["value"] = True
             update.check_if_due()
+            # Each pulse starts at the long cadence; only an answered page probe whose install met nothing but agent
+            # requests shortens it. A held build or a renderer that never answers cannot keep 2 s probes going.
+            if update_pulse.interval() != 60_000:
+                update_pulse.setInterval(60_000)
             from .application_update import canvas_job_running
             # Idle installs while the window is open. Closed to the tray installs
             # on the next tick, including a download that was not ready at the close.

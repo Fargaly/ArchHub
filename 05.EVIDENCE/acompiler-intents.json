@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "intents": {
+    "ACCOUNTLANGUAGE": {"source": "Wire the approved Account language, layout direction and agent reply controls to scoped preferences and their real consumers, including reopening the application.", "scope": ["01.APP/nodelang/settings_owner.py", "01.APP/nodelang/workshop_tasks.py", "01.APP/nodelang/agent_composer.py", "01.APP/nodelang/goose_adapter.py", "01.APP/nodelang/studio/app.jsx", "01.APP/nodelang/studio/ui.jsx", "01.APP/nodelang/studio/ds_settings3.jsx", "01.APP/nodelang/studio/context-menus.jsx", "01.APP/nodelang/studio/style.css", "02.TESTS/tests_replica/test_scoped_preferences.py", "02.TESTS/tests_js/settings_design_areas.test.cjs", "05.EVIDENCE/acompiler-intents.json"]},
     "HOMEDELETE": {
       "source": "Founder requests permanent task deletion in the installed Home and Canvas menus. Workshop 6142f6f51a9a455f9aee7a3f481cb421 and 44a1d8b4c01a40c2876367f1a239e016 assign the task file, row, explicit confirmation and active-work protection to the existing task owner.",
       "scope": [

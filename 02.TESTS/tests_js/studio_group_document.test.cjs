@@ -36,6 +36,8 @@ async function open() {
       let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: []};
       // COMMANDREGISTRY: api.js loads the owner catalogue before the first session file.
       if (url === '/api/commands') data = {commands: []};
+      // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+      else if (url === '/api/universal/desktop-access') data = {ok: true, admitted: true, state: 'admitted', subject: 'group-fixture'};
       else if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
       else if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: file(), path: 'C:/isolated/group.archhub'};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: (body.document.properties?.revision || 0) + 1, document: body.document};

@@ -220,6 +220,28 @@ def test_the_setup_command_prints_its_owned_attempt_for_the_installer(tmp_path, 
     qu.reopen_connectors(app, attempt)
 
 
+def test_a_drain_request_held_open_for_a_moment_is_still_removed(tmp_path, monkeypatch):
+    app, runtime, _fixture = _layout(tmp_path)
+    request = runtime / "connectors" / qu.DRAIN_REQUEST
+    request.parent.mkdir(parents=True, exist_ok=True)
+    request.write_text(json.dumps({"attempt": "A1"}), encoding="utf-8")
+    real, refusals = Path.unlink, iter([PermissionError(32, "in use")] * 3)
+
+    def unlink(self, *args, **kwargs):
+        error = next(refusals, None)
+        if error is not None:
+            raise error
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    qu.reopen_connectors(app, "A1", sleep=lambda _s: None)
+    assert not request.exists()
+    request.write_text(json.dumps({"attempt": "A1"}), encoding="utf-8")
+    refusals = iter([PermissionError(32, "in use")] * 99)
+    with pytest.raises(OSError, match="could not be removed"):
+        qu.reopen_connectors(app, "A1", sleep=lambda _s: None, tries=3)
+
+
 # ---- The compiled installer path: a real Inno Setup harness with the SHIPPED connector admission block of ArchHub.iss.
 
 def _compiler():

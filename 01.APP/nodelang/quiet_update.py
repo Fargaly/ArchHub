@@ -1227,16 +1227,26 @@ def connector_acknowledgements(app_dir: Path, attempt: str | None, *, process_it
     return reasons
 
 
-def reopen_connectors(app_dir: Path, attempt: str) -> None:
-    """Remove this attempt's drain request so supervisors admit calls again (a newer attempt's is left alone)."""
+def reopen_connectors(app_dir: Path, attempt: str, *, sleep=time.sleep, tries: int = 40, pause: float = 0.05) -> None:
+    """Remove this attempt's drain request so supervisors admit calls again (a newer attempt's is left alone).
+
+    A supervisor polling the file holds it open for a moment; Windows then refuses the delete (error 32).
+    One such moment (2026-11-25) left a finished install unresolved, so retry briefly.
+    """
     request = _runtime_connectors(app_dir) / DRAIN_REQUEST
-    try:
-        if json.loads(request.read_text(encoding="utf-8")).get("attempt") == attempt:
-            request.unlink()
-    except FileNotFoundError:
-        return
-    except (OSError, ValueError, AttributeError) as error:
-        raise OSError("connector drain request could not be removed: %s" % error) from error
+    for left in range(tries, 0, -1):
+        try:
+            if json.loads(request.read_text(encoding="utf-8")).get("attempt") == attempt:
+                request.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError as error:  # sharing violation while a supervisor reads it
+            if left == 1:
+                raise OSError("connector drain request could not be removed: %s" % error) from error
+            sleep(pause)
+        except (OSError, ValueError, AttributeError) as error:
+            raise OSError("connector drain request could not be removed: %s" % error) from error
 
 
 def drain_connectors(app_dir: Path, attempt: str, *, acknowledgements=connector_acknowledgements,

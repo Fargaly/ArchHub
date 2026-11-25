@@ -111,12 +111,75 @@
     color: c,
     fontWeight: 600
   }}>{children}</span>;
+  function AvatarMenu({id, person = false, selectionNodeId, onClose}) {
+    const s = useData(), u = useApp();
+    const [sub, setSub] = React.useState('');
+    const people = s.people || [];
+    const personRow = person ? (people.find(p => p.id === id || p.name === id) || {id, name: id}) : people.find(p => p.id === id || p.name === id);
+    const agentRow = !personRow && ((s.agents || []).find(a => a.id === id || a.name === id)
+      || (s.providers || []).find(p => p.id === id || p.name === id)
+      || (s.liveAgents || []).find(a => a.agent === id || a.handle === id || a.name === id));
+    const isPerson = Boolean(person || personRow);
+    const rawName = String(personRow?.name || agentRow?.name || id || 'Agent').split(/\s+\/\s+/).at(-1).trim();
+    const handle = String(agentRow?.handle || agentRow?.id || rawName).toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+    if (isPerson) {
+      const targetNode = selectionNodeId || personRow?.selectionNodeId || personRow?.nodeId || '';
+      return <div role="menu" aria-label={rawName + ' menu'} data-design="person.menu" style={{
+        position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 1100, minWidth: 216,
+        background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+        borderRadius: 10, padding: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)', display: 'grid', gap: 2
+      }}>
+        <div style={{padding: '6px 10px', borderBottom: '1px solid var(--color-line-soft, #1e1e24)', marginBottom: 2}}>
+          <div style={{fontSize: 13, fontWeight: 600, color: 'var(--color-ink, #ece8e0)'}}>{rawName}</div>
+          {personRow?.accessRole && <div className="muted" style={{fontSize: 11}}>{personRow.accessRole}</div>}
+        </div>
+        <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('sharedUI.PersonMention', {handle, onClose, rawName, u}, event)}>Mention {rawName}</button>
+        <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('sharedUI.PersonSelection', {onClose, rawName, targetNode, u}, event)}>Go to their selection</button>
+      </div>;
+    }
+    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED');
+    const workTasks = tasks.filter(t => t.agent === id || t.agent === rawName || t.delegate === id || (t.messages || []).some(m => m.who === rawName || m.who === id));
+    const providerObj = (s.providers || []).find(p => p.id === (agentRow?.provider || agentRow?.id || id)) || agentRow;
+    const models = [...new Set([providerObj?.model, ...(providerObj?.models || []), ...(agentRow?.models || [])].filter(Boolean))];
+    const working = Boolean(agentRow?.status === 'working' || agentRow?.presence === 'working' || workTasks.some(t => t.status === 'WIP' || t.status === 'RUNNING'));
+    const nodeMatch = (s.graph?.nodes || []).find(n => n.id === id || n.title === rawName || n.params?.agent === id || n.params?.agent === rawName);
+    return <div role="menu" aria-label={rawName + ' menu'} data-design="avatar.menu" style={{
+      position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 1100, minWidth: 236,
+      background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+      borderRadius: 10, padding: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)', display: 'grid', gap: 2
+    }}>
+      <div style={{padding: '6px 10px', borderBottom: '1px solid var(--color-line-soft, #1e1e24)', marginBottom: 2}}>
+        <div style={{fontSize: 13, fontWeight: 600, color: 'var(--color-ink, #ece8e0)'}}>{rawName}</div>
+        <div className="muted" style={{fontSize: 11}}>{providerObj?.model || agentRow?.runtime || (working ? 'Working now' : 'Ready')}</div>
+      </div>
+      <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('sharedUI.AvGoNode', {nodeMatch, onClose, rawName, u, workTasks}, event)}>Go to its node</button>
+      <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('sharedUI.AvOpenThread', {onClose, u, workTasks}, event)}>Open its thread</button>
+      <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('sharedUI.AvMessage', {handle, onClose, u}, event)}>Message</button>
+      <button type="button" role="menuitem" aria-expanded={sub === 'assign'} className="listbutton spread" onClick={event => executeAction('sharedUI.AvSubToggle', {key: 'assign', setSub, sub}, event)}><span>Assign to a task…</span><span className="muted">›</span></button>
+      {sub === 'assign' && <div role="group" aria-label="Assign task choices" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
+        {tasks.length ? tasks.slice(0, 8).map(t => <button type="button" role="menuitem" key={t.id} className="listbutton" onClick={event => executeAction('sharedUI.AvAssignTask', {api, handle, id, onClose, rawName, t, u}, event)}>{t.title}</button>) : <span className="muted" style={{fontSize: 11, padding: '4px 8px'}}>No open tasks yet.</span>}
+      </div>}
+      <button type="button" role="menuitem" aria-expanded={sub === 'work'} className="listbutton spread" onClick={event => executeAction('sharedUI.AvSubToggle', {key: 'work', setSub, sub}, event)}><span>See its work ({workTasks.length})</span><span className="muted">›</span></button>
+      {sub === 'work' && <div role="group" aria-label="Agent work items" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
+        {workTasks.length ? workTasks.map(t => <button type="button" role="menuitem" key={t.id} className="listbutton" onClick={event => executeAction('sharedUI.AvOpenWork', {onClose, t, u}, event)}>{t.title}</button>) : <span className="muted" style={{fontSize: 11, padding: '4px 8px'}}>Nothing assigned right now.</span>}
+      </div>}
+      <button type="button" role="menuitem" aria-expanded={sub === 'model'} className="listbutton spread" onClick={event => executeAction('sharedUI.AvSubToggle', {key: 'model', setSub, sub}, event)}><span>Switch model…</span><span className="muted">›</span></button>
+      {sub === 'model' && <div role="group" aria-label="Model choices" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
+        {(models.length ? models : ['Default model']).map(mdl => <button type="button" role="menuitemradio" aria-checked={mdl === providerObj?.model} key={mdl} className="listbutton spread" onClick={event => executeAction('sharedUI.AvSwitchModel', {api, id: providerObj?.id || id, mdl, onClose, rawName, u}, event)}><span>{mdl}</span><span>{mdl === providerObj?.model ? '✓' : ''}</span></button>)}
+      </div>}
+      <button type="button" role="menuitem" disabled={!working} className="listbutton" style={{color: working ? 'var(--color-err, #e6705f)' : undefined}} onClick={event => executeAction('sharedUI.AvStop', {api, id, onClose, rawName, u}, event)}>Stop</button>
+    </div>;
+  }
   const Av = ({
     id,
-    size = 28
+    size = 28,
+    menu = false,
+    person = false,
+    selectionNodeId
   }) => {
     const s = useData();
-    const p = (s.agents||[]).find(p => p.id === id) || s.providers.find(p => p.id === id) || {
+    const [open, setOpen] = React.useState(false);
+    const p = (s.agents||[]).find(p => p.id === id) || (s.providers||[]).find(p => p.id === id) || (s.people||[]).find(p => p.id === id || p.name === id) || {
       name: id,
       ini: String(id || '').trim().split(/[\s._-]+/).filter(Boolean).map(w => w[0].toUpperCase()).join('').slice(0, 2),  // initials of the display name
       col: A.userAv
@@ -124,7 +187,13 @@
     const name=String(p.name||id||'Agent').split(/\s+\/\s+/).at(-1).trim();
     const initials=name.split(/[\s._-]+/).filter(Boolean).map(word=>word[0].toUpperCase()).join('').slice(0,2)||'?';
     const hue=Array.from(String(p.name||id)).reduce((hash,char)=>(hash*31+char.charCodeAt(0))%360,0);
-    return <span className="agent-avatar" title={p.name||id}><D.Avatar agent={{...p,name,ini:initials,col:[A.accent,A.blue,A.purple,A.ok,A.warn,A.cyan][hue%6]}} size={size}/></span>;
+    const palette=[A.accent,A.blue,A.purple,A.ok,A.warn,A.cyan];
+    const badge=<D.Avatar agent={{...p,name,ini:initials,col:palette[hue%6]||'#d97757'}} size={size}/>;
+    if (!menu) return <span className="agent-avatar" title={p.name||id}>{badge}</span>;
+    return <span className="agent-avatar-wrap" onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }} style={{position:'relative',display:'inline-flex',alignItems:'center'}}>
+      <button type="button" className="button-reset agent-avatar" title={p.name||id} aria-label={(person ? 'Person ' : 'Agent ') + name} aria-haspopup="menu" aria-expanded={open} onClick={event => executeAction('sharedUI.AvatarToggle', {open, setOpen}, event)}>{badge}</button>
+      {open && <><div aria-hidden="true" onMouseDown={() => setOpen(false)} style={{position:'fixed',inset:0,zIndex:1099}} /><AvatarMenu id={id} person={person} selectionNodeId={selectionNodeId} onClose={() => setOpen(false)} /></>}
+    </span>;
   };
   function Heading({
     title,
@@ -324,8 +393,21 @@
       u = useApp(),
       c = s.approvals.find(c => c.id === id);
     const [busy, setBusy] = React.useState(false),
+      [justApproved, setJustApproved] = React.useState(false),
       [decisionError, setDecisionError] = React.useState('');
     if (!c) return <Empty>No action is waiting for approval.</Empty>;
+    const warnCol = A.warn || '#e5b25a',
+      okCol = A.ok || '#7ec18e',
+      errCol = A.err || '#e6705f',
+      lineCol = A.line || '#26262e',
+      inkSoftCol = A.inkSoft || '#9b938a',
+      bgSoftCol = A.bgSoft || '#1c1c23',
+      radLg = A.rad?.lg || 12,
+      radMd = A.rad?.md || 8;
+    const taskRow = (s.tasks || []).find(t => t.id === (c.taskId || c.work));
+    const taskLabel = c.taskTitle || taskRow?.title || '';
+    const whoLabel = c.who || c.agent || taskRow?.agent || '';
+    const reasonText = c.why || c.reason || '';
     const decide = async mode => {
       const digest = c.input_digest || id;
       if (approvalDecisions.has(digest) || api.getSnapshot().approvals.find(card=>card.id===id)?.status !== 'pending') return;
@@ -335,7 +417,10 @@
       try {
         const result = await u.act(() => mode === 'decline' ? api.decline(id) : api.approve(id, mode));
         if (result?.ok === false) setDecisionError(result.message);
-        if(result&&result.ok!==false)await api.listTasks?.();
+        if (result && result.ok !== false) {
+          if (mode !== 'decline') setJustApproved(true);
+          await api.listTasks?.();
+        }
       } catch (error) {
         setDecisionError(error.message || 'Approval was refused');
       } finally {
@@ -343,32 +428,47 @@
         setBusy(false);
       }
     };
+    const extraEvidence = <>
+      {c.preview && <div data-design="approval.preview" style={{fontSize: 12, padding: '8px 10px', borderRadius: radMd, background: bgSoftCol, border: '1px solid ' + lineCol}}>{c.preview}</div>}
+      {reasonText && <p data-design="approval.reason" className="muted" style={{fontSize: 12, margin: 0}}>Why: {reasonText}</p>}
+      {c.diff && <pre data-design="approval.diff" style={{margin: 0, whiteSpace: 'pre-wrap', font: '12px/1.45 "JetBrains Mono", monospace', background: bgSoftCol, border: '1px solid ' + lineCol, borderRadius: radMd, padding: '8px 10px'}}>{typeof c.diff === 'string' ? c.diff : JSON.stringify(c.diff, null, 2)}</pre>}
+    </>;
     if (c.approvalKind === 'ask' || c.approvalKind === 'canvas') {
-      const word = c.status === 'approved' ? 'Released' : c.status === 'declined' ? 'Refused' : c.status === 'failed' ? (c.error || 'The held action failed') : c.status;
-      return <Card data-design={c.approvalKind === 'canvas' ? 'approval.panel' : undefined} data-approval={id} data-ask-card="" style={{
-        border: '1px solid ' + (c.status === 'pending' ? A.warn : A.line),
-        borderRadius: A.rad.lg,
+      const word = c.status === 'approved' ? 'Approved. Running now.' : c.status === 'declined' ? 'Refused' : c.status === 'failed' ? (c.error || 'The held action failed') : c.status;
+      return <Card data-design={c.approvalKind === 'canvas' ? 'approval.panel' : 'approval.card'} data-approval={id} data-ask-card="" tabIndex={0} onKeyDown={e => {
+        if (e.key === 'Enter' && c.status === 'pending' && !busy && !e.target.closest?.('button,a,input,textarea,select,summary')) {
+          e.preventDefault();
+          void decide('once');
+        }
+      }} style={{
+        border: '1px solid ' + (c.status === 'pending' ? warnCol : lineCol),
+        borderRadius: radLg,
         padding: 16,
         display: 'grid',
         gap: 10,
-        maxHeight: c.approvalKind === 'canvas' && !compact ? 324 : undefined,
-        height: c.approvalKind === 'canvas' && !compact ? 324 : undefined,
+        maxHeight: c.approvalKind === 'canvas' && !compact ? 340 : undefined,
         overflowY: c.approvalKind === 'canvas' ? 'auto' : undefined
       }}>
         <div className="flex" style={{alignItems: 'flex-start', gap: 12}}>
-          <div className="fill"><h2 style={{fontSize: 15, margin: 0}}>{c.title}</h2><p className="muted" style={{fontSize: 12, margin: '4px 0 0'}}>{c.who} asked</p></div>
-          <Chip c={c.status === 'pending' ? A.warn : c.status === 'failed' ? A.err : A.ok}>{c.status === 'pending' ? 'Needs your OK' : word}</Chip>
+          <div className="fill">
+            <div style={{fontSize: 11, fontWeight: 600, letterSpacing: '0.03em', color: c.status === 'pending' ? warnCol : okCol, marginBottom: 2}}>{c.status === 'pending' ? 'Needs your approval' : 'Approval status'}</div>
+            <h2 style={{fontSize: 15, margin: 0}}>{c.title}</h2>
+            <p className="muted" style={{fontSize: 12, margin: '4px 0 0'}}>{[taskLabel, whoLabel ? whoLabel + ' asked' : ''].filter(Boolean).join(' · ') || 'Held action'}</p>
+          </div>
+          <Chip c={c.status === 'pending' ? warnCol : c.status === 'failed' ? errCol : okCol}>{c.status === 'pending' ? 'Needs your OK' : c.status === 'approved' ? 'Released' : word}</Chip>
         </div>
-        {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft, lineHeight: c.approvalKind === 'canvas' ? 1.45 : undefined}}>{c.summary}</p>}
-        {c.text && compact && approvalRows(c.text) ? <><dl className="approval-rows">{approvalRows(c.text).map(([name,value])=><React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>)}</dl><details className="approval-details"><summary>Details</summary><pre>{c.text}</pre></details></> : c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
+        {c.summary && <p style={{fontSize: 13, margin: 0, color: inkSoftCol, lineHeight: c.approvalKind === 'canvas' ? 1.45 : undefined}}>{c.summary}</p>}
+        {extraEvidence}
+        {c.text && compact && approvalRows(c.text) ? <><dl className="approval-rows">{approvalRows(c.text).map(([name,value])=><React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>)}</dl><details className="approval-details"><summary>Details</summary><pre>{c.text}</pre></details></> : c.text ? <div><div style={{fontSize: 11, color: inkSoftCol, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: bgSoftCol, border: '1px solid ' + lineCol, borderRadius: radMd, padding: '10px 12px'}}>{c.text}</pre></div> : null}
         {decisionError && <p role="alert">{decisionError}</p>}
-        {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn>{c.approvalKind==='canvas' && <Btn sm disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const target=c.taskId||c.work||u.task,key=JSON.stringify(['task-file',target]);u.setComposerDraft(current=>({...current,[key]:{text:'Why does '+c.title+' need approval?',revision:(current[key]?.revision||0)+1}}));u.close();return u.openTaskFile(target,'split');}},event)}>Ask why</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>{c.approvalKind==='canvas'?'Reject':'Deny'}</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
+        {(justApproved || c.status === 'approved') && <p role="status" data-design="approval.confirmed" style={{margin: 0, color: okCol, fontWeight: 600}}>Approved. Running now.</p>}
+        {c.status === 'pending' ? <div className="flex" style={{gap: 8, flexWrap: 'wrap'}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve <kbd style={{marginLeft: 4, fontSize: 10}}>Enter</kbd></Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApprovalAskWhy", {c, u}, event)}>Ask why</Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>Reject</Btn></div> : c.status !== 'approved' ? <p style={{margin: 0, color: c.status === 'failed' ? errCol : inkSoftCol}}>{word}</p> : null}
       </Card>;
     }
     return <Card data-approval={id} style={{
-      border: '1px solid ' + (c.status === 'pending' ? A.warn : A.line),
+      border: '1px solid ' + (c.status === 'pending' ? warnCol : lineCol),
       borderRadius: 14,
-      boxShadow: c.status === 'pending' ? '0 0 0 3px ' + A.warn + '18,0 8px 28px #0007' : undefined
+      boxShadow: c.status === 'pending' ? '0 0 0 3px ' + warnCol + '18,0 8px 28px #0007' : undefined
     }}>
   <div className="flex" style={{
         padding: '16px 18px'
@@ -380,13 +480,14 @@
           display: 'grid',
           placeItems: 'center',
           fontWeight: 800
-        }}>R</span><div className="fill"><h2>{c.title}</h2><p className="muted" style={{
+        }}>R</span><div className="fill">{c.status === 'pending' && <div style={{fontSize: 11, fontWeight: 600, color: warnCol}}>Needs your approval</div>}<h2>{c.title}</h2>{(taskLabel || whoLabel) && <p className="muted" style={{fontSize: 12, margin: '2px 0 0'}}>{[taskLabel, whoLabel ? 'by ' + whoLabel : ''].filter(Boolean).join(' · ')}</p>}<p className="muted" style={{
             fontSize: 12
-          }}>{s.nativeApproval ? c.summary || c.description || c.target || '' : <>{c.target || s.files.find(f => f.id === s.activeFile)?.name || 'Project model'} · {s.watcher.view} · one undo step</>}</p></div><Chip c={c.status === 'pending' ? A.warn : A.ok}>{c.status === 'pending' ? s.nativeApproval ? 'Needs your OK' : c.kind === 'social' || c.kind === 'email' ? 'Sends from your account' : c.kind === 'memory' ? 'Updates your Brain' : 'Writes to your model' : c.status}</Chip></div>
-  {window.UI.ApprovalRubric && <window.UI.ApprovalRubric id={id} />}<Table rows={c.rows} columns={c.kind === 'qc' ? ['element', 'before', 'after', 'decision'] : ['element', 'before', 'after']} />
+          }}>{s.nativeApproval ? c.summary || c.description || c.target || '' : <>{c.target || (s.files || []).find(f => f.id === s.activeFile)?.name || 'Project model'} · {s.watcher?.view} · one undo step</>}</p></div><Chip c={c.status === 'pending' ? warnCol : okCol}>{c.status === 'pending' ? s.nativeApproval ? 'Needs your OK' : c.kind === 'social' || c.kind === 'email' ? 'Sends from your account' : c.kind === 'memory' ? 'Updates your Brain' : 'Writes to your model' : c.status}</Chip></div>
+  {(c.preview || reasonText || c.diff) && <div style={{padding: '0 18px 12px', display: 'grid', gap: 8}}>{extraEvidence}</div>}
+  {window.UI.ApprovalRubric && <window.UI.ApprovalRubric id={id} />}<Table rows={c.rows || []} columns={c.kind === 'qc' ? ['element', 'before', 'after', 'decision'] : ['element', 'before', 'after']} />
   {c.kind === 'qc' && <div className="grid" style={{
         padding: 16
-      }}>{c.rows.map((row, i) => <div className="spread" key={i}><span className="flex"><window.UI.Sheet mark />{row.element} · {row.decision || 'Needs review'}</span><div className="flex">{api.supportsAction?.('reviewProofRow') !== false && <Btn sm onClick={event => executeAction("sharedUI.AcceptRow.9", {
+      }}>{(c.rows || []).map((row, i) => <div className="spread" key={i}><span className="flex"><window.UI.Sheet mark />{row.element} · {row.decision || 'Needs review'}</span><div className="flex">{api.supportsAction?.('reviewProofRow') !== false && <Btn sm onClick={event => executeAction("sharedUI.AcceptRow.9", {
               api,
               i,
               id,
@@ -398,6 +499,7 @@
               u
             }, event)}>Reject row {i + 1}</Btn>}</div></div>)}</div>}
   {decisionError && <p role="alert">{decisionError}</p>}
+  {(justApproved || c.status === 'approved') && <p role="status" data-design="approval.confirmed" style={{padding: '8px 18px 0', margin: 0, color: okCol, fontWeight: 600}}>Approved. Running now.</p>}
   {['executing','unconfirmed'].includes(c.status) ? <p role="alert">Host outcome is unconfirmed. Inspect the source before another edit; this request will not replay.</p> : s.nativeApproval && c.status === 'refused' ? <p role="alert">This review is closed. Request a fresh review before trying again.</p> : c.status === 'postponed' ? <div className="row spread"><span>Saved for later review.</span>{api.supportsAction?.('resumeApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ResumeReview.11", {
           api,
           id,
@@ -412,7 +514,7 @@
         flexWrap: 'wrap'
       }}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {
           decide
-        }, event)}>Approve once</Btn>{!s.nativeApproval && api.supportsAction?.('approve', 'session') !== false && <Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveSimilarThisSession.14", {
+        }, event)}>Approve once{A.rad ? <> <kbd style={{marginLeft: 4, fontSize: 10}}>Enter</kbd></> : null}</Btn>{!s.nativeApproval && api.supportsAction?.('approve', 'session') !== false && <Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveSimilarThisSession.14", {
           decide
         }, event)}>Approve similar this session</Btn>}{api.supportsAction?.('decline') !== false && <Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {
           decide
@@ -428,7 +530,7 @@
           }}>You can undo this</span><Btn sm ghost onClick={event => executeAction("sharedUI.NotSure.18", {
             u
           }, event)}>Not sure</Btn></>}</div> : <div className="spread row"><span style={{
-          color: c.status === 'approved' ? A.ok : A.inkSoft
+          color: c.status === 'approved' ? okCol : inkSoftCol
         }}>{c.status === 'approved' ? s.nativeApproval ? 'Approval recorded' : c.kind === 'qc' ? 'Review recorded' : c.kind === 'memory' ? 'Memory updated' : c.kind === 'meeting-summary' ? 'Summary sent' : c.kind === 'community' ? 'Pattern shared' : 'Applied and checked' : 'Nothing changed'}</span>{c.status === 'approved' && !s.nativeApproval && c.approvalKind !== 'watcher' && <Btn sm onClick={event => executeAction("sharedUI.Undo.19", {
           api,
           u
@@ -582,6 +684,7 @@
     Card,
     Chip,
     Av,
+    AvatarMenu,
     Heading,
     Empty,
     Table,
@@ -925,7 +1028,29 @@
     "sharedUI.Control.20": "sharedUIControl20",
     "sharedUI.Reset.21": "sharedUIReset21",
     "sharedUI.Retry.22": "sharedUIRetry22",
-    "sharedUI.Toggle.23": "sharedUIToggle23"
+    "sharedUI.Toggle.23": "sharedUIToggle23",
+    "sharedUI.AvatarToggle": "sharedUIAvatarToggle",
+    "sharedUI.AvGoNode": "sharedUIAvGoNode",
+    "sharedUI.AvOpenThread": "sharedUIAvOpenThread",
+    "sharedUI.AvMessage": "sharedUIAvMessage",
+    "sharedUI.AvSubToggle": "sharedUIAvSubToggle",
+    "sharedUI.AvAssignTask": "sharedUIAvAssignTask",
+    "sharedUI.AvOpenWork": "sharedUIAvOpenWork",
+    "sharedUI.AvSwitchModel": "sharedUIAvSwitchModel",
+    "sharedUI.AvStop": "sharedUIAvStop",
+    "sharedUI.PersonMention": "sharedUIPersonMention",
+    "sharedUI.PersonSelection": "sharedUIPersonSelection",
+    "sharedUI.ApprovalAskWhy": "sharedUIApprovalAskWhy"
+  };
+  const focusComposerWith = (u, mention) => {
+    const target = u.task || '';
+    const key = JSON.stringify([u.route || 'home', target]);
+    u.setComposerDraft?.(current => {
+      const prev = current[key]?.text || '';
+      const prefix = prev && !prev.endsWith(' ') ? prev + ' ' : prev;
+      return {...current, [key]: {text: prefix + mention + ' ', revision: (current[key]?.revision || 0) + 1}};
+    });
+    window.requestAnimationFrame?.(() => document.querySelector('[data-design="composer.msg"]')?.focus?.());
   };
   window.registerActions(sharedUIActions, {
     sharedUISend: ({send}) => send(),
@@ -951,6 +1076,81 @@
     sharedUIControl20,
     sharedUIReset21,
     sharedUIRetry22,
-    sharedUIToggle23: ({toggle}) => toggle()
+    sharedUIToggle23: ({toggle}) => toggle(),
+    sharedUIAvatarToggle: ({open, setOpen}) => setOpen(!open),
+    sharedUIAvGoNode: ({nodeMatch, onClose, rawName, u, workTasks}) => {
+      onClose?.();
+      if (nodeMatch) {
+        u.setSelectedNodeId?.(nodeMatch.id);
+        u.go?.('canvas');
+        return;
+      }
+      if (workTasks?.[0]) {
+        void u.openTaskFile?.(workTasks[0].id);
+        return;
+      }
+      u.setToast?.({text: rawName + ' has no node on this canvas yet.'});
+    },
+    sharedUIAvOpenThread: ({onClose, u, workTasks}) => {
+      onClose?.();
+      if (workTasks?.[0]) return u.openTaskFile?.(workTasks[0].id, 'split');
+      return u.go?.('workshop');
+    },
+    sharedUIAvMessage: ({handle, onClose, u}) => {
+      onClose?.();
+      focusComposerWith(u, '@' + handle);
+    },
+    sharedUIAvSubToggle: ({key, setSub, sub}) => setSub(sub === key ? '' : key),
+    sharedUIAvAssignTask: ({api, handle, id, onClose, rawName, t, u}) => {
+      onClose?.();
+      return u.act?.(async () => {
+        const res = typeof api.setTaskDelegate === 'function' ? await api.setTaskDelegate(t.id, id) : typeof api.setTaskSession === 'function' ? await api.setTaskSession(t.id, handle) : {ok: true};
+        u.setToast?.({text: 'Assigned ' + rawName + ' to ' + t.title + '.'});
+        return res;
+      });
+    },
+    sharedUIAvOpenWork: ({onClose, t, u}) => {
+      onClose?.();
+      return u.openTaskFile?.(t.id);
+    },
+    sharedUIAvSwitchModel: ({api, id, mdl, onClose, rawName, u}) => {
+      onClose?.();
+      return u.act?.(async () => {
+        const res = typeof api.setProviderModel === 'function' ? await api.setProviderModel(id, mdl) : {ok: true};
+        u.setToast?.({text: 'Switched ' + rawName + ' to ' + mdl + '.'});
+        return res;
+      });
+    },
+    sharedUIAvStop: ({api, id, onClose, rawName, u}) => {
+      onClose?.();
+      return u.act?.(async () => {
+        const res = typeof api.stopAgentSession === 'function' ? await api.stopAgentSession(id) : typeof api.stopEverything === 'function' ? await api.stopEverything() : {ok: true};
+        u.setToast?.({text: 'Stopped ' + rawName + '.'});
+        return res;
+      });
+    },
+    sharedUIPersonMention: ({handle, onClose, rawName, u}) => {
+      onClose?.();
+      focusComposerWith(u, '@' + (handle || rawName));
+    },
+    sharedUIPersonSelection: ({onClose, rawName, targetNode, u}) => {
+      onClose?.();
+      if (targetNode) {
+        u.setSelectedNodeId?.(targetNode);
+        u.go?.('canvas');
+        return;
+      }
+      u.setToast?.({text: rawName + ' has nothing selected on this canvas.'});
+    },
+    sharedUIApprovalAskWhy: ({c, u}) => {
+      const target = c.taskId || c.work || u.task;
+      if (target && u.openTaskFile) {
+        const key = JSON.stringify(['task-file', target]);
+        u.setComposerDraft?.(current => ({...current, [key]: {text: 'Why does ' + c.title + ' need approval?', revision: (current[key]?.revision || 0) + 1}}));
+        u.close?.();
+        return u.openTaskFile(target, 'split');
+      }
+      return u.show?.('Ask why');
+    }
   });
 })();

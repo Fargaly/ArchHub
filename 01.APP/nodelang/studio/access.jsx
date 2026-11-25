@@ -1,5 +1,8 @@
 // Account access stays with the user's identity; no founder cloud admin surface.
 (() => {
+  function executeAction(...args) {
+    return window.executeAction(...args);
+  }
   const WIRE_ACCESS_JSX_ACTIONS = {
   "settings.access.AccessAction0": "AccessAction0",
   "settings.access.AccessAction1": "AccessAction1",
@@ -65,6 +68,96 @@ AccessAction4: () => devicesRead.retry()});
         }))} /></div><Chip c={A.ok}>Every agent can work here</Chip></div> : null;
   }
   // Invite to watch (D-047): one named account sees one saved session read-only while ArchHub shares it.
+  const GUEST_ROLES = ['Watch', 'Comment', 'Edit'];
+  const GUEST_MENU_ACTIONS = {
+    'settings.access.GuestToggle': 'GuestToggle',
+    'settings.access.GuestClose': 'GuestClose',
+    'settings.access.GuestPreview': 'GuestPreview',
+    'settings.access.GuestStop': 'GuestStop',
+    'settings.access.GuestRoleToggle': 'GuestRoleToggle',
+    'settings.access.GuestSetRole': 'GuestSetRole',
+    'settings.access.GuestRemove': 'GuestRemove'
+  };
+  window.registerActions(GUEST_MENU_ACTIONS, {
+    GuestToggle: ({open, setOpen}) => setOpen(!open),
+    GuestClose: ({setOpen}) => setOpen(false),
+    GuestPreview: ({grant, sessionLabel, setOpen, u}) => {
+      setOpen(false);
+      u.setToast?.({text: 'Previewing what ' + (grant.name || grant.grantee) + ' sees.'});
+      u.show('Watching', {grant: grant.id, title: sessionLabel});
+    },
+    GuestStop: ({firstName, grant, setOpen, u}) => {
+      setOpen(false);
+      return u.act(async () => {
+        const res = await api.stopWatcher(grant.id);
+        u.setToast?.({text: 'Stopped sharing with ' + firstName + '.'});
+        return res;
+      });
+    },
+    GuestRoleToggle: ({roleOpen, setRoleOpen}) => setRoleOpen(!roleOpen),
+    GuestSetRole: ({firstName, grant, member, role, setLocalRole, setOpen, setRoleOpen, u}) => {
+      setLocalRole(role);
+      setRoleOpen(false);
+      setOpen(false);
+      return u.act(async () => {
+        const res = typeof api.setGuestRole === 'function'
+          ? await api.setGuestRole(grant.id, role)
+          : member && typeof api.setTeamAccess === 'function'
+            ? await api.setTeamAccess(member.id, {accessRole: role === 'Watch' ? 'Viewer' : 'Member'})
+            : {ok: true};
+        u.setToast?.({text: 'Changed ' + firstName + ' to ' + role + '.'});
+        return res;
+      });
+    },
+    GuestRemove: ({firstName, grant, setOpen, u}) => {
+      setOpen(false);
+      return u.act(async () => {
+        const res = typeof api.removeGuest === 'function' ? await api.removeGuest(grant.id) : await api.stopWatcher(grant.id);
+        u.setToast?.({text: 'Removed ' + firstName + ' from this Canvas.'});
+        return res;
+      });
+    }
+  });
+  function GuestMenu({grant, onClose}) {
+    const s = useData(), u = useApp();
+    const [roleOpen, setRoleOpen] = React.useState(false);
+    const [localRole, setLocalRole] = React.useState(grant.role || 'Watch');
+    const label = grant.name || grant.grantee || 'Guest';
+    const firstName = String(label).split(/[\s@]/)[0] || label;
+    const sessionLabel = (grant.session || '').split(/[\\/]/).pop() || 'Session';
+    const member = (s.people || []).find(p => p.email === grant.grantee || p.name === label);
+    const setOpen = next => { if (!next) onClose?.(); };
+    return <div role="menu" aria-label={label + ' guest menu'} data-design="guest.menu" style={{
+      position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 1100, minWidth: 236,
+      background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+      borderRadius: 10, padding: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)', display: 'grid', gap: 2
+    }}>
+      <div style={{padding: '6px 10px', borderBottom: '1px solid var(--color-line-soft, #1e1e24)', marginBottom: 2}}>
+        <div style={{fontSize: 13, fontWeight: 600, color: 'var(--color-ink, #ece8e0)'}}>{label}</div>
+        <div className="muted" style={{fontSize: 11}}>{localRole} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : 'while you share it'}</div>
+      </div>
+      <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('settings.access.GuestPreview', {grant, sessionLabel, setOpen, u}, event)}>Preview what they see</button>
+      <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('settings.access.GuestStop', {firstName, grant, setOpen, u}, event)}>Stop sharing with {firstName}</button>
+      <button type="button" role="menuitem" aria-expanded={roleOpen} className="listbutton spread" onClick={event => executeAction('settings.access.GuestRoleToggle', {roleOpen, setRoleOpen}, event)}><span>Change to role</span><span className="muted">{localRole} ›</span></button>
+      {roleOpen && <div role="group" aria-label="Guest role choices" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
+        {GUEST_ROLES.map(role => <button type="button" role="menuitemradio" aria-checked={localRole === role} key={role} className="listbutton spread" onClick={event => executeAction('settings.access.GuestSetRole', {firstName, grant, member, role, setLocalRole, setOpen, setRoleOpen, u}, event)}><span>Change to {role}</span><span>{localRole === role ? '✓' : ''}</span></button>)}
+      </div>}
+      <button type="button" role="menuitem" className="listbutton" style={{color: 'var(--color-err, #e6705f)'}} onClick={event => executeAction('settings.access.GuestRemove', {firstName, grant, setOpen, u}, event)}>Remove from this Canvas</button>
+    </div>;
+  }
+  function GuestAvatar({grant, size = 28}) {
+    const [open, setOpen] = React.useState(false);
+    const label = grant.name || grant.grantee || 'Guest';
+    const ini = String(label).trim().split(/[\s@._-]+/).filter(Boolean).map(w => w[0].toUpperCase()).join('').slice(0, 2) || 'G';
+    return <span data-design="guest.avatar" onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }} style={{position: 'relative', display: 'inline-flex', alignItems: 'center'}}>
+      <button type="button" className="button-reset" aria-label={'Guest ' + label} aria-haspopup="menu" aria-expanded={open} title={label + ' · watching'} onClick={event => executeAction('settings.access.GuestToggle', {open, setOpen}, event)} style={{
+        width: size, height: size, borderRadius: '50%', border: '1.5px dashed var(--color-cyan, #5fb3b3)',
+        background: 'var(--color-bg-soft, #1c1c23)', color: 'var(--color-ink, #ece8e0)',
+        fontSize: 11, fontWeight: 600, display: 'grid', placeItems: 'center', cursor: 'pointer'
+      }}>{ini}</button>
+      {open && <><div aria-hidden="true" onMouseDown={() => executeAction('settings.access.GuestClose', {setOpen})} style={{position: 'fixed', inset: 0, zIndex: 1099}} /><GuestMenu grant={grant} onClose={() => executeAction('settings.access.GuestClose', {setOpen})} /></>}
+    </span>;
+  }
   const WATCH_ACTIONS = {"settings.access.WatchStop": "WatchStop", "settings.access.WatchRetry": "WatchRetry", "settings.access.WatchSend": "WatchSend"};
   const WATCH_ENDS = [['stop', 'When I stop it'], ['1h', 'After 1 hour'], ['today', 'End of today']];
   function WatchSessions() {
@@ -82,7 +175,7 @@ AccessAction4: () => devicesRead.retry()});
       {read.state === 'loaded' && <span className="visually-hidden">Watchers loaded.</span>}
       {read.state !== 'waiting' && watch.capability === false && <p className="muted" role="note">{watch.reason || 'Read-only watcher invitations are unavailable.'}</p>}
       {watch.capability && !active.length && <p className="muted">Nobody is watching. Right-click a session on Home and choose Invite to watch.</p>}
-      {active.map(grant => <div className="team-access-row" key={grant.id}><div><b>{grant.grantee}</b><small className="muted">{(grant.session || '').split(/[\\/]/).pop() || 'Session'} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleString() : 'while you share it'}</small></div>
+      {active.map(grant => <div className="team-access-row" key={grant.id}><div className="flex" style={{gap: 10}}><GuestAvatar grant={grant} /><div><b>{grant.grantee}</b><small className="muted" style={{display: 'block'}}>{(grant.session || '').split(/[\\/]/).pop() || 'Session'} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleString() : 'while you share it'}</small></div></div>
         <Btn sm aria-label={'Stop ' + grant.grantee + ' watching'} onClick={event => runAction('settings.access.WatchStop', grant, event)}>Stop</Btn></div>)}</Card>;
   }
   function WatchInvite({path, title}) {
@@ -164,4 +257,6 @@ AccessAction4: () => devicesRead.retry()});
   window.UI.WatchingShared = WatchingShared;
   window.UI.WatchView = WatchView;
   window.UI.WatchInvite = WatchInvite;
+  window.UI.GuestAvatar = GuestAvatar;
+  window.UI.GuestMenu = GuestMenu;
 })();

@@ -473,14 +473,29 @@ class SettingsOwner:
                 'officeInvitations': invitations}
 
     def updateProfile(self, values):
-        if type(values) is not dict or not values or set(values) - {'name', 'firm'}:
-            raise ValueError('Edit your name or firm here; identity changes use browser sign-in.')
-        if any(type(v) is not str or not v.strip() or len(v) > 120 for v in values.values()):
-            raise ValueError('Use a name and firm between 1 and 120 characters.')
+        allowed = {'name', 'firm', 'role', 'presence', 'photo'}
+        if type(values) is not dict or not values or set(values) - allowed:
+            raise ValueError('Edit your name, firm, role, status or photo here; identity changes use browser sign-in.')
+        for field in ('name', 'firm'):
+            if field in values and (type(values[field]) is not str or not values[field].strip() or len(values[field].strip()) > 120):
+                raise ValueError('Use a name and firm between 1 and 120 characters.')
+        if 'role' in values and (type(values['role']) is not str or len(values['role'].strip()) > 160 or any(ord(c) < 32 for c in values['role'])):
+            raise ValueError('Use a role of up to 160 characters.')
+        if 'presence' in values and values['presence'] not in ('Available', 'Busy', 'Away'):
+            raise ValueError('Choose Available, Busy or Away.')
+        if 'photo' in values and (type(values['photo']) is not str or len(values['photo']) > 48000 or (
+                values['photo'] != '' and not re.fullmatch(r'data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+', values['photo']))):
+            raise ValueError('Use a cropped JPEG, PNG or WebP image.')
         _me, root = self._account()
-        profile = {**self._preferences(root).get('profile', {}), **{k: v.strip() for k, v in values.items()}}
+        normalized = {k: v if k == 'photo' else v.strip() for k, v in values.items()}
+        profile = {**self._preferences(root).get('profile', {}), **normalized}
         self._save(root, {'profile': profile})
-        return {'profile': profile, 'message': 'Profile saved'}
+        keys = set(values)
+        message = ('Name saved.' if keys == {'name'}
+                   else 'Role saved. Agents read it on the You node.' if keys == {'role'}
+                   else ('Photo updated.' if normalized['photo'] else 'Photo removed.') if keys == {'photo'}
+                   else 'Profile saved')
+        return {'profile': profile, 'message': message}
 
     def _company(self):
         rows = self.cloud('GET', '/v1/companies/mine').get('companies', [])
@@ -677,10 +692,14 @@ def notification_reads(identity=None, settings=None):
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     held = settings.read().get('notificationReads', [])
     if identity is not None:
-        if type(identity) is not str or not re.fullmatch(r'[a-z]+:[A-Za-z0-9_-]{1,160}', identity):
+        items = list(identity) if type(identity) in (list, tuple) else [identity]
+        if any(type(item) is not str or not re.fullmatch(r'[a-z]+:[A-Za-z0-9_-]{1,160}', item) for item in items):
             raise ValueError('Choose a current notification.')
-        held = [key for key in held if key != identity] + [identity]
-        settings.update({'notificationReads': held[-500:]})
+        if items:
+            seen = set(items)
+            deduped = list(dict.fromkeys(items))
+            held = [key for key in held if key not in seen] + deduped
+            settings.update({'notificationReads': held[-500:]})
     return set(held)
 
 
@@ -692,7 +711,7 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
     if function == 'setCanvasTabs':
         value = args[0] if len(args) == 1 else None
         # expanded: the profile, thread and agent nodes show as their own cards; folded into the Session card by default. A view.
-        if type(value) is not dict or set(value) - {'expanded'} != {'tabs', 'active', 'split', 'collapsed'}:
+        if type(value) is not dict or set(value) - {'expanded', 'rail'} != {'tabs', 'active', 'split', 'collapsed'}:
             raise ValueError('Choose open task tabs and their view state.')
         tabs = value['tabs']
         if type(tabs) is not list or len(tabs) > 100:
@@ -700,11 +719,17 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
         identities = set()
         for tab in tabs:
             # flow: this tab shows the Flow view (one socket in and out per node); a view, no session file changes.
-            if (type(tab) is not dict or set(tab) - {'flow'} != {'id', 'kept'} or
+            if (type(tab) is not dict or set(tab) - {'flow', 'pinned'} != {'id', 'kept'} or
                     type(tab['id']) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', tab['id']) or
-                    type(tab['kept']) is not bool or type(tab.get('flow', False)) is not bool or tab['id'] in identities):
+                    type(tab['kept']) is not bool or type(tab.get('flow', False)) is not bool or
+                    type(tab.get('pinned', False)) is not bool or tab['id'] in identities):
                 raise ValueError('Each open task tab needs a unique task identity.')
             identities.add(tab['id'])
+        if 'rail' in value:
+            rail = value['rail']
+            if (type(rail) is not list or len(rail) > 50 or len(set(rail)) != len(rail) or
+                    any(type(item) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', item) for item in rail)):
+                raise ValueError('Each pinned rail task needs a unique task identity.')
         if (type(value['collapsed']) is not bool or type(value.get('expanded', False)) is not bool or
                 any(type(value[key]) is not str or value[key] and value[key] not in identities for key in ('active', 'split')) or
                 value['split'] and value['split'] == value['active']):
@@ -755,7 +780,7 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
             'homeMap': {key: list(choices) for key, choices in HOME_MAP.items()}}  # what each map parameter may be; first is default
 
 
-DOCK_PANELS = ('workshop', 'library', 'map', 'insp')
+DOCK_PANELS = ('workshop', 'library', 'map', 'insp', 'people')
 
 
 def _one_dock_layout(held):
@@ -778,7 +803,7 @@ def dock_layout(function='readDockLayout', args=(), settings=None):
             raise ValueError('Choose one dock layout.')
         layout = args[0]
         if layout is not None:  # None is Reset: back to the default layout
-            if type(layout) is not dict or not ({'left', 'right'} <= set(layout) <= {'left', 'right', 'cmd'}):
+            if type(layout) is not dict or not ({'left', 'right'} <= set(layout) <= {'left', 'right', 'cmd', 'bottom', 'float', 'focus'}):
                 raise ValueError('Choose a left and a right dock.')
             if 'cmd' in layout:
                 if layout['cmd'] is None:
@@ -788,20 +813,44 @@ def dock_layout(function='readDockLayout', args=(), settings=None):
                     if (type(cmd) is not dict or set(cmd) != {'x', 'y'}
                             or not all(type(cmd[k]) in (int, float) and not isinstance(cmd[k], bool) and 0 <= cmd[k] <= 1 for k in ('x', 'y'))):
                         raise ValueError('Choose a composer position from 0 to 1.')
+            if 'focus' in layout and type(layout['focus']) is not bool:
+                raise ValueError('Choose whether focus mode is active.')
             placed = []
-            for side, keys in (('left', {'w', 'c', 'st'}), ('right', {'c', 'st'})):
+            sides = [('left', {'w', 'c', 'st'}), ('right', {'c', 'st'})]
+            if 'bottom' in layout:
+                if layout['bottom'] is None:
+                    layout = {k: v for k, v in layout.items() if k != 'bottom'}
+                else:
+                    sides.append(('bottom', {'h', 'c', 'st'}))
+            for side, keys in sides:
                 dock = layout[side]
                 if (type(dock) is not dict or set(dock) != keys or type(dock['c']) is not bool
                         or type(dock['st']) is not list or len(dock['st']) > len(DOCK_PANELS)):
                     raise ValueError('Choose the panels of the %s dock.' % side)
                 if side == 'left' and (type(dock['w']) is not int or not 200 <= dock['w'] <= 520):
                     raise ValueError('Choose a left dock width from 200 to 520 pixels.')
+                if side == 'bottom' and (type(dock['h']) not in (int, float) or isinstance(dock['h'], bool) or not 80 <= dock['h'] <= 640):
+                    raise ValueError('Choose a bottom dock height from 80 to 640 pixels.')
                 for slot in dock['st']:
                     if (type(slot) is not dict or set(slot) != {'p', 'a', 'h', 'c'} or type(slot['c']) is not bool
                             or type(slot['p']) is not list or slot['a'] not in slot['p']
                             or type(slot['h']) not in (int, float) or not 0.05 <= slot['h'] <= 20):
                         raise ValueError('Choose the tabs, the open tab and the height of each stacked panel.')
                     placed += slot['p']
+            if 'float' in layout:
+                if layout['float'] is None:
+                    layout = {k: v for k, v in layout.items() if k != 'float'}
+                else:
+                    floating = layout['float']
+                    if type(floating) is not list or len(floating) > len(DOCK_PANELS):
+                        raise ValueError('Choose floating dock panels.')
+                    for item in floating:
+                        if (type(item) is not dict or set(item) != {'id', 'x', 'y', 'w', 'h'}
+                                or item['id'] not in DOCK_PANELS
+                                or not all(type(item[k]) in (int, float) and not isinstance(item[k], bool) for k in ('x', 'y', 'w', 'h'))
+                                or item['w'] < 120 or item['h'] < 80):
+                            raise ValueError('Each floating panel needs an id, position and size.')
+                        placed.append(item['id'])
             if any(panel not in DOCK_PANELS for panel in placed) or len(set(placed)) != len(placed):
                 raise ValueError('Each dock panel can sit in one place only.')
         with settings.lock:
@@ -896,6 +945,7 @@ def preference_settings(function='readControls', args=(), settings=None):
         ("App language", "language", ("English", "Arabic")),
         ("Right-to-left layout", "rtl", ("Auto", "Always", "Never")),
         ("Agents reply in", "replyLang", tuple(next(p["options"] for p in SESSION_PARAMS if p["id"] == "reply_in"))),
+        ("Presence status", "profilePresence", ("Available", "Busy", "Away")),
     )
     account_rows = []
     for label, key, options in language_controls:
@@ -911,6 +961,27 @@ def preference_settings(function='readControls', args=(), settings=None):
         account_rows.append({"id": identity, "storageKey": key, "page": "Account", "group": "You",
                              "label": label, "type": "choice", "options": list(options), "default": options[0],
                              "value": settings.read().get(key, options[0])})
+    profile_text_controls = (
+        ("Display name", "profileName", 120, str()),
+        ("Your role", "profileRole", 160, str()),
+        ("Photo", "profilePhoto", 48000, str()),
+    )
+    for label, key, limit, initial in profile_text_controls:
+        identity = "Account." + label
+        if args and args[0] == identity and function in ("setAppearance", "resetAppearance"):
+            if function == "setAppearance":
+                val = args[1]
+                if type(val) is not str or len(val) > limit or any(ord(c) < 32 for c in val):
+                    raise ValueError("Choose a valid " + label.lower() + " value.")
+                if key == "profilePhoto" and val != "" and not re.fullmatch(r'data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+', val):
+                    raise ValueError("Use a cropped JPEG, PNG or WebP image.")
+                settings.update({key: val if key == "profilePhoto" else val.strip()})
+            else:
+                settings.update({}, remove=[key])
+            function, args = "readControls", ()
+        account_rows.append({"id": identity, "storageKey": key, "page": "Account", "group": "You",
+                             "label": label, "type": "text", "default": initial,
+                             "value": settings.read().get(key, initial)})
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
     from .library_engines import PDF_BASELINE_MISSING, PDF_NATIVE_SHEET_SIZE, PDF_PAPER_FORMATS, PDF_SHEET_SETS

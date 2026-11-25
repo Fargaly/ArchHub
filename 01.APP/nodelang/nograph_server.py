@@ -1960,12 +1960,15 @@ def _list_notifications():
     from hashlib import sha256
     read = notification_reads(settings=_SERVER.files['settings'])
     result = []
-    def add(kind, identity, text, task=''):
+    def add(kind, identity, text, task='', approval_id=''):
         key = kind + ':' + sha256(str(identity).encode()).hexdigest()
-        result.append({'id': key, 'text': text, 'taskId': task, 'read': key in read})
+        row = {'id': key, 'text': text, 'taskId': task, 'read': key in read}
+        if approval_id:
+            row['approvalId'] = approval_id
+        result.append(row)
     for card in _list_approvals():
         if card.get('status') == 'pending':
-            add('approval', card['id'], card.get('title') or 'Approval needed', card.get('taskId') or card.get('work') or '')
+            add('approval', card['id'], card.get('title') or 'Approval needed', card.get('taskId') or card.get('work') or '', card['id'])
     for task in _list_tasks():
         for activity in task.get('activity') or []:
             if activity.get('status') == 'Error':
@@ -1979,7 +1982,13 @@ def _list_notifications():
 
 def _read_notification(identity):
     from .settings_owner import notification_reads
-    if not any(row['id'] == identity for row in _list_notifications()['notifications']):
+    current = _list_notifications()['notifications']
+    if identity == 'all':
+        unread = [row['id'] for row in current if not row['read']]
+        if unread:
+            notification_reads(unread, settings=_SERVER.files['settings'])
+        return {**_list_notifications(), 'receipt': {'id': 'all', 'read': True}}
+    if not any(row['id'] == identity for row in current):
         raise ValueError('This notification is no longer current.')
     notification_reads(identity, settings=_SERVER.files['settings'])
     return {**_list_notifications(), 'receipt': {'id': identity, 'read': True}}
@@ -2364,10 +2373,16 @@ def r_settings_action(s, req):
         if function == 'read':
             return {'ok': True, 'result': {**local, **s.account_read()}}
         # Account, office, team and billing are the ArchHub cloud's; local preferences are one plain file.
-        from .settings_owner import AccountFiles, CloudRouteUnavailable
+        from .settings_owner import AccountFiles, CloudRouteUnavailable, preference_settings
         owner = SettingsOwner(AccountFiles(s.settings_dir / 'account.json'))
         try:
             result = owner.dispatch(function, list(args))
+            if function == 'updateProfile' and args and isinstance(args[0], dict):
+                mirror = {'name': 'profileName', 'role': 'profileRole', 'presence': 'profilePresence', 'photo': 'profilePhoto'}
+                patch = {mirror[k]: (args[0][k] if k == 'photo' else str(args[0][k]).strip()) for k in args[0] if k in mirror}
+                if patch:
+                    settings.update(patch)
+                    result = {**result, 'appearanceSettings': preference_settings(settings=settings)['appearanceSettings']}
             if s._account is not None:
                 s._account.at = 0.0
             return {'ok': True, 'result': result}

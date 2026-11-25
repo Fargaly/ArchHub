@@ -72,6 +72,7 @@
       [composerDraft, setComposerDraft] = React.useState(restoredView.composerDraft||{}),
       [modal, setModal] = React.useState(null),
       [toast, setToast] = React.useState(''),
+      [toastPaused, setToastPaused] = React.useState(false),
       [advanced, setAdvanced] = React.useState(false),
       [companion, setCompanion] = React.useState(false),
       [homeThreadId, setHomeThreadId] = React.useState(null),
@@ -353,10 +354,52 @@
       await saveCanvasTabs({...held, tabs, active, split: held.split === id || held.split === active ? '' : held.split});
       if (task === id) {setTask(active); if (!active) go('home');}
     };
-    const confirm = (title, run) => show('Confirm', {
+    const confirm = (title, run, opts = {}) => show('Confirm', {
       title,
-      run
+      run,
+      ...opts
     });
+    const settingValue = (id, fallback = '') => {
+      const row = (s.settings || []).find(item => item.id === id);
+      return row && row.value !== undefined ? row.value : fallback;
+    };
+    const userPhoto = s.profile?.photo ?? settingValue('Account.Photo', '');
+    const userRole = s.profile?.role ?? settingValue('Account.Your role', '');
+    const userPresence = s.profile?.presence || settingValue('Account.Presence status', 'Available') || 'Available';
+    const userDisplayName = s.profile?.name || settingValue('Account.Display name', '');
+    const saveProfileFields = patch => act(async () => {
+      if ('saveProfile' in api && typeof api.saveProfile === 'function') return api.saveProfile(patch);
+      const map = {name: 'Account.Display name', role: 'Account.Your role', presence: 'Account.Presence status', photo: 'Account.Photo'};
+      if (typeof api.updateProfile === 'function' && (s.profile?.signedIn || !s.settingsDestination)) {
+        try {
+          const updated = await api.updateProfile(patch);
+          if (updated && updated.ok !== false) return updated;
+        } catch (err) {
+          if (!s.settingsDestination) throw err;
+        }
+      }
+      let last = {ok: true};
+      for (const [k, v] of Object.entries(patch)) {
+        const settingId = map[k];
+        if (settingId && typeof api.setSetting === 'function') {
+          last = await api.setSetting(settingId, v, s.settingsDestination);
+        } else if (typeof api.updateProfile === 'function') {
+          last = await api.updateProfile({[k]: v});
+        }
+      }
+      return last;
+    });
+    const pinnedRailIds = Array.isArray(s.railTasks)
+      ? s.railTasks.map(item => typeof item === 'string' ? item : item.id).filter(Boolean)
+      : Array.isArray(canvasTabs.rail)
+        ? canvasTabs.rail
+        : (canvasTabs.tabs || []).filter(t => t.pinned).map(t => t.id);
+    const setPinnedRail = async nextIds => {
+      const unique = [...new Set(nextIds.filter(Boolean))];
+      if (typeof api.setRailTasks === 'function') await act(() => api.setRailTasks(unique));
+      return saveCanvasTabs({...tabsRef.current, rail: unique});
+    };
+    const pinTaskToRail = id => setPinnedRail([...pinnedRailIds, id]);
     const schedule = id => show('Schedule', {
       id
     });
@@ -422,6 +465,14 @@
       setTaskFace,
       canvasTabs,
       saveCanvasTabs,
+      pinnedRailIds,
+      setPinnedRail,
+      pinTaskToRail,
+      saveProfileFields,
+      userPhoto,
+      userRole,
+      userPresence,
+      userDisplayName,
       keepTaskTab,
       openTaskBeside,
       closeTaskTab,
@@ -448,11 +499,14 @@
     const menuApp = React.useRef(value);
     menuApp.current = value;
     React.useEffect(() => {
+      setToastPaused(false);
+    }, [toast]);
+    React.useEffect(() => {
       const duration = timing('toast_visible_ms');
-      if (!toast || duration === null) return;
+      if (!toast || toastPaused || duration === null) return;
       const t = setTimeout(() => setToast(''), duration);
       return () => clearTimeout(t);
-    }, [toast, s.runtimeParameters?.toast_visible_ms]);
+    }, [toast, toastPaused, s.runtimeParameters?.toast_visible_ms]);
     React.useEffect(() => {
       const openSurfaceMenu = e => {
         const current = api.getSnapshot();
@@ -589,9 +643,13 @@
           gap: 0
         }}><button data-design="header.mark" className="button-reset header-mark" style={{
             color: A.accent
-          }} aria-label="ArchHub menu" title="ArchHub menu" onClick={event => executeAction("appShell.ArchHubMenu.1", {
+          }} aria-label="ArchHub menu" aria-haspopup="menu" aria-expanded={modal?.kind === 'ArchHub menu'} title="ArchHub menu" onClick={event => executeAction("appShell.ArchHubMenu.1", {
+            close,
+            modal,
             show
-          }, event)}><ArchMark size={20} /></button><button data-design="header.workspace" className="button-reset header-workspace" aria-label="Workspace" title="Workspace" onClick={event => executeAction("appShell.Control.4", {
+          }, event)}><ArchMark size={20} /></button><button data-design="header.workspace" className="button-reset header-workspace" aria-label="Workspace" aria-haspopup="menu" aria-expanded={modal?.kind === 'Workspace menu'} title="Workspace" onClick={event => executeAction("appShell.Control.4", {
+            close,
+            modal,
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
@@ -605,7 +663,7 @@
           {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
           <button data-design="header.pc" className="button-reset muted header-pc" title="This PC and its programs: Settings › Connections" onClick={event => executeAction("appShell.Control.13", {
             go
-            }, event)}>On this PC · {(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || (s.hostsProbing?'checking programs…':'no program connected')}</button>{(rows => [['Running', rows.running, 'running', 'Nothing running', s.agentSummary], ['Needs you', rows.needsYou, 'need you', 'Nothing needs you', 'Sessions that wait for you']].map(([filter, count, word, none, title]) => <button key={filter} data-design={'header.' + word.replace(' ', '-')} className="button-reset muted" title={title + ' · show them on Home'} onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go, filter}, event)}>{count ? count + ' ' + word : none}</button>))(window.UI.homeRows(s, s.homeLayout))}<button data-design="header.agents" className="button-reset muted" title={(s.agentSummary || 'Checking running agents…') + ' · open Agents on this PC'} onClick={event => executeAction('ui.select', () => go('agents'), event)}>Agents on this PC</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+            }, event)}><span data-design="status.on-this-pc">On this PC · {(() => { const ready = (s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening'); const liveCount = window.UI.homeRows(s, s.homeLayout).running || (s.liveAgents||[]).filter(a=>a.status==='working').length; return (ready.length ? ready.length + ' ready (' + ready.map(h=>h.name).join(', ') + ')' : (s.hostsProbing?'checking programs…':'no program connected')) + ' · ' + liveCount + ' live ' + (liveCount === 1 ? 'agent' : 'agents'); })()}</span></button>{(rows => [['Running', rows.running, 'running', 'Nothing running', s.agentSummary], ['Needs you', rows.needsYou, 'need you', 'Nothing needs you', 'Sessions that wait for you']].map(([filter, count, word, none, title]) => <button key={filter} data-design={'header.' + word.replace(' ', '-')} className="button-reset muted" title={title + ' · show them on Home'} onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go, filter}, event)}>{count ? count + ' ' + word : none}</button>))(window.UI.homeRows(s, s.homeLayout))}<button data-design="header.agents" className="button-reset muted" title={(s.agentSummary || 'Checking running agents…') + ' · open Agents on this PC'} onClick={event => executeAction('ui.select', () => go('agents'), event)}>Agents on this PC</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
           }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
@@ -618,7 +676,9 @@
             s
           }, event)}>{s.update.state==='failed' ? 'Update failed' : 'Update'}</button>}<button data-design="header.tray" className="button-reset header-icon" aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
             show
-          }, event)}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" /></svg></button><button data-design="header.bell" className="button-reset header-icon" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
+          }, event)}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" /></svg></button><button data-design="header.bell" className="button-reset header-icon" aria-label="Notifications" aria-haspopup="dialog" aria-expanded={modal?.kind === 'Notifications'} title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
+            close,
+            modal,
             show
           }, event)}><window.AHIcon name="bell" size={16} />{s.notifications.some(n => !n.read) && <b className="header-count">{s.notifications.filter(n => !n.read).length}</b>}</button>{window.ARCHHUB_ONE_TITLE_BAR && <div className="window-controls" role="group" aria-label="Window">{[['minimize', 'Minimize', '\uE921'], ['maximize', 'Maximize', '\uE922'], ['close', 'Close', '\uE8BB']].map(([action, name, glyph]) => [action, action === 'maximize' && document.documentElement.dataset.windowMaximized === 'true' ? 'Restore' : name, glyph]).map(([action, label, glyph]) => <button key={action} className="button-reset" data-window-button={action} aria-label={label} title={label} onClick={event => executeAction("appShell.WindowControl.99", {
             api,
@@ -646,23 +706,40 @@
               r
             }, event)} badge={r === 'workshop' ? s.tasks.filter(t => t.status === 'IN REVIEW').length || undefined : undefined} style={{
               flex: 'none', width: 64, height: 58
-            }} />)}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="docs" size={18} />} label="Docs" active={route==='docs'} onClick={()=>go('docs')} style={{flex:'none',width:64,height:58}} /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
+            }} />)}{pinnedRailIds.length > 0 && pinnedRailIds.map((tid, idx) => {
+              const tRow = (s.tasks || []).find(item => item.id === tid) || (Array.isArray(s.railTasks) ? s.railTasks.find(item => item?.id === tid) : null) || {id: tid, title: tid};
+              return <D.Rail key={'pin:' + tid} variant="home" glyph={<window.AHIcon name="pin" size={15} />} label={tRow.title || tid} active={route === 'task-file' && task === tid} onClick={event => executeAction('appShell.RailOpenTask', {openTaskFile, tid}, event)} onContextMenu={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                show('Rail item menu', {taskId: tid, index: idx, anchor: {x: e.clientX || 72, y: e.clientY || 140}});
+              }} style={{flex: 'none', width: 64, height: 52}} />;
+            })}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="docs" size={18} />} label="Docs" active={route==='docs'} onClick={event => executeAction("appShell.Control.10", {go, r: 'docs'}, event)} style={{flex:'none',width:64,height:58}} /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
               go
             }, event)} style={{
               flex: 'none', width: 64, height: 58
-            }} /><button className="button-reset" aria-label="Your account" title="Your account" onClick={event => executeAction("appShell.YourAccount.12", {
+            }} /><button className="button-reset" aria-label="Your account" aria-haspopup="dialog" aria-expanded={modal?.kind === 'Profile card'} title="Your account" onClick={event => executeAction("appShell.YourAccount.12", {
+              close,
+              modal,
               show
             }, event)} style={{
+              position: 'relative',
               margin: '8px 0 14px',
               width: 32,
               height: 32,
               borderRadius: '50%',
-              background: 'linear-gradient(135deg,#e8c39e,#b98a62)',
+              background: userPhoto ? 'transparent' : 'linear-gradient(135deg,#e8c39e,#b98a62)',
               color: '#2a1d10',
               fontWeight: 700,
               fontSize: 'calc(12px * var(--text-scale,1))',
-              flex: 'none'
-            }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && route !== 'home' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
+              flex: 'none',
+              display: 'grid',
+              placeItems: 'center',
+              overflow: 'visible'
+            }}>{userPhoto ? <img src={userPhoto} alt="" style={{width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', display: 'block'}} /> : window.UI.profileInitials({...s.profile, name: userDisplayName || s.profile?.name})}<span data-presence={userPresence} aria-hidden="true" style={{
+              position: 'absolute', right: -1, bottom: -1, width: 9, height: 9, borderRadius: '50%',
+              border: '2px solid ' + A.bgDeep,
+              background: userPresence === 'Busy' ? 'var(--color-err, #e6705f)' : userPresence === 'Away' ? 'var(--color-warn, #e5b25a)' : 'var(--color-ok, #7ec18e)'
+            }} /></button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && route !== 'home' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} taskId={route === 'home' ? homeThreadId : task} />
   {window.UI.TutorialOverlay && <window.UI.TutorialOverlay />}
@@ -676,33 +753,273 @@
         <Btn sm ghost onClick={event => executeAction('ui.select', () => api.resolveOrphanDraft(s.orphanDrafts[0].view, false), event)}>Discard those changes</Btn>
       </div>
     </div>}
-  {(s.canvasSaveConflict || toast) && <div role="alert" className="flex" style={{
+  {(s.canvasSaveConflict || toast) && (() => {
+    const toastTone = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.tone || '') : '';
+    const borderCol = toastTone === 'bad' ? 'var(--color-err, #e6705f)' : toastTone === 'warn' ? 'var(--color-warn, #e5b25a)' : A.line;
+    const toastAction = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.action || toast.open) : null;
+    return <div role="alert" data-toast="" data-toast-tone={toastTone || 'info'} data-toast-paused={toastPaused ? 'true' : 'false'} className={'flex app-toast' + (toastTone ? ' tone-' + toastTone : '')} onMouseEnter={() => setToastPaused(true)} onMouseLeave={() => setToastPaused(false)} style={{
         position: 'fixed',
-        top: 100,
+        bottom: 24,
         left: '50%',
         transform: 'translateX(-50%)',
         maxWidth: '70vw',
-        pointerEvents: 'none',
-        border: '1px solid ' + A.line,
+        pointerEvents: 'auto',
+        border: '1px solid ' + borderCol,
         borderRadius: 10,
-        background: '#24242b',
-        padding: '12px 18px',
+        background: 'var(--color-bg-panel, #15151a)',
+        padding: '10px 16px',
         zIndex: 200,
-        boxShadow: '0 8px 30px #0008',
+        gap: 10,
+        boxShadow: '0 10px 32px rgba(0,0,0,0.5)',
         ...(s.canvasSaveConflict ? {display:'grid',gap:8} : {})
       }}>{s.canvasSaveConflict ? <>
         <span>{s.canvasSaveConflict}</span>
         {s.canvasSaveRecoveryError && <span>{s.canvasSaveRecoveryError}</span>}
-        <div style={{display:'flex',flexWrap:'wrap',gap:8,pointerEvents:'auto'}}>
+        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
           <Btn sm disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>api.resolveSaveConflict(true),event)}>Keep my changes as a copy</Btn>
           <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>api.resolveSaveConflict(false),event)}>Discard my changes and reload</Btn>
           <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>{api.dismissSaveConflict();setToast('');},event)}>Dismiss</Btn>
         </div>
-      </> : <><span>{toast.text || toast}</span>{toast.open && <Btn sm style={{pointerEvents:'auto'}} onClick={event => executeAction('ui.select', () => { setToast(''); return toast.open(); }, event)}>{toast.label || 'Open'}</Btn>}<Btn sm ghost style={{pointerEvents:'auto'}} onClick={event => executeAction("appShell.Dismiss.17", {
+      </> : <><span>{toast.text || toast}</span>{toastAction && <Btn sm onClick={event => executeAction('ui.select', () => { setToast(''); return toastAction(); }, event)}>{toast.label || 'Open'}</Btn>}<Btn sm ghost onClick={event => executeAction("appShell.Dismiss.17", {
           setToast
-        }, event)}>Dismiss</Btn></>}</div>}
+        }, event)}>Dismiss</Btn></>}</div>;
+  })()}
   {modal && <Dialog key={modal.kind + ':' + (modal.id || '')} modal={modal} close={close} />}
  </Ctx.Provider>;
+  }
+  const COLOUR_SWATCHES = [
+    ['Accent', '#d97757'],
+    ['Amber', '#e5b25a'],
+    ['Green', '#7ec18e'],
+    ['Teal', '#5fb3b3'],
+    ['Blue', '#7898d6'],
+    ['Violet', '#a98cd6'],
+    ['None', '']
+  ];
+  const ADD_NODE_TYPES = ['All', 'Text', 'Number', 'Elements', 'Sheet', 'File'];
+  function matchesNodeType(node, typeFilter) {
+    if (!typeFilter || typeFilter === 'All') return true;
+    const wanted = typeFilter.toLowerCase();
+    const hay = [
+      node.category,
+      node.title,
+      ...(node.inputs || []).map(p => p.type || p.name),
+      ...(node.outputs || []).map(p => p.type || p.name),
+      ...(node.paramDefs || []).map(p => p.type || p.name)
+    ].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(wanted) || (wanted === 'elements' && hay.includes('element'));
+  }
+  function paintCropCanvas(canvas, size, circular, img, zoom, offset) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, size, size);
+    ctx.save();
+    if (circular) {
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.clip();
+    }
+    ctx.fillStyle = '#2a1d10';
+    ctx.fillRect(0, 0, size, size);
+    if (img && img.naturalWidth > 0) {
+      const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight) * zoom;
+      const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
+      const factor = size / 240;
+      ctx.drawImage(img, (size - w) / 2 + offset.x * factor, (size - h) / 2 + offset.y * factor, w, h);
+    } else {
+      ctx.fillStyle = '#d97757';
+      ctx.beginPath();
+      ctx.arc(size / 2 + offset.x * (size / 240), size / 2 + offset.y * (size / 240), (size * 0.32) * zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (!circular) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function CropPhotoDialog({modal: m, close, u}) {
+    const stageRef = React.useRef(null), prevRef = React.useRef(null), imgRef = React.useRef(null), dragRef = React.useRef(null);
+    const [zoom, setZoom] = React.useState(1.15);
+    const [offset, setOffset] = React.useState({x: 0, y: 0});
+    const redraw = (nextZoom = zoom, nextOffset = offset, image = imgRef.current) => {
+      paintCropCanvas(stageRef.current, 240, false, image, nextZoom, nextOffset);
+      paintCropCanvas(prevRef.current, 56, true, image, nextZoom, nextOffset);
+    };
+    const useCropped = () => {
+      const out = document.createElement('canvas');
+      out.width = 128;
+      out.height = 128;
+      paintCropCanvas(out, 128, false, imgRef.current, zoom, offset);
+      const rawUrl = out.toDataURL('image/jpeg', 0.82);
+      const dataUrl = rawUrl && rawUrl.startsWith('data:image/') ? rawUrl : (m.src || '');
+      const prevPhoto = m.prevPhoto || '';
+      void u.saveProfileFields({photo: dataUrl}).then(res => {
+        if (!res) return;
+        close();
+        u.setToast({text: 'Photo updated.', label: 'Undo', action: () => u.saveProfileFields({photo: prevPhoto})});
+      });
+    };
+    const removeCurrent = () => {
+      const prevPhoto = m.prevPhoto || '';
+      void u.saveProfileFields({photo: ''}).then(res => {
+        if (!res) return;
+        close();
+        u.setToast({text: 'Photo removed.', label: 'Undo', action: () => u.saveProfileFields({photo: prevPhoto})});
+      });
+    };
+    return <div className="overlay" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+      <section className="dialog" role="dialog" aria-modal="true" aria-label="Crop your photo" data-design="crop.dialog" style={{width: 'min(420px, 94vw)', display: 'grid', gap: 14}}>
+        {m.src && <img ref={imgRef} src={m.src} alt="" onLoad={e => redraw(zoom, offset, e.currentTarget)} style={{display: 'none'}} />}
+        <header className="spread"><h2>Crop your photo</h2><Btn sm ghost aria-label="Close dialog" onClick={event => executeAction('appShell.CloseDialog.98', {close}, event)}>×</Btn></header>
+        <div className="flex" style={{gap: 18, alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap'}}>
+          <canvas ref={el => { stageRef.current = el; paintCropCanvas(el, 240, false, imgRef.current, zoom, offset); }} width={240} height={240} tabIndex={0} aria-label="Drag to move the picture" onPointerDown={e => {
+            dragRef.current = {x: e.clientX - offset.x, y: e.clientY - offset.y};
+          }} onPointerMove={e => {
+            if (dragRef.current) {
+              const next = {x: e.clientX - dragRef.current.x, y: e.clientY - dragRef.current.y};
+              setOffset(next);
+              redraw(zoom, next);
+            }
+          }} onPointerUp={() => { dragRef.current = null; }} onKeyDown={e => {
+            const step = 8;
+            let next = null;
+            if (e.key === 'ArrowLeft') next = {x: offset.x - step, y: offset.y};
+            else if (e.key === 'ArrowRight') next = {x: offset.x + step, y: offset.y};
+            else if (e.key === 'ArrowUp') next = {x: offset.x, y: offset.y - step};
+            else if (e.key === 'ArrowDown') next = {x: offset.x, y: offset.y + step};
+            if (next) { e.preventDefault(); setOffset(next); redraw(zoom, next); }
+          }} style={{width: 240, height: 240, borderRadius: 12, border: '1px solid ' + A.line, cursor: 'grab', touchAction: 'none'}} />
+          <div style={{display: 'grid', gap: 6, justifyItems: 'center'}}>
+            <canvas ref={el => { prevRef.current = el; paintCropCanvas(el, 56, true, imgRef.current, zoom, offset); }} width={56} height={56} aria-label="How it shows" style={{width: 56, height: 56, borderRadius: '50%', border: '1px solid ' + A.line}} />
+            <small className="muted">How it shows</small>
+          </div>
+        </div>
+        <label className="flex" style={{gap: 10}}><span>Zoom</span><input className="fill" type="range" aria-label="Zoom" min="1" max="3" step="0.01" value={zoom} onChange={e => { const nextZ = Number(e.target.value); setZoom(nextZ); redraw(nextZ, offset); }} /></label>
+        <div className="spread">
+          <div>{m.prevPhoto ? <button type="button" className="button-reset muted" onClick={event => executeAction('projects.controls.activate', {handler: removeCurrent}, event)}>Remove photo</button> : null}</div>
+          <div className="flex" style={{gap: 8}}>
+            <Btn onClick={event => executeAction('appShell.CloseDialog.98', {close}, event)}>Cancel</Btn>
+            <Btn p onClick={event => executeAction('projects.controls.activate', {handler: useCropped}, event)}>Use photo</Btn>
+          </div>
+        </div>
+      </section>
+    </div>;
+  }
+  function ProfileCardPopover({close, popRef, u}) {
+    const s = useData();
+    const photoInput = React.useRef(null);
+    const [nameVal, setNameVal] = React.useState(u.userDisplayName || s.profile?.name || '');
+    const [roleVal, setRoleVal] = React.useState(u.userRole || '');
+    const [langOpen, setLangOpen] = React.useState(false);
+    const [helpOpen, setHelpOpen] = React.useState(false);
+    const composerEl = typeof document !== 'undefined' ? document.querySelector('[data-design="composer.surface"]') : null;
+    const cRect = composerEl?.offsetParent ? composerEl.getBoundingClientRect() : null;
+    const overlapsX = cRect && cRect.width > 0 && cRect.left < 384 && cRect.right > 72;
+    const clampedBottom = overlapsX ? Math.max(20, Math.ceil(window.innerHeight - cRect.top + 12)) : 20;
+    const clampedMaxHeight = Math.max(220, (typeof window !== 'undefined' ? window.innerHeight : 800) - clampedBottom - 60);
+    const openFile = file => {
+      if (!file || !String(file.type || '').startsWith('image/')) return;
+      const reader = new window.FileReader();
+      reader.onload = () => u.show('Crop your photo', {src: String(reader.result || ''), prevPhoto: u.userPhoto});
+      reader.readAsDataURL(file);
+    };
+    const commitName = () => {
+      const trimmed = nameVal.trim();
+      if (!trimmed || trimmed === (u.userDisplayName || s.profile?.name || '')) return;
+      void u.saveProfileFields({name: trimmed}).then(res => { if (res) u.setToast({text: 'Name saved.'}); });
+    };
+    const commitRole = () => {
+      const trimmed = roleVal.trim();
+      if (trimmed === (u.userRole || '')) return;
+      void u.saveProfileFields({role: trimmed}).then(res => { if (res) u.setToast({text: 'Role saved. Agents read it on the You node.'}); });
+    };
+    const currentLang = s.settings.find(r => r.id === 'Account.App language')?.value || 'English';
+    const email = s.profile?.email || s.desktopAccess?.email || 'Signed in';
+    const rawPlan = s.profile?.plan || '';
+    const planPill = !rawPlan || ['Personal', 'solo'].includes(rawPlan) ? 'Solo · beta' : rawPlan;
+    const presenceColor = u.userPresence === 'Busy' ? 'var(--color-err, #e6705f)' : u.userPresence === 'Away' ? 'var(--color-warn, #e5b25a)' : 'var(--color-ok, #7ec18e)';
+    return <section ref={popRef} role="dialog" aria-modal="false" aria-label="Your profile" data-design="profile.card" onPaste={e => {
+        const items = e.clipboardData?.items || [];
+        for (const item of items) {
+          if (item.type && item.type.startsWith('image/')) {
+            e.preventDefault();
+            openFile(item.getAsFile());
+            return;
+          }
+        }
+      }} style={{
+        position: 'fixed', left: 72, bottom: clampedBottom, maxHeight: clampedMaxHeight,
+        width: 312, overflowY: 'auto', zIndex: 1050,
+        background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+        borderRadius: 12, padding: 14, boxShadow: '0 16px 40px rgba(0,0,0,0.55)', display: 'grid', gap: 10
+      }}>
+        <input ref={photoInput} className="sr-only" type="file" aria-label="Upload profile photo" accept="image/*" onChange={e => {
+          const f = e.target.files?.[0];
+          if (f) openFile(f);
+          e.target.value = '';
+        }} />
+        <div className="flex" style={{gap: 12, alignItems: 'flex-start'}}>
+          <button type="button" className="button-reset" data-design="profile.photo" aria-label={u.userPhoto ? 'Change profile photo' : 'Add profile photo'} onDragOver={e => e.preventDefault()} onDrop={e => {
+            e.preventDefault();
+            openFile(e.dataTransfer?.files?.[0]);
+          }} onClick={event => executeAction('projects.controls.activate', {handler: () => photoInput.current?.click()}, event)} style={{
+            position: 'relative', width: 52, height: 52, borderRadius: '50%', flex: 'none',
+            background: u.userPhoto ? 'transparent' : 'linear-gradient(135deg,#e8c39e,#b98a62)',
+            color: '#2a1d10', fontWeight: 700, fontSize: 16, display: 'grid', placeItems: 'center', cursor: 'pointer',
+            border: '1px solid var(--color-line, #26262e)'
+          }}>
+            {u.userPhoto ? <img src={u.userPhoto} alt="" style={{width: 52, height: 52, borderRadius: '50%', objectFit: 'cover'}} /> : window.UI.profileInitials({...s.profile, name: nameVal || s.profile?.name})}
+            <span data-presence={u.userPresence} aria-hidden="true" style={{position: 'absolute', right: 0, bottom: 0, width: 12, height: 12, borderRadius: '50%', background: presenceColor, border: '2px solid var(--color-bg-panel, #15151a)'}} />
+            <span style={{position: 'absolute', bottom: -16, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap', fontSize: 10, color: 'var(--color-ink-soft, #9b938a)'}}>{u.userPhoto ? 'Change' : 'Add photo'}</span>
+          </button>
+          <div className="fill" style={{display: 'grid', gap: 6, minWidth: 0}}>
+            <input aria-label="Name" placeholder="Your name" value={nameVal} onChange={e => setNameVal(e.target.value)} onBlur={commitName} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }} style={{fontSize: 13, fontWeight: 600, padding: '4px 8px'}} />
+            <input aria-label="Your role" placeholder="Your role" value={roleVal} onChange={e => setRoleVal(e.target.value)} onBlur={commitRole} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitRole(); } }} style={{fontSize: 12, padding: '4px 8px'}} />
+            <select aria-label="Presence status" value={u.userPresence} onChange={e => { const presence = e.target.value; void u.saveProfileFields({presence}); }} style={{fontSize: 12, padding: '3px 8px'}}>
+              <option value="Available">Available</option>
+              <option value="Busy">Busy</option>
+              <option value="Away">Away</option>
+            </select>
+          </div>
+        </div>
+        <div className="spread" style={{paddingTop: 8, borderTop: '1px solid var(--color-line-soft, #1e1e24)', fontSize: 12}}>
+          <span className="muted" style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{email}</span>
+          <span className="badge" data-design="profile.plan">{planPill}</span>
+        </div>
+        <nav aria-label="Account" style={{display: 'grid', gap: 2, borderTop: '1px solid var(--color-line-soft, #1e1e24)', paddingTop: 6}}>
+          <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('settings/Appearance'); }}, event)}>Personalisation and look</button>
+          <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Usage today')}, event)}>Usage</button>
+          <button type="button" aria-expanded={langOpen} className="listbutton spread" onClick={event => executeAction('projects.controls.activate', {handler: () => setLangOpen(v => !v)}, event)}><span>Language</span><span className="muted">{currentLang === 'Arabic' ? 'العربية' : 'English'} ›</span></button>
+          {langOpen && <div role="group" aria-label="Language choices" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
+            {[['English', 'English'], ['Arabic', 'العربية · Arabic']].map(([val, label]) => <button type="button" key={val} aria-pressed={currentLang === val} className="listbutton spread" onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting('Account.App language', val, s.settingsDestination))}, event)}><span>{label}</span><span>{currentLang === val ? '✓' : ''}</span></button>)}
+          </div>}
+          <button type="button" aria-expanded={helpOpen} className="listbutton spread" onClick={event => executeAction('projects.controls.activate', {handler: () => setHelpOpen(v => !v)}, event)}><span>Help and feedback</span><span className="muted">›</span></button>
+          {helpOpen && <div role="group" aria-label="Help and feedback" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
+            <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('docs'); }}, event)}>Docs</button>
+            <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Send feedback')}, event)}>Send feedback…</button>
+            <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('system'); }}, event)}>How everything connects</button>
+          </div>}
+          <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show("What's new")}, event)}>What&apos;s new</button>
+          <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('library'); }}, event)}>Get apps and extensions</button>
+          <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); window.open?.('https://archhub.io/account/', '_blank', 'noopener,noreferrer'); }}, event)}>Your account on archhub.io</button>
+        </nav>
+        <footer className="spread" style={{borderTop: '1px solid var(--color-line-soft, #1e1e24)', paddingTop: 8, fontSize: 12, gap: 8, flexWrap: 'wrap'}}>
+          {u.userPhoto && <button type="button" className="button-reset muted" onClick={event => executeAction('projects.controls.activate', {handler: () => {
+            const prev = u.userPhoto;
+            void u.saveProfileFields({photo: ''}).then(res => { if (res) u.setToast({text: 'Photo removed.', label: 'Undo', action: () => u.saveProfileFields({photo: prev})}); });
+          }}, event)}>Remove photo</button>}
+          <button type="button" className="button-reset muted" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('settings/Account'); }}, event)}>Settings › You</button>
+          <span className="fill" />
+          <button type="button" className="button-reset muted" onClick={event => executeAction('projects.controls.activate', {handler: () => {
+            void u.act(() => api.signIn(false)).then(res => { if (res) close(); });
+          }}, event)}>Sign out</button>
+        </footer>
+      </section>;
   }
   function NodeTypeForm({modal,close}) {
     const s=useData(),api=window.UI.api,ids=modal.ids||[modal.id],nodes=s.graph.nodes;
@@ -751,9 +1068,15 @@
           nodes[0].focus();
         }
       };
+      const isPopover = ['Profile card', 'ArchHub menu', 'Workspace menu', 'Notifications', 'Rail item menu'].includes(m.kind);
+      const outside = e => {
+        if (isPopover && !el.contains(e.target) && !e.target.closest?.('[aria-expanded="true"]')) close();
+      };
       el.addEventListener('keydown', handler);
+      if (isPopover) window.addEventListener('pointerdown', outside, true);
       return () => {
         el.removeEventListener('keydown', handler);
+        if (isPopover) window.removeEventListener('pointerdown', outside, true);
         voiceGeneration.current++;
         if (m.kind === 'Talk' && api.supportsAction('stopVoiceInput')) void u.act(api.stopVoiceInput);
       };
@@ -765,7 +1088,92 @@
     const saveForm=async fn=>{const result=await formAction.run(fn);if(result)close();};
     const k = m.kind;
     const logTask = k === 'Raw log' && s.tasks.find(task => task.id === m.id);
-    const title = logTask ? 'Raw log · ' + logTask.title : k;
+    const title = k === 'Confirm' ? (m.heading || m.title || 'Confirm') : logTask ? 'Raw log · ' + logTask.title : k;
+    if (k === 'Profile card') return <ProfileCardPopover close={close} popRef={ref} u={u} />;
+    if (k === 'Crop your photo') return <CropPhotoDialog modal={m} close={close} u={u} />;
+    if (k === 'ArchHub menu') {
+      const entries = [
+        ['All pages…', () => u.show('Search')],
+        ['How everything connects', () => u.go('system')],
+        ['App health', () => u.go('receipts')],
+        ['Community', () => u.go('community')],
+        ['Social media', () => u.go('social')],
+        ['Docs', () => u.go('docs')],
+        ['Settings', () => u.go('settings/Account')]
+      ];
+      return <section ref={ref} role="menu" aria-label="ArchHub menu" data-design="mark.menu" style={{
+          position: 'fixed', top: 52, left: 12, minWidth: 236, zIndex: 1050,
+          background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+          borderRadius: 10, padding: 6, boxShadow: '0 14px 36px rgba(0,0,0,0.5)', display: 'grid', gap: 2
+        }}>
+          {entries.map(([label, action]) => <button type="button" role="menuitem" key={label} className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); action(); }}, event)}>{label}</button>)}
+        </section>;
+    }
+    if (k === 'Workspace menu') {
+      return <section ref={ref} role="menu" aria-label="Workspaces" data-design="workspace.menu" style={{
+          position: 'fixed', top: 52, left: 48, minWidth: 240, zIndex: 1050,
+          background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+          borderRadius: 10, padding: 6, boxShadow: '0 14px 36px rgba(0,0,0,0.5)', display: 'grid', gap: 2
+        }}>
+          {(s.workspaces || []).map(w => {
+            const active = w.id === s.activeWorkspace;
+            return <button type="button" role="menuitemradio" aria-checked={active} key={w.id} className="listbutton spread" onClick={event => executeAction('projects.controls.activate', {handler: async () => { await u.act(() => api.selectWorkspace(w.id)); close(); }}, event)}><span>{w.name}</span><span>{active ? '✓' : ''}</span></button>;
+          })}
+          <button type="button" role="menuitem" className="listbutton" style={{borderTop: '1px solid var(--color-line-soft, #1e1e24)', marginTop: 4, paddingTop: 8}} onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Workspaces')}, event)}>Add workspace…</button>
+        </section>;
+    }
+    if (k === 'Rail item menu') {
+      const idx = m.index ?? u.pinnedRailIds.indexOf(m.taskId);
+      const reorder = delta => {
+        const next = [...u.pinnedRailIds];
+        const target = idx + delta;
+        if (idx < 0 || target < 0 || target >= next.length) return;
+        [next[idx], next[target]] = [next[target], next[idx]];
+        close();
+        return u.setPinnedRail(next);
+      };
+      return <section ref={ref} role="menu" aria-label="Rail item menu" data-design="rail.menu" style={{
+          position: 'fixed', left: 72, top: Math.max(56, Math.min(m.anchor?.y || 140, window.innerHeight - 160)), minWidth: 196, zIndex: 1050,
+          background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+          borderRadius: 10, padding: 6, boxShadow: '0 14px 36px rgba(0,0,0,0.5)', display: 'grid', gap: 2
+        }}>
+          <button type="button" role="menuitem" disabled={idx <= 0} className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => reorder(-1)}, event)}>Move up</button>
+          <button type="button" role="menuitem" disabled={idx < 0 || idx >= u.pinnedRailIds.length - 1} className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => reorder(1)}, event)}>Move down</button>
+          <button type="button" role="menuitem" className="listbutton" style={{color: 'var(--color-err, #e6705f)'}} onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); return u.setPinnedRail(u.pinnedRailIds.filter(id => id !== m.taskId)); }}, event)}>Remove from the rail</button>
+        </section>;
+    }
+    if (k === 'Notifications') {
+      const unreadIds = (s.notifications || []).filter(n => !n.read).map(n => n.id);
+      const pendingApprovals = (s.approvals || []).filter(c => ['pending', 'postponed', 'stale', 'refused', 'contested'].includes(c.status));
+      const markAllRead = () => u.act(async () => {
+        if (!unreadIds.length || api.supportsAction?.('readNotification') === false) return {ok: true};
+        try {
+          return await api.readNotification('all');
+        } catch {
+          let last = {ok: true};
+          for (const id of unreadIds) last = await api.readNotification(id);
+          return last;
+        }
+      });
+      return <section ref={ref} role="dialog" aria-modal="false" aria-label="Notifications" data-design="notifications.popover" style={{
+          position: 'fixed', top: 52, right: 16, width: 'min(380px, calc(100vw - 32px))', maxHeight: 'min(480px, calc(100vh - 80px))', overflowY: 'auto', zIndex: 1050,
+          background: 'var(--color-bg-panel, #15151a)', border: '1px solid var(--color-line, #26262e)',
+          borderRadius: 12, padding: 14, boxShadow: '0 16px 40px rgba(0,0,0,0.55)', display: 'grid', gap: 10
+        }}>
+          <header className="spread">
+            <h2 style={{fontSize: 15, margin: 0}}>Notifications</h2>
+            <div className="flex" style={{gap: 6}}>
+              <Btn sm ghost disabled={!unreadIds.length} onClick={event => executeAction('projects.controls.activate', {handler: markAllRead}, event)}>Mark all read</Btn>
+              <Btn sm ghost aria-label="Close dialog" onClick={event => executeAction('appShell.CloseDialog.98', {close}, event)}>×</Btn>
+            </div>
+          </header>
+          <div className="grid" style={{gap: 4}}>
+            {(s.notifications || []).map(n => (api.supportsAction?.('readNotification') !== false && <button type="button" className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {api, n, u}, event)}>{n.read ? '✓' : '●'} {n.text}</button>))}
+            {pendingApprovals.map(c => <Btn key={c.id} onClick={event => executeAction("appShell.Review.50", {c, u}, event)}>Review · {c.title}</Btn>)}
+            {!(s.notifications || []).length && !pendingApprovals.length && <Empty>You are all caught up.</Empty>}
+          </div>
+        </section>;
+    }
     if (k === 'Delete task') {
       const remove = async () => {
         const generation = voiceGeneration.current;
@@ -788,9 +1196,72 @@
       </section></div>;
     }
     if(k==='Save node type')return <div className="overlay"><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={m.skill?'Save as skill':'Save as node type'}><h2>{m.skill?'Save as skill':'Save as node type'}</h2><NodeTypeForm modal={m} close={close}/></section></div>;
-    if(['Rename node','Note','Wire rule','Node colour','Find node','Add node'].includes(k))return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close();}}><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={k}><h2>{k==='Rename node'?'Rename':k==='Note'?'Add note':k}</h2><window.UI.ActionStatus action={formAction}/>
-      {k==='Find node'||k==='Add node'?<><input data-design={k==='Find node'?'find.input':'addnode.input'} aria-label={k==='Find node'?'Find a node':'Add node'} placeholder={k==='Find node'?'Find a node…':'Search the Library…'} value={query} onChange={e=>setQuery(e.target.value)}/><div className="v22g-results">{(k==='Find node'?s.graph.nodes:s.libraryPorts.filter(n=>!n.noEngine)).filter(n=>n.title.toLowerCase().includes(query.toLowerCase())).map(n=><button type="button" className="listbutton" key={n.id} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(async()=>{if(k==='Find node'){u.setSelectedNodeId(n.id);return {ok:true};}const node=m.wireId?await api.insertNodeOnWire(m.wireId,n.id,m.point):await api.addNode(n.id,m.point);u.setSelectedNodeId(node.id);return node;})},event)}>{n.title}</button>)}</div></>:k==='Node colour'?<label>Colour<input type="color" aria-label="Node colour" value={text||s.graph.nodes.find(n=>n.id===m.id)?.color||'#d97757'} onChange={e=>setText(e.target.value)}/></label>:<label>{k==='Wire rule'?'Only pass values when':k==='Note'?'Note':'Name'}{k==='Note'?<textarea data-design="field.note" aria-label="Note" value={text} onChange={e=>setText(e.target.value)}/>:<input data-design={k==='Wire rule'?'field.only-pass-values-when':'field.rnt'} aria-label={k==='Wire rule'?'Only pass values when':'Node name'} value={text} onChange={e=>setText(e.target.value)}/>}</label>}
-      {k==='Wire rule'&&<p className="muted">Use the existing wire condition expression, for example value &gt; 0.</p>}{!['Find node','Add node'].includes(k)&&<div className="flex"><button type="button" data-design="action.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</button><button type="button" data-design={k==='Rename node'?'action.rename':'action.save'} disabled={k!=='Wire rule'&&!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(()=>k==='Rename node'?api.renameNode(m.id,text):k==='Note'?(m.id?api.setNodeParam(m.id,'text',text):api.addNote(text,m.point)):k==='Wire rule'?api.setWireRule(m.id,text):api.setNodePresentation(m.id,{color:text}))},event)}>{k==='Rename node'?'Rename':'Save'}</button></div>}</section></div>;
+    if (k === 'Add node') {
+      const trimmed = query.trim();
+      const isNum = /^-?\d+(?:\.\d+)?$/.test(trimmed);
+      const isQuoted = trimmed.length >= 2 && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('“') && trimmed.endsWith('”')));
+      const literalVal = isNum ? Number(trimmed) : isQuoted ? trimmed.slice(1, -1) : null;
+      const filtered = (s.libraryPorts || []).filter(n => !n.noEngine && matchesNodeType(n, mode) && n.title.toLowerCase().includes(trimmed.toLowerCase()));
+      const addItem = item => saveForm(async () => {
+        const node = m.wireId ? await api.insertNodeOnWire(m.wireId, item.id, m.point) : await api.addNode(item.id, m.point);
+        if (node) u.setSelectedNodeId(node.id);
+        return node;
+      });
+      const addLiteral = () => saveForm(async () => {
+        const valueEngine = (s.libraryPorts || []).find(n => /value|number|text/i.test(n.id) && !n.noEngine)?.id || 'param.value';
+        const node = await api.addNode(valueEngine, m.point);
+        if (node) {
+          await api.setNodeParam?.(node.id, 'value', literalVal);
+          u.setSelectedNodeId(node.id);
+        }
+        return node || {ok: true};
+      });
+      return <div className="overlay" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+        <section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label="Add node" onKeyDown={e => {
+          const inField = e.target.matches?.('input,textarea');
+          if (e.key === 'Enter') {
+            if (filtered[0]) { e.preventDefault(); void addItem(filtered[0]); }
+            else if (literalVal !== null) { e.preventDefault(); void addLiteral(); }
+          } else if (!inField && /^[1-9]$/.test(e.key)) {
+            const pick = filtered[Number(e.key) - 1];
+            if (pick) { e.preventDefault(); void addItem(pick); }
+          }
+        }}>
+          <h2>Add node</h2>
+          <window.UI.ActionStatus action={formAction} />
+          <input data-design="addnode.input" aria-label="Add node" placeholder="Search the Library, or type a number or &quot;text&quot;…" value={query} onChange={e => setQuery(e.target.value)} />
+          <div className="flex" role="group" aria-label="Node type filter" style={{gap: 4, flexWrap: 'wrap'}}>
+            {ADD_NODE_TYPES.map(t => <button type="button" key={t} className="tab-button" aria-pressed={mode === t} onClick={event => executeAction('projects.controls.activate', {handler: () => setMode(t)}, event)}>{t}</button>)}
+          </div>
+          {literalVal !== null && <button type="button" data-design="addnode.value" className="listbutton spread" onClick={event => executeAction('projects.controls.activate', {handler: addLiteral}, event)}><span>Value: {String(literalVal)}</span><kbd>Value</kbd></button>}
+          <div className="v22g-results">
+            {filtered.map((n, idx) => <button type="button" className="listbutton spread" key={n.id} onClick={event => executeAction('projects.controls.activate', {handler: () => addItem(n)}, event)}><span>{n.title}</span>{idx < 9 ? <kbd>{idx + 1}</kbd> : <span className="muted">{n.category || ''}</span>}</button>)}
+          </div>
+        </section>
+      </div>;
+    }
+    if (k === 'Colour' || k === 'Node colour') {
+      const currentNode = s.graph.nodes.find(n => n.id === m.id);
+      const activeHex = text || currentNode?.color || '';
+      const applyColour = hex => saveForm(() => hex ? api.setNodePresentation(m.id, {color: hex}) : api.setNodeFlags(m.id, {color: ''}));
+      return <div className="overlay" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+        <section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={k} data-design="colour.menu">
+          <h2>{k}</h2>
+          <window.UI.ActionStatus action={formAction} />
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6}}>
+            {COLOUR_SWATCHES.map(([name, hex]) => <button type="button" key={name} aria-pressed={activeHex.toLowerCase() === hex.toLowerCase()} className="listbutton flex" style={{gap: 6, justifyContent: 'flex-start'}} onClick={event => executeAction('projects.controls.activate', {handler: () => applyColour(hex)}, event)}><span aria-hidden="true" style={{width: 14, height: 14, borderRadius: '50%', background: hex || 'transparent', border: '1px solid ' + (hex || A.line)}} /><span>{name}</span></button>)}
+          </div>
+          <label className="flex" style={{gap: 10}}><span>Custom</span><input type="color" aria-label="Node colour" value={activeHex || '#d97757'} onChange={e => setText(e.target.value)} /></label>
+          <div className="flex">
+            <button type="button" data-design="action.cancel" onClick={event => executeAction('projects.controls.activate', {handler: close}, event)}>Cancel</button>
+            <button type="button" data-design="action.save" onClick={event => executeAction('projects.controls.activate', {handler: () => applyColour(text || currentNode?.color || '#d97757')}, event)}>Save</button>
+          </div>
+        </section>
+      </div>;
+    }
+    if(['Rename node','Note','Wire rule','Find node'].includes(k))return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close();}}><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={k}><h2>{k==='Rename node'?'Rename':k==='Note'?'Add note':k}</h2><window.UI.ActionStatus action={formAction}/>
+      {k==='Find node'?<><input data-design="find.input" aria-label="Find a node" placeholder="Find a node…" value={query} onChange={e=>setQuery(e.target.value)}/><div className="v22g-results">{s.graph.nodes.filter(n=>n.title.toLowerCase().includes(query.toLowerCase())).map(n=><button type="button" className="listbutton" key={n.id} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(async()=>{u.setSelectedNodeId(n.id);return {ok:true};})},event)}>{n.title}</button>)}</div></>:<label>{k==='Wire rule'?'Only pass values when':k==='Note'?'Note':'Name'}{k==='Note'?<textarea data-design="field.note" aria-label="Note" value={text} onChange={e=>setText(e.target.value)}/>:<input data-design={k==='Wire rule'?'field.only-pass-values-when':'field.rnt'} aria-label={k==='Wire rule'?'Only pass values when':'Node name'} value={text} onChange={e=>setText(e.target.value)}/>}</label>}
+      {k==='Wire rule'&&<p className="muted">Use the existing wire condition expression, for example value &gt; 0.</p>}{k!=='Find node'&&<div className="flex"><button type="button" data-design="action.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</button><button type="button" data-design={k==='Rename node'?'action.rename':'action.save'} disabled={k!=='Wire rule'&&!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(()=>k==='Rename node'?api.renameNode(m.id,text):k==='Note'?(m.id?api.setNodeParam(m.id,'text',text):api.addNote(text,m.point)):api.setWireRule(m.id,text))},event)}>{k==='Rename node'?'Rename':'Save'}</button></div>}</section></div>;
     if(k==='Add parameter')return <div className="overlay" ref={ref} onMouseDown={event=>{if(event.target===event.currentTarget)close();}}><window.UI.AddField modal kind="Parameter" title="Add parameter" sub="A value on this node" onClose={close} onAdd={input=>executeAction('appShell.AddParameter.28',{api,m,input,u})}/></div>;
     if(k==='Approve' && s.approvals.find(card=>card.id===m.id)?.approvalKind==='canvas') return <section ref={ref} className="v22g-approval-pop" role="dialog" aria-label="Approve Canvas Run" style={{position:'fixed',zIndex:1000,width:440,maxWidth:'calc(100vw - 32px)',left:Math.max(16,Math.min(m.anchor?.x || 400,window.innerWidth-456)),top:Math.max(16,Math.min(m.anchor?.y || 180,window.innerHeight-360))}}><window.UI.ApprovalCard id={m.id} /></section>;
     if (modalActions[k] && !api.supportsAction(modalActions[k])) return null;
@@ -871,12 +1342,48 @@
     }
     else if (k === 'Rename task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const result=await api.renameTask(m.id,text.trim());if(result)close();return result;})},event)}>Rename</Btn></div></>;
     else if (k === 'Attach meeting notes') body = <><label className="grid">Meeting notes<textarea aria-label="Meeting notes" rows={8} maxLength={4000} value={text} onChange={e=>setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(async()=>{const result=await api.attachMeetingNotes(u.task,text);if(result)close();return result;})},event)}>Attach to thread</Btn></div></>;
-    else if (k === 'Confirm') body = <><p>{m.title}</p><p className="muted">Undo brings it back.</p><div className="flex"><Btn onClick={event => executeAction("appShell.Cancel.31", {
+    else if (k === 'Confirm') {
+      const detail = m.detail !== undefined ? m.detail : 'Undo brings it back.';
+      body = <><p>{m.title}</p>{detail ? <p className="muted">{detail}</p> : null}<div className="flex"><Btn onClick={event => executeAction("appShell.Cancel.31", {
           close
         }, event)}>Cancel</Btn><Btn danger onClick={event => executeAction("appShell.Confirm.32", {
           m,
           saved
-        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input data-design="newtask.name" aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><div className="v22g-task-options"><label className="grid">Agent<select data-design="newtask.agent" aria-label="Agent" value={extra} onChange={e => setExtra(e.target.value)}><option value="">No agent</option>{(window.UI.workshopPeople?.(s).choices || []).filter(row=>row.key!=='everyone').map(row=><option key={row.key} value={row.handle || row.name}>{row.name}</option>)}</select></label><label className="grid">Workspace<select data-design="newtask.workspace" aria-label="Workspace" value={taskWorkspace} onChange={e => setTaskWorkspace(e.target.value)}><option value="">Sessions folder</option>{s.workspaces.filter(row=>!row.builtIn && row.available!==false).map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label></div><p className="v22g-task-hint">Opens its own .archhub file on the Canvas with the Agent, You, Workshop and Session nodes already in it. Nothing runs until you press Run.</p><div className="flex"><Btn data-design="newtask.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p data-design="newtask.create" disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const made=await api.createTask(text.trim(),extra,taskWorkspace);if(made?.taskId){await u.openTaskFile(made.taskId);await u.keepTaskTab(made.taskId);}return made;})},event)}>Create and open</Btn></div></>; else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
+        }, event)}>{m.confirmLabel || 'Confirm'}</Btn></div></>;
+    } else if (k === 'Usage today') {
+      const rows = (s.liveAgents && s.liveAgents.length ? s.liveAgents.map(a => ({
+        agent: a.name || a.agent || a.handle || 'Agent',
+        calls: a.calls ?? (s.tasks || []).filter(t => t.agent === (a.agent || a.handle)).length,
+        tokens: a.tokens ?? 0,
+        status: a.status || 'ready'
+      })) : (s.agents || []).map(a => ({
+        agent: a.name || a.id,
+        calls: (s.tasks || []).filter(t => t.agent === a.id).length,
+        tokens: a.tokens ?? 0,
+        status: a.status || 'ready'
+      })));
+      body = <div className="grid" style={{gap: 12}}>
+        <Table rows={rows} columns={['agent', 'calls', 'tokens', 'status']} />
+        <div className="flex"><Btn p onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('settings/Agents'); }}, event)}>Settings › Agents</Btn></div>
+      </div>;
+    } else if (k === 'Send feedback') {
+      body = <div className="grid" style={{gap: 10}}>
+        <label className="grid">What should we improve?<textarea aria-label="Feedback" rows={4} placeholder="Tell us what worked or what got in the way…" value={text} onChange={e => setText(e.target.value)} /></label>
+        <div className="flex">
+          <Btn onClick={event => executeAction('projects.controls.activate', {handler: close}, event)}>Cancel</Btn>
+          <Btn p disabled={!text.trim()} onClick={event => executeAction('projects.controls.activate', {handler: async () => {
+            const res = await u.act(() => typeof api.sendFeedback === 'function' ? api.sendFeedback(text.trim()) : Promise.resolve({ok: true}));
+            if (res) { close(); u.setToast({text: 'Feedback sent.'}); }
+          }}, event)}>Send</Btn>
+        </div>
+      </div>;
+    } else if (k === "What's new" || k === 'What’s new') {
+      body = <div className="grid" style={{gap: 10}}>
+        <div className="spread"><b>Version {s.update?.installed || 'current'}</b><Chip c={A.ok}>{s.update?.available ? 'Update ready' : 'Up to date'}</Chip></div>
+        <p>{s.update?.detail || 'One companion, one Workshop, editable nodes and settings, and a clear review before a change.'}</p>
+        <div className="flex"><Btn onClick={event => executeAction("appShell.UpdatesAbout.96", {u}, event)}>Updates &amp; About</Btn></div>
+      </div>;
+    } else if (k === 'New task') body = <><label className="grid">Task name<input data-design="newtask.name" aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><div className="v22g-task-options"><label className="grid">Agent<select data-design="newtask.agent" aria-label="Agent" value={extra} onChange={e => setExtra(e.target.value)}><option value="">No agent</option>{(window.UI.workshopPeople?.(s).choices || []).filter(row=>row.key!=='everyone').map(row=><option key={row.key} value={row.handle || row.name}>{row.name}</option>)}</select></label><label className="grid">Workspace<select data-design="newtask.workspace" aria-label="Workspace" value={taskWorkspace} onChange={e => setTaskWorkspace(e.target.value)}><option value="">Sessions folder</option>{s.workspaces.filter(row=>!row.builtIn && row.available!==false).map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label></div><p className="v22g-task-hint">Opens its own .archhub file on the Canvas with the Agent, You, Workshop and Session nodes already in it. Nothing runs until you press Run.</p><div className="flex"><Btn data-design="newtask.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p data-design="newtask.create" disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const made=await api.createTask(text.trim(),extra,taskWorkspace);if(made?.taskId){await u.openTaskFile(made.taskId);await u.keepTaskTab(made.taskId);}return made;})},event)}>Create and open</Btn></div></>; else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
           t,
           u
         }, event)}>{t}</Btn>)}<Btn onClick={event => executeAction("appShell.AccountSettings.34", {
@@ -1169,9 +1676,11 @@
 })();
 (() => {
   function appShellArchHubMenu1({
+    close,
+    modal,
     show
   }, event) {
-    const handler = () => show('App menu');
+    const handler = () => modal?.kind === 'ArchHub menu' ? close() : show('ArchHub menu');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellArchHub2({
@@ -1190,9 +1699,11 @@
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl4({
+    close,
+    modal,
     show
   }, event) {
-    const handler = () => show('Workspaces');
+    const handler = () => modal?.kind === 'Workspace menu' ? close() : show('Workspace menu');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellSearchCtrlK5({
@@ -1202,9 +1713,11 @@
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellNotifications6({
+    close,
+    modal,
     show
   }, event) {
-    const handler = () => show('Notifications');
+    const handler = () => modal?.kind === 'Notifications' ? close() : show('Notifications');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellTrayMenu7({
@@ -1234,9 +1747,11 @@
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellYourAccount12({
+    close,
+    modal,
     show
   }, event) {
-    const handler = () => show('Account');
+    const handler = () => modal?.kind === 'Profile card' ? close() : show('Profile card');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl13({
@@ -1537,7 +2052,8 @@
     const handler = async () => {
       const result = await u.act(() => api.readNotification(n.id));
       if(!result)return;
-      const card=api.getSnapshot().approvals.find(card=>card.status==='pending' && (card.taskId===n.taskId || card.work===n.taskId));
+      const snap = api.getSnapshot();
+      const card = snap.approvals.find(card => (n.approvalId && card.id === n.approvalId) || (card.status === 'pending' && ((n.taskId && (card.taskId === n.taskId || card.work === n.taskId)) || n.id.startsWith('approval:'))));
       if(card)u.show('Approve',{id:card.id});
       else if(n.taskId)await u.openTaskFile(n.taskId,'split');
       else u.close();
@@ -2093,9 +2609,11 @@
     "appShell.UpdatesAbout.96": "appShellUpdatesAbout96",
     "appShell.OpenDocs.97": "appShellOpenDocs97",
     "appShell.CloseDialog.98": "appShellCloseDialog98",
-    "appShell.WindowControl.99": "appShellWindowControl99"
+    "appShell.WindowControl.99": "appShellWindowControl99",
+    "appShell.RailOpenTask": "appShellRailOpenTask"
   };
   window.registerActions(appShellActions, {
+    appShellRailOpenTask: ({openTaskFile, tid}) => openTaskFile(tid),
     appShellRetryWorkshop: ({reloadWorkshop}) => reloadWorkshop(),
     appShellRetryView,
     appShellArchHubMenu1,

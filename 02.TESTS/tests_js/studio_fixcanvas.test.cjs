@@ -27,7 +27,10 @@ async function mount({cloud, saved, initialScope, slowDiscovery, refuseProperty=
       if(readCanvas?.enabled&&url.startsWith('/api/universal/canvas'))return await readCanvas.promise;
       const body=init.body?JSON.parse(init.body):null;calls.push({url,body});
       let data={ok:true,result:[],providers:[],agents:[],items:[],workspaces:[],templates:[]},status=200;
-      if(url==='/api/universal/cloud-session'&&cloud)data=await cloud;
+      // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+      if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'fixcanvas-fixture'};
+      else if(url==='/api/commands')data={commands:[]};  // The command owner serves the menu catalogue at startup (f8b5feea).
+      else if(url==='/api/universal/cloud-session'&&cloud)data=await cloud;
       else if(url==='/api/universal/application-update'&&slowDiscovery)data=await slowDiscovery;
       else if(url.startsWith('/api/universal/canvas?')||url==='/api/universal/canvas')data=deferredHome&&url.includes('screen=home')?{...structuredClone(raw),nodes:[],canvas_deferred:true}:structuredClone(raw);
       else if(url==='/api/universal/canvas-op'&&body?.op==='scheduler_tick')data={ok:true,result:[],unchanged:true,revision:raw.revision,scope:raw.scope.current,graph_id:raw.application_root};

@@ -87,6 +87,10 @@ async function adapter(account, responses={}){
    if(url==='/api/universal/canvas')data={root:'canvas',nodes:[],wires:[],
     authorization:{principal:'local-process',display_name:'Local transport'}};
    if(url==='/api/universal/cloud-session')data={...account};
+   // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+   if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'research-fixture'};
+   // The command owner serves the menu catalogue at startup (f8b5feea).
+   if(url==='/api/commands')data={commands:[]};
    if(Object.hasOwn(responses,url))data=await (typeof responses[url]==='function'?responses[url](options.body&&JSON.parse(options.body)):responses[url]);
    if(url==='/api/universal/cloud-signin'&&options.body)Object.assign(account,
     {signed_in:true,email:'user@example.test',user_id:'account-1',display_name:'Account user'});

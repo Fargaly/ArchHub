@@ -8,7 +8,8 @@ async function adapter(canvas,serve=()=>({ok:true,result:[]})){
   ArchHubStudioAuthority:{create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
-  const data=url==='/api/universal/canvas'?canvas:await serve(url,body);
+  // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+  const data=url==='/api/universal/desktop-access'?{ok:true,admitted:true,state:'admitted',subject:'agents-fixture'}:url==='/api/commands'?{commands:[]}:url==='/api/universal/canvas'?canvas:await serve(url,body);
   return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>data};
  };
  const context={window,document:window.document,fetch,CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},

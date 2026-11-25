@@ -28,7 +28,8 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  const page=await browser.newPage({viewport:{width:1496,height:960}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));
- await page.goto('http://canvasold.test/');
+ // api.js reads crypto.randomUUID at load (d2535174); the app always runs in a secure context, so the fixture page does too.
+ await page.goto('https://canvasold.test/');
  await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])
   await page.addScriptTag({content:name==='xyflow'?xyflow.script():name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
@@ -38,6 +39,8 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
   window.fetch=async (url,options={})=>{
    let data={ok:true,result:[],tasks:[],providers:[],agents:[],items:[],workspaces:[]};
    if(url==='/api/commands')data=commands;
+   // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+   else if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'canvasold-fixture'};
    else if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
    else if(url.startsWith('/api/universal/canvas?')||url==='/api/universal/canvas')data=window.fixtureRaw;
    else if(url.startsWith('/api/universal/graphs'))data={graphs:[{id:'root',title:'System'},{id:'user',title:'User graph'}],current_graph:window.fixtureRaw.scope.current};
@@ -179,6 +182,8 @@ async function navigation({delayCanvas=async()=>{}}={}) {
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});let data={ok:true,result:[],mods:{rows:[]}};
   if(url==='/api/commands')data=commandRegistry;
+  // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+  if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'canvasold-fixture'};
   if(url==='/api/universal/canvas'){data=snapshot();await delayCanvas(current);}
   if(url==='/api/universal/graphs?screen=home')data={ok:true,graphs:[{id:'root'},{id:'user'},{id:'other'}],current_graph:current};
   if(url==='/api/universal/graph-open'){current=body.root;data={ok:true};}

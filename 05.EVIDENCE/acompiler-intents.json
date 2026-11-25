@@ -12868,6 +12868,15 @@
         "02.TESTS/tests_replica/test_openrouter_free_tool_routing.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "UPDATEFALLBACK": {
+      "source": "Coordinator 717 2026-11-25 (child of UPDATERWORKS): the founder's updater logged 'no release information' because the anonymous GitHub API quota (60/hour per IP) was exhausted. When the API answers 403/429 or is unreachable, stage_if_newer falls back to archhub.io/download.json and accepts it only when the GitHub release of that build serves the same release.json (BUILD_ID, installer SHA-256, fixed github.com/Fargaly/ArchHub installer URL); otherwise nothing is staged and one line says why. updates.log names the source. API reads from this PC use GH_TOKEN/GITHUB_TOKEN/gh auth token when present, including the check_update_offer publication after-check (e988: it got 403 after promotion).",
+      "scope": [
+        "01.APP/nodelang/quiet_update.py",
+        "03.TOOLS/packaging/windows/check_update_offer.py",
+        "02.TESTS/tests_replica/test_update_release_path.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

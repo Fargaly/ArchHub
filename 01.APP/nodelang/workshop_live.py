@@ -233,7 +233,8 @@ def _seat_pids(history, session):
     """The declared session's live processes, agent first (OpenRig's seat = the agent's own console)."""
     import psutil
     from .workshop_mailbox import read_declarations
-    row = next((r for r in read_declarations(history._db, include_archived=True) if r['session'] == session), None)
+    row = next((r for r in read_declarations(history._db, include_archived=True, session=session)
+                if r['session'] == session), None)
     if row is None:
         return ()
     pids = []

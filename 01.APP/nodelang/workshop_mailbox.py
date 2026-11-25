@@ -19,6 +19,7 @@ import math
 import random
 import re
 import threading
+from bisect import bisect_left
 import time
 import unicodedata
 from uuid import uuid4
@@ -394,21 +395,30 @@ def _deliver_to(message, identity, declaration=None, history=None):
         _replied_author(history, message), message, declaration or {}))
 
 
-def _declaration(history, identity, runtime=None, known=None):
+def _declaration(history, identity, runtime=None, known=None, *, records=None):
     """known: the caller's own read_declarations(include_archived=True), so one poll reads the table once."""
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         row = history._db.execute("SELECT record FROM workshop_declarations WHERE json_extract(record,'$.session')=?",
             (identity["sender_key"],)).fetchone()
         if row:
-            return next((value for value in (read_declarations(history._db, include_archived=True) if known is None else known)
+            return next((value for value in (read_declarations(history._db, include_archived=True,
+                         records=records, session=identity["sender_key"]) if known is None else known)
                          if value["session"] == identity["sender_key"]), json.loads(row[0]))
     return {"runtime":runtime, "session":identity["sender_key"], "agent":identity["sender_label"]}
 
 
 def _asks_for_reply(message):
-    if not agent_addressed(message):
+    try:
+        return _asks_for_reply_text(message.get("content", ""), tuple(message.get("evidence") or ()))
+    except TypeError:   # unhashable evidence: asked directly
+        return _asks_for_reply_text.__wrapped__(message.get("content", ""), tuple(message.get("evidence") or ()))
+
+
+@lru_cache(maxsize=4096)   # the tick asks this of every pending message on every pass; a stored note never changes
+def _asks_for_reply_text(content, evidence):
+    if not agent_addressed({"content": content, "evidence": list(evidence)}):
         return False
-    body = message.get("content", "").partition("\n")[2]
+    body = content.partition("\n")[2]
     unquoted = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
     # Only an unquoted, unconditional sentence can waive the reply obligation.
     if re.search(
@@ -458,26 +468,106 @@ def _asks_for_reply(message):
         body, flags=re.IGNORECASE | re.MULTILINE))
 
 
+# Alias fields of a declaration -> _aliases({}, row) (equal to _aliases with the row's own identity). Rows rebuilt
+# from the same record share one set across reads, so a tick never recomputes ~300 rows' names per message.
+_ROW_ALIASES = {}
+
+
+def _row_aliases(row, *, limit=65536):
+    try:
+        key = tuple(row.get(field) for field in ("agent", "native_session_id", "display_name", "title", "session",
+            "runtime", "role", "project")) + (row.get("role_current", True), tuple(row.get("aliases", ())))
+        hash(key)
+    except TypeError:
+        return frozenset(_aliases({}, row))
+    found = _ROW_ALIASES.get(key)
+    if found is None:
+        if len(_ROW_ALIASES) >= limit:
+            _ROW_ALIASES.clear()   # shortcut: refilled on the next read; memory stays bounded by the limit
+        found = _ROW_ALIASES[key] = frozenset(_aliases({}, row))
+    return found
+
+
+class _Resolver:
+    """The names of one declarations list, indexed once (Founder 2026-11-25 'very slow': the injection tick matched
+    every waiting message against every declaration, messages x rows _aliases calls per tick)."""
+
+    def __init__(self, declarations):
+        self.declarations = declarations
+        self.current = [row for row in declarations if row.get("current")]
+        self.names = {}
+        for position, row in enumerate(self.current):
+            for alias in _row_aliases(row):
+                self.names.setdefault(alias, []).append(position)
+        self.natives = [str(row.get("native_session_id") or "").casefold() for row in self.current]
+        self.live = {recipient_identity(row) for row in self.current}
+        self._ambiguous, self._every, self._prefixes = {}, None, None
+
+    def ambiguous(self, target):
+        """A short hex id that starts two sessions' native ids (any age) and is nobody's exact name."""
+        if target not in self._ambiguous:
+            if self._prefixes is None:
+                # Every row's native id, sorted case-folded: a short id finds the ids it starts by bisection.
+                self._prefixes = sorted((str(row.get("native_session_id") or "").casefold(), position)
+                                        for position, row in enumerate(self.declarations))
+            natives, at = set(), bisect_left(self._prefixes, (target,))
+            while at < len(self._prefixes) and self._prefixes[at][0].startswith(target) and len(natives) < 2:
+                natives.add(self.declarations[self._prefixes[at][1]].get("native_session_id"))
+                at += 1
+            if len(natives) > 1:
+                if self._every is None:
+                    self._every = set().union(*(_row_aliases(row) for row in self.declarations))
+                self._ambiguous[target] = target not in self._every
+            else:
+                self._ambiguous[target] = False
+        return self._ambiguous[target]
+
+    def shared(self, target):
+        """F243: a bare tag shared by two live sessions."""
+        return len({recipient_identity(self.current[position]) for position in self.names.get(target, ())}) > 1
+
+    def addressed(self, message):
+        """The current rows whose session is not the author's and that _addressed(message, row identity, row) names."""
+        if message.get("category") != CATEGORY:
+            return []
+        hits = set()
+        for target in _header_targets(message):
+            wanted = target.casefold()
+            if wanted in _ROOM_TARGETS:
+                continue
+            hits.update(self.names.get(wanted, ()))
+            hits.update(self.names.get(_session_tag(wanted) or wanted, ()))
+            if re.fullmatch(r"[0-9a-f]{3,}", wanted):
+                hits.update(position for position, native in enumerate(self.natives) if native.startswith(wanted)
+                            and _short_id_open(message, self.current[position]["session"]))
+        author = str(message.get("author") or "")
+        return [self.current[position] for position in sorted(hits)
+                if "[" + self.current[position]["session"] + "]" not in author
+                and author != self.current[position]["agent"] + " [" + self.current[position]["session"] + "]"]
+
+
+def _resolver(declarations):
+    found = getattr(declarations, "resolver", None)
+    if found is None:
+        found = _Resolver(declarations)
+        if isinstance(declarations, _Known):
+            declarations.resolver = found
+    return found
+
+
 def _recipient_rows(message, declarations):
     """Named agents only; room posts match nobody."""
     if not agent_addressed(message):
         return []
+    resolver = _resolver(declarations)
     targets = [value.casefold() for value in _header_targets(message) if value.casefold() not in _ROOM_TARGETS]
-    ambiguous = {target for target in targets if re.fullmatch(r"[0-9a-f]{3,}", target)
-        and len({row.get("native_session_id") for row in declarations
-            if str(row.get("native_session_id") or "").casefold().startswith(target)}) > 1}
-    ambiguous = {target for target in ambiguous if not any(target in _aliases({}, row) for row in declarations)}
+    ambiguous = {target for target in targets if re.fullmatch(r"[0-9a-f]{3,}", target) and resolver.ambiguous(target)}
     # F243: a bare tag shared by two live sessions names neither.
-    ambiguous |= {target for target in targets if re.fullmatch(r"[0-9a-f]{12}", target) and len({recipient_identity(row)
-        for row in declarations if row.get("current") and target in _aliases({}, row)}) > 1}
+    ambiguous |= {target for target in targets if re.fullmatch(r"[0-9a-f]{12}", target) and resolver.shared(target)}
     if ambiguous:
         message = {**message, "content":"To " + ", ".join(target for target in targets if target not in ambiguous)
             + ":\n" + message["content"].partition("\n")[2]}
-    author = str(message.get("author") or "")
-    matched = [row for row in declarations if row.get("current")
-        and "[" + row["session"] + "]" not in author and _addressed(message,
-        {"sender":row["agent"] + " [" + row["session"] + "]", "sender_label":row["agent"],
-         "sender_key":row["session"]}, row)]
+    matched = resolver.addressed(message)
     project = _message_project(message)
     if not project:
         return matched
@@ -495,7 +585,7 @@ def _resolve(history, message, declarations):
     the agents its To line names, then the answered message's author when the To line names that author."""
     rows = _recipient_rows(message, declarations)
     author, sessions = _replied_author(history, message), {row["session"] for row in rows}
-    rows += [row for row in declarations if row.get("current") and row["session"] not in sessions
+    rows += [row for row in _resolver(declarations).current if row["session"] not in sessions
              and _reply_reaches(author, message, row)]
     # Two live rows of one native session are one addressee: the newest row takes the message, once.
     newest = {}
@@ -513,7 +603,7 @@ def _reply_recipients(history, message, identity, declaration, declarations, rep
     routing = _routing(message)
     if not recipients:
         recipients = routing["recipients"] if routing and routing["recipients"] else _resolve(history, message, declarations)
-    live = {recipient_identity(row) for row in declarations if row.get("current")}
+    live = _resolver(declarations).live
     if recipients and not any(recipient_identity(row, declarations) in live for row in recipients):
         recipients = _resolve(history, message, declarations)
     reply_targets = set()
@@ -879,9 +969,9 @@ def _seen(history, body, identity, runtime):
         raise ValueError("Workshop mailbox arguments are invalid")
     at = datetime.now(timezone.utc).isoformat()
     # The roster (process liveness probes) is read before the writer is taken; receipts and settlement stay atomic.
-    known = read_declarations(history._db, include_archived=True)
-    declaration = _declaration(history, identity, runtime, known)
-    declarations = [row for row in known if row["current"]]  # what read_declarations() returns without archived
+    known = _Known(_identities(history._db))   # addressee identities only: rebuilt rows are not needed for them
+    declaration = _declaration(history, identity, runtime)
+    declarations = read_declarations(history._db)
     with history._transaction(write=True):
         history._db.execute(SCHEMA)
         for message_id in ids:
@@ -1036,9 +1126,11 @@ class _Known(list):
 
 
 def _pending_page(history, identity, runtime, records=None):
-    known = _Known(read_declarations(history._db, include_archived=True, records=records))
-    declaration = _declaration(history, identity, runtime, known)
-    declarations = [row for row in known if row["current"]]
+    # Every row's addressee identity (read-only), this session's own row and the live rows: the ~5700 rows of dead
+    # processes are not rebuilt on every poll.
+    known = _Known(_identities(history._db, records))
+    declaration = _declaration(history, identity, runtime, records=records)
+    declarations = read_declarations(history._db, records=records)
     mine = recipient_identity(declaration, known)
     # Every declaration key of this addressee, current or archived: its receipts are this addressee's receipts.
     keys = sorted({identity["sender_key"]} | {row["session"] for row in known if recipient_identity(row, known) == mine})
@@ -1466,7 +1558,8 @@ class WorkshopInjection:
                 self._cursor = rows[-1]["sequence"]
             return
         # Process liveness probes must not keep SQLite readers blocking a sender's COMMIT.
-        declarations = read_declarations(history._db, include_archived=True)
+        declarations = _Known(read_declarations(history._db, include_archived=True))   # names indexed once per tick
+        declared = max(["", *(row.get("updated_at", "") for row in declarations)])
         self._waiting_roster, self._progress = roster, False
         if len(self._replies_done) > 10000:
             self._replies_done.clear()  # shortcut: bounded memory; a cleared reply is only re-checked once
@@ -1525,15 +1618,16 @@ class WorkshopInjection:
                 if routing is not None:
                     recipients = list(routing.get("recipients") or [])
                 elif agent_addressed(message):
-                    recipients = _resolve(history, message, [row for row in declarations
-                        if row.get("updated_at", "") <= message["created_at"]])
+                    # Nobody declared after the note: the tick's own list, whose names are already indexed.
+                    recipients = _resolve(history, message, declarations if declared <= message["created_at"] else
+                        [row for row in declarations if row.get("updated_at", "") <= message["created_at"]])
                 else:
                     recipients = []
                 with history._transaction(write=True):
                     for row in recipients:
                         _delivery_receipt(history, message, row, "addressed", now=now,
                             runtime=row["runtime"], native_session_id=row.get("native_session_id"))
-            live = {recipient_identity(row) for row in declarations if row.get("current")}
+            live = _resolver(declarations).live
             if not recipients or not any(recipient_identity(row, declarations) in live for row in recipients):
                 recipients = _resolve(history, message, declarations)
             controls = [events["native-control"] for events in recorded.values() if "native-control" in events]
@@ -1678,33 +1772,61 @@ def _exact_session_alias(alias, row):
 # declared again, so 6000 unchanged rows are not re-parsed on every poll (read_declarations was over a core,
 # 2026-11-25). Each read rebuilds fully detached rows from the bytes (3x cheaper than json.loads): a caller that
 # changes a row, or anything nested in it, never changes the next read.
+# Beside the bytes, the few fields liveness, roles and addressee identity read (never handed to a caller to change):
+# a read that returns only live rows, or one session's rows, rebuilds only those and their roles' rows.
 _BUILT = {}
+_META = ("pid", "created_at", "native_session_id", "native_process", "runtime", "app", "status", "role",
+         "updated_at", "session")
 
 
-def _built(texts):
+def _entries(texts):
     global _BUILT
     cache, built = _BUILT, {}
     for text in texts:
-        blob = cache.get(text)
-        if blob is None:
+        entry = cache.get(text)
+        if entry is None:
             row = json.loads(text)
             row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
-            blob = marshal.dumps(row)
-        built[text] = blob
+            entry = (marshal.dumps(row), {field: row[field] for field in _META if field in row})
+        built[text] = entry
     _BUILT = built   # only the rows of the newest read are kept: the cache never outgrows the table
-    return [marshal.loads(built[text]) for text in texts]
+    return [built[text] for text in texts]
 
 
-def read_declarations(connection, *, include_archived=False, records=None):
-    """records: the table's raw record texts, kept by a caller per commit (F419); liveness is read fresh."""
+def _records(connection, records=None):
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
-        return []
+        return None
+    return [row[0] for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")] \
+        if records is None else records
+
+
+def _identities(connection, records=None):
+    """Every declaration's addressee fields (session, native id, runtime, app) for recipient_identity, without
+    rebuilding 6000 rows; read-only, never handed out."""
+    records = _records(connection, records)
+    return [] if records is None else [meta for _blob, meta in _entries(records)]
+
+
+def read_declarations(connection, *, include_archived=False, records=None, session=None):
+    """records: the table's raw record texts, kept by a caller per commit (F419); liveness is read fresh.
+    session: only that session's rows (archived too when include_archived). Only the rows returned and the rows of
+    their roles are rebuilt: a live-only read no longer rebuilds the ~5700 rows of dead processes."""
+    records = _records(connection, records)
     if records is None:
-        records = [row[0] for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")]
-    rows = _built(records)
-    for row in rows:
-        row["process_alive"] = _session_alive(row)
-        row["current"] = row["status"] != "done" and row["process_alive"]
+        return []
+    entries = _entries(records)
+    alive = [_session_alive(meta) for _blob, meta in entries]
+    current = [meta["status"] != "done" and live for (_blob, meta), live in zip(entries, alive)]
+    wanted = ([meta.get("session") == session for _blob, meta in entries] if session is not None
+              else [True] * len(entries) if include_archived else current)
+    roles = {entries[at][1].get("role") for at, keep in enumerate(wanted) if keep} - {None, ""}
+    built = {}
+    for at, (blob, meta) in enumerate(entries):
+        if wanted[at] or (meta.get("role") and meta["role"] in roles):
+            row = built[at] = marshal.loads(blob)
+            row["process_alive"] = alive[at]
+            row["current"] = current[at]
+    rows = list(built.values())
     holders = {}  # F419: each role's newest current holder in one pass (it was a pass over every row for each row)
     for row in rows:
         if row.get("role") and row["current"] and (row["role"] not in holders
@@ -1720,7 +1842,7 @@ def read_declarations(connection, *, include_archived=False, records=None):
             # Role and human names follow their owner; exact session identities never do.
             holder.setdefault("aliases", []).extend(alias for alias in _aliases({}, row)
                 if not _exact_session_alias(alias, row))
-    return [row for row in rows if include_archived or row["current"]]
+    return [row for at, row in built.items() if wanted[at] and (include_archived or row["current"])]
 
 
 def _inherited_work(history, root, lineage):

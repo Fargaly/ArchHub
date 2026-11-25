@@ -9,8 +9,10 @@ Every task write names the revision it read. A stale revision conflicts.
 """
 import copy
 import json
+import math
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -1452,12 +1454,41 @@ def _task_threads(history):
     bound, last = {}, {}
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
         return bound, last
+    # Founder 2026-11-25 'very slow': every Work column read re-scanned json_each over the whole room (~34k notes).
+    # The room only grows (retention deletes old notes): an unchanged room costs one indexed count, new notes are
+    # read from the last sequence, and a deletion below it rebuilds once.
+    store = history._db.execute("PRAGMA database_list").fetchone()[2]
+    if not store:   # an in-memory room has no identity to key a cache on
+        return _thread_rows(history, ROOM, 0, math.inf, bound, last, DELIVERY_AUTHOR, DELIVERY_CATEGORY)
+    place = (store, os.stat(store).st_ino)
+    count, newest = history._db.execute(
+        "SELECT count(*), coalesce(max(sequence), 0) FROM messages WHERE conversation_id=?", (ROOM,)).fetchone()
+    with _THREADS_LOCK:
+        held = _THREADS.get(place)
+        if held is not None and (held[0], held[1]) == (count, newest):
+            return held[2], held[3]
+        after = 0
+        if held is not None and newest >= held[1] and history._db.execute(
+                "SELECT count(*) FROM messages WHERE conversation_id=? AND sequence<=?", (ROOM, held[1])).fetchone()[0] == held[0]:
+            after, bound, last = held[1], held[2], held[3]
+        _THREADS.clear()   # one store in use per process; a failed pass leaves nothing half-built behind
+        _thread_rows(history, ROOM, after, newest, bound, last, DELIVERY_AUTHOR, DELIVERY_CATEGORY)
+        _THREADS[place] = (count, newest, bound, last)
+    return bound, last
+
+
+_THREADS, _THREADS_LOCK = {}, threading.Lock()
+
+
+def _thread_rows(history, room, after, newest, bound, last, delivery_author, delivery_category):
+    """_task_threads' pass over the room notes after one sequence, in sequence order."""
     for message, author, content, category, task, created in history._db.execute(
             "SELECT m.id, m.author, m.content, m.category, r.value, m.created_at FROM messages m, json_each(m.refs) r "
-            "WHERE m.conversation_id=? AND json_valid(m.refs) ORDER BY m.sequence", (ROOM,)):
+            "WHERE m.conversation_id=? AND m.sequence>? AND m.sequence<=? AND json_valid(m.refs) ORDER BY m.sequence",
+            (room, after, newest)):
         last[task] = content
         thread = bound.setdefault(task, [])
-        if author != DELIVERY_AUTHOR and category != DELIVERY_CATEGORY and not (thread and thread[-1]["id"] == message):
+        if author != delivery_author and category != delivery_category and not (thread and thread[-1]["id"] == message):
             thread.append({"id": message, "who": author, "text": _without_header(content), "at": created})
     return bound, last
 
@@ -1713,7 +1744,7 @@ def _column_entry(row, session, declaration, project, state, last, threads, live
          'capacity': row.get('capacity') or '',
          'stale': shown == "stale", 'result': result, 'project': session.get('project', row.get('project') or ''), 'parent': row.get('parent_id') or '',
          'summary': _summary(row['title'], shown, result),
-         'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
+         'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': [dict(entry) for entry in bound], 'steps': [], 'reviews': [], 'queuedMessages': [],
          'declarations': [declaration] if declaration else [],
          'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
          'rules': list(session.get("rules") or []),

@@ -138,10 +138,12 @@ test('Updates retains the installed-build confirmation until the owner acknowled
 });
 
 test('Connect dialog tools render with session catalogue rows, which carry no nodes',()=>{
- // Catalogue rows are {id,title,path,kind} (session_files catalogue); the open session holds the nodes.
- const c=context({graphs:[{id:'a.archhub',title:'A',path:'a.archhub',kind:'agent-session'}],
-  graph:{nodes:[{id:'n1',params:{host:'WhatsApp Business'}},{id:'n2',params:{}},{id:'n3'}]}});
- load(c,'agent-states.jsx');
- const tree=c.UI.ConnectorTools({connection:{id:'whatsapp',name:'WhatsApp Business',connected:false}});
- assert.match(text(tree),/Used by\s+1\s+nodes/);
+ // Catalogue rows are {id,title,path,kind} (session_files catalogue); the open canvas holds the nodes.
+ const graphs=[{id:'a.archhub',title:'A',path:'a.archhub',kind:'agent-session'}];
+ const label=nodes=>{const c=context({graphs,graph:{nodes:[...nodes,{id:'other',params:{}},{id:'bare'}]}});load(c,'agent-states.jsx');
+  return text(c.UI.ConnectorTools({connection:{id:'whatsapp',name:'WhatsApp Business',connected:false}}));};
+ const uses=n=>Array.from({length:n},(_,i)=>({id:'n'+i,params:i%2?{source:'WhatsApp Business'}:{host:'WhatsApp Business'}}));
+ assert.match(label(uses(0)),/Not used on this canvas/);
+ assert.match(label(uses(1)),/Used by 1 node on this canvas/);
+ assert.match(label(uses(3)),/Used by 3 nodes on this canvas/);
 });

@@ -219,6 +219,11 @@
           if (node) executeAction("ui.go", u, 'canvas');
         }}>Open as node</Btn></div></div> : null;
   }
+  // Counts only the open canvas: catalogue rows carry no nodes, and other canvases are not loaded for this label.
+  const usage = (s, c) => {
+    const used = (s.graph?.nodes || []).filter(n => n.params?.host === c.name || n.params?.source === c.name).length;
+    return used ? `Used by ${used} node${used === 1 ? '' : 's'} on this canvas` : 'Not used on this canvas';
+  };
   function ConnectorTools({
     connection: c
   }) {
@@ -226,7 +231,7 @@
       u = useApp();
     return c ? <div className="grid" style={{
       marginTop: 20
-    }}><div className="spread"><span>Used by {(s.graph?.nodes || []).filter(n => n.params?.host === c.name || n.params?.source === c.name).length} nodes</span><Chip>{c.connected ? 'Ready' : 'Disconnected'}</Chip></div><p className="muted">Scopes: {['read', 'reply', 'post'].filter(k => c[k]).join(' · ') || 'None'}</p><div className="flex">{['Read', 'Write'].map(action => <Btn key={action} sm onClick={async () => {
+    }}><div className="spread"><span>{usage(s, c)}</span><Chip>{c.connected ? 'Ready' : 'Disconnected'}</Chip></div><p className="muted">Scopes: {['read', 'reply', 'post'].filter(k => c[k]).join(' · ') || 'None'}</p><div className="flex">{['Read', 'Write'].map(action => <Btn key={action} sm onClick={async () => {
           const n = await executeAction("addNode", u, action === 'Read' ? 'Read from host' : 'Write to host');
           if (n) await executeAction("setNodeParam", u, n.id, 'host', c.name);
           executeAction("ui.go", u, 'canvas');

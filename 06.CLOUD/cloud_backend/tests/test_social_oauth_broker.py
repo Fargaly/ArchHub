@@ -955,8 +955,7 @@ def _sync_user(token: str) -> str:
 def test_account_connections_are_per_account_encrypted_and_listed_without_tokens(client, monkeypatch):
     import account_sync
     import brain_replica
-    import config
-    monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "fake-state-secret")
+    monkeypatch.setattr(account_sync, "_KEY_CACHE", None)
     owner, other = _token_for("sync-owner@sync.test"), _token_for("sync-other@sync.test")
     stored = _sync_put(client, owner, "connections/social-x-101.json", account_sync.canonical(_x_record()))
     assert stored.status_code == 200, stored.text
@@ -980,24 +979,60 @@ def test_account_connections_are_per_account_encrypted_and_listed_without_tokens
     assert client.get("/v1/account-sync/manifest").status_code == 401
 
 
-def test_account_sync_refuses_credentials_outside_connections_and_fails_closed_without_a_key(client, monkeypatch):
-    import account_sync
-    import config
+def test_account_sync_refuses_credentials_outside_connections(client):
     token = _token_for("sync-nokey@sync.test")
     refused = _sync_put(client, token, "settings/router.json", b'{"key": "sk-live-looking"}')
     assert refused.status_code == 400 and "refuses_credentials" in refused.text
+
+
+def test_connection_key_is_random_on_the_cloud_and_survives_restart_and_secret_rotation(client, monkeypatch):
+    import os
+    import account_sync
+    import brain_replica
+    import config
+    monkeypatch.setattr(account_sync, "_KEY_CACHE", None)
+    monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "state-secret-1")
+    monkeypatch.setattr(config, "GOOGLE_OAUTH_CLIENT_SECRET", "google-secret-1")
+    token = _token_for("sync-key@sync.test")
+    assert _sync_put(client, token, "connections/social-x-101.json", account_sync.canonical(_x_record())).status_code == 200
+    key_file = account_sync._key_path()
+    held = key_file.read_bytes()
+    assert key_file.is_file() and brain_replica.DEFAULT_REPLICAS_ROOT not in key_file.parents
+    assert b"secret-1" not in held
+    if os.name != "nt":
+        assert key_file.stat().st_mode & 0o777 == 0o600
+    # A restart (empty cache) with every OAuth secret rotated or gone still opens the stored connection.
+    monkeypatch.setattr(account_sync, "_KEY_CACHE", None)
+    monkeypatch.setattr(config, "GOOGLE_OAUTH_CLIENT_SECRET", "google-secret-2")
     monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "")
-    monkeypatch.setattr(config, "GOOGLE_OAUTH_CLIENT_SECRET", "")
-    closed = _sync_put(client, token, "connections/social-x-101.json", account_sync.canonical(_x_record()))
-    assert closed.status_code == 503 and "SOCIAL_OAUTH_STATE_SECRET" in closed.text and "x-access-1" not in closed.text
+    opened = client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(token))
+    assert opened.status_code == 200 and opened.json()["record"]["token"] == "x-access-1"
+    assert key_file.read_bytes() == held and b"secret" not in opened.content
+
+
+def test_a_lost_key_shows_needs_reconnect_never_a_wrong_decrypt_and_a_reupload_heals(client, monkeypatch):
+    import account_sync
+    monkeypatch.setattr(account_sync, "_KEY_CACHE", None)
+    token = _token_for("sync-lost@sync.test")
+    assert _sync_put(client, token, "connections/social-x-101.json", account_sync.canonical(_x_record())).status_code == 200
+    # The data volume lost the key file: the cloud makes a new key at next use.
+    account_sync._key_path().unlink()
+    monkeypatch.setattr(account_sync, "_KEY_CACHE", None)
+    listed = client.get("/v1/account-sync/manifest", headers=_sync_headers(token)).json()["items"]
+    assert [(row["logical_path"], row.get("needs_reconnect")) for row in listed] == [("connections/social-x-101.json", True)]
+    refused = client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(token))
+    assert refused.status_code == 409 and "connection_needs_reconnect" in refused.text and "x-access-1" not in refused.text
+    # A PC that still holds the connection uploads it again: healed under the new key, nothing dropped.
+    assert _sync_put(client, token, "connections/social-x-101.json", account_sync.canonical(_x_record())).status_code == 200
+    assert "needs_reconnect" not in client.get("/v1/account-sync/manifest", headers=_sync_headers(token)).json()["items"][0]
+    assert client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(token)).json()["record"]["token"] == "x-access-1"
 
 
 def test_consume_keeps_the_grant_on_the_account_and_refreshes_it_server_side(client, monkeypatch):
     import account_sync
-    import config
     import social_oauth
+    monkeypatch.setattr(account_sync, "_KEY_CACHE", None)
     _social3_config(monkeypatch)
-    monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "fake-state-secret")
     token = _token_for("sync-consume@sync.test")
     state = urllib.parse.parse_qs(urllib.parse.urlsplit(_social3_start(client, "x", token).json()["auth_url"]).query)["state"][0]
     monkeypatch.setattr(social_oauth, "_exchange", lambda *args: {

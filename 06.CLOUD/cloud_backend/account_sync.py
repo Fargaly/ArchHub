@@ -8,8 +8,8 @@ displaced head (``conflict_sha256``) so the device keeps a visible copy.
 
 Namespaces are logical-path prefixes. ``connections/<entry>.json`` holds a
 social/connector grant record; it is the one namespace allowed to carry a
-credential, so its blobs are Fernet ciphertext (key derived from an existing
-server secret; fail closed without one) and every other namespace refuses
+credential, so its blobs are Fernet ciphertext under a random key the cloud
+makes at first use (account_sync.key on the data volume, owner-only) and every other namespace refuses
 secret-like content at ingress. A connection's refresh token stays in
 ``connection_refresh/`` beside the store and is never served.
 Not yet here (D-051 parts owned by their builders): the Workshop JSONL log routes.
@@ -22,8 +22,10 @@ import gzip
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
+import threading
 import time
 import urllib.request  # also loads urllib.parse and urllib.error
 from pathlib import Path
@@ -32,7 +34,6 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Header, HTTPException, Query
 
 import brain_replica
-import config
 import db
 
 router = APIRouter()
@@ -88,14 +89,47 @@ def _ensure(con: sqlite3.Connection) -> None:
     return con
 
 
+_KEY_CACHE: Fernet | None = None
+_KEY_LOCK = threading.Lock()
+
+
+def _key_path() -> Path:
+    # On the data volume beside the replicas tree, never inside a user's folder.
+    return Path(brain_replica.DEFAULT_REPLICAS_ROOT).parent / "account_sync.key"
+
+
 def _fernet() -> Fernet:
-    # No new secret: derived from one the cloud already holds.
-    # shortcut: rotating that secret makes stored connections unreadable (reconnect needed); add a
-    # key version + MultiFernet when a rotation is planned.
-    base = config.SOCIAL_OAUTH_STATE_SECRET or config.GOOGLE_OAUTH_CLIENT_SECRET
-    if not base:
-        raise SyncKeyUnavailable("account sync connection key unavailable: SOCIAL_OAUTH_STATE_SECRET or GOOGLE_OAUTH_CLIENT_SECRET not set")
-    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(base.encode("utf-8") + b":archhub-account-sync-connections-1").digest()))
+    """The connections key: random, made by the cloud at first use, kept owner-only on the data volume.
+
+    Never derived from or wrapped with an OAuth or other configured secret, never in env, logs or answers.
+    If the volume loses it, a new key is made and every older connection reads as "needs reconnect"
+    (Fernet authenticates, so nothing is ever decrypted wrong); a PC still holding it re-uploads it.
+    """
+    global _KEY_CACHE
+    with _KEY_LOCK:
+        if _KEY_CACHE is not None:
+            return _KEY_CACHE
+        path = _key_path()
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                handle = None  # another worker made it first: read theirs
+            if handle is not None:
+                with os.fdopen(handle, "wb") as out:
+                    out.write(Fernet.generate_key())
+                    out.flush()
+                    os.fsync(out.fileno())
+        try:
+            _KEY_CACHE = Fernet(path.read_bytes().strip())
+        except (OSError, ValueError) as exc:
+            raise SyncKeyUnavailable("account sync key unreadable") from exc
+        return _KEY_CACHE
+
+
+class NeedsReconnect(SyncKeyUnavailable):
+    """A stored connection this cloud's key cannot open (key lost with the volume)."""
 
 
 def _blob_path(root: Path, sha: str) -> Path:
@@ -104,8 +138,8 @@ def _blob_path(root: Path, sha: str) -> Path:
 
 def _write_blob(root: Path, logical_path: str, sha: str, content: bytes) -> None:
     path = _blob_path(root, sha)
-    if path.exists():
-        return
+    if path.exists() and not logical_path.startswith(_CONNECTIONS):
+        return  # a connection blob is rewritten: one sealed under a lost key must heal on re-upload
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _fernet().encrypt(content) if logical_path.startswith(_CONNECTIONS) else gzip.compress(content)
     temporary = path.with_suffix(".tmp")
@@ -118,9 +152,14 @@ def _read_blob(root: Path, logical_path: str, sha: str) -> bytes | None:
     if not path.is_file():
         return None
     data = path.read_bytes()
+    if logical_path.startswith(_CONNECTIONS):
+        try:
+            return _fernet().decrypt(data)
+        except InvalidToken as exc:
+            raise NeedsReconnect("connection needs reconnect: its account key was lost") from exc
     try:
-        return _fernet().decrypt(data) if logical_path.startswith(_CONNECTIONS) else gzip.decompress(data)
-    except (InvalidToken, OSError, EOFError) as exc:
+        return gzip.decompress(data)
+    except (OSError, EOFError) as exc:
         raise SyncKeyUnavailable("account sync item unreadable") from exc
 
 
@@ -286,19 +325,38 @@ def _user(authorization: str | None) -> dict:
 
 
 def _unavailable(exc: SyncKeyUnavailable) -> HTTPException:
+    if isinstance(exc, NeedsReconnect):
+        return HTTPException(status_code=409, detail={"error": "connection_needs_reconnect", "blocker": str(exc)})
     return HTTPException(status_code=503, detail={"error": "account_sync_unavailable", "blocker": str(exc)})
+
+
+def _needs_reconnect(root: Path, logical_path: str, sha: str) -> bool:
+    try:
+        _read_blob(root, logical_path, sha)
+    except NeedsReconnect:
+        return True
+    except SyncKeyUnavailable:
+        return False
+    return False
 
 
 @router.get("/v1/account-sync/manifest")
 def manifest(since: int = Query(0, ge=0), authorization: str | None = Header(None)) -> dict:
     """Heads changed after ``since``: paths and digests only, never content."""
     user = _user(authorization)
-    with _manifest(_root(user["id"])) as con:
+    root = _root(user["id"])
+    with _manifest(root) as con:
         rows = con.execute("SELECT * FROM items WHERE seq > ? ORDER BY seq", (since,)).fetchall()
         top = con.execute("SELECT COALESCE(MAX(seq), 0) FROM items").fetchone()[0]
-    return {"ok": True, "server_seq": top, "items": [
-        {"logical_path": r["logical_path"], "sha256": r["sha256"], "size": r["size"], "updated_at": r["updated_at"],
-         "device_id": r["device_id"], "deleted": bool(r["deleted"])} for r in rows]}
+    items = []
+    for r in rows:
+        item = {"logical_path": r["logical_path"], "sha256": r["sha256"], "size": r["size"],
+                "updated_at": r["updated_at"], "device_id": r["device_id"], "deleted": bool(r["deleted"])}
+        if (not r["deleted"] and r["logical_path"].startswith(_CONNECTIONS)
+                and _needs_reconnect(root, r["logical_path"], r["sha256"])):
+            item["needs_reconnect"] = True
+        items.append(item)
+    return {"ok": True, "server_seq": top, "items": items}
 
 
 @router.put("/v1/account-sync/item")

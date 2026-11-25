@@ -1,6 +1,19 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-async function adapter(canvas,serve=()=>({ok:true,result:[]})){
+// D-014 NOGRAPH: the open canvas is a session file (owner session_files); the graph projection stays for System.
+const PATH='C:/isolated/agents.archhub';
+const sessionFile=(nodes=[],id='graph')=>({format:'archhub',version:1,id,title:id,nodes,wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}});
+const files=(file,session)=>async body=>{
+ const own=session&&await session(body);if(own)return own;
+ if(body.action==='initial')return {ok:true,document:file,path:PATH};
+ if(body.action==='validate')return {ok:true,document:body.document};
+ if(body.action==='autosave')return {ok:true,path:body.path,revision:(body.document.properties?.revision||0)+1,document:body.document};
+ if(body.action==='solve')return {ok:true,results:{},solved:[],stale:[],ms:0};
+ if(body.action==='param-op'){const [id,key,value]=body.args,document=globalThis.structuredClone(body.document);document.nodes.find(n=>n.id===id).params[key]=value;return {ok:true,document,changed:[id]};}
+ return {ok:true};
+};
+async function adapter(canvas,serve=()=>({ok:true,result:[]}),file=sessionFile(),session=null){
+ const sessions=files(file,session);
  const calls=[],listeners=new Map();
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
   ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
@@ -9,7 +22,7 @@ async function adapter(canvas,serve=()=>({ok:true,result:[]})){
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
   // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
-  const data=url==='/api/universal/desktop-access'?{ok:true,admitted:true,state:'admitted',subject:'agents-fixture'}:url==='/api/commands'?{commands:[]}:url==='/api/universal/canvas'?canvas:await serve(url,body);
+  const data=url==='/api/universal/desktop-access'?{ok:true,admitted:true,state:'admitted',subject:'agents-fixture'}:url==='/api/commands'?{commands:[]}:url==='/api/universal/canvas'?canvas:url==='/api/session-files'?await sessions(body):await serve(url,body);
   return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>data};
  };
  const context={window,document:window.document,fetch,CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
@@ -20,19 +33,17 @@ async function adapter(canvas,serve=()=>({ok:true,result:[]})){
 }
 const graph=nodes=>({root:'graph',scope:{current:'graph'},nodes,wires:[],catalog:[],workshops:[{root:'workshop'}]});
 test('multi-node failure restores prior successful edits using the existing property owner',async()=>{
- const property=(id,value)=>({id,label:id,ports:[],properties:[{label:'value',value,relation:id+'-value',editable:true}]});
- const canvas=graph([property('one',1),property('two',2)]),writes=[];
- const {api}=await adapter(canvas,(url,body)=>{
-  if(url==='/api/universal/set-property'){
-   writes.push([body.relation,body.value]);
-   if(body.relation==='two-value')return {ok:false,error:'Second owner refused'};
-   canvas.nodes[0].properties[0].value=Number(body.value);return {ok:true};
-  }
-  return {ok:true,result:[]};
+ const property=(id,value)=>({id,type:'param.number',title:id,params:{value},paramDefs:[{id:'value',name:'value',type:'number'}],ports:{source:[],target:[]},position:{x:0,y:0}});
+ const writes=[];
+ const {api}=await adapter(graph([]),undefined,sessionFile([property('one',1),property('two',2)]),body=>{
+  if(body.action!=='param-op')return null;
+  writes.push([body.args[0],body.args[2]]);
+  return body.args[0]==='two'?{ok:false,error:'Second owner refused'}:null;
  });
  await assert.rejects(api.setMultipleNodeParameters(['one','two'],'value',9),/Second owner refused.*rolled back/);
- assert.deepEqual(writes,[['one-value','9'],['two-value','9'],['one-value','1']]);
- assert.equal(canvas.nodes[0].properties[0].value,1);assert.equal(canvas.nodes[1].properties[0].value,2);
+ assert.deepEqual(writes,[['one',9],['two',9],['one',1]]);
+ const held=api.getSessionDocument().nodes;
+ assert.equal(held[0].params.value,1);assert.equal(held[1].params.value,2);
 });
 test('Brain requests its real held count rather than exporting a silently truncated page',async()=>{
  const {api,calls}=await adapter(graph([]),(url,body)=>url==='/api/universal/brain-export'?
@@ -62,14 +73,14 @@ test('Agent surface read cannot publish metadata after the graph changes',async(
  let finish;
  const held=new Promise(resolve=>{finish=resolve;});
  const canvas=graph([]);
- const {api}=await adapter(canvas,(url,body)=>{
+ const {api,calls}=await adapter(canvas,(url,body)=>{
   if(body?.function==='getAgentSurface')return held;
   if(body?.function==='getGraphMetadata')return {ok:true,result:{documentation:'Old graph instructions'}};
   return {ok:true,result:[]};
- });
+ },sessionFile(),body=>body.action==='open'?{ok:true,document:sessionFile([],'other'),path:'C:/isolated/other.archhub'}:null);
  const reading=api.refreshAgentSurface();
- canvas.root='other';canvas.scope.current='other';
- await api.selectGraph('other');
+ while(!calls.some(call=>call.body?.function==='getAgentSurface'))await new Promise(resolve=>setTimeout(resolve,1));  // the read is in flight
+ await api.selectGraph('C:/isolated/other.archhub');
  finish({ok:true,result:{agentProfiles:{},learning:{layers:{}}}});
  await reading;
  assert.equal(api.getSnapshot().graph.id,'other');
@@ -83,28 +94,35 @@ test('registered commands use the exact owner method and UI navigation remains i
  assert.throws(()=>api.executeAction('invented',{act:fn=>fn()}),/Unknown action/);
 });
 
-test('Results export uses the selected pinned output and preserves CSV quoting',async()=>{
- const canvas=graph([{id:'node',label:'Output',ports:[],pinned:true,properties:[{label:'pinned_output',value:JSON.stringify([{value:'a,"b"'}])}],output:[{value:'original'}]}]);
- const {api}=await adapter(canvas);const exported=await api.exportData('Results','node');
+// Pinned outputs have no session-file owner yet (setPinnedOutput answers not_available): an open item, not a removal.
+test('Results export uses the selected node output and preserves CSV quoting',async()=>{
+ const file=sessionFile([{id:'node',type:'script.python',title:'Output',params:{kind:'pure',code:''},ports:{source:[],target:[]},position:{x:0,y:0},result:{status:'Done',output:[{value:'a,"b"'}]}},
+  {id:'other',type:'script.python',title:'Other',params:{kind:'pure',code:''},ports:{source:[],target:[]},position:{x:0,y:0},result:{status:'Done',output:[{value:'other'}]}}]);
+ const {api}=await adapter(graph([]),undefined,file);const exported=await api.exportData('Results','node');
  assert.equal(exported.content,'"value"\r\n"a,""b"""');
 });
 
 test('malformed project reads retain confirmed schedule and template lists',async()=>{
  const {api}=await adapter(graph([]),(url,body)=>url==='/api/universal/canvas-op'?{ok:true}:{ok:true,result:[]});
- await assert.rejects(api.refreshProjects(),/invalid schedule or template list/);
+ // Schedules and templates are re-read after a schedule change (refreshProjects now only re-shows the open file).
+ await assert.rejects(api.setScheduleEnabled('schedule',true),/invalid schedule or template list/);
  assert.equal(Array.isArray(api.getSnapshot().schedules),true);
  assert.equal(Array.isArray(api.getSnapshot().templates),true);
 });
 
+// D-014: graph documentation is a property of the session file, saved by its one owner (session_files).
 test('graph documentation retains its established metadata owner after Rest integration',async()=>{
  const {api,calls}=await adapter(graph([]),(url,body)=>{
   if(body?.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body?.function==='getGraphMetadata')return {ok:true,result:{documentation:'Saved instructions'}};
+  if(body?.function==='getGraphMetadata')return {ok:true,result:{}};
   return {ok:true,result:[]};
  });
  await api.updateGraph('graph',{documentation:'Saved instructions'});
- assert.equal(calls.filter(call=>call.body?.function==='setGraphMetadata').length,1);
  assert.equal(api.getSnapshot().graph.documentation,'Saved instructions');
+ await new Promise(resolve=>setTimeout(resolve,400));  // past the autosave debounce
+ const saves=calls.filter(call=>call.url==='/api/session-files'&&call.body.action==='autosave');
+ assert.equal(saves.length,1);assert.equal(saves[0].body.document.properties.documentation,'Saved instructions');
+ assert.equal(calls.filter(call=>call.body?.function==='setGraphMetadata').length,0,'no second owner');
 });
 
 test('host availability has its own read while the Watcher keeps its execution owner',async()=>{

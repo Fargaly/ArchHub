@@ -1122,7 +1122,7 @@
         width: k === 'Workshop board' ? 'min(1250px,95vw)' : k === 'Approve' ? 'min(850px,95vw)' : undefined
       }}><header className="spread"><h2>{title}</h2><Btn sm ghost aria-label="Close dialog" onClick={event => executeAction("appShell.CloseDialog.98", {
             close
-          }, event)}>×</Btn></header>{body}</section></div>;
+          }, event)}>×</Btn></header><Boundary key={k}>{body}</Boundary></section></div>;
   }
   class Boundary extends React.Component {
     constructor(p) {

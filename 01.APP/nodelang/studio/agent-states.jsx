@@ -226,7 +226,7 @@
       u = useApp();
     return c ? <div className="grid" style={{
       marginTop: 20
-    }}><div className="spread"><span>Used by {s.graphs.reduce((count, g) => count + g.nodes.filter(n => n.params.host === c.name || n.params.source === c.name).length, 0)} nodes</span><Chip>{c.connected ? 'Ready' : 'Disconnected'}</Chip></div><p className="muted">Scopes: {['read', 'reply', 'post'].filter(k => c[k]).join(' · ') || 'None'}</p><div className="flex">{['Read', 'Write'].map(action => <Btn key={action} sm onClick={async () => {
+    }}><div className="spread"><span>Used by {(s.graph?.nodes || []).filter(n => n.params?.host === c.name || n.params?.source === c.name).length} nodes</span><Chip>{c.connected ? 'Ready' : 'Disconnected'}</Chip></div><p className="muted">Scopes: {['read', 'reply', 'post'].filter(k => c[k]).join(' · ') || 'None'}</p><div className="flex">{['Read', 'Write'].map(action => <Btn key={action} sm onClick={async () => {
           const n = await executeAction("addNode", u, action === 'Read' ? 'Read from host' : 'Write to host');
           if (n) await executeAction("setNodeParam", u, n.id, 'host', c.name);
           executeAction("ui.go", u, 'canvas');

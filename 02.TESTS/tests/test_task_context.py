@@ -10,19 +10,34 @@ def _isolate(monkeypatch, root):
     monkeypatch.delenv("ARCHHUB_TEST_STATE_DIR", raising=False)
 
 
+FIXED = {"start", "fixed-agent", "fixed-you", "fixed-workshop"}
+
+
 def _file(directory, name, scope, progress, node_id, status, output):
     from nodelang.session_files import new_document, write_document
     document = new_document(name)
-    document["nodes"] = [{
-        "id": node_id, "type": "note", "title": name, "params": {},
-        "position": {"x": 0, "y": 0},
-        "result": {"status": status, "output": output, "error": ""},
-    }]
-    document["properties"] = {"taskContext": {
-        "scope": scope, "rules": [name + " rule"], "agents": [name + " agent"],
-        "plan": [name + " plan"], "progress": progress,
-    }}
+    document["nodes"] = [_node(name, node_id, status, output)]
+    document["properties"] = {"taskContext": _context(name, scope, progress)}
     return write_document(str(directory / (name + ".archhub")), document)
+
+
+def _node(name, node_id, status, output):
+    return {"id": node_id, "type": "note", "title": name, "params": {},
+            "position": {"x": 0, "y": 0}, "result": {"status": status, "output": output, "error": ""}}
+
+
+def _context(name, scope, progress):
+    return {"scope": scope, "rules": [name + " rule"], "agents": [name + " agent"],
+            "plan": [name + " plan"], "progress": progress}
+
+
+def _fill(path, name, scope, progress, node_id, status, output):
+    """Write the work into the task's own bound session file, keeping its fixed nodes and its task stamp."""
+    from nodelang.session_files import read_document, write_document
+    document = read_document(path)
+    document["nodes"].append(_node(name, node_id, status, output))
+    document["properties"]["taskContext"].update(_context(name, scope, progress))
+    write_document(path, document)
 
 
 def _call(function, *args):
@@ -39,14 +54,22 @@ def test_switching_tasks_keeps_each_file_scope_and_progress(tmp_path, monkeypatc
     from nodelang.workshop_tasks import create
     folder = tmp_path / "files"
     folder.mkdir()
-    path_a = _file(folder, "Alpha", "scope-a", {"step": "one", "note": "alpha"}, "node-a", "Done", "alpha-out")
-    path_b = _file(folder, "Beta", "scope-b", {"step": "two", "note": "beta"}, "node-b", "Working", "beta-out")
+    # A foreign file handed to openTaskGraph is not adopted: each task already owns the session started with it.
+    path_x = _file(folder, "Alpha", "scope-x", {"step": "foreign"}, "node-x", "Done", "foreign-out")
+    foreign = Path(path_x).read_bytes()
     with application_history() as history:
         task_a = create(history, "Alpha task", "founder")["id"]
         task_b = create(history, "Beta task", "founder")["id"]
 
-    opened_a = _call("openTaskGraph", task_a, path_a)
-    opened_b = _call("openTaskGraph", task_b, path_b)
+    opened_a = _call("openTaskGraph", task_a, path_x)
+    opened_b = _call("openTaskGraph", task_b)
+    path_a, path_b = opened_a["path"], opened_b["path"]
+    assert Path(path_x).read_bytes() == foreign
+    assert len({Path(path_a), Path(path_b), Path(path_x)}) == 3
+    _fill(path_a, "Alpha", "scope-a", {"step": "one", "note": "alpha"}, "node-a", "Done", "alpha-out")
+    _fill(path_b, "Beta", "scope-b", {"step": "two", "note": "beta"}, "node-b", "Working", "beta-out")
+    opened_a = _call("openTaskGraph", task_a)
+    opened_b = _call("openTaskGraph", task_b)
     saved_a = Path(opened_a["path"]).read_bytes()
     saved_b = Path(opened_b["path"]).read_bytes()
 
@@ -61,11 +84,14 @@ def test_switching_tasks_keeps_each_file_scope_and_progress(tmp_path, monkeypatc
     assert back_a["taskId"] == task_a and back_a["scope"] == "scope-a"
     assert back_a["rules"] == ["Alpha rule"] and back_a["agents"] == ["Alpha agent"] and back_a["plan"] == ["Alpha plan"]
     assert back_a["progress"] == {"step": "one", "note": "alpha"}
-    assert back_a["workflow"] == [{"id": "node-a", "type": "note", "title": "Alpha"}]
+    # The session's fixed nodes come with the task; everything else is exactly this task's own work.
+    assert {row["id"] for row in back_a["workflow"] if row["id"] in FIXED} == FIXED
+    assert [row for row in back_a["workflow"] if row["id"] not in FIXED] == [{"id": "node-a", "type": "note", "title": "Alpha"}]
     assert back_a["activity"] == [{"id": "node-a", "status": "Done", "output": "alpha-out"}]
     assert again_b["taskId"] == task_b and again_b["scope"] == "scope-b"
     assert again_b["progress"] == {"step": "two", "note": "beta"}
-    assert again_b["workflow"] == [{"id": "node-b", "type": "note", "title": "Beta"}]
+    assert {row["id"] for row in again_b["workflow"] if row["id"] in FIXED} == FIXED
+    assert [row for row in again_b["workflow"] if row["id"] not in FIXED] == [{"id": "node-b", "type": "note", "title": "Beta"}]
     assert again_b["activity"] == [{"id": "node-b", "status": "Working", "output": "beta-out"}]
 
     held = {row["id"]: row for row in _call("listTasks")}
@@ -73,7 +99,6 @@ def test_switching_tasks_keeps_each_file_scope_and_progress(tmp_path, monkeypatc
     assert held[task_b]["sessionPath"] == again_b["path"] and held[task_b]["sessionOpen"] is False
     on_disk = json.loads(Path(path_b).read_text(encoding="utf-8"))["properties"]["taskContext"]
     assert on_disk["scope"] == "scope-b" and on_disk["progress"]["note"] == "beta" and on_disk["task"] == task_b
-
 
 def test_mcp_tools_round_trip_session_fields_and_drop_archived_tasks(tmp_path, monkeypatch):
     """The MCP task tools create a session, write every field, archive, and reopen."""

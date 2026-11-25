@@ -167,17 +167,25 @@ def _expect(view, spec):
     assert view["agents"] == spec["agents"]
     assert view["plan"] == spec["plan"]
     assert view["progress"] == spec["progress"]
+    on_disk = json.loads(Path(view["path"]).read_text(encoding="utf-8"))
+    # The plan is held as this task's own step nodes on its canvas (one note per step, in plan_order).
+    steps = sorted((node for node in on_disk["nodes"] if node["type"] == "note"
+                    and type(node["params"].get("plan_order")) is int and node.get("workshopTask") == spec["taskId"]),
+                   key=lambda node: node["params"]["plan_order"])
+    assert [node["title"] for node in steps] == spec["plan"]
+    plan = {node["id"]: node for node in steps}
+    assert [row for row in view["workflow"] if row['id'] in plan] == [
+        {"id": node["id"], "type": "note", "title": node["title"]} for node in steps]
     fixed = {'start', 'fixed-agent', 'fixed-you', 'fixed-workshop'}
-    assert [row for row in view["workflow"] if row['id'] not in fixed] == spec["workflow"]
+    assert [row for row in view["workflow"] if row['id'] not in fixed | set(plan)] == spec["workflow"]
     assert {row['id'] for row in view["workflow"] if row['id'] in fixed} == fixed
     assert view["workflow"][0]["id"] == "start"
     assert view["activity"] == spec["activity"]
-    assert [row for row in view["parameters"] if row['id'] not in fixed] == spec["parameters"]
+    assert [row for row in view["parameters"] if row['id'] not in fixed | set(plan)] == spec["parameters"]
     assert view["messages"] == [{"role": "task", **note} for note in spec["messages"]]
-    on_disk = json.loads(Path(view["path"]).read_text(encoding="utf-8"))
     held = on_disk["properties"]["taskContext"]
     assert held["task"] == spec["taskId"]
-    assert held["scope"] == spec["scope"] and held["plan"] == spec["plan"]
+    assert held["scope"] == spec["scope"] and "plan" not in held  # one copy: the step nodes asserted above
     assert held["agents"] == spec["agents"] and held["progress"] == spec["progress"]
     assert held["rules"] == spec["rules"]
     by_id = {node["id"]: node for node in on_disk["nodes"]}

@@ -19,19 +19,36 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 CHANGELOG = ROOT / "CHANGELOG.md"
 API = "https://api.github.com/repos/Fargaly/ArchHub/releases"
-SYNC_CHANGELOG_NODE = {'id': 'website.sync_changelog', 'params': {'request_seconds': 60}}
+SYNC_CHANGELOG_NODE = {'id': 'website.sync_changelog', 'params': {'request_seconds': 60, 'gh_seconds': 15}}
 BUILD_HEADING = re.compile(r"^## (20\d{6}-(?:\d{4}-[0-9a-f]+|\d{6}-[1-9]\d*-[1-9]\d*-[0-9a-f]{40}))\s*$", re.M)
+
+
+def gh_token() -> str:
+    """The signed-in gh CLI token, read into this process only; empty when gh is absent or signed out."""
+    gh = shutil.which("gh")
+    if not gh:
+        return ""
+    try:
+        run = subprocess.run([gh, "auth", "token"], capture_output=True, text=True,
+                             timeout=SYNC_CHANGELOG_NODE['params']['gh_seconds'])
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"gh auth token unavailable: {type(exc).__name__}", file=sys.stderr)
+        return ""
+    return run.stdout.strip() if run.returncode == 0 else ""
 
 
 def fetch_releases(token: str | None = None) -> list[dict]:
     if token is None:
-        token = os.environ.get("GH_TOKEN")
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or gh_token()
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "archhub-changelog-sync"}
     rows: list[dict] = []
     page = 1
@@ -39,8 +56,15 @@ def fetch_releases(token: str | None = None) -> list[dict]:
         request = urllib.request.Request(f"{API}?per_page=100&page={page}", headers=headers)
         if token:
             request.add_unredirected_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(request, timeout=SYNC_CHANGELOG_NODE['params']['request_seconds']) as response:
-            batch = json.load(response)
+        try:
+            with urllib.request.urlopen(request, timeout=SYNC_CHANGELOG_NODE['params']['request_seconds']) as response:
+                batch = json.load(response)
+        except urllib.request.HTTPError as exc:  # urllib.request re-exports urllib.error.HTTPError
+            limit = " (rate limit)" if exc.code in (403, 429) else ""
+            raise SystemExit(f"GitHub releases API refused: HTTP {exc.code}{limit}; "
+                             + ("the token was refused" if token else "set GH_TOKEN or GITHUB_TOKEN, or sign in with gh")) from None
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"GitHub releases API unreachable: {type(exc).__name__}: {exc}") from None
         if not batch:
             break
         rows.extend(item for item in batch

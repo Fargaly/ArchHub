@@ -82,7 +82,8 @@ class StaticSiteTest(unittest.TestCase):
             history = "\n".join(f"## {identity}\n\n- Kept manual entry {i}.\n"
                                 for i, identity in enumerate(local_only))
             path.write_text("# Changelog\n\n## Next build\n\n" + history, encoding="utf-8")
-            with patch.dict("os.environ", {"GH_TOKEN": ""}), patch.object(sync_changelog, "CHANGELOG", path), patch.object(
+            with patch.dict("os.environ", {"GH_TOKEN": "", "GITHUB_TOKEN": ""}), patch.object(sync_changelog, "gh_token", return_value=""), \
+                    patch.object(sync_changelog, "CHANGELOG", path), patch.object(
                     sync_changelog.urllib.request, "urlopen", side_effect=response):
                 result = sync_changelog.sync()
                 stamp = path.stat().st_mtime_ns
@@ -185,8 +186,9 @@ setImmediate(() => {
                 self.assertEqual(sync_changelog.fetch_releases(), [])
                 self.assertEqual(sync_changelog.fetch_releases("placeholder-helper"), [])
                 self.assertEqual(sync_changelog.fetch_releases(""), [])
-            with patch.dict(os.environ):
+            with patch.dict(os.environ), patch.object(sync_changelog, "gh_token", return_value=""):
                 os.environ.pop("GH_TOKEN", None)
+                os.environ.pop("GITHUB_TOKEN", None)
                 self.assertEqual(sync_changelog.fetch_releases(), [])
         self.assertEqual(requests, [
             ("Bearer placeholder-env", None), ("Bearer placeholder-helper", None),

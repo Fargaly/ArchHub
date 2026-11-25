@@ -9472,7 +9472,9 @@
         "02.TESTS/tests_replica/test_app_never_pops_a_console.py",
         "02.TESTS/tests_replica/test_designmatch.py",
         "02.TESTS/tests_replica/test_router_lists_real_providers.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/workshop_live.py",
+        "02.TESTS/tests_replica/test_launcher_tick_cost.py"
       ]
     },
     "NOBLOCK": {

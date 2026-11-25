@@ -407,6 +407,35 @@ def _raw_outlook_mail(tool: str, command: str) -> bool:
     return _outlook_mail_mutation(command)
 
 
+# Workspace Standard: a governed folder's root holds README.md, REGISTER.md and named results only; work
+# goes in its _WIP/. Founder 2026-11-25: "ليه مفيش حاجة تجبر الايجنتس يشتغلوا مظبوط" (why does nothing
+# force the agents to work correctly). Every agent ArchHub hooks gets this rule, not only Claude.
+_RESULT_NAME = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+){3,}-\d{3}-\d{4}-\d{2}-\d{2}\.[A-Za-z0-9]+$")
+
+
+def _names(text) -> list:
+    return [part.strip() for part in str(text).split(",") if part.strip()]
+
+
+def loose_root_file(tool: str, target: str, params=None) -> str:
+    """The folder to use instead when this write would leave a new loose file at a governed root, else ""."""
+    if not target or not _WRITE.match(tool):
+        return ""
+    path = Path(target)
+    if not path.is_absolute() or path.exists():
+        return ""  # editing an existing file is never a new loose file
+    params = params or WORKSPACE_RULES["loose-root-file"]["params"]
+    root, name = path.parent, path.name
+    if (root / "README.md").is_file() and (root / "REGISTER.md").is_file():
+        if name.casefold() in {n.casefold() for n in _names(params["rootFiles"])} or _RESULT_NAME.match(name):
+            return ""
+        return str(root / "_WIP")
+    if ((root / ".git").exists() and (root / "AGENTS.md").is_file()
+            and any(fnmatch.fnmatch(name.casefold(), pattern.casefold()) for pattern in _names(params["scratchInSourceRoot"]))):
+        return str(root / "_WIP")  # a source checkout's root: scratch scripts and logs never land there
+    return ""
+
+
 def classify(event: dict, environment) -> tuple[str, dict]:
     tool, data = event["tool"], event["input"]
     text = "\n".join(_strings(data))
@@ -423,7 +452,8 @@ def classify(event: dict, environment) -> tuple[str, dict]:
              "private": bool(_PRIVATE_PATH.search(text)),
              "others": bool(_OTHERS_PATH.search(text)),
              "raw_outlook": _raw_outlook_mail(tool, command),
-             "pdf_read": bool(re.fullmatch(r"(?i)read|read_file|view", tool) and target.lower().endswith(".pdf"))}
+             "pdf_read": bool(re.fullmatch(r"(?i)read|read_file|view", tool) and target.lower().endswith(".pdf")),
+             "target": target}
     if _SCREEN_TOOL.search(tool):
         return "screen", facts
     if _SHELL.match(tool):
@@ -1203,7 +1233,45 @@ def _under(path: Path, root: Path) -> bool:
 
 RUN_MODES = ("Ask first", "Accept edits", "Plan only")
 TOOL_MODES = ("Off", "Ask", "Allowed")
-DEFAULT_PERMISSIONS = {"runMode": "Accept edits", "tools": {}}
+# Workspace rules are Settings the founder edits and controls (2026-11-25: "اليوزر يعرف يعدلها ويتحكم فيها" and
+# "وليها كونفيجيوريشنز"): each has its Office standard id, On/Off, what happens on a violation, which agents it
+# applies to, and its own parameters, as the GOVERNANCE sheet rows do.
+WORKSPACE_RULES = {"loose-root-file": {
+    "standard": "FOLDERS-02",
+    "title": "No loose files at a governed folder's root; work goes in its _WIP folder",
+    "params": {"rootFiles": "README.md, REGISTER.md",
+               "scratchInSourceRoot": "_*, *.log, *.tmp, *.bak, *.diff, *.patch, *.py, *.ps1, *.cmd, *.bat, *.out, *.txt"}}}
+RULE_MODES = ("On", "Off")
+RULE_VIOLATIONS = ("Refuse", "Ask", "Note")
+
+
+def _rule_default(rule_id):
+    return {"state": "On", "onViolation": "Refuse", "appliesTo": "All agents",
+            "params": dict(WORKSPACE_RULES[rule_id]["params"])}
+
+
+def _checked_rule(rule_id, value):
+    if rule_id not in WORKSPACE_RULES:
+        raise ValueError("Unknown workspace rule: %s." % rule_id)
+    if value in RULE_MODES:  # shorthand: only the switch
+        value = {"state": value}
+    if type(value) is not dict or set(value) - {"state", "onViolation", "appliesTo", "params"}:
+        raise ValueError("A workspace rule has a state, what happens on a violation, who it applies to and parameters.")
+    rule = {**_rule_default(rule_id), **value}
+    rule["params"] = {**_rule_default(rule_id)["params"], **(value.get("params") or {})}
+    if rule["state"] not in RULE_MODES or rule["onViolation"] not in RULE_VIOLATIONS:
+        raise ValueError("A rule is On or Off, and a violation is refused, asked about or noted.")
+    if (type(rule["appliesTo"]) is not str or not rule["appliesTo"].strip() or len(rule["appliesTo"]) > 400
+            or any(k not in WORKSPACE_RULES[rule_id]["params"] or type(v) is not str or len(v) > 1000
+                   for k, v in rule["params"].items())):
+        raise ValueError("Who a rule applies to, and each of its parameters, is short text.")
+    return rule
+
+
+def _rule_applies(rule, vendor) -> bool:
+    who = rule["appliesTo"].strip()
+    return who.casefold() == "all agents" or vendor.casefold() in {w.strip().casefold() for w in who.split(",")}
+DEFAULT_PERMISSIONS = {"runMode": "Accept edits", "tools": {}, "rules": {}}
 _ROUTINE = ("read", "write", "shell", "other")
 
 
@@ -1214,7 +1282,7 @@ def _settings_dir(environment) -> Path:
 def checked_permissions(values) -> dict:
     """The permissions parameters, validated; raises ValueError naming what is wrong."""
     if type(values) is not dict or set(values) - set(DEFAULT_PERMISSIONS):
-        raise ValueError("Permissions are a run mode and a list of tool modes.")
+        raise ValueError("Permissions are a run mode, tool modes and workspace rules.")
     values = {**DEFAULT_PERMISSIONS, **values}
     tools = values["tools"]
     if values["runMode"] not in RUN_MODES:
@@ -1222,7 +1290,12 @@ def checked_permissions(values) -> dict:
     if (type(tools) is not dict or len(tools) > 200
             or any(type(k) is not str or not k.strip() or len(k) > 200 or v not in TOOL_MODES for k, v in tools.items())):
         raise ValueError("Each tool mode is a tool name (or pattern) set to Off, Ask or Allowed.")
-    return {"runMode": values["runMode"], "tools": dict(tools)}
+    rules = values["rules"]
+    if type(rules) is not dict:
+        raise ValueError("Workspace rules are a list of rules.")
+    checked = {key: _checked_rule(key, value) for key, value in rules.items()}
+    return {"runMode": values["runMode"], "tools": dict(tools),
+            "rules": {key: checked.get(key) or _rule_default(key) for key in WORKSPACE_RULES}}
 
 
 def read_permissions(environment=None, path: Path | None = None) -> dict:
@@ -1232,7 +1305,7 @@ def read_permissions(environment=None, path: Path | None = None) -> dict:
         return checked_permissions(json.loads((path or _settings_dir(environment) / "permissions.json")
                                               .read_text(encoding="utf-8")))
     except (OSError, ValueError, TypeError):
-        return dict(DEFAULT_PERMISSIONS, tools={})
+        return checked_permissions({})
 
 
 def write_permissions(changes, environment=None, path: Path | None = None) -> dict:
@@ -1240,7 +1313,15 @@ def write_permissions(changes, environment=None, path: Path | None = None) -> di
     path = path or _settings_dir(environment) / "permissions.json"
     if type(changes) is not dict:
         raise ValueError("Permissions are a run mode and a list of tool modes.")
-    values = checked_permissions({**read_permissions(environment, path), **changes})
+    held = read_permissions(environment, path)
+    if type(changes.get("rules")) is dict:  # a partial rule edit keeps the rest of that rule
+        merged = dict(held["rules"])
+        for key, value in changes["rules"].items():
+            if type(value) is dict and key in merged:
+                value = {**merged[key], **value, "params": {**merged[key]["params"], **(value.get("params") or {})}}
+            merged[key] = value
+        changes = {**changes, "rules": merged}
+    values = checked_permissions({**held, **changes})
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     try:
@@ -1523,6 +1604,14 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
     if facts.get("pdf_read"):
         notes.append(PDF_TEXT_NOTE)
     permissions = read_permissions(environment)
+    loose = permissions["rules"]["loose-root-file"]
+    instead = (loose_root_file(event["tool"], facts["target"], loose["params"])
+               if loose["state"] == "On" and _rule_applies(loose, vendor) else "")
+    if instead:
+        if loose["onViolation"] == "Refuse":
+            rules = [*rules, "loose-root-file"]
+        notes.append("STD %s: a governed folder's root holds only %s and named results. Put this file in %s instead."
+                     % (WORKSPACE_RULES["loose-root-file"]["standard"], loose["params"]["rootFiles"], instead))
     mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
     hold_id = ""
     if mode and mode[0] == "ask":
@@ -1621,6 +1710,7 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "lethal-trifecta": "private data plus untrusted content would be sent out",
             "banned-package": BANNED_REASON,
             "raw-outlook-mail": RAW_OUTLOOK_REASON,
+            "loose-root-file": "a new loose file would land at a governed folder's root",
             "tool-off": "this tool is Off in Settings",
             "plan-only": "Plan only is on in Settings, so nothing changes",
             "tool-ask": "this tool is set to Ask in Settings",

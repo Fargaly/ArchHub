@@ -2278,14 +2278,16 @@ def r_settings_action(s, req):
         return {'ok': True, 'result': result}
     if function in ('readPermissions', 'setPermissions'):
         # Run mode and per-tool modes: parameters the one decision (hook_decision.decide) reads.
-        from .hook_decision import read_permissions, write_permissions, RUN_MODES, TOOL_MODES
+        from .hook_decision import read_permissions, write_permissions, RUN_MODES, TOOL_MODES, RULE_MODES, RULE_VIOLATIONS, WORKSPACE_RULES
         path = s.settings_dir / 'permissions.json'
         try:
             values = (read_permissions(path=path) if function == 'readPermissions'
                       else write_permissions(args[0] if args else None, path=path))
         except ValueError as refused:
             raise Refused(str(refused)) from refused
-        return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES)}}
+        return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES),
+                                       'ruleModes': list(RULE_MODES), 'ruleViolations': list(RULE_VIOLATIONS),
+                                       'ruleCatalogue': WORKSPACE_RULES}}
     if function == 'setCompanionState':
         written = companion.write({**companion.read(), **(args[0] if args else {})})
         from .baboom_companion_process import settings_changed

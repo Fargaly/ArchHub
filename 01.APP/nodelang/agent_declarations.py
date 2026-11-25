@@ -32,7 +32,12 @@ def _alive(row, *, strict=False):
             raise
         verdict = False
     if len(_VERDICTS) > 4096:
-        _VERDICTS.clear()
+        # Dead verdicts never change, so keep them: clearing them made every pass re-ask the OS about ~6000
+        # stale rows (830 ms per pass on the founder's PC, 2026-11-25). Only alive verdicts are dropped.
+        for stale in [k for k, v in _VERDICTS.items() if v[0] is not False]:
+            del _VERDICTS[stale]
+        if len(_VERDICTS) > 262144:  # shortcut: bound memory at ~260k dead rows; a row sweep is the next step
+            _VERDICTS.clear()
     _VERDICTS[key] = (verdict, time.monotonic())
     return verdict
 

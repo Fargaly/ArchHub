@@ -352,6 +352,25 @@ def status(provider: str, *, path: Optional[Path] = None,
                if payload.get("publish_blocker") else {})}
 
 
+def whatsapp_messages(contact: str = "", since: int = 0, limit: int = 50, *, path: Optional[Path] = None,
+                      http: Callable[..., tuple[int, dict]] = _request) -> dict:
+    """Read the signed-in account's WhatsApp Business messages the cloud webhook received.
+
+    `contact` matches the other party's phone digits or WhatsApp name; `since` is the
+    `next` cursor of an earlier read. Read-only: nothing is sent.
+    """
+    token, base = _session(path)
+    if not token:
+        return {"ok": False, "state": "signin_required", "messages": [], "next": since}
+    code, payload = http("POST", base + "/oauth/whatsapp/messages", bearer=token,
+                         body={"contact": str(contact or "")[:120], "since": int(since or 0),
+                               "limit": max(1, min(int(limit or 50), 200))})
+    if code != 200 or not isinstance(payload.get("messages"), list):
+        return {"ok": False, "state": "unavailable", "messages": [], "next": since,
+                "reason": "WhatsApp messages could not be read from the ArchHub cloud; retry"}
+    return {"ok": True, "state": "ok", "messages": payload["messages"], "next": payload.get("next", since)}
+
+
 def start(provider: str, *, path: Optional[Path] = None,
           opener=None, http: Callable[..., tuple[int, dict]] = _request) -> dict:
     token, base = _session(path)

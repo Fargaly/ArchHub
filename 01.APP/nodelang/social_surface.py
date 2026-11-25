@@ -33,7 +33,9 @@ from .social_connectors import (
 _LOCK = threading.RLock()
 _LOG = logging.getLogger(__name__)
 # Social media node: its typed parameters.
-SOCIAL_NODE = {"id": "social.media", "params": {"state_limit_bytes": 65536, "closed_posts_limit": 50}}
+SOCIAL_NODE = {"id": "social.media", "params": {"state_limit_bytes": 65536, "closed_posts_limit": 50,
+                                                "whatsapp_page_size": 200, "whatsapp_pages": 10,
+                                                "whatsapp_inbox_rows": 40}}
 # Draft account -> (social_connections network, Work operation, text argument).
 POST_ROUTES = {"LinkedIn": ("linkedin", "linkedin.post", "text"),
                "Facebook": ("facebook", "facebook.page_post", "message"),
@@ -49,7 +51,7 @@ def empty_state():
     return {
         "social": {"office": dict.fromkeys(("name", "headline", "bio", "website", "audience"), ""),
                    "inbox": [], "drafts": [], "groups": [], "research": [], "tutorials": [],
-                   "triaged": False, "digest": {"enabled": False, "time": "", "summary": ""}},
+                   "triaged": False, "whatsappCursor": 0, "digest": {"enabled": False, "time": "", "summary": ""}},
         "presentation": {"slides": [], "walkthrough": 0},
         "prototype": {"name": "", "samples": 0, "baseline": 0,
                       "status": "", "linkedModel": False, "pattern": None, "measurements": "", "features": []},
@@ -82,7 +84,7 @@ class SocialSurface:
     """The social owner over one JSON file: {"state": <Studio state>, "posts": [approval cards]}."""
 
     PUBLIC = ("get_state", "update_office_page", "save_social_draft", "discard_social_draft",
-              "read_social_message", "triage_social_inbox", "reply_social_message",
+              "read_social_message", "triage_social_inbox", "reply_social_message", "read_whatsapp_inbox",
               "set_social_group_rule", "set_social_digest", "generate_social_digest",
               "read_content_source", "add_slide", "edit_slide", "remove_slide", "reorder_slide",
               "set_prototype", "rebaseline_prototype", "check_verdict_pattern", "set_meeting",
@@ -192,6 +194,37 @@ class SocialSurface:
         rows.sort(key=lambda row: not row.get("unread", False))
         state["social"]["triaged"] = True
         return self._save(state, {"conversations": len(rows), "order": "Unread first"})
+
+    def read_whatsapp_inbox(self):
+        """Pull new WhatsApp Business messages the cloud webhook received into the inbox."""
+        from . import cloud_social_oauth
+        reader = cloud_social_oauth.whatsapp_messages
+        state = self.get_state()
+        social = state["social"]
+        params = SOCIAL_NODE["params"]
+        cursor, added = int(social.get("whatsappCursor") or 0), 0
+        for _page in range(params["whatsapp_pages"]):  # bounded pages per read
+            answer = reader(since=cursor, limit=params["whatsapp_page_size"])
+            if not answer.get("ok"):
+                raise ValueError("Sign in to ArchHub to read WhatsApp." if answer.get("state") == "signin_required"
+                                 else answer.get("reason") or "WhatsApp messages could not be read; retry.")
+            for m in answer["messages"]:
+                if m.get("direction") == "in":
+                    social["inbox"].append({"id": "wa:" + str(m["wamid"]), "platform": "WhatsApp Business",
+                                            "from": m.get("contact_name") or "+" + str(m.get("contact", "")),
+                                            "contact": str(m.get("contact", "")), "priority": "",
+                                            "text": str(m.get("text", ""))[:1000], "sentAt": m.get("sent_at", 0),
+                                            "unread": True})
+                    added += 1
+            if not answer["messages"] or answer["next"] == cursor:
+                break
+            cursor = int(answer["next"])
+        # The file holds 64 KiB: keep only the newest WhatsApp messages in the inbox.
+        whatsapp = [row for row in social["inbox"] if row.get("platform") == "WhatsApp Business"]
+        drop = {id(row) for row in whatsapp[:-params["whatsapp_inbox_rows"]]}
+        social["inbox"] = [row for row in social["inbox"] if id(row) not in drop]
+        social["whatsappCursor"] = cursor
+        return self._save(state, {"added": added, "cursor": cursor})
 
     def reply_social_message(self, identity, text):
         row = self._row(self.get_state()["social"]["inbox"], identity)

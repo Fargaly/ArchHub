@@ -22,8 +22,8 @@ import urllib.request
 from typing import Callable
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 import config
 import db
@@ -258,6 +258,14 @@ def _get_json(url: str, token: str, *, timeout: float = 20.0) -> dict:
         return json.loads(response.read(65536).decode("utf-8"))
 
 
+def _post_bearer(url: str, token: str, *, timeout: float = 20.0) -> dict:
+    request = urllib.request.Request(url, data=b"", method="POST",
+                                     headers={"Accept": "application/json",
+                                              "Authorization": "Bearer " + token})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read(65536).decode("utf-8") or "{}")
+
+
 _exchange: Callable[[str, str, str, str], dict] | None = None
 _profile: Callable[[str, str], dict] | None = None
 _pages: Callable[[str], dict] | None = None
@@ -268,7 +276,7 @@ _whatsapp: Callable[[str], dict] | None = None
 def _whatsapp_profile(token: str) -> dict:
     client_id, secret, _redirect = _client("whatsapp")
     debug = _get_json("https://graph.facebook.com/v25.0/debug_token?" + urllib.parse.urlencode({"input_token": token}), client_id + "|" + secret)
-    discovered = {}
+    discovered, waba = {}, {}
     for scope in debug.get("data", {}).get("granular_scopes", []):
         if scope.get("scope") != "whatsapp_business_management":
             continue
@@ -279,8 +287,12 @@ def _whatsapp_profile(token: str) -> dict:
             for phone in phones:
                 if isinstance(phone, dict) and _GRAPH_ID.fullmatch(str(phone.get("id", ""))):
                     discovered[str(phone["id"])] = phone
+                    waba[str(phone["id"])] = str(business_id)
     if len(discovered) == 1:
         phone_id, phone = next(iter(discovered.items()))
+        # Webhooks (messages, coexistence echoes/history) reach the cloud only
+        # once the app is subscribed to the customer's WhatsApp Business Account.
+        _post_bearer("https://graph.facebook.com/v25.0/" + waba[phone_id] + "/subscribed_apps", token)
         return {"id": phone_id, "name": phone.get("display_phone_number") or phone.get("verified_name", "")}
     if discovered:
         raise SocialOAuthError("whatsapp_multiple_phone_numbers_select_in_embedded_signup")
@@ -388,7 +400,9 @@ def status(provider: str, authorization: str | None = Header(None)) -> dict:
     return {"ok": True, "provider": provider,
             "state": "blocked" if configured(provider) and blocker else "configured" if configured(provider) else "missing",
             **({"blocker": blocker} if blocker else {}),
-            **({"publish_blocker": review, "review_state": "pending" if pending else "unverified"} if review else {})}
+            **({"publish_blocker": review, "review_state": "pending" if pending else "unverified"} if review else {}),
+            # The callback URL to register in the Meta app's WhatsApp webhook settings.
+            **({"webhook_url": config.PUBLIC_URL.rstrip("/") + "/webhooks/whatsapp"} if provider == "whatsapp" else {})}
 
 
 @router.get("/oauth/{provider}/start")
@@ -565,9 +579,128 @@ def consume(provider: str, body: dict, authorization: str | None = Header(None),
             raise SocialOAuthError("grant_invalid") from exc
     except SocialOAuthError as exc:
         raise HTTPException(status_code=400, detail={"error": str(exc)})
+    if provider == "whatsapp":
+        db.link_whatsapp_number(phone_number_id=record["account_id"], user_id=record["user_id"])
     answer = {"ok": True, "provider": provider, "account_id": record["account_id"],
               "name": record.get("name", ""), "access_token": grant_payload["access_token"]}
     if provider in _META_NETWORKS:
         answer["pages"] = grant_payload.get("pages", [])
         answer["page_secrets"] = grant_payload.get("page_secrets", {})
     return answer
+
+
+# ------------------------------------------------ WhatsApp inbound (webhook) --
+
+_WEBHOOK_FIELDS = frozenset({"messages", "smb_message_echoes", "history"})
+_WEBHOOK_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _app_secret() -> str:
+    return _client_values("whatsapp")[1]
+
+
+def whatsapp_verify_token() -> str:
+    """Meta's webhook verify token, derived from the app secret: no extra secret to hold."""
+    return hmac.new(_app_secret().encode("utf-8"), b"archhub-whatsapp-webhook-verify",
+                    "sha256").hexdigest()
+
+
+def _digits(value: object) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())[:32]
+
+
+def _message_text(message: dict) -> tuple[str, str]:
+    kind = str(message.get("type") or "unknown")[:32]
+    body = message.get(kind) if isinstance(message.get(kind), dict) else {}
+    text = body.get("body") or body.get("caption") or body.get("text") or body.get("title") or ""
+    return kind, (str(text) if text else "[" + kind + "]")[:4096]
+
+
+def whatsapp_rows(payload: object) -> list[dict]:
+    """Flatten one Meta webhook body into message rows (owner not yet resolved)."""
+    rows: list[dict] = []
+    if not isinstance(payload, dict) or payload.get("object") != "whatsapp_business_account":
+        return rows
+    for entry in payload.get("entry") or []:
+        for change in (entry.get("changes") or []) if isinstance(entry, dict) else []:
+            if not isinstance(change, dict) or change.get("field") not in _WEBHOOK_FIELDS:
+                continue
+            value = change.get("value") if isinstance(change.get("value"), dict) else {}
+            meta = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+            number_id, own = str(meta.get("phone_number_id") or ""), _digits(meta.get("display_phone_number"))
+            if not _GRAPH_ID.fullmatch(number_id):
+                continue
+            names = {_digits(c.get("wa_id")): str((c.get("profile") or {}).get("name") or "")[:120]
+                     for c in value.get("contacts") or [] if isinstance(c, dict)}
+            batch = [(m, None) for m in value.get("messages") or []]
+            batch += [(m, "out") for m in value.get("message_echoes") or []]
+            for item in value.get("history") or []:
+                for thread in (item.get("threads") or []) if isinstance(item, dict) else []:
+                    if isinstance(thread, dict):
+                        batch += [(m, None) for m in thread.get("messages") or []]
+            for message, direction in batch:
+                if not isinstance(message, dict) or not message.get("id"):
+                    continue
+                sender = _digits(message.get("from"))
+                direction = direction or ("out" if own and sender == own else "in")
+                contact = _digits(message.get("to")) if direction == "out" else sender
+                kind, text = _message_text(message)
+                try:
+                    sent_at = int(message.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    sent_at = 0
+                rows.append({"phone_number_id": number_id, "wamid": str(message["id"])[:256],
+                             "direction": direction, "contact": contact,
+                             "contact_name": names.get(contact, ""), "kind": kind,
+                             "text": text, "sent_at": sent_at})
+    return rows
+
+
+@router.get("/webhooks/whatsapp", response_class=PlainTextResponse)
+def whatsapp_webhook_verify(mode: str = Query("", alias="hub.mode"),
+                            token: str = Query("", alias="hub.verify_token"),
+                            challenge: str = Query("", alias="hub.challenge")) -> PlainTextResponse:
+    if not _app_secret():
+        raise HTTPException(status_code=503, detail="whatsapp_webhook_unconfigured")
+    if mode != "subscribe" or not hmac.compare_digest(token, whatsapp_verify_token()):
+        raise HTTPException(status_code=403, detail="whatsapp_webhook_verify_refused")
+    return PlainTextResponse(challenge[:256])
+
+
+@router.post("/webhooks/whatsapp")
+async def whatsapp_webhook(request: Request) -> dict:
+    secret = _app_secret()
+    if not secret:
+        raise HTTPException(status_code=503, detail="whatsapp_webhook_unconfigured")
+    raw = await request.body()
+    if len(raw) > _WEBHOOK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="whatsapp_webhook_too_large")
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw, "sha256").hexdigest()
+    if not hmac.compare_digest(request.headers.get("x-hub-signature-256", ""), expected):
+        raise HTTPException(status_code=403, detail="whatsapp_webhook_signature_invalid")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="whatsapp_webhook_invalid_json")
+    owners: dict[str, str | None] = {}
+    rows = []
+    for row in whatsapp_rows(payload):
+        number = row["phone_number_id"]
+        if number not in owners:
+            owners[number] = db.whatsapp_number_owner(number)
+        if owners[number]:  # a number no ArchHub account connected is dropped
+            rows.append({**row, "user_id": owners[number]})
+    # Counts only: message text and phone numbers never reach the log.
+    return {"ok": True, "stored": db.store_whatsapp_messages(rows) if rows else 0}
+
+
+@router.post("/oauth/whatsapp/messages")
+def whatsapp_messages(body: dict, authorization: str | None = Header(None)) -> dict:
+    """The signed-in account's messages. The filter rides in the body: the access log records URLs."""
+    user = _bearer(authorization)
+    contact, since, limit = body.get("contact", ""), body.get("since", 0), body.get("limit", 50)
+    if (not isinstance(contact, str) or len(contact) > 120 or type(since) is not int or since < 0
+            or type(limit) is not int or not 1 <= limit <= 200):
+        raise HTTPException(status_code=400, detail="whatsapp_messages_invalid_filter")
+    rows = db.list_whatsapp_messages(user_id=user["id"], contact=contact, since=since, limit=limit)
+    return {"ok": True, "messages": rows, "next": rows[-1]["id"] if rows else since}

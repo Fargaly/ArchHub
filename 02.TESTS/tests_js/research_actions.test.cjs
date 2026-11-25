@@ -11,7 +11,16 @@ async function researchAdapter(engine='research.weighted'){
   {label:'engine',value:engine},{label:'research_run',value:JSON.stringify(run)},
   {label:'research_review',value:JSON.stringify(review)}]}],wires:[],
   workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}});
+ // D-014: Run goes through the session-file owner; the node's engine (library_engines) is its research owner.
+ const file={format:'archhub',version:1,id:'research',title:'Research',nodes:[{id:'research-node',type:engine,title:'Research',
+  params:{criteria:'[]',method:'TOPSIS'},ports:{source:[{id:'out',type:'list'}],target:[]},position:{x:0,y:0}}],
+  wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}};
  const result=await adapter({signed_in:false},{'/api/universal/canvas':canvas,
+  '/api/session-files':body=>body.action==='initial'?{ok:true,document:file,path:'C:/isolated/research.archhub'}
+   :body.action==='validate'?{ok:true,document:body.document}
+   :body.action==='autosave'?{ok:true,path:body.path,revision:2,document:body.document}
+   :body.action==='solve'?{ok:true,results:{},solved:[],stale:[],ms:0}
+   :body.action==='run'?{ok:true,succeeded:true,revision:3,results:{'research-node':{status:'Done',output:run.output}}}:{ok:true},
   '/api/universal/workshop':body=>{
    if(body.function==='listTasks')return {ok:true,result:[{id:'work',messages:[{id:'answer',sources}]}]};
    if(body.function==='listAgentsWorking'||body.function==='listApprovals')return {ok:true,result:[]};
@@ -29,9 +38,10 @@ test('RESEARCHNODES runValuation routes Run to weighted owner and projects graph
  const {api,requests}=await researchAdapter();
  assert.equal(api.supportsAction('runValuation'),true);
  const result=await api.runNode('research-node');
- assert.equal(result.output[0].id,'linked-row');
+ assert.equal(result.results['research-node'].output[0].id,'linked-row');
  assert.equal(api.getSnapshot().graph.nodes[0].output[0].score,0.75);
- assert.deepEqual(requests.find(row=>row.body?.function==='runValuation').body.args,['research-node']);
+ const sent=requests.find(row=>row.url==='/api/session-files'&&row.body.action==='run').body;
+ assert.deepEqual(sent.roots,['research-node']);assert.equal(sent.document.nodes[0].type,'research.weighted');
 });
 
 test('RESEARCHNODES setResearchReview sends item state and restores persisted review',async()=>{
@@ -47,9 +57,10 @@ test('RESEARCHNODES setResearchReview sends item state and restores persisted re
 
 test('RESEARCHNODES runResearchNode uses registered text executor route and confirmed output',async()=>{
  const {api,requests,setOutput}=await researchAdapter('text.ops');setOutput('real text result');
- assert.equal((await api.runNode('research-node')).output,'real text result');
+ assert.equal((await api.runNode('research-node')).results['research-node'].output,'real text result');
  assert.equal(api.getSnapshot().graph.nodes[0].output,'real text result');
- assert.deepEqual(requests.find(row=>row.body?.function==='runResearchNode').body.args,['research-node']);
+ const sent=requests.find(row=>row.url==='/api/session-files'&&row.body.action==='run').body;
+ assert.deepEqual(sent.roots,['research-node']);assert.equal(sent.document.nodes[0].type,'text.ops');
 });
 
 test('RESEARCHNODES runSpecialNode stays hidden with no registered semantic owner',async()=>{

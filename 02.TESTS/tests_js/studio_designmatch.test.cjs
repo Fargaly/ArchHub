@@ -32,6 +32,8 @@ async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
    const body=options.body?JSON.parse(options.body):{};requests.push({url,body});
    let data={ok:true};
    if(url==='/api/commands')data={commands:[]};
+   // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+   if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'designmatch-fixture'};
    // The open document is a session file (D-014); its owner answers like session_files does.
    if(url==='/api/session-files'){
     if(body.action==='catalogue')data={ok:true,items:[],sessions:[],recent:[],directory:'/fixture'};

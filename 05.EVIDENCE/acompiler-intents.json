@@ -729,7 +729,7 @@
     },
     "AGENTDECLARE": {
       "source": "AGENTDECLARE founder 2026-10-19 repeated request: every agent declares who/what/request/where/status in ONE Workshop mailbox; overlaps coordinate; findings reach founder; no install.",
-      "scope": [
+      "scope": ["02.TESTS/tests_replica/test_alive_cache_keeps_dead_verdicts.py", 
         "AGENTDECLARE.patch",
         "AGENTDECLARE.patch.sha256",
         "PROGRESS.md",

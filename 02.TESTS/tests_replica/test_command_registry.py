@@ -53,11 +53,23 @@ def test_every_preexisting_agent_tool_keeps_its_schema_and_callable():
     after = build_server(mailbox_call=lambda *args, **kwargs: {})
     previous = {tool.name: tool for tool in before._tool_manager.list_tools()}
     current = {tool.name: tool for tool in after._tool_manager.list_tools()}
-    assert current.keys() == previous.keys()
-    # task.create gained one optional parent (Projects > tasks > subtasks); every other field of its schema is kept.
-    grown = previous.pop('task.create').parameters
+    assert previous.keys() <= current.keys()
+    assert current.keys() - previous.keys() <= {'social.whatsapp_messages', 'max_render_view', 'rhino_bake_geometry', 'blender_render_scene'}
+    grown_optional = {
+        'declare': {'continue_task'},
+        'task.create': {'parent', 'canvas_task', 'piece', 'continue_task', 'intent'},
+        'task.release': {'reason', 'handover'},
+        'task.set_session': {'begin_write', 'reconcile', 'acceptance', 'handover'},
+    }
+    for tool_name, added_keys in grown_optional.items():
+        prior_schema = previous.pop(tool_name).parameters
+        now_schema = current[tool_name].parameters
+        kept_prior = {k: v for k, v in prior_schema['properties'].items() if k not in added_keys}
+        kept_now = {k: v for k, v in now_schema['properties'].items() if k not in added_keys}
+        assert kept_now == kept_prior, tool_name
+        assert now_schema.get('required', []) == prior_schema.get('required', []), tool_name
+        assert not (added_keys & set(now_schema.get('required', []))), tool_name
     now = current['task.create'].parameters
-    assert {**now, 'properties': {k: v for k, v in now['properties'].items() if k != 'parent'}} == grown
     assert now['properties']['parent'] == {'default': '', 'title': 'Parent', 'type': 'string'}
     assert 'parent' not in now.get('required', [])
     sent = []
@@ -174,10 +186,15 @@ def test_approved_replay_has_no_direct_call_bypass():
 def test_group_context_keeps_every_former_frame_command():
     from nodelang.command_registry import commands_for_context, payload
     data = payload()
-    expected = {'menu.rename.25', 'menu.colour', 'menu.select.contents', 'menu.remove.frame.keep.nodes'}
+    expected = {'menu.rename.25', 'menu.colour', 'menu.select.contents', 'menu.remove.frame.keep.nodes',
+                'menu.group.freeze', 'menu.group.bypass', 'menu.group.arrange'}
+    embed_expected = {'menu.open', 'menu.embed.run', 'menu.embed.update', 'menu.embed.tab',
+                      'menu.rename.25', 'menu.colour', 'menu.embed.detach', 'menu.delete.50'}
     assert 'frame' not in data['contexts']
+    assert 'embed' in data['contexts']
     assert all('frame' not in row['contexts'] for row in data['commands'])
     assert expected <= {row['id'] for row in commands_for_context('group')}
+    assert embed_expected <= {row['id'] for row in commands_for_context('embed')}
     assert len({row['id'] for row in data['commands']}) == len(data['commands'])
 
 

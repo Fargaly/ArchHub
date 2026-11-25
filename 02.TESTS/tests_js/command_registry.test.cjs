@@ -26,7 +26,7 @@ function runtime(source, state, {more=false}={}) {
     {get:(target,key)=>target[key]||record('u',key)});
   const actionState={run:fn=>fn()};
   const sandbox={window:{innerWidth:1400,innerHeight:900,UI:{api,useData:()=>state,useApp:()=>u,
-    useAction:()=>actionState,bindActions:()=> (_id,fn,event)=>fn(event)},AHIcon:()=>null,
+    useAction:()=>actionState,productLabel:label=>label,bindActions:()=> (_id,fn,event)=>fn(event)},AHIcon:()=>null,
     ArchHubCommandRegistry:JSON.parse(fs.readFileSync(registryPath,'utf8'))},
     navigator:{clipboard:{writeText:record('clipboard','writeText')}},
     React:{useRef:()=>({current:null}),useState:()=>[more,record('state','setMore')],useLayoutEffect:()=>{},
@@ -73,9 +73,20 @@ test('a newly declared context reuses an existing command without another handle
   assert.deepEqual(plain(rig.calls),[['u.setSelectedNodeId','node']]);
 });
 
-test('node and group registrations contain exactly their reachable menu actions',()=>{
+test('node, embed and group registrations contain exactly their reachable menu actions',()=>{
   const contexts={};
-  for(const [context,kind,extra] of [['node','Node menu',{}],['group','Group menu',{children:['child']}],['group','Group menu',{frameMembers:['child']}]]){
+  const cases=[
+    ['node','Node menu',{}],
+    ['node','Node menu',{status:'Waiting for approval',approvalId:'ap-1'}],
+    ['node','Node menu',{openable:true}],
+    ['node','Node menu',{type:'note'}],
+    ['node','Node menu',{title:'Remote tunnel'}],
+    ['node','Node menu',{params:{session_file:'child.archhub'}}],
+    ['embed','Embed menu',{params:{session_file:'child.archhub'}}],
+    ['group','Group menu',{children:['child']}],
+    ['group','Group menu',{frameMembers:['child']}]
+  ];
+  for(const [context,kind,extra] of cases){
     const state={graph:{nodes:[{id:'node',title:'Node',type:'script.python',inputs:[],outputs:[],parameterSchema:[],...extra}],wires:[]},tasks:[]};
     const rig=runtime(fs.readFileSync(path.join(studio,'compiled/context-menus.js'),'utf8'),state);
     const ids=new Set();
@@ -89,7 +100,7 @@ test('node and group registrations contain exactly their reachable menu actions'
   }
 });
 
-test('every existing menu item preserves label, order, state and action calls', async () => {
+test('every existing menu item preserves its state and owner action calls alongside whole-design items', async () => {
   const compiler={};vm.createContext(compiler);
   vm.runInContext(fs.readFileSync(path.join(studio,'vendor/babel.js'),'utf8'),compiler);
   const before=execFileSync('git',['show','60dc0f8e:01.APP/nodelang/studio/context-menus.jsx'],{cwd:root,encoding:'utf8'});
@@ -100,35 +111,53 @@ test('every existing menu item preserves label, order, state and action calls', 
   const fixtures=[...['Open tasks','Canvas attachments','Task message menu','Task tab menu','Wire menu','Port menu','Node menu',
     'Selection menu','Canvas menu','Tray','App menu'].map(kind=>({kind})),
     {kind:'Group menu',node:{children:['child']}},{kind:'Frame menu',node:{frameMembers:['child']}},
+    {kind:'Embed menu',node:{params:{session_file:'child.archhub'}}},
     {kind:'Node menu',more:true},{kind:'Node menu',node:{fixed:true}},{kind:'Node menu',node:{agentWork:{role:'session'}}},
-    {kind:'Node menu',node:{frozen:true,bypassed:true,pinned:true}},
+    {kind:'Node menu',node:{frozen:true,bypassed:true,pinned:true,status:'Done'}},
     {kind:'Port menu',node:{parameterSchema:[{key:'value',editable:true,promoted:true}]}},
     {kind:'Task message menu',pinned:true},{kind:'Canvas menu',copied:false},
-    {kind:'Wire menu',wire:{enabled:false}},{kind:'Group menu',node:{children:['child'],collapsed:true}}];
+    {kind:'Wire menu',wire:{enabled:false,rule:'value > 0'}},{kind:'Group menu',node:{children:['child'],collapsed:true}}];
+  const renamed=new Map([
+    ['Remove frame, keep nodes','Remove group, keep nodes'],
+    ['Unbypass','Stop bypassing'],
+    ['Fork','Fork from here'],
+    ['Open ArchHub','Open Home'],
+    ['Quit','Quit ArchHub']
+  ]);
+  const movedToNodeMore=new Set(['Colour','Save as node type']);
   let mapped=0;
   for(const fixture of fixtures){
     const state={copied:fixture.copied,graph:{nodes:[{...node,...fixture.node}],wires:[{id:'wire',from:'node',fromPort:'param:value',to:'node',toPort:'in',...fixture.wire}]},
       tasks:[{id:'task',title:'Task',pinnedMessages:fixture.pinned?['message']:[]},{id:'third',title:'Third'},{id:'fourth',title:'Fourth'}]};
     const old=runtime(baseline,state,fixture),now=runtime(current,state,fixture);
+    const nowMore=fixture.kind==='Node menu'&&!fixture.more?runtime(current,state,{...fixture,more:true}):null;
     const props=rig=>({kind:rig===now&&fixture.kind==='Frame menu'?'Group menu':fixture.kind,nodeId:fixture.kind==='Task tab menu'?'task':'node',wireId:'wire',taskId:'task',
       message:{id:'message',text:'Node message'},port:'param:value',paramKey:'value',selected:['node','child'],
       close:()=>rig.calls.push(['close']),open:()=>rig.calls.push(['open']),
       canvas:new Proxy({point:{x:10,y:20}},{get:(target,key)=>target[key]||((...args)=>{rig.calls.push(['canvas.'+String(key),...args]);return {ok:true};})})});
     const labelOf=row=>row.children[1].children[0];
-    const oldButtons=buttons(old.sandbox.window.UI.ContextMenu(props(old))).filter(row=>labelOf(row)!=='Frame');
+    const oldButtons=fixture.kind==='Embed menu'?[]:buttons(old.sandbox.window.UI.ContextMenu(props(old))).filter(row=>labelOf(row)!=='Frame');
     const newButtons=buttons(now.sandbox.window.UI.ContextMenu(props(now)));
-    const shape=rows=>plain(rows.map(row=>({label:labelOf(row)==='Remove frame, keep nodes'?'Remove group, keep nodes':labelOf(row),key:row.children[2].children[0],
-      disabled:!!row.props.disabled,danger:row.props.className==='danger'})));
-    const priorShape=shape(oldButtons).map(row=>row.label==='Arrange'?{...row,key:'Ctrl L'}:row);
-    assert.deepEqual(shape(newButtons),priorShape,fixture.kind+JSON.stringify(fixture));
-    for(let index=0;index<oldButtons.length;index++){
-      if(oldButtons[index].props.disabled)continue;
-      old.calls.length=now.calls.length=0;
-      await oldButtons[index].props.onClick({});await newButtons[index].props.onClick({});
-      // #372: Rerun runs the node again (runNode(id, true)); every other control keeps the old calls exactly.
-      const label=shape(oldButtons)[index].label;
-      const expected=plain(old.calls).map(call=>label==='Rerun'&&call[0]==='api.runNode'?[...call,true]:call);
-      assert.deepEqual(plain(now.calls),expected,fixture.kind+' '+label);
+    const moreButtons=nowMore?buttons(nowMore.sandbox.window.UI.ContextMenu(props(nowMore))):[];
+    for(const oldBtn of oldButtons){
+      const rawLabel=labelOf(oldBtn);
+      const targetLabel=rawLabel==='Rerun'&&fixture.node?.status!=='Done'?'Run this step':rawLabel==='Add rule'&&fixture.wire?.rule?'Edit rule':(renamed.get(rawLabel)||rawLabel);
+      const inMore=fixture.kind==='Node menu'&&!fixture.more&&movedToNodeMore.has(targetLabel);
+      const activeRig=inMore?nowMore:now;
+      const newBtn=(inMore?moreButtons:newButtons).find(row=>labelOf(row)===targetLabel);
+      assert.ok(newBtn,fixture.kind+' missing '+targetLabel+' (from '+rawLabel+')');
+      const expectedKey=targetLabel==='Arrange'?'Ctrl L':oldBtn.children[2].children[0];
+      assert.equal(newBtn.children[2].children[0],expectedKey,fixture.kind+' shortcut '+targetLabel);
+      assert.equal(!!newBtn.props.disabled,!!oldBtn.props.disabled,fixture.kind+' disabled '+targetLabel);
+      assert.equal(newBtn.props.className==='danger',oldBtn.props.className==='danger',fixture.kind+' danger '+targetLabel);
+      if(oldBtn.props.disabled)continue;
+      old.calls.length=activeRig.calls.length=0;
+      await oldBtn.props.onClick({});await newBtn.props.onClick({});
+      // #372: Rerun / Run this step runs the node again (runNode(id, true)); Open Home navigates to home; every other control keeps its exact owner call.
+      const expected=targetLabel==='Open Home'?[['close'],['u.go','home']]
+        :plain(old.calls).map(call=>rawLabel==='Rerun'&&call[0]==='api.runNode'?[...call,true]
+          :rawLabel==='Make a task from this'&&call[0]==='api.createTask'?['api.createTask',call[1],'','','','task']:call);
+      assert.deepEqual(plain(activeRig.calls),expected,fixture.kind+' '+targetLabel);
       mapped++;
     }
     const contextProps=props(now);

@@ -12826,6 +12826,7 @@
         "01.APP/nodelang/cloud_signin.py",
         "02.TESTS/tests_replica/test_cloud_social_oauth_finish.py",
         "docs/DECISIONS.md",
+        "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

@@ -11,6 +11,8 @@ async function mount(name,props={},server=()=>({ok:true,result:[]})){
   const body=options.body?JSON.parse(options.body):null;if(body)posts.push({url,body});
   let data={ok:true};
   if(url==='/api/commands')data={commands:[]};
+  // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+  if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'agents-fixture'};
   // The open file (D-014): a node's output is its recorded result in the session document.
   if(url==='/api/session-files'){
    const file={format:'archhub',version:1,id:'fixture',title:'Fixture',nodes:[{id:'node',type:'data.constant',title:'Actual output',params:{},position:{x:0,y:0},result:{status:'Done',output:[{value:7}]}}],wires:[],groups:[],notes:[],properties:{}};

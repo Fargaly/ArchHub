@@ -344,10 +344,10 @@
             // Keys 1 and 2 answer the card under the pointer (design): the card takes the focus on hover, never away from typing.
             onMouseEnter={event => { if (!window.document.activeElement?.closest?.('input, textarea, select, [contenteditable="true"]')) event.currentTarget.focus({preventScroll: true}); }}
             onKeyDown={event => { if (event.target === event.currentTarget && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key === '1' || event.key === '2')) { event.preventDefault(); decide(card, event.key === '1' ? 'approve' : 'decline'); } }}>
-          <div className="wsch"><Av id={card.who || task?.owner || 'Agent'} size={22} /><b>{what}</b><em>{where || card.who}</em></div>
+          <div className="wsch"><Av id={card.who || task?.owner || 'Agent'} size={22} /><b>{where || what}</b><em>{card.who || task?.owner}</em></div>
           {draft && <dl className="ws-draft"><dt>To</dt><dd>{draft.to || 'No recipient'}{draft.cc ? ' · cc ' + draft.cc : ''}</dd>{draft.subject && <><dt>Subject</dt><dd>{draft.subject}</dd></>}</dl>}
           {draft?.body && (shown === card.id ? <pre className="ws-draft-body" data-ws-draft-body="">{draft.body}</pre> : <p className="soft ws-draft-preview">{draft.body.slice(0, 160)}{draft.body.length > 160 ? '…' : ''}</p>)}
-          <p>{card.who ? card.who + ' asked' : 'Asked'}{card.summary ? <> · <span className="soft">{card.summary}</span></> : null}</p>
+          <p>{where && <>{what} · </>}{card.who ? card.who + ' asked' : 'Asked'}{card.summary ? <> · <span className="soft">{card.summary}</span></> : null}</p>
           <div className="wsca"><Btn p sm disabled={busy === card.id} onClick={event => executeAction('ui.select', () => decide(card, 'approve'), event)}>Approve</Btn>
             <Btn sm disabled={busy === card.id} onClick={event => executeAction('ui.select', () => decide(card, 'decline'), event)}>Reject</Btn>
             <Btn sm ghost aria-expanded={draft ? shown === card.id : undefined} onClick={event => executeAction('ui.select', () => draft ? setShown(shown === card.id ? '' : card.id) : onShow({task, path: card.path, nodeId: card.nodeId, approvalId: card.id}), event)}>{draft && shown === card.id ? 'Hide' : 'Show'}</Btn></div></div>; })}

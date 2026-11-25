@@ -12829,6 +12829,18 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "OPENROUTERFREEIDS": {
+      "source": "R&D res-077/res-078 2026-11-25 (child of RELAYMODELS): live https://openrouter.ai/api/v1/models no longer lists dots-studio/dots-3-note-preview:free, cohere/north-mini-code:free or mistralai/mistral-small-3.2-24b-instruct:free; desktop and relay free defaults move to the live nemotron free ids, tests follow.",
+      "scope": [
+        "01.APP/nodelang/openrouter_defaults.py",
+        "06.CLOUD/cloud_backend/config.py",
+        "06.CLOUD/cloud_backend/tests/test_openrouter_free.py",
+        "06.CLOUD/cloud_backend/tests/test_relay_models.py",
+        "02.TESTS/tests_replica/test_openrouter_free_tool_routing.py",
+        "02.TESTS/tests_replica/test_the_router_sends_it_where_it_says.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

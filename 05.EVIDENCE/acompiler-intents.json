@@ -12531,6 +12531,7 @@
         "06.CLOUD/cloud_backend/db.py",
         "06.CLOUD/cloud_backend/social_oauth.py",
         "06.CLOUD/cloud_backend/tests/test_social_oauth_broker.py",
+        "06.CLOUD/cloud_backend/tests/test_google_is_the_only_sign_in.py",
         "01.APP/nodelang/cloud_social_oauth.py",
         "01.APP/nodelang/social_surface.py",
         "01.APP/nodelang/native_agent_mcp.py",

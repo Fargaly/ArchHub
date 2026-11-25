@@ -37,7 +37,9 @@ for name in ('door-schedule', 'sheet-check'):
 talk = new_document('agent-talk')
 talk['properties']['taskContext'] = {'task': 'task-1'}
 (owner.directory / 'agent-talk.archhub').write_text(json.dumps(talk), encoding='utf-8')
-owner.dispatch({'action':'open', 'path':str(owner.directory / 'door-schedule.archhub')})
+# The account's files are the ones it opened (signed pointers); door-schedule is opened last, so it stays current.
+for name in ('sheet-check', 'agent-talk', 'door-schedule'):
+    owner.dispatch({'action':'open', 'path':str(owner.directory / (name + '.archhub'))})
 # Desktop work needs a verified ArchHub account (cd19d5d4); this isolated owner is signed in.
 class Admitted:
     def check(self, *, expected_bearer=None, bind_resume=False):
@@ -87,7 +89,7 @@ finally:
     await page.route(connection.url+'/', route => route.fulfill({contentType:'text/html',
       body:'<div id="root" data-screen="canvas" style="position:relative"><div id="shelf-host" class="canvas-pane-peek" data-side="library"></div></div>'}));
     await page.route('**/api/universal/desktop-access', route => route.fulfill({
-      json: {ok: true, admitted: true, state: 'admitted', subject: 'studio-test', email: 'studio@example.test'}
+      json: {ok: true, admitted: true, state: 'admitted', subject: 'librarytree-fixture', email: 'studio@example.test'}  // the isolated owner's admitted account: a different subject is refused
     }));
     await page.goto(connection.url);
     await page.addStyleTag({path:path.join(studio,'style.css')});

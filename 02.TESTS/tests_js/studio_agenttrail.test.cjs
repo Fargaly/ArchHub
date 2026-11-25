@@ -27,7 +27,9 @@ async function truthAdapter(){
  document:{hidden:true,addEventListener(){}},fetch:async(url,options)=>{
   const body=options?.body?JSON.parse(options.body):{};
   if(url==='/api/universal/agents-canvas'&&fail)throw Error('fixture observer offline');
-  const result=url==='/api/universal/canvas'?{ok:true,root:'graph:fixture',nodes:[],revision:1,workshops:[{root:'room'}]}:
+  // Desktop work needs a verified ArchHub account (cd19d5d4) and startup reads the command catalogue (f8b5feea).
+  const result=url==='/api/universal/desktop-access'?{ok:true,admitted:true,state:'admitted',subject:'agenttrail-fixture'}:url==='/api/commands'?{commands:[]}:
+   url==='/api/universal/canvas'?{ok:true,root:'graph:fixture',nodes:[],revision:1,workshops:[{root:'room'}]}:
    url==='/api/universal/providers'?{providers:[{id:'claude-code',name:'Claude Code',state:'installed',signedIn:null},{id:'openrouter',name:'OpenRouter',state:'keyed'}]}:
    url==='/api/universal/agents-canvas'?{ok:true,agents,sessions:sessions??agents.filter(a=>a.kind!=='observation').map(a=>({id:a.id,status:a.presence})),tasks:[],wires:[]}:body.function==='listWorkshopMessages'?{ok:true,result:{messages:[]}}:{ok:true,result:[]};
   return {ok:true,status:200,json:async()=>result};
@@ -63,12 +65,14 @@ test('AGENTS-TRUTH summary and Home count use the displayed session roster',asyn
 });
 
 test('AGENTS-TRUTH failed refresh clears certainty immediately and recovers',async()=>{
+ // A transport failure reads 'did not respond' and keeps the owner failure as its cause (4c2483e9).
+ const offline=error=>/did not respond/.test(error.message)&&/fixture observer offline/.test(error.cause?.message);
  const {api,fail}=await truthAdapter();fail();
- await assert.rejects(api.listAgentsWorking(),/fixture observer offline/);
+ await assert.rejects(api.listAgentsWorking(),offline);
  const s=api.getSnapshot();assert.equal(s.agentSummary,'Agent status is incomplete.');
  assert.ok(s.agents.every(a=>a.presence==='unknown'));
  assert.ok(s.agents.every(a=>a.detail==='ArchHub could not check this agent. Last known status: Working.'));
- await assert.rejects(api.listAgentsWorking(),/fixture observer offline/);
+ await assert.rejects(api.listAgentsWorking(),offline);
  assert.ok(api.getSnapshot().agents.every(a=>a.detail.endsWith('Last known status: Working.')));
  fail(false);await api.listAgentsWorking();
  assert.equal(api.getSnapshot().agentSummary,'2 working · 0 idle');
@@ -111,7 +115,9 @@ test('AGENTS-TRUTH provider null sign-in renders unchecked with no pretend switc
 
 test('the existing Task used by Workshop and Board renders runtime facts and honest flags',()=>{
  const window={ArchHubAPI:{executeAction:()=>{}},UI:{A:{warn:'#fc0'},D:{dot:()=>null},
-  useApp:()=>({}),Av:()=>null,Btn:()=>null,Card:()=>null,Chip:()=>null,Composer:()=>null,ApprovalCard:()=>null,Empty:()=>null}};
+  useApp:()=>({}),Av:()=>null,Btn:()=>null,Card:()=>null,Chip:()=>null,Composer:()=>null,ApprovalCard:()=>null,Empty:()=>null,
+  // ui.jsx supplies the row reason (562ddef9); for a row with no rowState it is empty.
+  taskRowReason:()=>''}};
  vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio,'ds_workshop3.jsx'),'utf8'),{loader:'jsx'}).code,{window,React});
  const task={id:'work:fixture',title:'Existing Work',status:'WIP',owner:'codex',steps:[{status:'done'},{status:'pending'}],activity:{
   sessions:[{provider:'codex',session:'codex-fixture',tool:'apply_patch',file:'01.APP/OWNED.py',state:'working'},
@@ -143,7 +149,8 @@ test('the existing five-second timer refreshes Work rows while provider discover
   document:{hidden:false,addEventListener:()=>{}},fetch:async(url,options)=>{
    if(url==='/api/universal/providers'&&hold)await new Promise(resolve=>{release=resolve;});
    const body=options?.body?JSON.parse(options.body):{};
-   const result=url==='/api/universal/canvas'?canvas:url==='/api/universal/providers'?{providers:[]}:
+   const result=url==='/api/universal/desktop-access'?{ok:true,admitted:true,state:'admitted',subject:'agenttrail-fixture'}:url==='/api/commands'?{commands:[]}:
+    url==='/api/universal/canvas'?canvas:url==='/api/universal/providers'?{providers:[]}:
     url==='/api/universal/mods'?{ok:true,mods:{rows:[]}}:
     body.function==='listTasks'?{ok:true,result:[{id:'work:fixture',title:'Work',activity:{sessions:[{tool:observed}]}}]}:
     body.function==='listWorkshopMessages'?{ok:true,result:{messages:[]}}:

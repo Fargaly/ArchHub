@@ -12795,6 +12795,22 @@
         "02.TESTS/tests_replica/test_social_tools_are_offered.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "METARECEIVE": {
+      "source": "Founder 2026-11-25: since we started on WhatsApp, do all of social media and the rest: Facebook Page Messenger and Instagram DMs reach ArchHub through the same Meta webhook and message store, and agents read them filtered by contact and network.",
+      "scope": [
+        "06.CLOUD/cloud_backend/db.py",
+        "06.CLOUD/cloud_backend/social_oauth.py",
+        "06.CLOUD/cloud_backend/tests/test_social_oauth_broker.py",
+        "06.CLOUD/cloud_backend/tests/test_google_is_the_only_sign_in.py",
+        "01.APP/nodelang/cloud_social_oauth.py",
+        "01.APP/nodelang/social_surface.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/studio/social.jsx",
+        "02.TESTS/tests_replica/test_social3_oauth.py",
+        "02.TESTS/tests_replica/test_social_tools_are_offered.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

@@ -295,7 +295,7 @@ def test_studio_endpoint_uses_one_google_login_and_reports_its_real_phase(cloud,
         return begin(method, base_url=base, path=record, opener=opened.append)
 
     monkeypatch.setattr(cloud_signin, "begin", browser_redirect)
-    server = NoGraphServer(tmp_path / "app", desktop_access=DesktopAccess(record)).start()
+    server = NoGraphServer(tmp_path / "app", desktop_access=DesktopAccess(record, fresh_for=0)).start()
 
     def call(path, body=None, subject=""):
         request = urllib.request.Request(server.public_url + "/api/universal/" + path,
@@ -397,7 +397,7 @@ def _saved_desktop_session(cloud, record):
 def test_desktop_access_fails_closed_and_recovers_with_a_fresh_cloud_answer(cloud, tmp_path):
     record = tmp_path / "cloud.json"
     now = [1000.0]
-    gate = DesktopAccess(record, clock=lambda: now[0])
+    gate = DesktopAccess(record, fresh_for=0, clock=lambda: now[0])
     assert gate.check()["state"] == "signed_out" and cloud.seen == []
     _saved_desktop_session(cloud, record)
     assert gate.check() == {"ok": True, "admitted": True, "state": "admitted",
@@ -430,7 +430,7 @@ def test_desktop_access_does_not_forward_bearer_on_redirect(cloud, tmp_path):
     worker.start()
     cloud.me_redirect = f"http://127.0.0.1:{sink.server_port}/v1/me"
     try:
-        assert DesktopAccess(record).check()["state"] == "unavailable"
+        assert DesktopAccess(record, fresh_for=0).check()["state"] == "unavailable"
         code, _ = cloud_signin.http_json("GET", base + "/v1/me",
                                        headers={"Authorization": "Bearer redirect-test"})
         assert code == 302
@@ -457,7 +457,7 @@ def test_desktop_http_admission_protects_work_and_rebinds_initial_canvas(cloud, 
         return {"ok": True, "path": "first-user-original.archhub"}
 
     monkeypatch.setattr(SessionFiles, "dispatch", initial)
-    server = NoGraphServer(state, desktop_access=DesktopAccess(record, offline_grace=-1)).start()
+    server = NoGraphServer(state, desktop_access=DesktopAccess(record, fresh_for=0, offline_grace=-1)).start()
 
     def call(path, body=None, *, subject="u-42"):
         req = urllib.request.Request(server.public_url + path,
@@ -520,7 +520,7 @@ def test_cloud_answer_cannot_admit_after_local_signout(cloud, tmp_path):
         cloud_signin.write_cloud_session(record, {"token": None})
         return 200, {"user_id": "u-42", "email": "a@example.com"}
 
-    assert DesktopAccess(record, fetch=signout_during_probe).check()["state"] == "session_invalid"
+    assert DesktopAccess(record, fresh_for=0, fetch=signout_during_probe).check()["state"] == "session_invalid"
 
 
 def test_simultaneous_admissions_share_only_the_inflight_cloud_verdict(cloud, tmp_path, monkeypatch):
@@ -546,7 +546,7 @@ def test_simultaneous_admissions_share_only_the_inflight_cloud_verdict(cloud, tm
         return 503, {}
 
     monkeypatch.setattr(cloud_session, "Future", ObservedFuture)
-    gate = DesktopAccess(record, fetch=fetch)
+    gate = DesktopAccess(record, fresh_for=0, fetch=fetch)
     with ThreadPoolExecutor(max_workers=2) as workers:
         first = workers.submit(gate.check)
         try:
@@ -598,7 +598,7 @@ def test_queued_canvas_write_is_refused_even_if_the_cloud_reconnects(cloud, tmp_
 
     monkeypatch.setattr(canvas_documents, "locked", observing_lock)
     monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
-    server = NoGraphServer(tmp_path / "profile", desktop_access=DesktopAccess(record, offline_grace=-1)).start()
+    server = NoGraphServer(tmp_path / "profile", desktop_access=DesktopAccess(record, fresh_for=0, offline_grace=-1)).start()
     payload = {"action": "autosave", "path": str(path), "document": {**document, "title": "After"}}
     try:
         with ThreadPoolExecutor(max_workers=1) as workers:
@@ -638,7 +638,7 @@ def test_relaunch_automatically_recovers_only_the_bound_credentials(cloud, tmp_p
     base = _saved_desktop_session(cloud, record)
 
     def open_as(subject):
-        app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+        app = NoGraphServer(state, desktop_access=DesktopAccess(record, fresh_for=0)).start()
         app.native_file_picker = lambda *args: str(path)
         return app, lambda action: _desktop_request(app, "/api/session-files", body={"action": action}, subject=subject)
 
@@ -699,7 +699,7 @@ def test_same_verified_account_recovers_after_ordinary_sign_in_rotation(cloud, t
     document = new_document("Retain across account credential changes")
     write_document(path, document)
     original = path.read_bytes()
-    app = NoGraphServer(state, desktop_access=DesktopAccess(record, offline_grace=-1)).start()
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record, fresh_for=0, offline_grace=-1)).start()
 
     def call(action, subject="u-42", **body):
         return _desktop_request(app, "/api/session-files", subject=subject, body={"action": action, **body})
@@ -799,7 +799,7 @@ def test_legacy_recovery_migrates_only_with_a_trusted_bearer(cloud, tmp_path, mo
         _sign_in_again(cloud, record, new)
         assert not cloud.me_accounts.get(old)
 
-    app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record, fresh_for=0)).start()
     app.native_file_picker = lambda *args: str(path)
 
     def call(action):
@@ -851,7 +851,7 @@ def test_implicit_canvas_consumers_follow_the_verified_account(cloud, tmp_path, 
     a_path, a_id = fixture("First account")
     b_path, b_id = fixture("Second account")
     _sign_in_again(cloud, record, first)
-    app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record, fresh_for=0)).start()
     app.files["settings"].update({"appearanceTheme": "Light", "settingsScope": "Session"})
 
     def request(route, body, subject):
@@ -923,7 +923,7 @@ def test_mixed_legacy_recent_rows_keep_valid_entries_during_explicit_open(cloud,
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
     record = cloud_signin.cloud_session_path()
     _sign_in_again(cloud, record, "ah_" + "a" * 40)
-    access = DesktopAccess(record).check(bind_resume=True)
+    access = DesktopAccess(record, fresh_for=0).check(bind_resume=True)
     files = SessionFiles(sign_resume_pointer=access["_sign_resume_pointer"])
     old, legacy, opened = [tmp_path / (name + ".archhub") for name in ("older", "legacy", "newly opened")]
     for path in (old, legacy, opened):
@@ -1031,3 +1031,22 @@ def test_cancelled_google_attempt_cannot_replace_retry(cloud, tmp_path, monkeypa
     assert not old.thread.is_alive() and not completed
     assert len(opened) == (pause_at == "exchange")
     assert cloud_signin.read_cloud_session(record)["token"] == cloud.exchange_token
+
+
+def test_one_verified_answer_is_reused_for_a_minute_so_actions_do_not_each_ask_the_cloud(cloud, tmp_path):
+    record = tmp_path / "cloud.json"
+    _saved_desktop_session(cloud, record)
+    now, calls = [0.0], []
+
+    def fetch(_endpoint, _bearer):
+        calls.append(1)
+        return 200, {"user_id": "u-42", "email": "a@example.com"}
+
+    gate = DesktopAccess(record, fetch=fetch, clock=lambda: now[0])
+    for _ in range(50):
+        assert gate.check()["admitted"]
+    assert len(calls) == 1
+    now[0] += 61
+    assert gate.check()["admitted"] and len(calls) == 2
+    cloud_signin.write_cloud_session(record, {"token": None})
+    assert gate.check()["state"] == "signed_out"  # a local sign-out is never hidden by the reuse

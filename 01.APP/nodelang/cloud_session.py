@@ -198,13 +198,16 @@ class _ResumeSigner:
 class DesktopAccess:
     """Admit work using a fresh server verdict for the current protected account."""
 
-    def __init__(self, path=None, *, fetch=None, clock=time.monotonic, offline_grace=300.0):
+    def __init__(self, path=None, *, fetch=None, clock=time.monotonic, offline_grace=300.0, fresh_for=60.0):
         # A network blip must not lock the founder out mid-work (2026-11-25): an unanswered check reuses the same
         # token's last verified answer for offline_grace seconds; 401/403 still locks at once.
         self._path = path
         self._fetch = fetch
         self._clock = clock
         self._grace = offline_grace
+        # Every desktop action admits through check(); without this the app asked the cloud several times a
+        # second, and one slow answer locked the workspace. A 200 for this exact token is reused for fresh_for s.
+        self._fresh = fresh_for
         self._in_flight = {}
         self._verified = {}  # key -> (when, account) of the last 200 answer for that base and token
         self._lock = threading.Lock()
@@ -223,6 +226,9 @@ class DesktopAccess:
     def _verify(self, base, bearer):
         key = hashlib.sha256((base + "|" + bearer).encode()).digest()
         with self._lock:
+            seen = self._verified.get(key)
+            if seen is not None and self._clock() - seen[0] < self._fresh:
+                return 200, seen[1]
             pending = self._in_flight.get(key)
             leader = pending is None
             if leader:

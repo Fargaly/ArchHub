@@ -52,7 +52,7 @@ def _tool_schema():
     }]
 
 
-def _chat_payload(text="ok", *, model="dots-studio/dots-3-note-preview:free"):
+def _chat_payload(text="ok", *, model="nvidia/nemotron-3.5-lightning:free"):
     return {
         "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
         "model": model,
@@ -84,7 +84,7 @@ def _tool_catalogue(*models):
 
 def test_openrouter_free_tool_turn_starts_with_tool_capable_free_model():
     wire = _Wire([_chat_payload()], catalogue_rows=_tool_catalogue(
-        "dots-studio/dots-3-note-preview:free",
+        "nvidia/nemotron-3.5-lightning:free",
     ))
 
     result = model_router.route_chat(
@@ -100,7 +100,7 @@ def test_openrouter_free_tool_turn_starts_with_tool_capable_free_model():
 
     body = wire.chat_body(0)
     assert result["ok"] is True
-    assert body["model"] == "dots-studio/dots-3-note-preview:free"
+    assert body["model"] == "nvidia/nemotron-3.5-lightning:free"
     assert body["model"] != "openrouter/free"
     assert body["tools"] == _tool_schema()
 
@@ -109,8 +109,8 @@ def test_openrouter_free_tool_turn_rotates_after_429():
     sent = []
 
     catalogue = _tool_catalogue(
-        "dots-studio/dots-3-note-preview:free",
-        "cohere/north-mini-code:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     )
 
     def opener(request, timeout=None):
@@ -140,8 +140,8 @@ def test_openrouter_free_tool_turn_rotates_after_429():
 
     assert result["text"] == "second"
     assert sent == [
-        "dots-studio/dots-3-note-preview:free",
-        "cohere/north-mini-code:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     ]
 
 
@@ -149,9 +149,9 @@ def test_openrouter_free_tool_turn_exhausts_once_after_three_failures():
     sent = []
 
     catalogue = _tool_catalogue(
-        "dots-studio/dots-3-note-preview:free",
-        "cohere/north-mini-code:free",
         "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "nvidia/nemotron-3.5-super-vl:free",
     )
 
     def opener(request, timeout=None):
@@ -184,15 +184,15 @@ def test_openrouter_free_tool_turn_exhausts_once_after_three_failures():
 
     assert failure.reason_code == "free_model_exhausted"
     assert sent == [
-        "dots-studio/dots-3-note-preview:free",
-        "cohere/north-mini-code:free",
         "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "nvidia/nemotron-3.5-super-vl:free",
     ]
 
 
 def test_openrouter_free_tool_turn_never_sends_tools_to_non_tool_model():
     wire = _Wire([], catalogue_rows=_tool_catalogue(
-        "dots-studio/dots-3-note-preview:free",
+        "nvidia/nemotron-3.5-lightning:free",
     ))
 
     def opener(request, timeout=None):
@@ -241,9 +241,9 @@ def test_openrouter_free_tool_turn_empty_catalogue_refuses_without_dispatch():
 
 
 def test_openrouter_free_tool_turn_skips_default_model_decapabled_in_catalogue():
-    wire = _Wire([_chat_payload(model="cohere/north-mini-code:free")], catalogue_rows=[
-        _catalogue_row("dots-studio/dots-3-note-preview:free", tools=False),
-        _catalogue_row("cohere/north-mini-code:free", tools=True),
+    wire = _Wire([_chat_payload(model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free")], catalogue_rows=[
+        _catalogue_row("nvidia/nemotron-3.5-lightning:free", tools=False),
+        _catalogue_row("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", tools=True),
     ])
 
     result = model_router.route_chat(
@@ -258,7 +258,7 @@ def test_openrouter_free_tool_turn_skips_default_model_decapabled_in_catalogue()
     )
 
     assert result["ok"] is True
-    assert wire.chat_body(0)["model"] == "cohere/north-mini-code:free"
+    assert wire.chat_body(0)["model"] == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
 
 def test_openrouter_free_tool_turn_first_fetch_failure_without_cache_refuses_without_dispatch():

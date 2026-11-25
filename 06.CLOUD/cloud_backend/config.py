@@ -897,9 +897,9 @@ FREE_PROVIDER = _req("FREE_PROVIDER", "nvidia").strip().lower()
 _FREE_MODEL_DEFAULTS = {
     "nvidia":     "nvidia/nemotron-3-ultra-550b-a55b",
     "groq":       "llama-3.3-70b-versatile",
-    # 2026-06-23: was meta-llama/llama-3.3-70b-instruct:free — that slug is no
-    # longer free on OpenRouter (in-body 404). Point at a presently-free slug.
-    "openrouter": "mistralai/mistral-small-3.2-24b-instruct:free",
+    # 2026-11-25: mistral-small-3.2-24b-instruct:free left OpenRouter's live
+    # /api/v1/models list (paid slug only). Point at a presently-free slug.
+    "openrouter": "nvidia/nemotron-3.5-lightning:free",
     "google":     "gemini-2.5-flash",
     "custom":     "llama-3.3-70b-versatile",
 }

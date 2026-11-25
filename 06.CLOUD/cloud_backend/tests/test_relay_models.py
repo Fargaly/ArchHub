@@ -23,8 +23,8 @@ def catalogue(monkeypatch):
 
 def test_recorded_pool_prioritizes_curated_text_tools(catalogue, monkeypatch):
     pool = config.openrouter_free_models(force_refresh=True)
-    assert pool[:5] == config.RELAY_PREFERRED_MODELS
-    assert pool.index("liquid/lfm-3-1.7b:free") > 4
+    assert pool[:len(config.RELAY_PREFERRED_MODELS)] == config.RELAY_PREFERRED_MODELS
+    assert pool.index("liquid/lfm-3-1.7b:free") >= len(config.RELAY_PREFERRED_MODELS)
     assert "openrouter/free" not in pool
     assert not any("lyria" in slug for slug in pool)
     rows = {row["id"]: row for row in catalogue["data"]}
@@ -41,7 +41,6 @@ def test_remainder_sorted_by_total_size_and_independent_of_api_order(catalogue):
     catalogue["data"].reverse()
     assert config.openrouter_free_models(force_refresh=True) == pool
     known_sizes = ["google/gemma-4-31b-it:free",
-                   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
                    "xingchen-agi/xing4.0-29b-a4b:free",
                    "google/gemma-4-26b-a4b-it:free",
                    "liquid/lfm-2.5-2.6b:free", "liquid/lfm-3-1.7b:free"]

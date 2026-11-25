@@ -463,12 +463,12 @@ def test_openrouter_free_rotation_comes_from_the_live_catalogue_not_stale_static
             OPENROUTER_CHAT, 503, "Service Unavailable", {},
             io.BytesIO(b'{"error":{"message":"first free model is unavailable"}}'),
         ),
-        {**_openai_answer("catalogue answered"), "model": "cohere/north-mini-code:free"},
+        {**_openai_answer("catalogue answered"), "model": "google/gemma-4-31b-it:free"},
     ])
     catalogue = _fake_free_catalogue([
         "nvidia/nemotron-3.5-content-safety:free",
         "vendor/text-embedding-model:free",
-        "cohere/north-mini-code:free",
+        "google/gemma-4-31b-it:free",
     ])
     monkeypatch.setattr(model_catalogue, "held_model_groups_read_only", lambda *args, **kwargs: catalogue)
     monkeypatch.setattr(model_catalogue, "live_model_groups", lambda *args, **kwargs: (_ for _ in ()).throw(
@@ -482,9 +482,9 @@ def test_openrouter_free_rotation_comes_from_the_live_catalogue_not_stale_static
     assert out["text"] == "catalogue answered"
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "cohere/north-mini-code:free",
+        "google/gemma-4-31b-it:free",
     ]
-    assert "mistralai/mistral-small-3.2-24b-instruct:free" not in [body["model"] for body in wire.bodies]
+    assert "nvidia/nemotron-3.5-lightning:free" not in [body["model"] for body in wire.bodies]
 
 
 def test_openrouter_free_rotation_reads_the_signed_in_picker_cache(monkeypatch):
@@ -493,14 +493,14 @@ def test_openrouter_free_rotation_reads_the_signed_in_picker_cache(monkeypatch):
 
     def held(read_session, **kwargs):
         seen.append(read_session)
-        return _fake_free_catalogue(["cohere/north-mini-code:free"])
+        return _fake_free_catalogue(["google/gemma-4-31b-it:free"])
 
     wire = _FreeFallbackWire([
         urllib.error.HTTPError(
             OPENROUTER_CHAT, 503, "Service Unavailable", {},
             io.BytesIO(b'{"error":{"message":"first free model is unavailable"}}'),
         ),
-        {**_openai_answer("signed cache answered"), "model": "cohere/north-mini-code:free"},
+        {**_openai_answer("signed cache answered"), "model": "google/gemma-4-31b-it:free"},
     ])
     monkeypatch.setattr(model_router, "default_cloud_session", lambda: session)
     monkeypatch.setattr(model_catalogue, "held_model_groups_read_only", held)
@@ -516,7 +516,7 @@ def test_openrouter_free_rotation_reads_the_signed_in_picker_cache(monkeypatch):
     assert seen == [session]
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "cohere/north-mini-code:free",
+        "google/gemma-4-31b-it:free",
     ]
 
 
@@ -542,7 +542,7 @@ def test_openrouter_free_env_override_still_wins_over_catalogue(monkeypatch):
 
 
 def test_openrouter_free_unavailable_catalogue_id_is_skipped_on_next_send(monkeypatch):
-    catalogue = _fake_free_catalogue(["cohere/north-mini-code:free", "google/gemma-4-26b-a4b-it:free"])
+    catalogue = _fake_free_catalogue(["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free"])
     monkeypatch.setattr(model_catalogue, "held_model_groups_read_only", lambda *args, **kwargs: catalogue)
     monkeypatch.setattr(model_router, "probe_local_runtimes", lambda: {1234: False, 11434: False})
     model_router.bind_local_cli_broker(None)
@@ -1367,7 +1367,7 @@ def test_provider_error_text_keeps_long_words_while_redacting_credentials():
 def test_openrouter_free_empty_content_falls_to_next_free_default(monkeypatch):
     wire = _SequenceWire([
         {**_openai_answer(""), "model": "apodex/apodex-1.1-mini:free"},
-        {**_openai_answer("fallback ok"), "model": "dots-studio/dots-3-note-preview:free"},
+        {**_openai_answer("fallback ok"), "model": "nvidia/nemotron-3.5-lightning:free"},
     ])
     monkeypatch.setattr(model_router, "probe_local_runtimes", lambda: {1234: False, 11434: False})
     model_router.bind_local_cli_broker(None)
@@ -1378,17 +1378,17 @@ def test_openrouter_free_empty_content_falls_to_next_free_default(monkeypatch):
                      before_dispatch=lambda: started.append("once"))
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "dots-studio/dots-3-note-preview:free",
+        "nvidia/nemotron-3.5-lightning:free",
     ]
     assert out["text"] == "fallback ok"
-    assert out["actual_model"] == "dots-studio/dots-3-note-preview:free"
+    assert out["actual_model"] == "nvidia/nemotron-3.5-lightning:free"
     assert started == ["once"]
 
 
 def test_openrouter_free_empty_http_body_falls_to_next_free_default(monkeypatch):
     wire = _SequenceWire([
         b"",
-        {**_openai_answer("fallback ok"), "model": "dots-studio/dots-3-note-preview:free"},
+        {**_openai_answer("fallback ok"), "model": "nvidia/nemotron-3.5-lightning:free"},
     ])
     monkeypatch.setattr(model_router, "probe_local_runtimes", lambda: {1234: False, 11434: False})
     model_router.bind_local_cli_broker(None)
@@ -1397,7 +1397,7 @@ def test_openrouter_free_empty_http_body_falls_to_next_free_default(monkeypatch)
                      secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "dots-studio/dots-3-note-preview:free",
+        "nvidia/nemotron-3.5-lightning:free",
     ]
     assert out["text"] == "fallback ok"
 
@@ -1421,7 +1421,7 @@ def test_openrouter_free_empty_http_body_with_filtered_empty_list_uses_local(mon
 def test_openrouter_free_non_json_http_body_falls_to_next_free_default(monkeypatch):
     wire = _SequenceWire([
         b"provider gateway wrote plain text",
-        {**_openai_answer("fallback ok"), "model": "dots-studio/dots-3-note-preview:free"},
+        {**_openai_answer("fallback ok"), "model": "nvidia/nemotron-3.5-lightning:free"},
     ])
     monkeypatch.setattr(model_router, "probe_local_runtimes", lambda: {1234: False, 11434: False})
     model_router.bind_local_cli_broker(None)
@@ -1430,7 +1430,7 @@ def test_openrouter_free_non_json_http_body_falls_to_next_free_default(monkeypat
                      secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "dots-studio/dots-3-note-preview:free",
+        "nvidia/nemotron-3.5-lightning:free",
     ]
     assert out["text"] == "fallback ok"
 
@@ -1440,7 +1440,7 @@ def test_openrouter_free_reasoning_only_falls_to_next_free_default(monkeypatch):
         {"choices": [{"message": {"role": "assistant", "reasoning": "hidden chain"},
                       "finish_reason": "stop"}],
          "model": "apodex/apodex-1.1-mini:free"},
-        {**_openai_answer("normal answer"), "model": "dots-studio/dots-3-note-preview:free"},
+        {**_openai_answer("normal answer"), "model": "nvidia/nemotron-3.5-lightning:free"},
     ])
     monkeypatch.setattr(model_router, "probe_local_runtimes", lambda: {1234: False, 11434: False})
     model_router.bind_local_cli_broker(None)
@@ -1454,7 +1454,7 @@ def test_openrouter_free_reasoning_only_falls_to_next_free_default(monkeypatch):
 def test_openrouter_free_normal_content_does_not_fallback():
     wire = _SequenceWire([
         {**_openai_answer("normal answer"), "model": "apodex/apodex-1.1-mini:free"},
-        {**_openai_answer("must not be asked"), "model": "dots-studio/dots-3-note-preview:free"},
+        {**_openai_answer("must not be asked"), "model": "nvidia/nemotron-3.5-lightning:free"},
     ])
     out = route_chat("openrouter/free", ASK, opener=wire,
                      environ={"OPENROUTER_API_KEY": "or-live-key"},
@@ -1621,13 +1621,13 @@ def test_openrouter_catalogue_excludes_safety_models_from_chat_rows():
     def opener(request, timeout=None):
         return _Answer(json.dumps({"data": [
             {"id": "nvidia/nemotron-3.5-content-safety:free", "name": "Safety", "pricing": {"prompt": "0", "completion": "0"}},
-            {"id": "mistralai/mistral-small-3.2-24b-instruct:free", "name": "Mistral", "pricing": {"prompt": "0", "completion": "0"}},
+            {"id": "nvidia/nemotron-3.5-lightning:free", "name": "Lightning", "pricing": {"prompt": "0", "completion": "0"}},
         ]}).encode("utf-8"))
 
     rows = model_catalogue.openrouter_models(opener=opener, timeout=1.0, prices={})
     routes = [row["route"] for row in rows]
     assert "nvidia/nemotron-3.5-content-safety:free" not in routes
-    assert "mistralai/mistral-small-3.2-24b-instruct:free" in routes
+    assert "nvidia/nemotron-3.5-lightning:free" in routes
 
 
 def test_the_server_hands_the_picker_routes_and_the_refusal_as_words():

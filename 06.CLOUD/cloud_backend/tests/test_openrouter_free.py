@@ -71,9 +71,9 @@ def _reset_free_env(monkeypatch):
     monkeypatch.setattr("config.OPENROUTER_MODEL",
                         "meta-llama/llama-3.3-70b-instruct:free")
     monkeypatch.setattr("config.OPENROUTER_FREE_MODELS", (
-        "mistralai/mistral-small-3.2-24b-instruct:free",
-        "deepseek/deepseek-chat-v3-0324:free",
-        "qwen/qwen-2.5-72b-instruct:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "nvidia/nemotron-3.5-super-vl:free",
     ))
     monkeypatch.setattr("config.FREE_DAILY_CAP_PER_USER", 200)
     # Pin the CURRENT free pool to the curated static list so selector/rotation/
@@ -114,12 +114,12 @@ def test_select_openrouter_when_only_openrouter_key(monkeypatch):
     assert sel is not None
     assert sel["provider"] == "openrouter"
     assert sel["base_url"] == "https://openrouter.ai/api/v1"
-    assert sel["model"] == "mistralai/mistral-small-3.2-24b-instruct:free"
+    assert sel["model"] == "nvidia/nemotron-3.5-lightning:free"
     assert sel["key"] == "or-founder-key"
     assert config.free_default_available() is True
     assert config.free_provider_key() == "or-founder-key"
     assert config.free_selected_model() == (
-        "mistralai/mistral-small-3.2-24b-instruct:free")
+        "nvidia/nemotron-3.5-lightning:free")
 
 
 def test_openrouter_preferred_over_nvidia_and_gemini(monkeypatch):
@@ -158,9 +158,9 @@ def test_free_model_rotation_lists_openrouter_pool_in_order(monkeypatch):
     rot = config.free_model_rotation()
     models = [c["model"] for c in rot]
     assert models == [
-        "mistralai/mistral-small-3.2-24b-instruct:free",
-        "deepseek/deepseek-chat-v3-0324:free",
-        "qwen/qwen-2.5-72b-instruct:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "nvidia/nemotron-3.5-super-vl:free",
     ]
     # All carry the same server-side key + provider + base.
     assert all(c["provider"] == "openrouter" for c in rot)
@@ -238,7 +238,7 @@ def test_stream_free_rotates_to_next_pool_model_on_429(monkeypatch):
     monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
 
     sink = []
-    status = {"mistralai/mistral-small-3.2-24b-instruct:free": 429}
+    status = {"nvidia/nemotron-3.5-lightning:free": 429}
     monkeypatch.setattr(
         proxy.httpx, "AsyncClient",
         _fake_client_factory(status, sink))
@@ -247,9 +247,9 @@ def test_stream_free_rotates_to_next_pool_model_on_429(monkeypatch):
     chunks = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     body = b"".join(chunks).decode()
     # The throttled head was drained, the SECOND pool model was streamed.
-    assert ("drained", "mistralai/mistral-small-3.2-24b-instruct:free") in sink
-    assert ("streamed", "deepseek/deepseek-chat-v3-0324:free") in sink
-    assert "deepseek/deepseek-chat-v3-0324:free" in body
+    assert ("drained", "nvidia/nemotron-3.5-lightning:free") in sink
+    assert ("streamed", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free") in sink
+    assert "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" in body
     # Server-side key carried every attempt.
     auths = [s[3] for s in sink if s[0] == "request"]
     assert all(a == "Bearer or-key" for a in auths)
@@ -267,7 +267,7 @@ def test_stream_free_first_model_streams_when_ok(monkeypatch):
     head = config.free_selected_model()
     asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     streamed = [s[1] for s in sink if s[0] == "streamed"]
-    assert streamed[0] == "mistralai/mistral-small-3.2-24b-instruct:free"
+    assert streamed[0] == "nvidia/nemotron-3.5-lightning:free"
 
 
 def test_stream_free_last_candidate_streams_error_body(monkeypatch):
@@ -279,16 +279,16 @@ def test_stream_free_last_candidate_streams_error_body(monkeypatch):
     monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
     sink = []
     status = {
-        "mistralai/mistral-small-3.2-24b-instruct:free": 429,
-        "deepseek/deepseek-chat-v3-0324:free": 429,
-        "qwen/qwen-2.5-72b-instruct:free": 429,
+        "nvidia/nemotron-3.5-lightning:free": 429,
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": 429,
+        "nvidia/nemotron-3.5-super-vl:free": 429,
     }
     monkeypatch.setattr(
         proxy.httpx, "AsyncClient", _fake_client_factory(status, sink))
     head = config.free_selected_model()
     asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     # Last candidate still streamed (honest error body), earlier ones drained.
-    assert ("streamed", "qwen/qwen-2.5-72b-instruct:free") in sink
+    assert ("streamed", "nvidia/nemotron-3.5-super-vl:free") in sink
 
 
 async def _collect(agen):
@@ -370,7 +370,7 @@ def test_inbody_404_under_200_rotates_to_content(monkeypatch):
     _reset_free_env(monkeypatch)
     monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
     sink = []
-    head = "mistralai/mistral-small-3.2-24b-instruct:free"
+    head = "nvidia/nemotron-3.5-lightning:free"
     # The head returns the in-body 404; the next pool model returns content.
     monkeypatch.setattr(
         proxy.httpx, "AsyncClient",
@@ -378,12 +378,12 @@ def test_inbody_404_under_200_rotates_to_content(monkeypatch):
     chunks = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     body = b"".join(chunks).decode()
     # The client got REAL content from the 2nd pool model, NOT the 404 error.
-    assert "deepseek/deepseek-chat-v3-0324:free" in body
+    assert "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" in body
     assert '"code":404' not in body
     assert "error" not in body
     # The head with the in-body error was drained (rotated past), 2nd streamed.
     assert ("drained", head) in sink
-    assert ("streamed", "deepseek/deepseek-chat-v3-0324:free") in sink
+    assert ("streamed", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free") in sink
 
 
 def test_inbody_error_all_fail_streams_last_error(monkeypatch):
@@ -397,9 +397,9 @@ def test_inbody_error_all_fail_streams_last_error(monkeypatch):
     err = lambda code: (
         b'data: {"error":{"code":%d,"message":"nope"}}\n\n' % code)
     bodies = {
-        "mistralai/mistral-small-3.2-24b-instruct:free": err(404),
-        "deepseek/deepseek-chat-v3-0324:free": err(429),
-        "qwen/qwen-2.5-72b-instruct:free": err(503),
+        "nvidia/nemotron-3.5-lightning:free": err(404),
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": err(429),
+        "nvidia/nemotron-3.5-super-vl:free": err(503),
     }
     monkeypatch.setattr(
         proxy.httpx, "AsyncClient", _fake_inbody_factory(bodies, sink))
@@ -407,7 +407,7 @@ def test_inbody_error_all_fail_streams_last_error(monkeypatch):
     chunks = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     body = b"".join(chunks).decode()
     # The LAST candidate's (error) body IS streamed — honest error over silence.
-    assert ("streamed", "qwen/qwen-2.5-72b-instruct:free") in sink
+    assert ("streamed", "nvidia/nemotron-3.5-super-vl:free") in sink
     assert '"code":503' in body
 
 
@@ -419,7 +419,7 @@ def test_inbody_openai_style_error_object_rotates(monkeypatch):
     _reset_free_env(monkeypatch)
     monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
     sink = []
-    head = "mistralai/mistral-small-3.2-24b-instruct:free"
+    head = "nvidia/nemotron-3.5-lightning:free"
     body = (b'data: {"error":{"message":"model is not available for free",'
             b'"type":"invalid_request_error"}}\n\n')
     monkeypatch.setattr(
@@ -427,7 +427,7 @@ def test_inbody_openai_style_error_object_rotates(monkeypatch):
         _fake_inbody_factory({head: body}, sink))
     out = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     out_s = b"".join(out).decode()
-    assert "deepseek/deepseek-chat-v3-0324:free" in out_s
+    assert "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" in out_s
     assert ("drained", head) in sink
 
 
@@ -533,7 +533,7 @@ def test_no_key_user_served_openrouter_free_not_402(monkeypatch):
     assert isinstance(resp, StreamingResponse)
     assert resp.headers.get("X-ArchHub-Tier") == "free-default"
     assert resp.headers.get("X-ArchHub-Model") == (
-        "mistralai/mistral-small-3.2-24b-instruct:free")
+        "nvidia/nemotron-3.5-lightning:free")
 
 
 def test_models_advertises_openrouter_free_default(monkeypatch):
@@ -544,9 +544,9 @@ def test_models_advertises_openrouter_free_default(monkeypatch):
     out = proxy.list_models(user=_user("orm@example.com", "trial"))
     assert out["archhub_free_default"] is True
     assert out["archhub_default_model"] == (
-        "mistralai/mistral-small-3.2-24b-instruct:free")
+        "nvidia/nemotron-3.5-lightning:free")
     ids = [m["id"] for m in out["data"]]
-    assert "mistralai/mistral-small-3.2-24b-instruct:free" in ids
+    assert "nvidia/nemotron-3.5-lightning:free" in ids
 
 
 def test_free_path_consumes_no_hosted_credit(monkeypatch):

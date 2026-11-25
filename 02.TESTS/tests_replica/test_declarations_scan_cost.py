@@ -2,6 +2,7 @@
 read_declarations: 6008 rows (5743 of dead processes) re-parsed and rebuilt on every poll and every commit.
 The output must stay identical to the old algorithm; only unchanged rows stop being re-parsed."""
 import json
+import math
 import os
 import time
 
@@ -85,14 +86,15 @@ def _fill(history, *, count=6000, live_every=1000):
             ("room:declaration:%064x" % i, json.dumps(_record(i, live=i % live_every == 1))) for i in range(count)])
 
 
-def _ms(call, *, repeat=5, between=lambda: None):
-    total = 0.0
+def _ms(call, *, repeat=9, between=lambda: None):
+    # The best of several runs (timeit's rule): the queue runs tests at BelowNormal beside other work.
+    best = math.inf
     for _ in range(repeat):
         between()
         start = time.perf_counter()
         call()
-        total += time.perf_counter() - start
-    return total / repeat * 1000
+        best = min(best, time.perf_counter() - start)
+    return best * 1000
 
 
 def test_declarations_identical_to_old_algorithm_and_cheaper(monkeypatch):
@@ -135,3 +137,18 @@ def test_declarations_identical_to_old_algorithm_and_cheaper(monkeypatch):
     print("\nread_declarations(include_archived=True) 6000 rows: before %.1f ms, after %.1f ms" % (before, after))
     print("_StoreWatch.declarations per commit 6000 rows: before %.1f ms, after %.1f ms" % (watch_before, watch_after))
     assert after < before and watch_after < watch_before
+
+
+def test_changing_nested_fields_of_a_read_never_changes_the_next_read(monkeypatch):
+    """Verifier e988: c71e7818 shared nested containers between reads; a caller's edit leaked into the next read."""
+    monkeypatch.setattr(ad, "_VERDICTS", {})
+    monkeypatch.setattr(mb, "_BUILT", {})
+    with mb.application_history() as history:
+        _fill(history, count=3)
+        first = mb.read_declarations(history._db, include_archived=True)[0]
+        original = json.dumps(first)
+        first["paths"].append("c:/changed")
+        first["process_lineage"][0]["pid"] = -1
+        first["native_process"]["runtime"] = "changed"
+        again = mb.read_declarations(history._db, include_archived=True)[0]
+    assert json.dumps(again) == original

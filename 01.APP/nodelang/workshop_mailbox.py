@@ -10,6 +10,7 @@ from functools import lru_cache
 from .user_paths import state_directory
 
 import json
+import marshal
 import os
 from pathlib import Path
 import sqlite3
@@ -1673,8 +1674,10 @@ def _exact_session_alias(alias, row):
             or _session_tag(alias) != "" or re.fullmatch(r"[0-9a-f]{12}", alias.casefold()) is not None)
 
 
-# Raw record text -> that row parsed, with its sockets. A row's text changes only when it is declared again, so
-# 6000 unchanged rows are not re-parsed on every poll (read_declarations was over a core, 2026-11-25).
+# Raw record text -> that row parsed, with its sockets, as marshal bytes. A row's text changes only when it is
+# declared again, so 6000 unchanged rows are not re-parsed on every poll (read_declarations was over a core,
+# 2026-11-25). Each read rebuilds fully detached rows from the bytes (3x cheaper than json.loads): a caller that
+# changes a row, or anything nested in it, never changes the next read.
 _BUILT = {}
 
 
@@ -1682,13 +1685,14 @@ def _built(texts):
     global _BUILT
     cache, built = _BUILT, {}
     for text in texts:
-        row = cache.get(text)
-        if row is None:
+        blob = cache.get(text)
+        if blob is None:
             row = json.loads(text)
             row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
-        built[text] = row
+            blob = marshal.dumps(row)
+        built[text] = blob
     _BUILT = built   # only the rows of the newest read are kept: the cache never outgrows the table
-    return [built[text] for text in texts]
+    return [marshal.loads(built[text]) for text in texts]
 
 
 def read_declarations(connection, *, include_archived=False, records=None):
@@ -1697,9 +1701,7 @@ def read_declarations(connection, *, include_archived=False, records=None):
         return []
     if records is None:
         records = [row[0] for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")]
-    # Copies: callers (and the alias pass below) change rows; the cached ones stay as parsed.
-    rows = [{**row, "sockets": dict(row["sockets"]), **({"aliases": list(row["aliases"])} if "aliases" in row else {})}
-            for row in _built(records)]
+    rows = _built(records)
     for row in rows:
         row["process_alive"] = _session_alive(row)
         row["current"] = row["status"] != "done" and row["process_alive"]

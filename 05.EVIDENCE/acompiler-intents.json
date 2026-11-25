@@ -12881,6 +12881,14 @@
         "02.TESTS/tests_replica/test_update_release_path.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ACCOUNTLANGUAGE-MOJIBAKE": {
+      "source": "Coordinator 2026-11-25 (child of ACCOUNTLANGUAGE): commit aba0f4be re-saved studio/api.js as cp1252-decoded UTF-8, so the Studio shows 'Checking running agentsâ€¦' and 'Â·'. Restore the real characters, keep that commit's Account changes, and add a guard that fails on mojibake in shipped Studio text.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_replica/test_studio_text_has_no_mojibake.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

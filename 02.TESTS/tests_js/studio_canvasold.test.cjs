@@ -319,7 +319,8 @@ test('node body drag and selected group drag persist through the real move adapt
  let after=await card(page,'level').boundingBox();assert.ok(Math.abs(after.x-before.x-35)<2&&Math.abs(after.y-before.y-90)<2,'local movement stays visible while its save is pending');
  await page.evaluate(()=>{window.holdMove=false;window.releaseMove();});await page.waitForTimeout(80);
  after=await card(page,'level').boundingBox();assert.ok(Math.abs(after.y-before.y-90)<2,'confirmed move stays where it was dropped');
- await card(page,'text').locator('.node-header').click({modifiers:['Shift']});
+ // Click the visible start of the header: the card runs past the canvas edge, and scrolling it into view would move the whole canvas.
+ await card(page,'text').locator('.node-header').click({modifiers:['Shift'],position:{x:20,y:8}});
  const start=await Promise.all(['level','text'].map(id=>card(page,id).boundingBox()));await drag('level',-20,45);await page.waitForTimeout(80);
  const end=await Promise.all(['level','text'].map(id=>card(page,id).boundingBox()));
  for(let i=0;i<2;i++)assert.ok(Math.abs(end[i].x-start[i].x+20)<2&&Math.abs(end[i].y-start[i].y-45)<2,'all selected nodes move together '+JSON.stringify({start,end,ids:await selectedIds(page),calls:await page.evaluate(()=>window.fixtureCalls)}));

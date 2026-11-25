@@ -20,6 +20,12 @@ async function mount(outcome) {
   let roots = [];
   win.fetch = async (url, options = {}) => {
     if (url === '/api/commands') return {ok:true, status:200, json:async () => ({commands:[]})};
+    // The launcher's page session, then the verified ArchHub account desktop work needs (cd19d5d4).
+    if (url === '/api/universal/session') return {ok:true, status:200, json:async () => ({token:'wsadd-fixture', csrf:'wsadd-fixture'})};
+    if (url === '/api/universal/desktop-access') return {ok:true, status:200, json:async () => ({ok:true, admitted:true, state:'admitted', subject:'wsadd-fixture'})};
+    // The workspace opens once its first session file arrives (cd19d5d4 gates the app on that).
+    if (url === '/api/session-files' && JSON.parse(options.body).action === 'initial') return {ok:true, status:200, json:async () => ({ok:true, path:'',
+      document:{format:'archhub', version:1, id:'wsadd-fixture', title:'Workspaces', nodes:[], wires:[], groups:[], notes:[], properties:{}}})};
     if (url !== '/api/universal/workspace-roots') return new Promise(() => {});
     const body = JSON.parse(options.body);
     requests.push(body);
@@ -42,6 +48,8 @@ async function mount(outcome) {
   };
   win.eval(read('vendor/react.js'));
   win.eval(read('vendor/react-dom.js'));
+  // api.js builds its canvas command queue from studio-authority.js at startup.
+  win.eval(read('studio-authority.js'));
   win.eval(read('api.js'));
   win.eval(`window.AH={};window.AH_DS={Toggle:()=>null};`);
   win.eval(transformSync(read('ds/index.jsx'), {loader:'jsx',target:'es2022'}).code);
@@ -65,8 +73,12 @@ async function mount(outcome) {
   }
   const settle = () => new Promise(resolve => setTimeout(resolve, 40));
   await settle();
+  // The app opens once the admitted desktop has loaded its first session file (cd19d5d4).
+  for (let i = 0; i < 50 && !win.ArchHubAPI.getSnapshot().desktopAccess?.ready; i++) await settle();
   const add = [...win.document.querySelectorAll('section button')].find(b => b.textContent === 'Add workspace' && b.closest('section').querySelector('h2')?.textContent === 'Workspaces');
-  assert.ok(add, 'real Settings Add rendered');
+  assert.ok(add, 'real Settings Add rendered: '+JSON.stringify(win.ArchHubAPI.getSnapshot().desktopAccess)+' '+win.document.body.textContent.slice(0,200));
+  // Record only what Add does: the admitted desktop already listed the workspaces at startup.
+  requests.length = 0;
   if (outcome === 'owner-idle') await win.ArchHubAPI.listWorkspaces();
   else add.click();
   for (let attempt = 0; attempt < 100; attempt++) {

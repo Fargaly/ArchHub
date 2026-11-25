@@ -613,6 +613,20 @@ test('WIRE-rest owner refusal propagates without a write retry or fabricated gro
  assert.equal(api.getSnapshot().community.groups.length,0);
 });
 
+// The command owner's /api/commands payload (command_registry.payload), read once in a throwaway profile.
+let registry=null;
+function commandRegistry(){
+ if(registry)return registry;
+ const os=require('node:os'),{execFileSync}=require('node:child_process');
+ const profile=fs.mkdtempSync(path.join(os.tmpdir(),'account-registry-'));
+ try{
+  const env={...process.env,LOCALAPPDATA:profile,APPDATA:profile,USERPROFILE:profile};
+  const script="import json,sys;sys.path.insert(0,'.');from nodelang.command_registry import payload;print(json.dumps(payload()))";
+  registry=JSON.parse(execFileSync(process.env.ARCHHUB_PYTHON||'python',['-I','-B','-c',script],{cwd:path.join(__dirname,'../../01.APP'),env,windowsHide:true,encoding:'utf8'}));
+ }finally{fs.rmSync(profile,{recursive:true,force:true});}
+ return registry;
+}
+
 async function restScreen(component, api, state, props={}) {
  const {JSDOM}=require('jsdom');
  const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
@@ -624,9 +638,10 @@ async function restScreen(component, api, state, props={}) {
  if(component==='NodeDetails')win.ArchHubAPI=api;
  const u={go:route=>navigation.push(route),show:(name,data)=>navigation.push({name,data}),setSelectedNodeId:id=>navigation.push({select:id}),advanced:false};
  win.AHIcon=()=>null;
- // Menus are the command owner's projection (/api/commands), written by tests_replica/test_command_registry.py as command_registry.test.cjs reads it.
- win.ArchHubCommandRegistry=JSON.parse(fs.readFileSync(path.join(__dirname,'../../.cache/testiso-commandregistry/commands.json'),'utf8'));
- win.UI={api,A:{ok:'green',warn:'orange',inkSoft:'gray'},D:{Toggle:({checked,onCheckedChange,label})=>React.createElement('input',{type:'checkbox',checked,'aria-label':label,onChange:event=>onCheckedChange(event.target.checked)})},
+ // Menus are the command owner's projection (/api/commands), read from that owner itself so this file runs on its own.
+ win.ArchHubCommandRegistry=commandRegistry();
+ // productLabel is ui.jsx's label translator (aba0f4be); English settings return the label unchanged.
+ win.UI={api,productLabel:label=>label,A:{ok:'green',warn:'orange',inkSoft:'gray'},D:{Toggle:({checked,onCheckedChange,label})=>React.createElement('input',{type:'checkbox',checked,'aria-label':label,onChange:event=>onCheckedChange(event.target.checked)})},
   useData:()=>state,useApp:()=>u,Btn:({p,sm,ghost,danger,...props})=>React.createElement('button',props),Card:element('section'),Chip:element('span'),
   Heading:({title,children})=>React.createElement('header',null,title,children),Empty:element('p'),Table:({rows})=>React.createElement('pre',null,JSON.stringify(rows)),SettingControl:()=>null,Av:()=>null};
  for(const screenFile of ['answer-widgets.jsx','community-tools.jsx','decision-results.jsx','canvas-states.jsx','watcher-controls.jsx','desktop.jsx','ds_watch_edit.jsx','routing.jsx','xray.jsx','context-menus.jsx',...(component==='NodeDetails'?['workflow-states.jsx']:[])]){

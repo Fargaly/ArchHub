@@ -70,6 +70,10 @@ test('actual adapter sends graph operations and rejects failed writes without op
   if(body)posts.push({url,body,headers:options.headers});
   let data={ok:true};
   if(url==='/api/universal/canvas')data=canvas;
+  // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+  if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'social-fixture',email:'social@example.test'};
+  // The command owner serves the menu catalogue at startup (f8b5feea).
+  if(url==='/api/commands')data={commands:[]};
   if(url==='/api/universal/social-connections')data={ok:true,items:[]};
   if(url==='/api/universal/social-surface'){
    if(refuse)return {ok:false,status:409,json:async()=>({ok:false,error:'Owner rejected this draft. Correct the account and retry.'})};

@@ -60,6 +60,8 @@ async function refreshDesktopAccess(force=false){
    const switching=Boolean(desktopSubject&&desktopSubject!==answer.subject);
    if(switching)lockDesktop('switching');
    await changeDesktopSubject(answer.subject);if(generation!==desktopGeneration)return desktopAccess;
+   // The admitted subject is the account every in-flight owner read is guarded by; set it now, not when account discovery returns.
+   if(state.profile.id!==answer.subject)publish({profile:{...state.profile,id:answer.subject}});
    showDesktopAccess({admitted:true,state:'admitted',notice:'',subject:answer.subject,email:answer.email||null,ready:ready&&!switching});
    if(switching&&ready){if(sessionDocument)projectFile();else await api.newSession();showDesktopAccess({ready:true});void refreshAccount().catch(()=>{});void api.listWorkspaces().catch(()=>{});}
    for(const resolve of desktopWaiters)resolve();desktopWaiters.clear();return desktopAccess;

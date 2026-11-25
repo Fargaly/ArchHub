@@ -38,7 +38,9 @@ test('a canvas edit during an in-flight task save keeps the edited nodes and vie
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push({url, body});
       let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: []};
-      if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
+      // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+      if (url === '/api/universal/desktop-access') data = {ok: true, admitted: true, state: 'admitted', subject: 'race-fixture'};
+      else if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
       else if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: structuredClone(file), path: 'C:/isolated/alpha.archhub'};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: (body.document.properties?.revision || 0) + 1, document: body.document};
       else if (url === '/api/session-files' && body?.action === 'read') data = {ok: true, path: body.path, revision: 9, document: structuredClone(stale)};
@@ -99,6 +101,8 @@ test('a refused or slow library-collapse read still opens the initial session ex
     addEventListener() {}, dispatchEvent(event) { notices.push(event.detail && event.detail.message); },
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
+      // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+      if (url === '/api/universal/desktop-access') return {ok: true, status: 200, json: async () => ({ok: true, admitted: true, state: 'admitted', subject: 'race-fixture'})};
       if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') {
         await settingsGate;
         return {ok: true, status: 200, json: async () => ({ok: true, result: []})};
@@ -128,7 +132,7 @@ test('a refused or slow library-collapse read still opens the initial session ex
   releaseSettings();
   const noticed = Date.now();
   while (!notices.includes('Settings owner did not confirm the action. Refresh and retry.')) {
-    if (Date.now() - noticed > 3000) throw new Error('settings validation did not refuse the array result');
+    if (Date.now() - noticed > 3000) throw new Error('settings validation did not refuse the array result; notices: '+JSON.stringify(notices));
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   const collapsed = context.ArchHubAPI.getSnapshot().libraryCollapsed;
@@ -158,6 +162,8 @@ test('a task refresh replaces recorded context and keeps file state only when th
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push(body && body.function);
+      // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+      if (url === '/api/universal/desktop-access') return {ok: true, status: 200, json: async () => ({ok: true, admitted: true, state: 'admitted', subject: 'race-fixture'})};
       let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], commands: [], document: structuredClone(blank), path: 'C:/isolated/boot.archhub', revision: 1};
       if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: structuredClone(blank), path: 'C:/isolated/boot.archhub'};
       else if (url === '/api/session-files' && body?.action === 'validate') data = {ok: true, document: body.document};
@@ -233,6 +239,8 @@ test('late first-file startup preserves a newer created, opened or saved workflo
    fetch:async(url,options={})=>{
     const body=options.body?JSON.parse(options.body):null;
     if(url==='/api/commands')return response({commands:[]});
+    // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+    if(url==='/api/universal/desktop-access')return response({ok:true,admitted:true,state:'admitted',subject:'race-fixture'});
     if(url==='/api/session-files'&&body?.action==='initial'){
      initialStarted=true;await gate;
      if(choice.endsWith('error'))return {ok:false,status:409,headers:{get:()=>null},json:async()=>({ok:false,error:'Initial file refused'})};

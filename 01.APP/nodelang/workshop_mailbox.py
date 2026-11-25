@@ -951,9 +951,10 @@ class _StoreWatch:
     def _parsed(self):
         version = self.version()
         if getattr(self, '_records', (None,))[0] != version:
-            # The declarations change only with a commit: parsed once per commit counter, never on a timer.
+            # The declarations change only with a commit: read once per commit counter, never on a timer; the
+            # texts go to read_declarations, which parses only rows whose text changed.
             table = self._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone()
-            self._records = (version, [json.loads(row[0]) for row in self._db.execute(
+            self._records = (version, [row[0] for row in self._db.execute(
                 "SELECT record FROM workshop_declarations ORDER BY root")] if table else None)
         return self._records[1]
 
@@ -1672,14 +1673,34 @@ def _exact_session_alias(alias, row):
             or _session_tag(alias) != "" or re.fullmatch(r"[0-9a-f]{12}", alias.casefold()) is not None)
 
 
+# Raw record text -> that row parsed, with its sockets. A row's text changes only when it is declared again, so
+# 6000 unchanged rows are not re-parsed on every poll (read_declarations was over a core, 2026-11-25).
+_BUILT = {}
+
+
+def _built(texts):
+    global _BUILT
+    cache, built = _BUILT, {}
+    for text in texts:
+        row = cache.get(text)
+        if row is None:
+            row = json.loads(text)
+            row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
+        built[text] = row
+    _BUILT = built   # only the rows of the newest read are kept: the cache never outgrows the table
+    return [built[text] for text in texts]
+
+
 def read_declarations(connection, *, include_archived=False, records=None):
-    """records: the table's rows already parsed by a caller that keeps them per commit (F419); liveness is read fresh."""
+    """records: the table's raw record texts, kept by a caller per commit (F419); liveness is read fresh."""
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         return []
-    rows = ([json.loads(row[0]) for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")]
-            if records is None else [{**row, **({'aliases': list(row['aliases'])} if 'aliases' in row else {})} for row in records])
+    if records is None:
+        records = [row[0] for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")]
+    # Copies: callers (and the alias pass below) change rows; the cached ones stay as parsed.
+    rows = [{**row, "sockets": dict(row["sockets"]), **({"aliases": list(row["aliases"])} if "aliases" in row else {})}
+            for row in _built(records)]
     for row in rows:
-        row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
         row["process_alive"] = _session_alive(row)
         row["current"] = row["status"] != "done" and row["process_alive"]
     holders = {}  # F419: each role's newest current holder in one pass (it was a pass over every row for each row)

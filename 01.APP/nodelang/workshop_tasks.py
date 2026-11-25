@@ -1462,21 +1462,21 @@ def _task_threads(history):
     return bound, last
 
 
-def _is_stale(row, declarations, hours):
+def _is_stale(row, blocked_work, by_owner, hours):
     """A declared task whose owner has not been live for `hours`, or a session with no live member and no
-    activity for `hours` that is not waiting for the founder. Never deleted or archived; Continue still works."""
+    activity for `hours` that is not waiting for the founder. Never deleted or archived; Continue still works.
+    blocked_work / by_owner: built once per list (a scan of every declaration per row was rows x 6000)."""
     if str(row["id"]).startswith(SESSION_PREFIX) and row["status"] != "done":
         if _live(row.get("members") or []):
             return False
-        if any(item.get("work") == row["id"] and item.get("current") and item.get("status") == "blocked"
-               for item in declarations):
+        if row["id"] in blocked_work:
             return False
         seen = datetime.fromisoformat(row.get("updated_at") or "1970-01-01T00:00:00+00:00")
         seen = seen if seen.tzinfo else seen.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) - seen >= timedelta(hours=hours)
     if not str(row["id"]).startswith("declared-") or row["status"] == "done":
         return False
-    mine = [item for item in declarations if item.get("session") == row.get("owner")]
+    mine = by_owner.get(row.get("owner"), [])
     if any(item.get("current") for item in mine):
         return False
     latest = max([row.get("updated_at") or ""] + [item.get("updated_at") or "" for item in mine])
@@ -1638,8 +1638,14 @@ def _column(history, project=None, stale_hours=None, *, include_archived=False, 
             live[_declaration_task_id(item)] = item["status"]
         if item.get("work"):
             live[item["work"]] = "blocked" if "blocked" in (item["status"], live.get(item["work"])) else item["status"]
+    blocked_work = {item["work"] for item in declarations
+                    if item.get("work") and item.get("current") and item.get("status") == "blocked"}
+    by_owner = {}
+    for item in declarations:
+        by_owner.setdefault(item.get('session'), []).append(item)
+
     def state(row):
-        if _is_stale(row, declarations, hours):
+        if _is_stale(row, blocked_work, by_owner, hours):
             return "stale"
         if row["status"] == "done":
             return "DONE"
@@ -1653,9 +1659,6 @@ def _column(history, project=None, stale_hours=None, *, include_archived=False, 
     threads, last = _task_threads(history)
     listed = rows(history, include_archived=include_archived, settle=settle)
     index = _declaration_index(declarations)
-    by_owner = {}
-    for item in declarations:
-        by_owner.setdefault(item.get('session'), []).append(item)
     working = {m["owner"] for row in listed if not row["id"].startswith("declared-") and row["status"] != "done"
                and not row.get("archived") for m in _live(row.get("members") or [])}
     from .session_files import _registered_roots

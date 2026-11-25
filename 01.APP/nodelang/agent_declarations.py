@@ -17,10 +17,12 @@ _VERDICTS = {}
 
 
 def _alive(row, *, strict=False):
-    import psutil
-    import time
     key = (row["pid"], row["created_at"])
     known = None if strict else _VERDICTS.get(key)
+    if known is not None and known[0] is False:
+        return False   # before the imports below: thousands of dead rows are asked on every poll
+    import psutil
+    import time
     from .library_engines import LIBRARY_ITEM_ENGINES
     recheck = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['session_poll_ms'] / 1000
     if known is not None and (known[0] is False or time.monotonic() - known[1] < recheck):

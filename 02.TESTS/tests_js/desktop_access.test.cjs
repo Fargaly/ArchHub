@@ -120,3 +120,71 @@ test('first admitted Home reads shared-with-you once per account, and an account
  assert.deepEqual(f.api.getSnapshot().watching.watching,[],'B never sees A\'s shared sessions');
  f.close();
 });
+
+test('optional 15000 ms update status timeout preserves a concurrent workspace read and its admitted subject', async t => {
+ const f=fixture();
+ t.after(f.close);
+ f.set('A'); await f.api.refreshDesktopAccess(true); await f.api.ready;
+ const fetch=f.context.fetch;
+ let release;
+ const hold=new Promise(resolve=>{release=resolve;});
+ const observed=[];
+ const timeouts=[];
+ let aborted;
+ f.context.AbortSignal=class extends AbortSignal {
+  static timeout(ms){timeouts.push(ms);return AbortSignal.timeout(ms);}
+ };
+ f.context.fetch=async(url,init)=>{
+  if(url==='/api/universal/workspace-roots'){
+   observed.push(new Headers(init.headers).get('X-ArchHub-Desktop-Subject'));
+   await hold;
+   return {ok:true,status:200,headers:new Headers(),json:async()=>({ok:true,roots:[{root_id:'qa',label:'QA workspace'}]})};
+  }
+  if(url==='/api/universal/application-update'){
+   observed.push(new Headers(init.headers).get('X-ArchHub-Desktop-Subject'));
+   assert(init.signal instanceof AbortSignal);
+   await new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>{aborted=init.signal.reason;reject(aborted);},{once:true}));
+  }
+  return fetch(url,init);
+ };
+ // Native AbortSignal timers do not keep the Node test process alive.
+ const keepAlive=setTimeout(()=>{},20000);
+ t.after(()=>clearTimeout(keepAlive));
+ const workspace=f.api.listWorkspaces();
+ try{
+  await f.api.refreshApplicationUpdate().catch(error=>{assert.equal(error.cause?.name,'TimeoutError');});
+ } finally {release();}
+ const items=await workspace;
+ assert.equal(aborted?.name,'TimeoutError');
+ assert.equal(items.find(row=>row.id==='qa').name,'QA workspace');
+ assert(timeouts.length>0 && timeouts.every(ms=>ms===15000));
+ assert(observed.length>=2 && observed.every(subject=>subject==='A'));
+ assert.equal(f.api.getSnapshot().desktopAccess.subject,'A');
+ assert.equal(f.api.getSnapshot().desktopAccess.admitted,true);
+});
+
+test('a rejected network request preserves admission and subsequent workspace reads',async t=>{
+ const f=fixture();
+ t.after(f.close);
+ f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
+ const fetch=f.context.fetch;
+ f.context.fetch=()=>Promise.reject(new TypeError('fixture network failure'));
+ await assert.rejects(f.api.listWorkspaces());
+ assert.equal(f.api.getSnapshot().desktopAccess.admitted,true);
+ assert.equal(f.api.getSnapshot().desktopAccess.subject,'A');
+ f.context.fetch=fetch;
+ assert(Array.isArray(await f.api.listWorkspaces()));
+});
+
+for(const state of ['signed_out','session_invalid']){
+ test('authoritative '+state+' refusal locks the previously admitted workspace',async t=>{
+  const f=fixture();t.after(f.close);
+  f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
+  f.context.fetch=async()=>({ok:false,status:401,headers:new Headers(),
+   json:async()=>({ok:false,code:'desktop_access_required',state,error:'Fixture access refused'})});
+  await assert.rejects(f.api.listWorkspaces(),/Fixture access refused/);
+  const access=f.api.getSnapshot().desktopAccess;
+  assert.equal(access.admitted,false);assert.equal(access.state,state);
+  assert.equal(f.api.getSessionDocument(),null);
+ });
+}

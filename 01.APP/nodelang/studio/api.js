@@ -128,7 +128,10 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  const polled=body===undefined||POLLED.has(body.function)&&(path==='/api/universal/workshop'?body.action==='data-api':path==='/api/universal/settings-action');
  const readKey=polled?path+JSON.stringify({...body,request_id:undefined}):null, cached=readKey&&conditional.get(readKey);
  let response;try{response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
- 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio',...(cached?{'If-None-Match':cached.etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(error){if(requestAccountEpoch===accountEpoch&&!desktopRoutes.has(path))lockDesktop('unavailable');throw error;}
+ 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio',...(cached?{'If-None-Match':cached.etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(cause){
+  const reason=signal?.aborted&&signal.reason?.message;
+  throw Error(reason ? reason+' — retry when ready.' : 'ArchHub did not respond. Check the result before retrying.',{cause});
+ }
  if(response.status===304){
   if(!cached||requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
   return cached.result;
@@ -172,7 +175,7 @@ async function streamChat(prompt,agent,replyTo,task,extra) {
  publish({composerAnswer:{answer:'',provider:'Routing',model:'Free model'}});
  let response;try{response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
   'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'',
-  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(extra||{}),...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});}catch(error){if(streamAccount===accountEpoch)lockDesktop('unavailable');throw error;}
+  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(extra||{}),...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});}catch(cause){throw Error('ArchHub did not respond. Check the result before retrying.',{cause});}
  if(streamAccount!==accountEpoch)throw Error('The account changed while this request was in flight.');
  if(!response.ok){const result=await response.json();if(result.code==='desktop_access_required')lockDesktop(result.state||'unavailable');throw Error(result.error||'The model request was refused.');}
  if(streamAccount!==accountEpoch||!desktopAdmitted()){await response.body.cancel();throw desktopError();}

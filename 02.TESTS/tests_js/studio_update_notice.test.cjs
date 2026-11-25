@@ -52,6 +52,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   // The application's existing owner-refresh timer is paused while hidden.
   Object.defineProperty(win.document,'hidden',{value:true});
   win.structuredClone=globalThis.structuredClone;
+  win.CSS={escape:require('css-tree').ident.encode};
   win.crypto.randomUUID=require('node:crypto').randomUUID;
   win.ARCHHUB_BOOT={home_load_ms:60000,token:'isolated-session',csrf:'isolated-csrf'};
   win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
@@ -62,14 +63,17 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   win.fetch=async(url,options={})=>{
     let data={ok:true};
-    if(url==='/api/commands')data={commands:[]};
+    if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'A',email:'a@example.test'};
+    if(url==='/api/commands')data={commands:[
+      {id:'menu.undo',action:{},shortcut:'Ctrl Z'}, {id:'menu.redo',action:{},shortcut:'Ctrl Shift Z'}
+    ]};
     if(url==='/api/session-files'){
       const body=JSON.parse(options.body||'{}');
       if(body.action==='catalogue')data={ok:true,items:[{id:'value',title:'Value',engine:'param.value',pure:true,params:{type:'number',value:1},ports:{source:[],target:[]}}],sessions:[],recent:[],directory:'/fixture'};
-      else if(body.action==='initial')data={ok:true,document:{format:'archhub',version:1,id:'fixture-file',title:'Fixture',nodes:[],wires:[],groups:[],notes:[],properties:{}}};
-      else data={ok:true,document:body.document,revision:1,outputs:{},pending:{},changed:[]};
+      else if(body.action==='initial')data={ok:true,path:'/fixture/session.archhub',document:{format:'archhub',version:1,id:'fixture-file',title:'Fixture',nodes:[],wires:[],groups:[],notes:[],properties:{}}};
+      else data={ok:true,path:body.path||'/fixture/session.archhub',document:body.document,revision:1,outputs:{},pending:{},changed:[]};
     }
-    if(url==='/api/router/settings')data={default_model:'openrouter/fixture:free',agents:{},providerPreferences:{},fallback_models:[]};
+    if(url==='/api/router/settings')data={default_model:'openrouter/fixture:free',agents:{},providerPreferences:{},models:[],fallback_models:[]};
     if(url==='/api/universal/settings-action'){
       const body=JSON.parse(options.body||'{}');
       data=server.settings?await server.settings(body):{ok:true,result:{runMode:'Accept edits',tools:{},libraryCollapsed:[]}};
@@ -223,7 +227,7 @@ test('a read that never answers times out and a native status refresh recovers',
   v.deadlines.at(-1).abort(new Error('Update status did not answer within 15 seconds'));
   await v.settle(()=>v.api.getSnapshot().update.state==='failed','timeout reported by owner');
   assert.match(v.api.getSnapshot().update.detail,/did not answer within 15 seconds/);
-  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
+  assert.equal(!!v.doc.querySelector('[aria-label="Update available"]'),false);
   current=status('ready');v.push();
   await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'verified update can be requested');
  }finally{v.close();}
@@ -232,7 +236,7 @@ test('a read that never answers times out and a native status refresh recovers',
 test('up to date draws no notice; a ready build shows one relaunch notification',async()=>{
   let current=status('idle');const v=await mount({get:()=>current});
   try{
-    assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
+    assert.equal(!!v.doc.querySelector('[aria-label="Update available"]'),false);
     current=status('ready');v.push();
     await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'ready badge appears');
     assert.equal(!!v.doc.querySelector('[role="dialog"]'),false);
@@ -249,8 +253,8 @@ test('one ready toolbar action restarts once without a second confirmation',asyn
   await v.click(v.doc.querySelector('[aria-label="Update available"]'));
   await v.settle(()=>v.api.getSnapshot().update.state==='restarting','restart requested');
   assert.deepEqual(v.posts,[{action:'reload'}]);
-  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
-  assert.equal(v.doc.querySelector('[role="dialog"]'),null);
+  assert.equal(!!v.doc.querySelector('[aria-label="Update available"]'),false);
+  assert.equal(!!v.doc.querySelector('[role="dialog"]'),false);
  }finally{v.close();}
 });
 
@@ -272,12 +276,15 @@ test('R11 ready notification applies with ONE button and no review dialog',async
 });
 
 test('a refused restart reports its reason and a native status refresh recovers',async()=>{
- const v=await mount({get:()=>status('ready'),post:()=>({ok:false,error:'A Workshop job is running'})});
+ let busy = false;
+ const v=await mount({get:()=>status('ready', {restart_supported:!busy, restart_refusal:busy?'A Workshop job is running':''}),
+   post:()=>{busy=true;return {ok:false,error:'A Workshop job is running'};}});
  try{
   await v.click(v.doc.querySelector('[aria-label="Update available"]'));
   await v.settle(()=>/Workshop job is running/.test(v.doc.body.textContent),'refusal stays visible');
-  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
+  assert.equal(!!v.doc.querySelector('[aria-label="Update available"]'),false);
   assert.deepEqual(v.posts,[{action:'reload'}]);
+  busy=false;
   v.push();
   await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'status reoffers verified build');
   assert.equal(v.posts.length,1,'reading status cannot restart');
@@ -290,7 +297,7 @@ for(const from of [null,PREVIOUS])test('installed build receipt persists until a
  try{
   await v.settle(()=>v.api.getSnapshot().update.updatedTo===INSTALLED,'installed receipt arrives');
   assert.equal(v.api.getSnapshot().update.updatedFrom,from||'');
-  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null,'installed is not a pending update');
+  assert.equal(!!v.doc.querySelector('[aria-label="Update available"]'),false,'installed is not a pending update');
   assert.equal(v.posts.length,0);
   await v.api.acknowledgeUpdate();
   assert.equal(v.api.getSnapshot().update.updatedTo,'');
@@ -311,7 +318,7 @@ test('late reads cannot override newer reads and failed first reads are visible'
   let current=()=>{throw Error('Update status could not be read');};const v=await mount({get:()=>current()});
   try{
     await v.settle(()=>v.api.getSnapshot().update.state==='failed','read failure visible');
-    assert.match(v.api.getSnapshot().update.detail,/could not be read/);
+    assert.equal(v.api.getSnapshot().update.detail,'ArchHub did not respond. Check the result before retrying.');
     const late=deferred();current=()=>late.promise;
     const first=v.api.refreshApplicationUpdate();
     current=()=>status('idle');await v.api.refreshApplicationUpdate();
@@ -393,24 +400,25 @@ test('STUDIOFIX an auxiliary Composer edits and sends without replacing the prim
 // Drafts per Home session are proven on the compiled app with two real map cards: the map draws no cards in JSDOM
 // (no layout). See 03.TOOLS/tools/real_app_check/scenarios/home_drafts.mjs.
 test('Settings search shows values and Advanced rows, then reveals the control in place',async()=>{
- const nodes=[{id:'n1',label:'Appearance',properties:[{label:'Text scale',value:100,editor:'number',setting:{kind:'theme'},relation:'n1',editable:true}]}];
- const v=await mount({get:()=>status('idle'),nodes,workshop:body=>{
-  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-  return {ok:true,result:[]};
- }});
+ const ownerRow={id:'Appearance.Text scale',page:'Appearance',label:'Text scale',group:'Size and density',type:'number',value:100,default:100};
+ const v=await mount({get:()=>status('idle'),settings:()=>({ok:true,result:{appearanceSettings:[ownerRow]}})});
  try{
   await v.api.setSettingsScope('User');
   await v.click(v.doc.querySelector('[aria-label="Settings"]'));
   await v.settle(()=>!!v.doc.querySelector('[aria-label="Search settings"]'),'Settings search is on the sheet');
   const field=v.doc.querySelector('[aria-label="Search settings"]');
-  Object.getOwnPropertyDescriptor(v.win.HTMLInputElement.prototype,'value').set.call(field,'100');
-  field.dispatchEvent(new v.win.Event('input',{bubbles:true}));
-  field.dispatchEvent(new v.win.Event('change',{bubbles:true}));
-  await v.settle(()=>!![...v.doc.querySelectorAll('.sheet-result')].find(node=>node.textContent.includes('Text scale')&&node.textContent.includes('100')&&node.textContent.includes('Advanced')),'the value and Advanced row are in the results');
-  await v.click([...v.doc.querySelectorAll('.sheet-result')].find(node=>node.textContent.includes('Text scale')));
-  // The result opens its own Settings page with the search cleared. The graph's raw Advanced rows (a node property as
-  // a setting) left with the graph (NOGRAPH); Text scale is the Settings owner's Appearance row.
-  await v.settle(()=>v.doc.querySelector('[data-screen]')?.getAttribute('data-screen')==='settings/Appearance'&&!v.doc.querySelector('[aria-label="Search settings"]').value,'selecting the result reveals that control and keeps Settings open');
+  const search = value => {
+    Object.getOwnPropertyDescriptor(v.win.HTMLInputElement.prototype,'value').set.call(field,value);
+    field.dispatchEvent(new v.win.Event('input',{bubbles:true}));
+    field.dispatchEvent(new v.win.Event('change',{bubbles:true}));
+  };
+  const result = label => [...v.doc.querySelectorAll('[role="option"]')].find(option=>option.textContent.includes(label));
+  search('100');
+  await v.settle(()=>result('Text size')?.querySelector('span')?.textContent==='100','the current text scale is searchable by value');
+  search('sampling breadth');
+  await v.settle(()=>result('Sampling breadth')?.textContent.includes('Advanced'),'an advanced setting is searchable while folded');
+  await v.click(result('Sampling breadth'));
+  await v.settle(()=>v.doc.querySelector('[data-screen="settings/Agents"] [data-row="topP"]') &&
+    !v.doc.querySelector('[aria-label="Search settings"]').value,'the advanced row is revealed with search cleared');
  }finally{v.close();}
 });

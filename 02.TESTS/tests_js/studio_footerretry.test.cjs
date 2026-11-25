@@ -141,6 +141,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   win.fetch=async(url,options={})=>{
     let data={ok:true};
+    if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'A',email:'a@example.test'};
     if(url==='/api/commands')data={commands:[]};
     if(url==='/api/universal/canvas')data={root:'graph',nodes:[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
     if(url==='/api/universal/cloud-session')data=server.cloud?await server.cloud():{ok:true,signed_in:false};

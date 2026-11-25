@@ -2386,10 +2386,25 @@ function libraryNode(item,position){return {id:window.crypto.randomUUID(),type:i
 api.addNode=async(name,position={})=>{
  const item=(state.libraryPorts||[]).find(i=>i.id===name||i.title===name);
  if(!item||item.noEngine)throw Error('Choose an executable Library node.');
- if(position.x===undefined){const detail={reserved:[],point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};}
- if(item.engine==='skill'&&item.params.session_file)return api.insertSession(item.params.session_file,position);
- const node=libraryNode(item,position);
- fileEdit(d=>d.nodes.push(node),[node.id]);return state.graph.nodes.find(n=>n.id===node.id);
+ // NODEPLACE: a placed card holds its spot until it is painted, so concurrent adds never take the same one.
+ const scope=scopeEpoch+':'+state.graph.id;let reservation=null;
+ if(position.x===undefined){const detail={reserved:[...insertionReservations].filter(point=>point.scope===scope),point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};if(detail.point){reservation={...detail.point,scope};insertionReservations.add(reservation);}}
+ try{
+  if(item.engine==='skill'&&item.params.session_file)return await api.insertSession(item.params.session_file,position);
+  const node=libraryNode(item,position),shown=()=>state.graph.nodes.find(n=>n.id===node.id);
+  fileEdit(d=>d.nodes.push(node),[node.id]);
+  // Once painted, the Canvas places the card again by its real height; a navigation in between leaves it where it is.
+  if(reservation&&!document.hidden&&window.requestAnimationFrame){
+   await new Promise(resolve=>{const timer=setTimeout(resolve,Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));});
+   if(scope!==scopeEpoch+':'+state.graph.id||document.hidden||!sessionDocument?.nodes.some(n=>n.id===node.id))return shown();
+   const detail={reserved:[...insertionReservations].filter(point=>point!==reservation&&point.scope===scope),nodeId:node.id,point:null,error:null};
+   window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));
+   if(detail.point&&(detail.point.x!==position.x||detail.point.y!==position.y))await api.moveNodes({[node.id]:{x:detail.point.x,y:detail.point.y}});
+   if(detail.point)Object.assign(reservation,detail.point);
+  }
+  if(reservation?.offscreen)notice('Added off-screen — '+reservation.offscreen);
+  return shown();
+ }finally{if(reservation)insertionReservations.delete(reservation);}
 };
 api.moveNode=(id,position)=>api.moveNodes({[id]:position});
 // afterPaint (a canvas drop): the file edit now, the redraw after the drop's frame is painted.

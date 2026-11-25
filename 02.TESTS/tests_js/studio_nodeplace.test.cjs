@@ -2,6 +2,20 @@
 const {setImmediate}=require('node:timers');
 const xyflow=require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+// D-014 NOGRAPH: the open canvas is a session file (owner session_files); Library items come from its catalogue.
+const ITEMS=[{id:'def',title:'Number',engine:'data.constant',cat:'Input',params:{value:0},ports:{source:[{id:'value',type:'number'}],target:[]}},
+ {id:'tall',title:'Tall',engine:'data.constant',cat:'Input',params:Object.fromEntries(Array.from({length:7},(_,i)=>['p'+i,'value'])),ports:{source:[{id:'value',type:'number'}],target:[]}}];
+const sessionNode=(id,x,y)=>({id,type:'data.constant',item:'def',title:id,params:{value:0},ports:{source:[{id:'value',type:'number'}],target:[]},position:{x,y}});
+const sessionFile=(nodes=[],id='g')=>({format:'archhub',version:1,id,title:id,nodes,wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}});
+function sessionOwner(file,others={}){
+ return body=>body.action==='initial'?{ok:true,document:file,path:'C:/isolated/g.archhub'}
+  :body.action==='open'?{ok:true,document:others[body.path],path:body.path}
+  :body.action==='catalogue'?{ok:true,items:ITEMS,sessions:[],directory:'mem'}
+  :body.action==='validate'?{ok:true,document:body.document}
+  :body.action==='autosave'?{ok:true,path:body.path,revision:(body.document.properties?.revision||0)+1,document:body.document}
+  :body.action==='solve'?{ok:true,results:{},solved:[],stale:[],ms:0}:{ok:true};
+}
+const added=api=>api.getSessionDocument().nodes.filter(n=>n.type==='data.constant'&&n.title==='Number');
 async function adapter(account, responses={}){
  const requests=[],events=new Map();
  const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},
@@ -27,15 +41,15 @@ async function adapter(account, responses={}){
  const source=process.env.NODEPLACE_BASELINE==='1'?require('node:child_process').execFileSync('git',['show','origin/main:01.APP/nodelang/studio/api.js'],{cwd:path.resolve(__dirname,'../..'),encoding:'utf8'}):fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/api.js'),'utf8');
  vm.runInNewContext(source,context);
  await window.ArchHubAPI.ready;
+ await window.ArchHubAPI.refreshLibraryPorts();
  return {api:window.ArchHubAPI,requests,window,document:context.document};
 }
 
 test('NODEPLACE wide graph inserts in visible viewport, not past the last node',async()=>{
- const canvas={root:'g',nodes:[{id:'far',label:'Far',x:12000,y:200,properties:[],ports:[]}],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
- const {api,requests,window}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
+ const {api,window}=await adapter({signed_in:false},{'/api/session-files':sessionOwner(sessionFile([sessionNode('far',12000,200)]))});
  window.addEventListener('archhub:canvas-insertion',e=>{e.detail.point={x:400,y:300,w:224,h:160};});
  await api.addNode('def');
- const point=requests.find(r=>r.url==='/api/universal/node-create').body;
+ const point=added(api)[0].position;
  assert.ok(point.x>=0&&point.x+224<=1024&&point.y>=0&&point.y+160<=768,JSON.stringify(point)+' is outside viewport');
 });
 
@@ -61,8 +75,8 @@ async function mount(t, graph = fixture()) {
   // api.js reads crypto.randomUUID at load (d2535174); the app always runs in a secure context, so the fixture page does too.
   await page.goto('https://canvaslook.test/');
   await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
-  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])
-    await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():readCanvas(name)});
+  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','panels','ui.jsx'])
+    await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():name==='panels'?readCanvas('compiled/react-resizable-panels.js'):readCanvas(name)});
   await page.evaluate(graph=>{
     const R=window.React,h=R.createElement;
     let state={revision:1,graph,settings:[],workspaces:[],catalogue:[{id:'level',name:'Level',description:'A level value',family:'Get',output:'text',descriptor:{engine:'Input'}},
@@ -73,7 +87,7 @@ async function mount(t, graph = fixture()) {
     window.fixtureCalls=[];
     const publish=()=>{state={...state,revision:state.revision+1};listeners.forEach(f=>f());};
     window.fixtureState=()=>state;
-    const api={refreshProjects:async()=>{},getSnapshot:()=>state,getNodeParameters:()=>[],setSetting:async()=>{},
+    const api={refreshProjects:async()=>{},getSnapshot:()=>state,getNodeParameters:()=>[],setSetting:async()=>{},nodeIcons:[],  // the inspector's icon choices (api.nodeIcons)
       addNode:async(id,position)=>{window.fixtureCalls.push({action:'add',id,position});const n={...state.graph.nodes.find(n=>!n.children.length),id:'added',title:'Level',parent:null,children:[],...position};state.graph={...state.graph,nodes:[...state.graph.nodes,n]};publish();return n;},
       moveNodes:async positions=>{window.fixtureCalls.push({action:'move',positions});state.graph={...state.graph,nodes:state.graph.nodes.map(n=>({...n,...positions[n.id]}))};publish();}};
     window.UI={...window.UI,A:window.AH,D:window.AH_DS,api,Chip:({children})=>h('span',null,children),Empty:({children})=>h('p',null,children),
@@ -115,10 +129,13 @@ test('NODEPLACE actual Canvas centres, avoids occupied/repaired cards, follows s
  assert.ok(Math.abs(point.x+point.w/2-(result.area.width/2-result.matrix.x)/result.matrix.z)<.01,'preferred centre');
  // Reserve centre before the first asynchronous create resolves.
  const second=checkPoint(await placement(page,[point]));assert.ok(!overlaps({...point,width:point.w,height:point.h},{...second,width:second.w,height:second.h}));
+ // The first card opens just under the full-width canvas toolbar (an occupied overlay); pan it clear so its side is free.
+ await page.locator('.node-canvas .react-flow__pane').evaluate(el=>{const r=el.getBoundingClientRect();el.dispatchEvent(new window.WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width*.5,clientY:r.y+r.height*.5,deltaX:0,deltaY:160}));});await page.waitForTimeout(60);
  await page.locator('[data-graph-node="n0"] .node-header').click();
  result=await placement(page);checkPoint(result);
  const selected=result.boxes.find(b=>b.id==='n0'),m=result.matrix;
- assert.ok(Math.abs(result.detail.point.x-((selected.x-result.area.x-m.x)/m.z+280))<.01,'beside selected');
+ // Beside the selected card at the non-overlap offset (STUDIOFIX 280 px, wider for a wider card).
+ assert.ok(Math.abs(result.detail.point.x-((selected.x-result.area.x-m.x)/m.z+Math.max(280,selected.width/m.z+36)))<.01,'beside selected');
  await page.locator('.node-canvas .react-flow__pane').evaluate(el=>{const r=el.getBoundingClientRect();el.dispatchEvent(new window.WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width*.7,clientY:r.y+r.height*.7,deltaX:300,deltaY:120}));});await page.waitForTimeout(60);
  checkPoint(await placement(page));
 
@@ -135,11 +152,12 @@ test('NODEPLACE occupied centre uses actual tall DOM bounds and finds the neares
 });
 test('NODEPLACE explicit drops bypass placement and failed creation releases the reservation',async()=>{
  let fail=true;
- const canvas={root:'g',nodes:[],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
- const {api,requests,window}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':()=>{if(fail)throw Error('refused');return {ok:true};}});
- const reservations=[];window.addEventListener('archhub:canvas-insertion',e=>{reservations.push(e.detail.reserved.length);e.detail.point={x:400,y:300,w:224,h:160};});
- await assert.rejects(api.addNode('def'),/refused/);fail=false;await api.addNode('def');await api.addNode('def',{x:0,y:-25});
- assert.deepEqual(reservations,[0,0]);assert.equal(requests.filter(r=>r.url==='/api/universal/node-create').at(-1).body.y,-25);
+ const {api,window}=await adapter({signed_in:false},{'/api/session-files':sessionOwner(sessionFile())});
+ // A refused creation is the Canvas refusing the spot; the session file then holds nothing new.
+ const reservations=[];window.addEventListener('archhub:canvas-insertion',e=>{reservations.push(e.detail.reserved.length);if(fail){e.detail.error='refused';return;}e.detail.point={x:400,y:300,w:224,h:160};});
+ await assert.rejects(api.addNode('def'),/refused/);assert.equal(added(api).length,0);
+ fail=false;await api.addNode('def');await api.addNode('def',{x:0,y:-25});
+ assert.deepEqual(reservations,[0,0]);assert.equal(added(api).at(-1).position.y,-25);
 });
 
 async function mountReal(t) {
@@ -147,28 +165,24 @@ async function mountReal(t) {
  const page=await browser.newPage({viewport:{width:1800,height:1200}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
  // api.js reads crypto.randomUUID at load (d2535174); the app always runs in a secure context, so the fixture page does too.
  await page.route('https://nodeplace.test/**',r=>r.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));await page.goto('https://nodeplace.test/');await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
- for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():readCanvas(name)});
+ for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','panels','ui.jsx'])await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():name==='panels'?readCanvas('compiled/react-resizable-panels.js'):readCanvas(name)});
  await page.evaluate(()=>{
   window.ARCHHUB_AUTHORITY={};window.ARCHHUB_BOOT={token:'fixture',csrf:'fixture'};
-  window.realCanvas={root:'g',nodes:[{id:'far',label:'Far',x:12000,y:200,properties:[],ports:[]}],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}},{id:'tall',name:'Tall',descriptor:{engine:'data.constant'}}]};
+  let made=0;const uuid=window.crypto.randomUUID.bind(window.crypto);window.crypto.randomUUID=()=>window.nextAdded?'added-'+made++:uuid();
   window.realRequests=[];window.fetch=async(url,options={})=>{
    const body=options.body&&JSON.parse(options.body);window.realRequests.push({url,body});let data={ok:true};
-   if(url.startsWith('/api/universal/canvas'))data=window.realCanvas;
+   if(url==='/api/session-files')data=window.sessionOwner(body);
    // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
    if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'nodeplace-fixture'};
    if(url==='/api/commands')data={commands:[]};  // The command owner serves the menu catalogue at startup (f8b5feea).
    if(url==='/api/universal/canvas-op')data={ok:true,result:body.op==='project_state'?{versions:[],modelReview:{}}:[]};
-   if(url==='/api/universal/node-create'){
-    const id='added-'+window.realCanvas.nodes.length;
-    window.realCanvas.nodes.push({id,label:body.title,x:body.x,y:body.y,properties:body.title==='Tall'?Array.from({length:7},(_,i)=>({label:'p'+i,value:'value',editable:true})):[],ports:[]});data={ok:true,root:id};
-   }
-   if(url==='/fixture/move'){Object.assign(window.realCanvas.nodes.find(n=>n.id===body.id),body.point);}
-   if(url==='/fixture/remove')window.realCanvas.nodes=window.realCanvas.nodes.filter(n=>n.id!==body.id);
    return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(data))};
   };
-  window.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),move:(id,point)=>post('/fixture/move',{id,point}),remove:id=>post('/fixture/remove',{id})})}};
+  window.ArchHubStudioAuthority={create:({get})=>{let held;return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas')})}};
  });
- await page.addScriptTag({content:readCanvas('api.js')});await page.evaluate(()=>window.ArchHubAPI.ready);
+ await page.evaluate(`window.sessionOwner=(${sessionOwner.toString()})(${JSON.stringify(sessionFile([{...sessionNode('far',12000,200),params:{},ports:{source:[],target:[]}}]))});const ITEMS=${JSON.stringify(ITEMS)};`.replace('const ITEMS','window.ITEMS'));
+ await page.evaluate(()=>{const owner=window.sessionOwner;window.sessionOwner=body=>body.action==='catalogue'?{ok:true,items:window.ITEMS,sessions:[],directory:'mem'}:owner(body);});
+ await page.addScriptTag({content:readCanvas('api.js')});await page.evaluate(async()=>{await window.ArchHubAPI.ready;await window.ArchHubAPI.refreshLibraryPorts();window.nextAdded=true;});
  await page.evaluate(()=>{
   const R=window.React,h=R.createElement,api=window.ArchHubAPI;
   window.UI={...window.UI,A:window.AH,D:window.AH_DS,api,Chip:({children})=>h('span',null,children),Empty:({children})=>h('p',null,children),
@@ -196,40 +210,44 @@ test('NODEPLACE real API plus Canvas: concurrent and same-turn adds, tall card, 
   await page.screenshot({path:path.join(output,'NODEPLACE.png')});
   assert.deepEqual(fs.readdirSync(output),['NODEPLACE.png']);
  }
- assert.equal(await page.evaluate(()=>window.realRequests.find(r=>r.url==='/api/universal/node-create').body.x),12280,'real insertion beside selected node');
+ const beside=await placement(page),far=beside.boxes.find(b=>b.id==='far');  // the non-overlap offset of the selected card's real width
+ assert.ok(Math.abs(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.find(n=>n.id==='added-0').position.x)-(12000+Math.max(280,far.width/beside.matrix.z+36)))<.01,'real insertion beside selected node');
  await page.evaluate(()=>window.ArchHubAPI.addNode('def',{x:-40,y:25}));
- assert.deepEqual(await page.evaluate(()=>window.realRequests.filter(r=>r.url==='/api/universal/node-create').at(-1).body),{title:'Number',engine:'data.constant',x:-40,y:25});
+ assert.deepEqual(await page.evaluate(()=>{const n=window.ArchHubAPI.getSessionDocument().nodes.at(-1);return {title:n.title,engine:n.type,x:n.position.x,y:n.position.y};}),{title:'Number',engine:'data.constant',x:-40,y:25});
  await page.evaluate(()=>window.realDOMRoot.unmount());
  assert.equal(await page.evaluate(()=>{const detail={reserved:[],point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));return detail.point;}),null,'unmount removes viewport owner');
 });
 
 test('NODEPLACE concurrent revision-root creations return their own selected node',async()=>{
- let release,started;const held=new Promise(r=>release=r),ready=new Promise(r=>started=r);let next=0;
- const canvas={root:'g',nodes:[],wires:[],catalog:[{id:'def',name:'Number',revision_root:'rev'}]};
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/fixture/create':async body=>{
-  const id='created-'+next++;canvas.nodes.push({id,label:id,x:body.x,y:body.y,properties:[],ports:[]});canvas.selected=id;
-  if(id==='created-0'){started();await held;}return {ok:true,selected:id};
- }});
- const first=api.addNode('def');await ready;const second=api.addNode('def');release();
- const results=await Promise.all([first,second]);assert.deepEqual(results.map(n=>n.id),['created-0','created-1']);
+ const {api,window,document}=await adapter({signed_in:false},{'/api/session-files':sessionOwner(sessionFile())});
+ document.hidden=false;window.requestAnimationFrame=fn=>setTimeout(fn,0);
+ const reserved=[];let next=0;
+ window.addEventListener('archhub:canvas-insertion',e=>{if(e.detail.nodeId)return;reserved.push(e.detail.reserved.length);e.detail.point={x:400+300*next++,y:300,w:224,h:160};});
+ const first=api.addNode('def'),second=api.addNode('def');  // the second asks while the first still holds its spot
+ const results=await Promise.all([first,second]);
+ assert.deepEqual(reserved,[0,1]);
+ assert.deepEqual(results.map(n=>n.id),added(api).map(n=>n.id));assert.notEqual(results[0].id,results[1].id);
+ assert.deepEqual(results.map(n=>n.x),[400,700]);
 });
 test('NODEPLACE bounded rendering wait does not move a node after navigation',async()=>{
- const canvas={root:'g',nodes:[],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
- const {api,window,document,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':body=>{canvas.nodes.push({id:'made',label:'Number',x:body.x,y:body.y,properties:[],ports:[]});return {ok:true,root:'made'};}});
+ const other='C:/isolated/other.archhub';
+ const {api,window,document,requests}=await adapter({signed_in:false},{'/api/session-files':sessionOwner(sessionFile(),{[other]:sessionFile([],'other')})});
  document.hidden=false;let frames=0;window.requestAnimationFrame=()=>{frames++;};let calls=0;
  window.addEventListener('archhub:canvas-insertion',e=>{calls++;e.detail.point={x:400,y:300,w:224,h:160};});
  const made=api.addNode('def');while(!frames)await new Promise(r=>setImmediate(r));
- await api.selectGraph('other').catch(()=>{});await made;
- assert.equal(calls,1,'stale graph does not get post-create placement');assert.equal(requests.some(r=>r.url==='/fixture/remove'||r.url==='/fixture/move'),false);
+ await api.selectGraph(other).catch(()=>{});await made;
+ assert.equal(calls,1,'stale graph does not get post-create placement');
+ assert.equal(api.getSessionDocument().id,'other');assert.equal(added(api).length,0,'the new node stays in its own file');
+ const saves=requests.filter(r=>r.url==='/api/session-files'&&r.body.action==='autosave'&&r.body.document.id==='g');
+ assert.ok(saves.length);for(const save of saves)assert.deepEqual(save.body.document.nodes.map(n=>n.position),[{x:400,y:300}],'never moved');
 });
 test('NODEPLACE actual-height overflow keeps the new node and reports direction without deleting',async()=>{
- const canvas={root:'g',nodes:[],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
- const {api,window,document,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':body=>{canvas.nodes.push({id:'made',label:'Number',x:body.x,y:body.y,properties:[],ports:[]});return {ok:true,root:'made'};},'/fixture/move':body=>{Object.assign(canvas.nodes.find(n=>n.id===body.id),body.point);return {ok:true};}});
+ const {api,window,document}=await adapter({signed_in:false},{'/api/session-files':sessionOwner(sessionFile())});
  document.hidden=false;window.requestAnimationFrame=fn=>setTimeout(fn,0);
  const notices=[];window.addEventListener('archhub:notice',e=>notices.push(e.detail.message));
  window.addEventListener('archhub:canvas-insertion',e=>{e.detail.point=e.detail.nodeId?{x:1100,y:300,w:224,h:900,offscreen:'right'}:{x:400,y:300,w:224,h:160};});
- const made=await api.addNode('def');assert.equal(made.id,'made');assert.equal(canvas.nodes.length,1);
- assert.equal(canvas.nodes[0].x,1100);assert.equal(requests.some(r=>r.url==='/fixture/remove'),false);
+ const made=await api.addNode('def');assert.equal(made.id,added(api)[0].id);assert.equal(added(api).length,1);
+ assert.equal(added(api)[0].position.x,1100);assert.equal(made.x,1100);
  assert.deepEqual(notices.filter(n=>n.startsWith('Added off-screen')),['Added off-screen — right']);
 });
 
@@ -240,9 +258,8 @@ test('NODEPLACE full viewport still creates through real API and Canvas without 
  const made=await page.evaluate(()=>window.ArchHubAPI.addNode('def'));
  const after=await placement(page);assert.deepEqual(after.matrix,before.matrix);
  assert.ok(made.id);assert.equal(await page.locator('[data-graph-node^="added"]').count(),1);
- const data=await page.evaluate(()=>({requests:window.realRequests,notices:window.nodeplaceNotices}));
- assert.equal(data.requests.filter(r=>r.url==='/api/universal/node-create').length,1);
- assert.equal(data.requests.some(r=>r.url==='/fixture/remove'),false);
+ const data=await page.evaluate(()=>({nodes:window.ArchHubAPI.getSessionDocument().nodes.map(n=>n.id),notices:window.nodeplaceNotices}));
+ assert.deepEqual(data.nodes,['far',made.id],'one node created and none removed');
  assert.match(data.notices.at(-1),/^Added off-screen — (left|right|above|below)/);
  const added=after.boxes.find(b=>b.id===made.id);
  for(const b of [...after.boxes,...after.overlays])if(b.id!==made.id)assert.ok(!overlaps(added,b));

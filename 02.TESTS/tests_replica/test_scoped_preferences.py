@@ -501,3 +501,24 @@ def test_project_register_keeps_adopted_register_references_inside_the_selected_
     cleared = call('update-register', id='first', expected=kept, number='', override=False, namingRegister='', issuedRegister='')['register']
     assert cleared == legacy
     assert call('list')['roots'][1]['register'] == {'number': '', 'override': False}
+
+def test_account_language_controls_inherit_and_drive_the_reply(tmp_path, monkeypatch):
+    import pytest
+    from nodelang import settings_owner as owner, session_files
+    from nodelang.nograph_server import JsonFile
+    settings = JsonFile(tmp_path / "settings.json", {})
+    roots = JsonFile(tmp_path / "roots.json", {"roots":[]})
+    document = session_files.new_document("Owner's English task name")
+    scope = owner.PreferenceScope(settings, roots, document=document)
+    monkeypatch.setattr(owner, "preference_scope", lambda document=None: scope)
+    for label, value in (("App language", "Arabic"), ("Right-to-left layout", "Never"), ("Agents reply in", "Both")):
+        identity = "Account." + label
+        owner.preference_settings("setAppearance", [identity, value], settings)
+        actual = next(row for row in owner.preference_settings(settings=settings)["appearanceSettings"] if row["id"] == identity)
+        assert actual["value"] == value
+    assert owner.agent_reply_language(document) == "Both"
+    document["properties"]["settings"] = {"Account.Agents reply in":"Arabic"}
+    assert owner.agent_reply_language(document) == "Arabic"
+    assert document["title"] == "Owner's English task name"
+    with pytest.raises(ValueError):
+        owner.preference_settings("setAppearance", ["Account.Right-to-left layout", "bad"], settings)

@@ -4,7 +4,7 @@
   const NAVIGATION_ROUTES = {};
 window.ArchHubRouteNames = NAVIGATION_ROUTES;
 let state = {"keyboardPending": true, "revision": 0, "sessionApprovals": [], "activeWorkspace": "", "activeFile": "", "profile": {"id": "", "isFounder": false, "name": "", "firm": "", "email": "", "signedIn": false, "plan": ""}, "nodeSchemas": {}, "providers": [], "catalogue": [], "libraryPorts": [], "templates": [], "pages": ["Account", "Connections", "BABOOM", "Agents", "Brain", "System graph", "Workshop", "Library & Mods", "Automations", "Hooks", "Dependencies", "Privacy", "Appearance", "Updates & About", "Advanced"], "settings": [], "companion": {"mode": "idle", "x": null, "y": null, "pinned": false}, "workspaces": [], "tasks": [], "approvals": [], "graph": {"id": "", "name": "", "nodes": [], "wires": [], "workspaceIds": [], "documentation": "", "customProperties": [], "courtStatus": ""}, "brain": [], "dependencies": [], "connections": [], "files": [], "secrets": [], "people": [], "archives": [], "schedules": [], "mods": [], "receipts": [], "runs": [], "drafts": [], "feedback": [], "notifications": [], "meeting": {"title": "", "actions": [], "calendarId": "", "platform": "", "agent": "", "status": "", "consent": false, "transcript": [], "actionOwners": {}, "actionTasks": {}}, "watcher": {"geometry": {"outline": [], "walls": [], "doors": [], "tags": []}, "host": "", "view": "", "views": [], "rooms": [], "imageEdits": [], "wallY": 0, "pendingY": 0, "marks": [], "comments": [], "mask": null, "applied": false, "lengthMm": 0, "appliedLengthMm": 0, "thicknessMm": 0, "appliedThicknessMm": 0, "snap": false, "gridMm": 0, "orthogonal": false, "showDimensions": false, "dimensionAlignment": "", "dimensions": []}, "update": {"available": false, "installed": "", "next": ""}, "app": {"hidden": false, "quit": false, "stopped": false}, "backups": [], "sync": "", "lastResult": null, "docs": [], "bookGlossary": [], "social": {"office": {"name": "", "headline": "", "bio": "", "website": "", "audience": ""}, "inbox": [], "drafts": [], "groups": [], "digest": {"enabled": false, "time": "", "summary": ""}, "research": [], "tutorials": [], "triaged": false}, "learning": {"concept": "", "hosts": [], "baseline": "", "residual": "", "why": "", "sources": [], "findings": [], "status": "", "destination": "", "layer": "", "layers": {"Host": {"program": "", "operation": "", "preserveRelationships": false}, "Habit": {"pattern": "", "minimumRepeats": 0, "learn": false}, "Intent": {"baseline": "", "deviation": "", "why": ""}, "Self": {"metric": "", "threshold": null, "rebaseline": false}, "Agent": {"provider": "", "checkResults": false, "maxIterations": 0}, "Session": {"graph": "", "shareContext": false, "retainCheckpoints": false}}}, "modelSources": [], "devices": [], "activeDevice": "", "graphs": [], "capabilities": [], "mcpServers": [], "suggestions": [], "community": {"tab": "", "peers": [], "patterns": [], "shared": [], "points": [], "groups": [], "joinStatus": "", "marketQuery": "", "listing": {"title": "", "price": 0, "creatorShare": 0}, "charge": {"client": "", "project": "", "basis": "", "amount": 0}, "charges": [], "marketplace": []}, "modelReview": {"operation": "", "results": [], "issues": []}, "usage": {"tokens": 0, "cost": 0, "runs": 0, "quota": 0, "seats": 0, "grace": false}, "hostSkills": [], "provenance": [], "presentation": {"slides": [], "walkthrough": 0}, "healthHistory": [], "prototype": {"name": "", "threshold": null, "samples": 0, "baseline": 0, "status": "", "linkedModel": false, "pattern": null}, "composerAttachments": [], "settingsScope": "User", "officeItems": [], "timesheet": {"status": "", "rows": []}, "desktop": {"program": "", "stage": "", "taskId": null}, "meetingCalendar": [], "refine": {"breadth": 0, "depth": 0, "trials": 0, "tokens": 0, "results": [], "accepted": null}, "intakeRules": [], "uncertainLinks": [], "onboarding": {"role": "", "assessment": ""}, "firms": [], "activeFirm": "", "officeInvitations": [], "billing": {"status": "", "requestedPlan": "", "cycle": "", "checkout": null, "limitReached": null, "invoices": []}};
-Object.assign(state,{agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…'});
+Object.assign(state,{agents:[],agentSummary:'Checking running agentsâ€¦',agentHealth:'Checking running agentsâ€¦'});
 // The dock layout comes with the page (boot payload), so the first frame already shows his layout.
 if(window.ARCHHUB_BOOT?.dock_layout)state.dockLayout=window.ARCHHUB_BOOT.dock_layout;
 const emptyWatcher=window.structuredClone(state.watcher);
@@ -134,7 +134,7 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  let response;try{response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
  'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Desktop-Subject':desktopSubject||'','X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||'','X-ArchHub-Renderer':'studio',...(cached?{'If-None-Match':cached.etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(cause){
   const reason=signal?.aborted&&signal.reason?.message;
-  throw Error(reason ? reason+' — retry when ready.' : 'ArchHub did not respond. Check the result before retrying.',{cause});
+  throw Error(reason ? reason+' â€” retry when ready.' : 'ArchHub did not respond. Check the result before retrying.',{cause});
  }
  if(response.status===304){
   if(!cached||requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
@@ -323,14 +323,14 @@ function projectProviders(agentGraph=state.agentGraph) {
  const declaredTasks=[...new Map(agents.flatMap(p=>(p.sessions||[]).filter(d=>d.status==='working'&&!assigned.has(d.root))
   .map(d=>[d.request_id,{id:d.root,title:d.task,owner:p.runtime||p.id,status:'WIP',declaration:true}]))).values()];
  publish({providers,agents,declaredTasks,agentGraph,agentWorkingCount:working,
-  agentSummary:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete.':working?`${working} working · ${idle} idle`:sessions.length?'No agents are working.':'No agents are running.',
-  agentHealth:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete. Some sessions could not be checked.':'Agent status is current.'});
+  agentSummary:!agentsChecked?'Checking running agentsâ€¦':!complete?'Agent status is incomplete.':working?`${working} working Â· ${idle} idle`:sessions.length?'No agents are working.':'No agents are running.',
+  agentHealth:!agentsChecked?'Checking running agentsâ€¦':!complete?'Agent status is incomplete. Some sessions could not be checked.':'Agent status is current.'});
 }
 function providerDto(p) {
- const availability=({keyed:'Credential present · Sign-in not checked',running:'Reachable · Model not reported',
-  'no key':'Not connected','key invalid':'Credential invalid','not running':'Not reachable',checking:'Checking local runtime…',
-  installed:'Installed · Sign-in not checked','not installed':'Not installed',
-  'keyed, not routed':'Credential present · No direct route','not supported':'Not supported yet'})[p.state]||'Availability not reported';
+ const availability=({keyed:'Credential present Â· Sign-in not checked',running:'Reachable Â· Model not reported',
+  'no key':'Not connected','key invalid':'Credential invalid','not running':'Not reachable',checking:'Checking local runtimeâ€¦',
+  installed:'Installed Â· Sign-in not checked','not installed':'Not installed',
+  'keyed, not routed':'Credential present Â· No direct route','not supported':'Not supported yet'})[p.state]||'Availability not reported';
  return {...p,id:p.id||p.provider||p.app,name:p.name||p.label||p.id||p.provider||p.app,
   ini:p.ini||(p.name||p.id||p.provider||p.app||'').slice(0,1),col:p.col||window.AH?.inkSoft,
   availability,authentication:p.signedIn===true?'Connected':p.signedIn===false?'Not connected':'Sign-in not checked',
@@ -399,14 +399,14 @@ async function refreshApplicationUpdate(background=false) {
   const data=await request('/api/universal/application-update',undefined,true,AbortSignal.timeout(15000));
   if(generation!==updateGeneration)return copy(state.update);
   updateReadFailures=0;updateReadAfter=0;
-  if(state.connectionNotice==='Checking for updates…')publish({connectionNotice:''});
+  if(state.connectionNotice==='Checking for updatesâ€¦')publish({connectionNotice:''});
   return projectUpdate(data);
  }catch(error){
   if(generation!==updateGeneration)return copy(state.update);
   const delay=[5000,15000,60000,300000][Math.min(updateReadFailures++,3)];
   updateReadAfter=Date.now()+delay;
   projectUpdate({state:'failed',current_build:state.update.installed,detail:error.message});
-  if(!state.connectionNotice||state.connectionNotice==='Checking for updates…')publish({connectionNotice:'Checking for updates…'});
+  if(!state.connectionNotice||state.connectionNotice==='Checking for updatesâ€¦')publish({connectionNotice:'Checking for updatesâ€¦'});
   if(!background)throw error;
   return copy(state.update);
  }finally{updateReadsPending--;}
@@ -460,7 +460,7 @@ function stopRefresh(){if(refreshTimer!==null){window.clearInterval(refreshTimer
 function clearCanvas(){
  scopeEpoch++;accountEpoch++;canvas=null;commands?.clear();defaults.clear();conditional.clear();state=copy(initialState);providerRoster=[];controlsGeneration++;preferenceGeneration++;notificationGeneration++;
  workingAgents=[];agentsChecked=false;
- publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
+ publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agentsâ€¦',agentHealth:'Checking running agentsâ€¦',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
 }
 function watchRefresh(){stopRefresh();if(listeners.size&&!document.hidden)refreshTimer=window.setInterval(async()=>{await refreshDesktopAccess();if(desktopAdmitted())await refreshLive();},ownerRefreshMs);}
 document.addEventListener('visibilitychange',()=>{watchRefresh();reportedSurface=null;reportSurface();if(!document.hidden)void refreshDesktopAccess(true).then(()=>{if(desktopAdmitted())return refreshLive();return null;});});
@@ -561,7 +561,7 @@ api.stopVoiceInput=()=>{
 };
 api.speak=text=>{
  if(!api.supportsAction('speak'))throw Error('Speech output is unavailable in this window.');
- if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Choose 1–32000 characters to read aloud.');
+ if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Choose 1â€“32000 characters to read aloud.');
  return new Promise((resolve,reject)=>{
   const utterance=new window.SpeechSynthesisUtterance(text);
   utterance.onend=()=>resolve({ok:true});
@@ -613,7 +613,7 @@ Object.assign(api,{
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId,false);},
  async setSetting(id,value,destination=state.settingsDestination){
-  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.'))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
+  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey)))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -621,7 +621,7 @@ Object.assign(api,{
   }
   return nodeProperty(row.owner,row.key,value);
  },
- async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
+ async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey))))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
  async resetPage(page){for(const row of state.settings.filter(r=>r.page===page&&(r.id!=='Appearance.Zoom percentage'||r.default!==undefined))) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
  setNodeParam:nodeProperty,
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
@@ -660,7 +660,7 @@ Object.assign(api,{
    if(detail.point && (detail.point.x!==x || detail.point.y!==y))await api.moveNode(made.id,{x:detail.point.x,y:detail.point.y});
    if(detail.point)reservation=Object.assign(reservation,detail.point);
   }
-  if(made?.id && reservation?.offscreen)notice('Added off-screen — '+reservation.offscreen);
+  if(made?.id && reservation?.offscreen)notice('Added off-screen â€” '+reservation.offscreen);
   return state.graph.nodes.find(n=>n.id===made?.id)||made;
   }finally{if(reservation)insertionReservations.delete(reservation);}
  },
@@ -708,7 +708,7 @@ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approva
   if(state.update.restartRefusal)throw Error(state.update.restartRefusal);
   return updateAction('reload');
  },
- async listWorkspaces(){let data;try{data=await request('/api/universal/workspace-roots',{action:'list'});}catch(error){publish({workspaceHealth:{state:'error',message:'ArchHub could not read your workspace list. Your files are unchanged.',detail:error.message}});throw error;}const roots=[...(data.built_in?[{...data.built_in,root_id:data.built_in.id,builtIn:true}]:[]),...(data.roots||[]).filter(w=>w.state!=='unregistered')];const workspaces=roots.map(w=>({id:w.root_id,name:w.label||(w.builtIn?'ArchHub':w.root_id),folder:w.path,canvas:w.canvas||'',builtIn:w.builtIn===true,removable:w.removable!==false,privacy:w.privacy,available:w.available,register:w.register,registerFiles:w.registerFiles||{},nativeClientEditor:data.native_client_editor===true,projectTemplate:w.project_template}));publish({workspaces,workspaceHealth:{...(data.health||{state:'unverified',message:'Reading workspaces…'}),projection:data.projection,revision:data.revision}});return workspaces;},
+ async listWorkspaces(){let data;try{data=await request('/api/universal/workspace-roots',{action:'list'});}catch(error){publish({workspaceHealth:{state:'error',message:'ArchHub could not read your workspace list. Your files are unchanged.',detail:error.message}});throw error;}const roots=[...(data.built_in?[{...data.built_in,root_id:data.built_in.id,builtIn:true}]:[]),...(data.roots||[]).filter(w=>w.state!=='unregistered')];const workspaces=roots.map(w=>({id:w.root_id,name:w.label||(w.builtIn?'ArchHub':w.root_id),folder:w.path,canvas:w.canvas||'',builtIn:w.builtIn===true,removable:w.removable!==false,privacy:w.privacy,available:w.available,register:w.register,registerFiles:w.registerFiles||{},nativeClientEditor:data.native_client_editor===true,projectTemplate:w.project_template}));publish({workspaces,workspaceHealth:{...(data.health||{state:'unverified',message:'Reading workspacesâ€¦'}),projection:data.projection,revision:data.revision}});return workspaces;},
  editLocalProjectClient(id){return request('/api/universal/workspace-roots',{action:'edit-local-client',id});},
  async updateProjectRegister(workspace, number, override, references={}){
   // references: namingRegister / issuedRegister, a register file inside the project (relative or picked); omitted keeps, '' clears.
@@ -1145,7 +1145,7 @@ api.joinMeeting=async()=>{
  return socialWork('Join the selected meeting using the connected meeting program. Report the actual join result; no invented presence.\n'+JSON.stringify(m),{provider:m.agent});
 };
 api.startMeetingTranscript=()=>{
- if(!state.meeting.consent)throw Error('Record everyone’s transcript consent first.');
+ if(!state.meeting.consent)throw Error('Record everyoneâ€™s transcript consent first.');
  return socialWork('Start the consented transcript for this selected meeting using its actual capture source. Return attributed transcript turns and capture status.\n'+JSON.stringify(state.meeting),{provider:state.meeting.agent});
 };
 api.stopMeetingTranscript=()=>socialWork('Stop actual transcript capture for this selected meeting and confirm capture stopped.\n'+JSON.stringify(state.meeting),{provider:state.meeting.agent});
@@ -1856,7 +1856,7 @@ function fileNode(node, document=sessionDocument){
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&document.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
  const column=node.type==='data.field'?{dataset:feed?document.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='script.python'?node.params.kind!=='effect':node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.frameMembers&&node.title==='Frame'?'Group':node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='script.python'?node.params.kind!=='effect':node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.frameMembers&&node.title==='Frame'?'Group':node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' Â· '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],frameMembers:node.frameMembers,collapsed:node.collapsed!==false,members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,bypassed:!!node.bypassed,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
@@ -2006,7 +2006,7 @@ async function runSolve(){
  const solved=await sessionRequest('solve',{document:portableDocument(),path:sessionPath,changed,params});
  if(sessionDocument?.id!==id||epoch!==runEpoch)return;
  for(const n of sessionDocument.nodes)if(solved.results[n.id])n.result=solved.results[n.id];
- solveNote='Solved '+solved.solved.length+' node'+(solved.solved.length===1?'':'s')+' in '+solved.ms+' ms'+(solved.stale.length?' · '+solved.stale.length+' out of date (Run)':'');
+ solveNote='Solved '+solved.solved.length+' node'+(solved.solved.length===1?'':'s')+' in '+solved.ms+' ms'+(solved.stale.length?' Â· '+solved.stale.length+' out of date (Run)':'');
  localDirty=true;projectFile();publish({solveMs:solved.ms,solveCount,solveStale:solved.stale});queueAutosave();
  if(solved.written?.length)api.refreshRouter?.().catch(()=>{});
  return solved;
@@ -2670,7 +2670,7 @@ async function loadDesktop(){
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
  // The refusal still belongs on the status footer; a later update read must not erase it.
- void settingsAction('readLibraryCollapsed').catch(error=>{const message=error.message||String(error);notice(message);publish({libraryCollapsed:[],connectionNotice:state.connectionNotice&&state.connectionNotice!=='Checking for updates…'?state.connectionNotice:message});});
+ void settingsAction('readLibraryCollapsed').catch(error=>{const message=error.message||String(error);notice(message);publish({libraryCollapsed:[],connectionNotice:state.connectionNotice&&state.connectionNotice!=='Checking for updatesâ€¦'?state.connectionNotice:message});});
  // The Library catalogue reads every saved session file (a cold first start on a full profile takes seconds): it loads after
  // the splash, and the Library shows that it is loading. The first file's nodes take their ports when it arrives.
  publish({libraryStatus:'waiting',libraryError:''});

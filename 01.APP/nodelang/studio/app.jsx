@@ -151,6 +151,13 @@
       accent = s.settings.find(r => r.id === 'Appearance.Accent colour')?.value || '#d97757';
     // The document theme is rewritten only when an appearance value changes. Keyed on every store revision, it
     // reset root CSS variables (a whole-document style recalculation) on every refresh, drag drop and fold.
+    const arabic = s.settings.find(row => row.id === 'Account.App language')?.value === 'Arabic';
+    const direction = s.settings.find(row => row.id === 'Account.Right-to-left layout')?.value || 'Auto';
+    React.useEffect(() => {
+      document.documentElement.lang = arabic ? 'ar' : 'en';
+      document.documentElement.dir = direction === 'Always' || (direction === 'Auto' && arabic) ? 'rtl' : 'ltr';
+    }, [arabic, direction]);
+    const navLabel = label => window.UI.productLabel(label, s.settings);
     const appearanceKey = JSON.stringify(s.settings.filter(r => String(r.id).startsWith('Appearance.')).map(r => [r.id, r.value]));
     const originalColours = React.useRef({
       accent: A.accent,
@@ -568,7 +575,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? "Home" : routeNames[route]) || route.split('/').at(-1)}</button>{route === "task-file" && <><span className="muted">›</span><span className="header-page header-here" title="This session">{s.tasks.find(t => t.id === task)?.title || s.graph.name}</span></>}<span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{route.startsWith("settings/") ? <span className="header-phrase">{(pending => agentLoad.status === 'error' ? <span role="alert" className="header-error"><span className="header-error-text" title={agentLoad.message}>{agentLoad.message}</span><Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>
+          }, event)}>{navLabel((route.startsWith("settings/") ? "Settings" : route === "task-file" ? "Home" : routeNames[route]) || route.split('/').at(-1))}</button>{route === "task-file" && <><span className="muted">›</span><span className="header-page header-here" title="This session">{s.tasks.find(t => t.id === task)?.title || s.graph.name}</span></>}<span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{route.startsWith("settings/") ? <span className="header-phrase">{(pending => agentLoad.status === 'error' ? <span role="alert" className="header-error"><span className="header-error-text" title={agentLoad.message}>{agentLoad.message}</span><Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>
             : s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" title={s.connectionNotice} onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice</button>
             : pending ? <button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go}, event)}>{pending + ' wait for you'}</button>
             : <span>{s.profile.signedIn ? 'Signed in' : 'Local session'}</span>)(window.UI.homeRows(s, s.homeLayout).needsYou)}</span> : <>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : s.connectionNotice ? <span>{s.connectionNotice}</span> : null}
@@ -610,7 +617,7 @@
             padding: '10px 0 8px',
             gap: 0,
             overflow: 'auto'
-          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="home" glyph={<window.AHIcon name={g} size={18} />} label={l} active={route === r || (route === "task-file" && r === "canvas")} onDragOver={e => {
+          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="home" glyph={<window.AHIcon name={g} size={18} />} label={navLabel(l)} active={route === r || (route === "task-file" && r === "canvas")} onDragOver={e => {
               if (r === 'canvas') e.preventDefault();
             }} onDragEnter={() => {
               if (r === 'canvas') go(r);

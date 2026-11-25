@@ -457,7 +457,7 @@
     raw = false
   }) {
     const u = useApp(), data = useData(), destination = data.settingsDestination;
-    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')) && (!destination||data.settingsScopePending);
+    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
     const changed = row.default !== undefined && JSON.stringify(row.value) !== JSON.stringify(row.default);
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',
@@ -474,7 +474,7 @@
         }, event)} onKeyDown={e => {
           if (e.key === 'Enter') u.openSystem(row.page);
         }} />}
-  {presentation==='seg' && row.options ? <div className="sheet-segments" role="group" aria-label={row.label}>{row.options.map(option=><button type="button" key={option} aria-pressed={option===row.value} disabled={disabled||Boolean(row.disabledOptions?.[option])} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,option,destination))},event)}>{option}</button>)}</div> :
+  {presentation==='seg' && row.options ? <div className="sheet-segments" role="group" aria-label={row.label}>{row.options.map(option=><button type="button" key={option} aria-pressed={option===row.value} disabled={disabled||Boolean(row.disabledOptions?.[option])} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,option,destination))},event)}>{productLabel(option,data.settings)}</button>)}</div> :
    presentation==='step' && row.type==='number' ? <span className="sheet-stepper">
      <button type="button" disabled={disabled||row.value<=row.min} aria-label={'Decrease '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,Number(row.value)-1,destination))},event)}>−</button>
      <input id={'setting-'+row.id} aria-label={row.label} type="number" disabled={disabled} min={row.min} max={row.max} step="1" value={row.value} onChange={event=>{
@@ -496,7 +496,7 @@
         <i aria-hidden="true" /><span>{value}</span>
       </button>)}
     </div>
-  ) : row.options ? <select disabled={disabled} id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}}>{row.options.map(v => <option key={v} disabled={Boolean(row.disabledOptions?.[v])} title={row.disabledOptions?.[v]}>{v}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button disabled={disabled} type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1, destination))}, event)}>−</button><input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => {const value=Number(e.target.value);return u.act(() => api.setSetting(row.id, value, destination));}} /><button disabled={disabled} type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1, destination))}, event)}>+</button></span> : <input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type={row.type === 'color' ? 'color' : 'text'} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}} />}
+  ) : row.options ? <select disabled={disabled} id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}}>{row.options.map(v => <option key={v} value={v} disabled={Boolean(row.disabledOptions?.[v])} title={row.disabledOptions?.[v]}>{productLabel(v,data.settings)}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button disabled={disabled} type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1, destination))}, event)}>−</button><input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => {const value=Number(e.target.value);return u.act(() => api.setSetting(row.id, value, destination));}} /><button disabled={disabled} type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1, destination))}, event)}>+</button></span> : <input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type={row.type === 'color' ? 'color' : 'text'} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}} />}
   {changed && <button disabled={disabled} className="reset" aria-label={'Reset ' + row.label} onClick={event => executeAction("sharedUI.Reset.21", {
           api,
           row,
@@ -543,7 +543,27 @@
     const Tag = block ? 'div' : 'span';
     return <Tag className="soon" data-soon="" data-block={block ? '' : undefined} role="group" aria-label={label + '. ' + SOON} aria-disabled="true" title={SOON}><Tag className="soon-part" ref={part => part?.setAttribute('inert', '')}>{children}</Tag><span className="soon-chip">Coming soon</span></Tag>;
   }
+  const arabicLabels = {
+    Home:'الرئيسية', Canvas:'لوحة العمل', Settings:'الإعدادات', Account:'الحساب', Projects:'المشروعات',
+    Agents:'الوكلاء', Library:'المكتبة', Workshop:'الورشة', Community:'المجتمع', Docs:'المستندات', Help:'المساعدة',
+    'This PC':'هذا الكمبيوتر', Connections:'الاتصالات', You:'أنت', Profile:'الملف الشخصي', Storage:'التخزين',
+    'App language':'لغة التطبيق', 'Right-to-left layout':'تخطيط من اليمين إلى اليسار', 'Agents reply in':'لغة ردود الوكلاء',
+    English:'الإنجليزية', Arabic:'العربية', Both:'كلتاهما', Auto:'تلقائي', Always:'دائمًا', Never:'أبدًا',
+    Copy:'نسخ', Paste:'لصق', Cut:'قص', Delete:'حذف', Archive:'أرشفة', Rename:'إعادة تسمية',
+    Duplicate:'تكرار', Group:'تجميع', Ungroup:'فك التجميع', Undo:'تراجع', Redo:'إعادة', Select:'تحديد',
+    'Select all':'تحديد الكل', 'Fit to view':'ملاءمة العرض', 'Open in Canvas':'فتح في لوحة العمل',
+    'New task':'مهمة جديدة', 'New session':'جلسة جديدة', 'Search settings':'البحث في الإعدادات',
+    'Search, or ask where something is':'ابحث أو اسأل عن مكان أحد الإعدادات', 'All projects':'كل المشروعات',
+    'Changed settings':'الإعدادات المعدّلة', 'Reset':'إعادة التعيين', 'Save':'حفظ', 'Cancel':'إلغاء',
+    'Menus and labels':'القوائم والتسميات', 'Every agent, every thread':'كل وكيل في كل محادثة',
+    'Auto turns it on with Arabic':'يُفعَّل تلقائيًا عند اختيار العربية'
+  };
+  function productLabel(label, settings) {
+    if (!settings?.some(row => row.id === 'Account.App language' && row.value === 'Arabic')) return label;
+    return Object.hasOwn(arabicLabels, label) ? arabicLabels[label] : label;
+  }
   window.UI = {
+    productLabel,
     shortcutFor, shortcutFromEvent, matchesShortcut,
     Soon,
     useAskBaboom,

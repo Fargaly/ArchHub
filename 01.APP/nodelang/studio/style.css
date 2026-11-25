@@ -1613,3 +1613,6 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .theme-swatches [data-theme-option=Dark] i{background:linear-gradient(90deg,#15151a 30%,#0e0e11 30%)}
 .theme-swatches [data-theme-option=Light] i{background:linear-gradient(90deg,#fbf9f4 30%,#efeae0 30%)}
 .theme-swatches [data-theme-option=System] i{background:linear-gradient(135deg,#15151a 50%,#fbf9f4 50%)}
+
+/* Graph positions use a left-origin coordinate system in both reading directions. */
+html[dir="rtl"] .react-flow { direction: ltr; }

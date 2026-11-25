@@ -168,8 +168,9 @@ def _chat(
     try:
         options = {"max_tokens": 900, "temperature": 0}
         options.update(_generation_options(generation))
+        from .settings_owner import agent_reply_language, reply_instruction
         answer = route_chat(model, [
-            {"role": "system", "content": _SYSTEM},
+            {"role": "system", "content": _SYSTEM + "\n" + reply_instruction(agent_reply_language())},
             {"role": "user", "content": context_block + "\n\nUser: " + prompt},
         ], free_only=model == "openrouter/free" or model.endswith(":free"),
             **options, **({"before_dispatch": before_dispatch} if before_dispatch else {}))

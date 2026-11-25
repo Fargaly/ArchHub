@@ -884,6 +884,25 @@ def preference_settings(function='readControls', args=(), settings=None):
     from .nograph_server import JsonFile
     from .session_files import profile_directory
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    language_controls = (
+        ("App language", "language", ("English", "Arabic")),
+        ("Right-to-left layout", "rtl", ("Auto", "Always", "Never")),
+        ("Agents reply in", "replyLang", tuple(next(p["options"] for p in SESSION_PARAMS if p["id"] == "reply_in"))),
+    )
+    account_rows = []
+    for label, key, options in language_controls:
+        identity = "Account." + label
+        if args and args[0] == identity and function in ("setAppearance", "resetAppearance"):
+            if function == "setAppearance":
+                if args[1] not in options:
+                    raise ValueError("Choose a listed " + label.lower() + " value.")
+                settings.update({key: args[1]})
+            else:
+                settings.update({}, remove=[key])
+            function, args = "readControls", ()
+        account_rows.append({"id": identity, "storageKey": key, "page": "Account", "group": "You",
+                             "label": label, "type": "choice", "options": list(options), "default": options[0],
+                             "value": settings.read().get(key, options[0])})
     from .daily_work_nodes import BCF_VERSIONS
     from .nodeslib_v2_engines import IFC_PROJECT_VERSIONS
     from .library_engines import PDF_BASELINE_MISSING, PDF_NATIVE_SHEET_SIZE, PDF_PAPER_FORMATS, PDF_SHEET_SETS
@@ -1051,7 +1070,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows]}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows]}
 
 
 def preference_setting(identity):
@@ -1495,6 +1514,18 @@ def preference_scope(document=None):
     return PreferenceScope(JsonFile(folder / 'settings.json', {}),
                            JsonFile(folder / 'workspaces.json', {'roots': []}),
                            path=SessionFiles().current_path() if document is None else '', document=document)
+
+
+def agent_reply_language(document=None, fallback="English"):
+    """Read the preference for the conversation, independently of the scope being edited."""
+    scope = preference_scope(document)
+    level = "Session" if scope.document else "Workspace" if scope.workspace else "User"
+    language = scope.effective(level).get("Account.Agents reply in", fallback)
+    return language if language in ("English", "Arabic", "Both") else "English"
+
+
+def reply_instruction(language):
+    return "Write the user-facing reply in both English and Arabic." if language == "Both" else f"Write the user-facing reply in {language}."
 
 
 def write_preference(document, identity, value):

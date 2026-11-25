@@ -1882,6 +1882,11 @@ class SessionFiles:
         return [row for row in rows if isinstance(row, dict) and isinstance(row.get('path'), str) and row['path']]
 
     def recent(self):
+        """Home's recent files: the newest 20 of the account's files."""
+        return self._owned()[:20]
+
+    def _owned(self):
+        """Every file this account opened or saved, newest first (signed pointers; no cap: the Library lists them all)."""
         target = self.metadata/'recent.json'
         with _METADATA_LOCK, canvas_documents.locked(target):
             owned = []
@@ -1897,14 +1902,14 @@ class SessionFiles:
             return owned
 
     def known_paths(self):
-        return None if self.sign_resume_pointer is None else {row['path'] for row in self.recent()}
+        return None if self.sign_resume_pointer is None else {row['path'] for row in self._owned()}
 
     def remember(self, path, document):
         with _METADATA_LOCK, canvas_documents.locked(self.metadata/'recent.json'):
             row = {'id': str(path), 'path': str(path), 'name': document['title'], 'title': document['title']}
             self._sign_pointer(row)
             rows = [row] + [r for r in self._recent() if r['path'] != str(path)]
-            self._write_pointer_metadata(self.metadata/'recent.json', rows[:20])
+            self._write_pointer_metadata(self.metadata/'recent.json', rows)
 
     def forget_path(self, path):
         """Remove the deleted file from startup recovery and Home recents."""

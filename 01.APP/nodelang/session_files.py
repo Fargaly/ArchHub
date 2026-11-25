@@ -2050,6 +2050,23 @@ class SessionFiles:
         if action == 'resolve-session':
             path, document = linked_session(body.get('params') or {})
             return {'ok': True, 'path': path, 'document': document}
+        if action == 'update-session':
+            document = validate(body.get('document'))
+            node = next((n for n in document['nodes'] if n['id'] == body.get('node')), None)
+            if not node or not (node.get('params') or {}).get('session_file'):
+                raise ValueError('Choose a linked session group')
+            resolved_path, child = linked_session(node['params'])
+            ports = skill_ports(child, catalogue())
+            valid_out = {p['id'] for p in ports['source']}
+            valid_in = {p['id'] for p in ports['target']}
+            removed = {w['id'] for w in document['wires']
+                       if (w['from']['node'] == node['id'] and w['from']['socket'] not in valid_out)
+                       or (w['to']['node'] == node['id'] and w['to']['socket'] not in valid_in)}
+            document['wires'] = [w for w in document['wires'] if w['id'] not in removed]
+            node['title'] = child['title']
+            node['ports'] = ports
+            node['params']['session_file'] = resolved_path
+            return {'ok': True, 'document': validate(document), 'removedWires': len(removed)}
         if action == 'detach-session':
             document = validate(body.get('document'))
             node = next((n for n in document['nodes'] if n['id'] == body.get('node')), None)
@@ -2245,6 +2262,12 @@ class SessionFiles:
                     changed = node_params.promote(document, owner['id'], owner['paramDefs'][-1]['id'])
             else:
                 changed = operation(document, *args)
+                if body['op'] == 'set' and len(args) >= 3 and args[1] == 'prefer_no_agent' and type(args[2]) is bool:
+                    edited_node = next((n for n in document['nodes'] if n['id'] == args[0]), None)
+                    if edited_node and edited_node.get('type') == 'thing.session':
+                        props = document.setdefault('properties', {})
+                        props['preferNoAgent'] = args[2]
+                        props['prefer_no_agent'] = args[2]
             return {'ok': True, 'document': validate(document), 'changed': changed}
         if action == 'wire-rule':
             document = validate(body.get('document'))
@@ -2363,7 +2386,10 @@ class SessionFiles:
 # never copied (project label -> settings/workspaces.json, global settings -> settings owner,
 # members and lease -> workshop_tasks, an input link's value -> the source file, read live).
 SESSION_STATES = ('open', 'done', 'archived')
-_MODEL_KEYS = frozenset({'project', 'state', 'pinned', 'doneCheck', 'settings', 'inputLinks', 'automation'})
+_MODEL_KEYS = frozenset({
+    'project', 'state', 'pinned', 'doneCheck', 'settings', 'inputLinks', 'automation',
+    'preferNoAgent', 'prefer_no_agent', 'checkpointsOnHome',
+})
 _PORTABLE_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
 DONE_CHECK_TRIES = 3
 
@@ -2400,6 +2426,12 @@ def _check_model(props):
         raise ValueError('Session state must be open, done or archived.')
     if 'pinned' in props and type(props['pinned']) is not bool:
         raise ValueError('Session pinned must be Boolean.')
+    if 'preferNoAgent' in props and type(props['preferNoAgent']) is not bool:
+        raise ValueError('Session preferNoAgent must be Boolean.')
+    if 'prefer_no_agent' in props and type(props['prefer_no_agent']) is not bool:
+        raise ValueError('Session prefer_no_agent must be Boolean.')
+    if 'checkpointsOnHome' in props and type(props['checkpointsOnHome']) is not bool:
+        raise ValueError('Session checkpointsOnHome must be Boolean.')
     if 'doneCheck' in props:
         check = props['doneCheck']
         if (not isinstance(check, dict) or len({'command', 'node'} & set(check)) != 1
@@ -2464,6 +2496,24 @@ def _state_of(props, task_row=None):
 def _pinned_of(props):
     held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
     return props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True
+
+
+def _prefer_no_agent_of(document):
+    props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
+    session_node = next((n for n in document.get('nodes', []) if n.get('type') == 'thing.session' and n.get('fixed')), None)
+    param_val = ((session_node or {}).get('params') or {}).get('prefer_no_agent')
+    if type(param_val) is bool:
+        return param_val
+    if type(props.get('prefer_no_agent')) is bool:
+        return props['prefer_no_agent']
+    if type(props.get('preferNoAgent')) is bool:
+        return props['preferNoAgent']
+    return True
+
+
+def _checkpoints_on_home_of(props):
+    held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
+    return props['checkpointsOnHome'] if type(props.get('checkpointsOnHome')) is bool else held.get('checkpointsOnHome') is True
 
 
 def authored_registration(document):
@@ -2544,6 +2594,8 @@ def session_fields(document, path=None, *, roots=None, task_row=None):
             **({'authoredRegistration': authored_registration(document)} if str(held.get('task') or '').startswith('declared-') else {}),
             'revision': canvas_documents.revision(document),
             'project': _project_of(props, roots, task_row), 'state': state, 'pinned': pinned,
+            'preferNoAgent': _prefer_no_agent_of(document),
+            'checkpointsOnHome': _checkpoints_on_home_of(props),
             'onHome': pinned or state == 'open',
             'doneCheck': copy.deepcopy(props['doneCheck']) if isinstance(props.get('doneCheck'), dict) else None,
             'automation': automation, 'settings': dict(props.get('settings') or {}),
@@ -2735,6 +2787,21 @@ def set_session_fields(path, values, by='You', *, expected_revision=None):
             props['pinned'] = values['pinned']
             if held is not None:
                 held.pop('homePinned', None)
+        if 'preferNoAgent' in values or 'prefer_no_agent' in values:
+            flag = values['prefer_no_agent'] if 'prefer_no_agent' in values else values['preferNoAgent']
+            if type(flag) is not bool:
+                raise ValueError('Prefer steps with no agent must be Boolean.')
+            props['preferNoAgent'] = flag
+            props['prefer_no_agent'] = flag
+            for node in document['nodes']:
+                if node.get('type') == 'thing.session' and node.get('fixed'):
+                    node.setdefault('params', {})['prefer_no_agent'] = flag
+        if 'checkpointsOnHome' in values:
+            if type(values['checkpointsOnHome']) is not bool:
+                raise ValueError('Checkpoints on Home must be Boolean.')
+            props['checkpointsOnHome'] = values['checkpointsOnHome']
+            if held is not None:
+                held['checkpointsOnHome'] = values['checkpointsOnHome']
         if 'doneCheck' in values:
             check = values['doneCheck']
             if check is None:

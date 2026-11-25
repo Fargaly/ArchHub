@@ -75,17 +75,27 @@
   // Saved NodeCard colours come from the shared Penpot palette.
   const SPEC = {node:'var(--color-bg-panel)',line:'var(--color-line)',slot:'var(--color-bg-soft)',hollow:'var(--color-ink-muted)',panel:'var(--color-bg-panel)',field:'var(--color-bg-panel)',fieldLine:'var(--color-line)',
     text:'var(--color-ink)',label:'var(--color-ink-soft)',count:'var(--color-ink-muted)',link:'var(--color-accent-hi)',number:'var(--color-ink)',typed:'var(--color-cyan)',rule:'var(--color-bg-raised)',exposed:'var(--color-accent-dim)'};
+  // Shared Run view store: NodeInspector Runs, Canvas actions and tests can inspect any past run read-only on the Canvas.
+  let activeRunView = null;
+  const runViewListeners = new Set();
+  const setCanvasRunView = next => { activeRunView = next || null; runViewListeners.forEach(fn => fn()); };
+  const useCanvasRunView = () => React.useSyncExternalStore(fn => { runViewListeners.add(fn); return () => runViewListeners.delete(fn); }, () => activeRunView);
   // Node-RED status pattern: one colour on the card edge plus one status line under it (spec State/* components).
-  const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim] : rejected ? ['Types do not match', A.err]
+  const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim]
+    : n.bypassed ? ['Bypassed', A.inkDim]
+    : rejected ? ['Types do not match', A.err]
     : n.previewOff ? ['Preview off', A.inkSoft]
+    : /unconfirmed/i.test(n.status) ? ['Unconfirmed · Check result', A.warn]
+    : /ended/i.test(n.status) ? ['Ended · Run again', A.warn]
     : /saved/i.test(n.status) ? ['Saved', A.ok]
     : /await/i.test(n.status) ? ['Awaiting', A.warn]
     : /approval|needs you|in review/i.test(n.status) ? ['Needs you', A.warn]
     : /agent|working|wip/i.test(n.status) ? ['Working', A.ink]
     : /error|fail|refus/i.test(n.status) ? ['Failed · ' + (n.error || 'retry'), A.err]
-    : /block|held|wait/i.test(n.status) ? ['Blocked · upstream', A.inkSoft]
+    : /block|held|wait/i.test(n.status) ? ['Blocked · ' + (n.blockedBy || 'upstream'), A.inkSoft]
     : /stale|changed|out of date/i.test(n.status) ? ['Out of date · Run', A.warn]
     : /running|updating/i.test(n.status) ? ['Updating…', A.cyan]
+    : /retried/i.test(n.status) ? ['Retried', A.ok]
     : /done|ran/i.test(n.status) ? ['Done', A.ok] : ['Not run', A.inkSoft];
   // Spec Wire/*: compatible cyan, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2).
   const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===w.to) || {}, false)[0]) ? A.warn : A.cyan;
@@ -241,12 +251,16 @@
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
   function AgentWorkflowCard({n, renderPort, headerProps, selected, headerEnd, width = 304}) {
     const u = useApp();
-    const status = n.role==='step'&&n.status==='blocked' ? 'Blocked' : ({working:'Working',blocked:'Waiting for you',done:'Done',idle:'Idle',resting:'Idle',stopped:'Stopped',failed:'Failed',open:'Planned',claimed:'In progress'})[n.status] || n.status;
-    const color = /Working|Done|progress/.test(status) ? A.ok : /Waiting|Blocked/.test(status) ? A.warn : /Failed/.test(status) ? A.err : A.inkMuted;
+    const status = n.role==='step'&&n.status==='blocked' ? 'Blocked' : ({working:'Working',blocked:'Waiting for you',done:'Done',idle:'Idle',resting:'Idle',stopped:'Stopped',failed:'Failed',unconfirmed:'Unconfirmed',ended:'Ended',rejected:'Rejected',open:'Planned',claimed:'In progress'})[String(n.status || '').toLowerCase()] || n.status;
+    const color = /Working|Done|progress/.test(status) ? A.ok : /Waiting|Blocked|Unconfirmed|Ended/.test(status) ? A.warn : /Failed|Rejected/.test(status) ? A.err : A.inkMuted;
     const message=n.message, at=message?.at ? new Date(message.at) : null, minutes=at ? Math.max(0,Math.floor((Date.now()-at.getTime())/60000)) : null;
     const textStyle={overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
+    const needsApprove = !n.pure && Boolean(n.needsApproval || n.approvalRequired || /Waiting for you|approval/i.test(status));
+    const unconfirmed = /^unconfirmed$/i.test(status);
+    const recoverable = /^(Failed|Ended|Blocked|Rejected)$/i.test(status);
+    const runStepNow = async (again = false) => { const result = await u.act(() => api.runNode(n.id, again)); if (result?.approvalId) u.show('Approve', {id: result.approvalId}); };
     if (n.role === 'step') return <D.Node w={300} className="v22g-node" selected={selected} gc={color} glyph={<window.AHIcon name="workshop" size={12}/>} title={n.title} sub={n.kicker} ins={n.inputs} outs={n.outputs} renderPort={renderPort} headerProps={headerProps} headerEnd={headerEnd}
-      foot={<span className="v48-step-actions"><span style={{marginRight:'auto',color}}>{status}</span><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:n.openResult},event)}>History</button>{n.agentWork?.runnable && <button type="button" className="button-reset nodrag" disabled={/Working|progress/.test(status)} onClick={event=>executeAction('projects.controls.activate',{handler:async()=>{const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}},event)}>Run step</button>}</span>}>
+      foot={<span className="v48-step-actions"><span style={{marginRight:'auto',color}}>{status}</span><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:n.openResult},event)}>History</button>{unconfirmed && <button type="button" className="button-reset nodrag" disabled={n.type && n.type !== 'thing.file.write' && !n.checkable} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.recoverRun(n.id,'check'))},event)}>Check result</button>}{(unconfirmed || recoverable) && <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>unconfirmed && api.recoverRun ? api.recoverRun(n.id,'retry') : runStepNow(true))},event)}>{/^Failed$/i.test(status) ? 'Retry' : 'Run this step again'}</button>}{!unconfirmed && !recoverable && n.agentWork?.runnable && <button type="button" className="button-reset nodrag" disabled={/Working|progress/.test(status)} onClick={event=>executeAction('projects.controls.activate',{handler:()=>runStepNow(false)},event)}>{needsApprove ? 'Run · needs Approve' : 'Run step'}</button>}</span>}>
       <div className="v48-step-body" style={{display:'grid',gap:4,padding:'8px 10px 6px'}}><div className="v48-step-preview"><ResultPreview value={n.result || message?.text || 'Run to inspect output'}/></div>{(n.parameterSchema || []).filter(p=>['goal','model','detail','prompt','language'].includes(p.key)).map(p=><label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={n} p={p} value={n.params[p.key]} u={u}/></label>)}{n.actions && <details className="nodrag"><summary>Details</summary>{n.actions}</details>}</div>
     </D.Node>;
     return <D.Node w={width} className="agent-workflow-card" selected={selected} gc={color} glyph={<window.AHIcon name={n.role==='task'?'docs':'workshop'} size={12} />}
@@ -528,10 +542,16 @@
     </div>;
   }
   // Successful output speaks for itself; the footer carries only actionable states.
-  function RefusedChip({refusal, onConvert}) {
-    return <div data-refused-chip="" role="status" style={{color: A.err, display: 'flex', flexWrap: 'wrap', gap: 4}}>
-      {refusal.outType === refusal.inType && refusal.reason ? <span>{refusal.reason}</span> : <><span>Needs a {refusal.outType} → {refusal.inType} converter ·</span>
-      <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
+  function RefusedChip({refusal, onConvert, onDismiss}) {
+    return <div data-refused-chip="" data-design="convert.offer" role={refusal.cycle ? 'alert' : 'status'} style={{color: A.err, display: 'grid', gap: 4, padding: '6px 8px', background: A.bgRaised, border: '1px solid ' + A.err, borderRadius: 6}}>
+      {refusal.cycle || (refusal.outType === refusal.inType && refusal.reason) ? <span>{refusal.reason}</span> : <>
+        <b style={{color: A.ink}}>Insert converter?</b>
+        <span>Needs a {refusal.outType} → {refusal.inType} converter.</span>
+        <span className="flex" style={{gap: 8}}>
+          {onDismiss && <button type="button" className="button-reset nodrag" style={{color: A.inkSoft}} onClick={event => executeAction('projects.controls.activate', {handler: onDismiss}, event)}>Cancel</button>}
+          <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline', fontWeight: 600}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button>
+        </span>
+      </>}
     </div>;
   }
   const measureLabels = new Map([['length_mm', 'Length'], ['area_m2', 'Area'], ['total_area_m2', 'Total area']]);
@@ -624,10 +644,22 @@
     const usedPorts = (owner, side) => (owner?.[side === 'out' ? 'outputs' : 'inputs'] || []).filter(p => s.graph.wires.some(w => side === 'out' ? w.from === owner.id && w.fromPort === p.id && !(s.graph.nodes.find(r => r.id === w.to)?.fixed && !expanded) && !sessionAgents.some(row=>row.id===w.to) : w.to === owner.id && w.toPort === p.id && !(s.graph.nodes.find(r => r.id === w.from)?.fixed && !expanded) && !sessionAgents.some(row=>row.id===w.from)));
     const panelSocket = (owner, p, side) => socket({...p, id: owner.id === n.id ? p.id : owner.id + ':' + p.id}, side);
     const edit = owner => (owner?.parameterSchema || []).filter(p => p.editable).map(p => <label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={owner} p={p} value={owner.params[p.key]} u={u}/></label>);
-    // R28: the Parameters, Tools and Context panels are the session node's own values (node properties ARE the settings).
+    // R28 + B:313: the Parameters, Tools and Context panels are the session node's own values, including the live prefer_no_agent toggle.
     const group = name => new Set((n.paramDefs || []).filter(d => d.group === name).map(d => d.id).concat(name === 'Parameters' ? ['workspace'] : []));
-    // "Prefer steps with no agent" has no planner behind it yet: shown inert (every element acts or goes).
-    const editGroup = name => { const keys = group(name); return (n.parameterSchema || []).filter(p => p.editable && keys.has(p.key) && p.key !== 'tools_off').map(p => p.key === 'prefer_no_agent' ? <window.UI.Soon key={p.key} label={p.label}><label className="v48-session-param"><span>{p.label}</span><input type="checkbox" disabled checked={!!n.params[p.key]} readOnly/></label></window.UI.Soon> : <label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={n} p={p} value={n.params[p.key]} u={u}/></label>); };
+    const editGroup = name => {
+      const keys = group(name);
+      return (n.parameterSchema || []).filter(p => p.editable && keys.has(p.key) && p.key !== 'tools_off').map(p => {
+        if (p.key === 'prefer_no_agent') {
+          const preferDeterministic = n.params[p.key] !== false;
+          return <div key={p.key} className="v48-session-param" data-design="session.prefer-no-agent">
+            <span>{p.label || 'Prefer steps with no agent'}<em>{preferDeterministic ? 'steps with no agent first' : 'agent decides'}</em></span>
+            <D.Toggle className="nodrag" label={p.label || 'Prefer steps with no agent'} checked={preferDeterministic} onCheckedChange={next => u.act(() => api.setNodeParam(n.id, 'prefer_no_agent', Boolean(next)))} />
+          </div>;
+        }
+        const Wrap = p.type === 'boolean' ? 'div' : 'label';
+        return <Wrap key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={n} p={p} value={n.params[p.key]} u={u}/></Wrap>;
+      });
+    };
     const panelOuts = {Parameters: ['parameters'], Tools: ['tools'], Context: ['context', 'project folder', 'standard']};
     const panelPorts = new Set(Object.values(panelOuts).flat());
     const toolsOff = n.params.tools_off || [];
@@ -658,7 +690,113 @@
       <footer>{(s.approvals || []).some(card=>card.status==='pending' && (card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.path===api.getSessionPath()))) ? 'Waiting for you' : s.graph.nodes.some(row => /running|working/i.test(row.params?.status || row.status)) ? 'Working' : s.graph.nodes.some(row=>/fail|error/i.test(row.status)) ? 'Failed' : 'Idle'}</footer>
     </div>;
   }
-  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, onOpen, menu}) {
+  function EmbedUpdateBanner({n, s, u}) {
+    const [attempt, setAttempt] = React.useState(0);
+    const [load, setLoad] = React.useState(() => (n.embedChanged || n.outputsChanged || /outputs? changed/i.test(n.status || ''))
+      ? {status: 'loaded', message: ''}
+      : {status: 'waiting', message: ''});
+    React.useEffect(() => {
+      let live = true;
+      if (n.embedChanged || n.outputsChanged || /outputs? changed/i.test(n.status || '')) {
+        setLoad({status: 'loaded', message: ''});
+        return () => { live = false; };
+      }
+      setLoad({status: 'waiting', message: ''});
+      window.fetch('/api/session-files', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'resolve-session', params: n.params})})
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not check linked session.')))
+        .then(res => {
+          if (!live) return;
+          const childOuts = (res?.document?.nodes || []).filter(cn => cn.type === 'output' || cn.kind === 'Output' || (cn.ports?.source || []).some(p => p.exposed)).map(cn => cn.title || cn.id).join('|');
+          const curOuts = (n.outputs || []).map(p => p.name || p.id).join('|');
+          const changed = Boolean(res?.document && ((res.document.title && res.document.title !== n.title) || (childOuts && childOuts !== curOuts)));
+          setLoad({status: changed ? 'loaded' : 'empty', message: ''});
+        })
+        .catch(error => {
+          if (live) setLoad({status: 'error', message: error?.message || 'Could not check linked session.'});
+        });
+      return () => { live = false; };
+    }, [attempt, n.id, n.title, n.embedChanged, n.outputsChanged, n.status, JSON.stringify(n.params?.session_file || ''), s.revision]);
+    const updateEmbedNow = () => u.act(async () => {
+      if (typeof api.updateEmbeddedSession === 'function') {
+        const res = await api.updateEmbeddedSession(n.id);
+        setLoad({status: 'empty', message: ''});
+        return res;
+      }
+      const doc = api.getSessionDocument?.(), sessionPath = api.getSessionPath?.();
+      if (doc) {
+        const resp = await window.fetch('/api/session-files', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'update-session', document: doc, node: n.id})});
+        const data = resp.ok ? await resp.json() : null;
+        if (data?.ok && data.document && sessionPath) {
+          await window.fetch('/api/session-files', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'save', path: sessionPath, document: data.document})});
+        }
+      }
+      setLoad({status: 'empty', message: ''});
+      await api.refreshLibraryPorts?.();
+      const refreshed = await api.refreshProjects?.({userCanvas: true});
+      u.setToast('Updated ' + n.title + ' from its session file.');
+      return refreshed || {ok: true};
+    });
+    return <>
+      {load.status === 'waiting' && <span role="status" className="sr-only">Checking linked session</span>}
+      {load.status === 'empty' && <span hidden data-embed-clean="" />}
+      {load.status === 'error' && <div role="alert" className="spread nodrag" style={{padding: '4px 10px', color: A.err, fontSize: 'calc(11px * var(--text-scale,1))'}}><span>{load.message}</span><button type="button" className="button-reset nodrag" onClick={event => executeAction('projects.controls.activate', {handler: () => setAttempt(v => v + 1)}, event)}>Retry</button></div>}
+      {load.status === 'loaded' && <div data-embed-update="" className="spread nodrag" style={{padding: '6px 10px', background: A.bgSoft, borderBottom: '1px solid ' + A.lineSoft, color: A.warn, fontSize: 'calc(11px * var(--text-scale,1))'}}><span>Its outputs changed in its file</span><button type="button" className="button-reset nodrag" style={{color: A.accent, fontWeight: 600}} onClick={event => executeAction('projects.controls.activate', {handler: updateEmbedNow}, event)}>Update</button></div>}
+    </>;
+  }
+  function NodeRunsList({n, s}) {
+    const activeRun = useCanvasRunView();
+    const [attempt, setAttempt] = React.useState(0);
+    const sessionPath = api.getSessionPath?.() || '';
+    const inlineRuns = React.useMemo(() => [
+      ...(n.runs || []),
+      ...((s.runs || []).filter(row => !row.nodeId || row.nodeId === n.id || (row.results && n.id in row.results)))
+    ], [n.id, n.runs, s.runs]);
+    const [load, setLoad] = React.useState(() => (!sessionPath || typeof api.sessionRuns !== 'function')
+      ? {status: inlineRuns.length ? 'loaded' : 'empty', rows: [], message: ''}
+      : {status: 'waiting', rows: [], message: ''});
+    React.useEffect(() => {
+      let live = true;
+      if (!sessionPath || typeof api.sessionRuns !== 'function') {
+        setLoad({status: inlineRuns.length ? 'loaded' : 'empty', rows: [], message: ''});
+        return () => { live = false; };
+      }
+      setLoad(cur => ({...cur, status: 'waiting', message: ''}));
+      api.sessionRuns(sessionPath, 20).then(rows => {
+        if (!live) return;
+        const list = Array.isArray(rows) ? rows : [];
+        setLoad({status: (list.length || inlineRuns.length) ? 'loaded' : 'empty', rows: list, message: ''});
+      }).catch(error => {
+        if (live) setLoad({status: 'error', rows: [], message: error?.message || 'Could not read runs.'});
+      });
+      return () => { live = false; };
+    }, [attempt, sessionPath, s.revision, n.id, inlineRuns.length]);
+    const merged = React.useMemo(() => {
+      const seen = new Set(), out = [];
+      for (const r of [...(n.runs || []), ...load.rows, ...inlineRuns]) {
+        if (!r || !r.id || seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out.slice(0, 8);
+    }, [n.runs, load.rows, inlineRuns]);
+    return <div data-node-runs="" style={{display: 'grid', gap: 4}}>
+      {load.status === 'waiting' && <span role="status" style={{color: SPEC.label, fontSize: 'calc(12px * var(--text-scale,1))'}}>Reading runs…</span>}
+      {load.status === 'empty' && <span style={{color: SPEC.label, fontSize: 'calc(12px * var(--text-scale,1))'}}>No runs yet</span>}
+      {load.status === 'error' && <span role="alert" style={{color: A.err, fontSize: 'calc(12px * var(--text-scale,1))'}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler: () => setAttempt(v => v + 1)}, event)}>Retry</button></span>}
+      {load.status === 'loaded' && merged.map(run => {
+        const runStatus = /retried/i.test(run.status || '') || run.retried ? 'Retried' : /fail|error/i.test(run.status || '') ? 'Failed' : 'Done';
+        const runKind = run.triggerKind || run.kind || run.trigger || 'Manual';
+        const runTime = run.at || run.startedAt || run.finishedAt || run.time || 'Recent';
+        const picked = activeRun?.id === run.id;
+        return <button key={run.id} type="button" data-run-row={run.id} aria-pressed={picked} className="listbutton spread" style={{padding: '5px 8px', fontSize: 'calc(12px * var(--text-scale,1))'}}
+          onClick={event => executeAction('projects.controls.activate', {handler: () => setCanvasRunView(picked ? null : {id: run.id, time: runTime, kind: runKind, status: runStatus, results: run.results || {}})}, event)}>
+          <span>{String(runTime)} · {String(runKind)}</span>
+          <span style={{color: runStatus === 'Failed' ? A.err : A.ok}}>{runStatus}</span>
+        </button>;
+      })}
+    </div>;
+  }
+  function FlowCard({n, s, u, selected, refusal, onConvert, onDismissRefusal, socket, members, onMember, onDetach, onOpen, menu}) {
     // v48 shows two rows beside a preview, otherwise three; Properties keeps every parameter.
     const [compact, setCompact] = React.useState(true);
     const pinned = n.fixed && n.type !== 'thing.session', task = n.fixed ? (s.tasks || []).find(row=>row.id===n.agentTask) : null, messages = window.UI.homeTaskMessages?.(task) || [];
@@ -688,21 +826,31 @@
       hasOutput = n.output != null && n.output !== '' && (typeof n.output!=='object' || Object.keys(n.output).length>0 && !('approvalId' in n.output)),
       rowLimit = hasOutput ? 2 : 3,
       params = pending || pinned && compact ? [] : compact ? shown.slice(0, rowLimit) : shown,
-      refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
+      refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} onDismiss={onDismissRefusal} />;
     for (const p of params) for (const port of n.inputs.filter(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(port.id);
     const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
     const requestedHeader=n.color || (headerSetting?.value!==headerSetting?.default ? headerSetting?.value : '');
     const headerColor=typeof requestedHeader==='string'&&/^#[0-9a-f]{6}$/i.test(requestedHeader)?requestedHeader:undefined;
     const [familyColor,familyIcon] = NODE_FAMILY_STYLE[String(n.category||'').toLowerCase()] || [A.blue,'canvas'];
     const luminance = headerColor && headerColor.slice(1).match(/../g).map(hex => {const channel=parseInt(hex,16)/255;return channel<=0.04045?channel/12.92:((channel+0.055)/1.055)**2.4;}).reduce((sum,channel,index)=>sum+channel*[0.2126,0.7152,0.0722][index],0);
-    return <D.Node className="v22g-node" data-pinned-card={pinned || undefined} data-design={!n.fixed ? 'node.' + (n.status==='Running'?'running':n.status==='Done'?'done':/approval/i.test(n.status)?'waiting':/error|fail/i.test(n.status)?'failed':'pending') : undefined} data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
+    const isEmbed = Boolean(n.params?.session_file);
+    const isUnconfirmed = /^unconfirmed$/i.test(n.status || '');
+    const isEndedOrBlocked = /^(ended|blocked|rejected)$/i.test(n.status || '');
+    const isFailedStep = /error|fail|refus/i.test(n.status || '');
+    const needsStepApprove = !n.pure && !isEmbed && Boolean(approval || n.needsApproval || n.approvalRequired || n.pure === false);
+    const runCardStep = async (again = false) => {
+      const result = await u.act(() => api.runNode(n.id, again));
+      if (result?.approvalId) u.show('Approve', {id: result.approvalId});
+    };
+    return <D.Node className="v22g-node" data-pinned-card={pinned || undefined} data-embed-node={isEmbed || undefined} data-design={!n.fixed ? 'node.' + (n.status==='Running'?'running':n.status==='Done'?'done':/approval/i.test(n.status)?'waiting':/error|fail/i.test(n.status)?'failed':'pending') : undefined} data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
       w={n.fixed ? 300 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 300} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : (n.category && n.category!=='Node' ? n.category : n.kind) + ' · ' + (n.pure ? 'Runs by itself' : 'Waits for you')}
       glyph={n.fixed && ['thing.agent','thing.session'].includes(n.type) ? <window.UI.Av id={n.params.agent || task?.agents?.[0] || ''} size={20}/> : <window.AHIcon name={n.icon || (n.type==='thing.you' ? 'user' : n.type==='thing.workshop' ? 'workshop' : familyIcon)} size={12}/>} gc={n.fixed ? A.purple : familyColor}
       selected={selected} headerProps={{className:'node-header','data-custom-header':headerColor?true:undefined,style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
       style={{fontSize:'calc(12px * var(--text-scale,1))',borderRadius:'var(--node-radius,8px)',minHeight:pending?160:undefined}}
       ins={n.inputs.filter(port=>!slotPorts.has(port.id)&&(!pending||port.id===n.inputs[0]?.id||port.id==='param:'+n.inputs[0]?.id||wiresIn.some(w=>w.toPort===port.id)))} outs={n.outputs}
       renderPort={(port,index,side)=><div data-port-row={side} style={{position:'relative',height:22,minWidth:0,textAlign:side==='out'?'right':'left',display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px'}}><span style={{position:'absolute',[side==='out'?'right':'left']:-11,top:'50%',height:22,transform:'translateY(-50%)'}}>{socket(port,side)}</span><span title={port.name} style={{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{port.name}</span></div>}
-      foot={n.children?.length&&!n.fixed?<span className="spread"><span>{n.children.length} nodes</span><button type="button" data-design="group.open" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:onOpen},event)}>Open</button></span>:pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span className="v48-step-actions"><span title={n.error || state} style={{marginRight:'auto'}}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:n.params?.session_file ? onOpen : ()=>n.agentWork?.role==='step'?u.show('Node',{id:n.id}):u.go('runs')},event)}>{n.params?.session_file ? 'Open' : 'History'}</button>{(!n.agentWork || n.agentWork.runnable) && <button type="button" className="button-reset nodrag" disabled={n.status==='Running'} onClick={event=>executeAction('projects.controls.activate',{handler:async()=>{const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}},event)}>{n.params?.session_file ? 'Run' : 'Run step'}</button>}</span>} footc={pinned ? A.inkSoft : stateColor}>
+      foot={n.children?.length&&!n.fixed?<span className="spread" data-design="group.footer"><span>{n.children.length} nodes</span><span className="flex" style={{gap:8}}><button type="button" data-design="group.open" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:onOpen},event)}>Open</button><button type="button" data-design="group.expand" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,false))},event)}>Expand</button><button type="button" data-design="group.ungroup" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.ungroupNode(n.id))},event)}>Ungroup</button></span></span>:pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span className="v48-step-actions"><span title={n.error || state} style={{marginRight:'auto'}}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:isEmbed ? onOpen : ()=>n.agentWork?.role==='step'?u.show('Node',{id:n.id}):u.go('runs')},event)}>{isEmbed ? 'Open' : 'History'}</button>{isUnconfirmed && <button type="button" className="button-reset nodrag" disabled={n.type!=='thing.file.write'&&!n.checkable} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.recoverRun(n.id,'check'))},event)}>Check result</button>}{(isUnconfirmed || isEndedOrBlocked) && <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>isUnconfirmed && api.recoverRun ? api.recoverRun(n.id,'retry') : api.runNode(n.id,true))},event)}>Run this step again</button>}{!isUnconfirmed && !isEndedOrBlocked && (!n.agentWork || n.agentWork.runnable) && <button type="button" className="button-reset nodrag" disabled={n.status==='Running'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>runCardStep(isFailedStep)},event)}>{isEmbed ? 'Run' : isFailedStep ? 'Retry' : needsStepApprove ? 'Run · needs Approve' : 'Run step'}</button>}</span>} footc={pinned ? A.inkSoft : stateColor}>
+      {isEmbed && <EmbedUpdateBanner n={n} s={s} u={u} />}
 
       {members.length > 0 && (n.fixed || !n.children?.length) && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       {pinned && compact && <div className="v22g-pinned-summary">{pinnedSummary}</div>}
@@ -732,8 +880,8 @@
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {!n.dataset && !n.column && (!n.fixed || n.type==='thing.session') && !n.children?.length && api.addNodeParameter && <div className="flex">{pending&&<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(false)},event)}>Parameters</button>}<AddParameter n={n} u={u} /></div>}
-
-        {approval && <button type="button" className="button-reset nodrag" onClick={e=>u.show('Approve',{id:approval.id,anchor:{x:e.clientX,y:e.clientY}})}>Review</button>}
+        {refusal && !params.some(p => n.inputs.some(x => (x.id === p.key || x.id === 'param:' + p.key) && x.id === refusal.to.port)) && <RefusedChip refusal={refusal} onConvert={onConvert} onDismiss={onDismissRefusal} />}
+        {approval && <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Approve',{id:approval.id,anchor:{x:event.clientX,y:event.clientY}})},event)}>Review</button>}
       </div>
     </D.Node>;
   }
@@ -777,6 +925,8 @@
       <div style={cap}>Output</div>
       {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}
       <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
+      <div style={cap}>Runs</div>
+      <NodeRunsList n={n} s={s} />
       {/* Rerun and Fork, the node menu's own commands (window.UI.nodeCommand): one click from Properties too (Book). */}
       {!n.fixed && !(n.agentWork?.runnable === false || n.agentWork?.role === 'session') && <div className="flex" data-node-commands="" style={{gap: 6, marginTop: 12}}>
         {['menu.rerun', 'menu.fork'].map(id => <Btn sm key={id} data-command={id} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => window.UI.nodeCommand(id, n)).then(done => { if (done?.approvalId) u.show('Approve', {id: done.approvalId}); })}, event)}>{(window.ArchHubCommandRegistry?.commands || []).find(row => row.id === id)?.label || (id === 'menu.rerun' ? 'Rerun' : 'Fork')}</Btn>)}
@@ -850,7 +1000,11 @@
   }
   // A card redraws when its data or selection changes; a drag frame only moves it (the engine sets its transform).
   const nodeTypes = {archhub: React.memo(FlowNode, (a, b) => a.id === b.id && a.data === b.data && a.selected === b.selected)}, edgeTypes = {archhub: FlowWire};
-  const {Group: CanvasGroup, Panel: CanvasPanel, Separator: CanvasSeparator} = window.ReactResizablePanels;
+  const {Group: CanvasGroup, Panel: CanvasPanel, Separator: CanvasSeparator} = window.ReactResizablePanels || {
+    Group: ({className, children}) => <div className={className} style={{display: 'flex', height: '100%', width: '100%'}}>{children}</div>,
+    Panel: ({children}) => <div style={{flex: 1, minWidth: 0, minHeight: 0, height: '100%'}}>{children}</div>,
+    Separator: () => null
+  };
   // Docked in Home with the Inspector outside, the canvas is the only pane: a plain flex box instead of a resizable
   // group of one, whose mount measured every panel (about 80 ms of an Open its Canvas).
   const SinglePanes = ({className, children}) => <div className={className} data-single-pane="" style={{display: 'flex', height: '100%', width: '100%'}}>{children}</div>;
@@ -1094,21 +1248,79 @@
       return owner===parent;
     };
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
+    const runView = useCanvasRunView();
+    const [editingNote, setEditingNote] = React.useState(null);
+    const [findOpen, setFindOpen] = React.useState(false), [findQuery, setFindQuery] = React.useState(''), [findIndex, setFindIndex] = React.useState(0), findInputRef = React.useRef(null);
+    const [handoffOpen, setHandoffOpen] = React.useState(false);
+    const [deleteAsk, setDeleteAsk] = React.useState(false), [deleteError, setDeleteError] = React.useState(''), [deletingTask, setDeletingTask] = React.useState(false);
+    const [lastUndoLabel, setLastUndoLabel] = React.useState(''), [lastRedoLabel, setLastRedoLabel] = React.useState('');
     const groupMenuTimer=React.useRef(null);
     React.useEffect(()=>()=>clearTimeout(groupMenuTimer.current),[active,scope,u.modal?.kind]);
     // A file opens showing its saved places, never an arrangement over them (only Tidy up arranges).
-    // A card keeps its object while its node and its shown place are the same objects (stable props for the engine).
+    // Collapsed groups preserve every crossing wire socket so external wires stay attached when folded.
     const shownCards = React.useRef(new Map());
     const visible = sourceNodes.map(n => {
-      const place = layout.scope === scope ? layout.positions[n.id] : undefined, held = shownCards.current.get(n.id);
-      if (held && held.n === n && held.place === place) return held.card;
-      const card = {...n, ...(place || {})};
-      shownCards.current.set(n.id, {n, place, card});
+      const place = layout.scope === scope ? layout.positions[n.id] : undefined;
+      const isCollapsedGrp = Boolean(n.children?.length && !n.fixed && n.collapsed);
+      const wireSig = isCollapsedGrp ? s.graph.wires : null;
+      const held = shownCards.current.get(n.id);
+      if (held && held.n === n && held.place === place && held.wireSig === wireSig) return held.card;
+      let extraIns = null, extraOuts = null;
+      if (isCollapsedGrp) {
+        const desc = new Set();
+        const stack = [...(n.children || [])];
+        while (stack.length) {
+          const cid = stack.pop();
+          if (desc.has(cid)) continue;
+          desc.add(cid);
+          const child = s.graph.nodes.find(x => x.id === cid);
+          for (const sub of child?.children || []) stack.push(sub);
+        }
+        extraIns = [...(n.inputs || [])];
+        extraOuts = [...(n.outputs || [])];
+        for (const w of s.graph.wires) {
+          const fromId = w.memberFrom?.node ?? w.from, fromPort = w.memberFrom?.port ?? w.fromPort;
+          const toId = w.memberTo?.node ?? w.to, toPort = w.memberTo?.port ?? w.toPort;
+          if (desc.has(fromId) && !desc.has(toId) && !extraOuts.some(p => (p.member?.node === fromId && p.member.port === fromPort) || p.id === fromId + ':' + fromPort)) {
+            const memberNode = s.graph.nodes.find(x => x.id === fromId), mp = memberNode?.outputs.find(p => p.id === fromPort);
+            extraOuts.push({id: fromId + ':' + fromPort, name: mp?.name || fromPort, type: mp?.type || w.type || 'any', list: mp?.list, member: {node: fromId, port: fromPort}});
+          }
+          if (desc.has(toId) && !desc.has(fromId) && !extraIns.some(p => (p.member?.node === toId && p.member.port === toPort) || p.id === toId + ':' + toPort)) {
+            const memberNode = s.graph.nodes.find(x => x.id === toId), mp = memberNode?.inputs.find(p => p.id === toPort);
+            extraIns.push({id: toId + ':' + toPort, name: mp?.name || toPort, type: mp?.type || w.type || 'any', list: mp?.list, member: {node: toId, port: toPort}});
+          }
+        }
+      }
+      const card = {...n, ...(place || {}), ...(extraIns ? {inputs: extraIns, outputs: extraOuts} : {})};
+      shownCards.current.set(n.id, {n, place, wireSig, card});
       return card;
     }),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId),
       inspected = !wire && selected.length === 1 && s.graph.nodes.find(n => n.id === selected[0]);
+    const arrangeWithToast = () => u.act(async () => {
+      const res = await api.arrangeGraph();
+      setLastUndoLabel('Arrange');
+      setLastRedoLabel('');
+      u.setToast('Tidied up: left to right in wire order.');
+      return res;
+    });
+    const addInlineNote = point => u.act(async () => {
+      const created = await api.addNote('Note', point);
+      if (created?.id) {
+        setLastUndoLabel('Add note');
+        setLastRedoLabel('');
+        setSelected([created.id]);
+        setEditingNote({id: created.id, text: 'Note', isNew: true});
+      }
+      return created;
+    });
+    const openFindBar = () => {
+      setFindOpen(true);
+      setFindQuery('');
+      setFindIndex(0);
+      window.requestAnimationFrame(() => findInputRef.current?.focus());
+    };
     // The Inspector and the app-wide selection follow after the selected card is painted (same-frame feedback).
     React.useEffect(() => {
       React.startTransition(() => onInspect?.({nodeId: inspected?.id || null, wireId: wire?.id || null}));
@@ -1211,10 +1423,10 @@
         for(const [id,run] of [['menu.copy',()=>api.copyNodes(editable)],['menu.cut',()=>api.cutNodes(editable)],['menu.duplicate',()=>api.duplicateNodes(editable)],['menu.paste.here',()=>api.pasteNodes(center)]]){
           if(match(id)){e.preventDefault();u.act(run);return;}
         }
-        if(match('menu.find.a.node')){e.preventDefault();u.show('Find node');}
-        if(match('menu.arrange')){e.preventDefault();u.act(()=>api.arrangeGraph());}
+        if(((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') || match('menu.find.a.node')){e.preventDefault();openFindBar();return;}
+        if(match('menu.arrange')){e.preventDefault();arrangeWithToast();return;}
         if(match('menu.add.node.here')){e.preventDefault();u.show('Add node',{point:center});}
-        if(match('menu.add.note')){e.preventDefault();u.show('Note',{point:center});}
+        if(match('menu.add.note')){e.preventDefault();addInlineNote(center);return;}
         if(match('menu.rename.25')&&node&&!node.fixed){e.preventDefault();u.show('Rename node',{id:node.id,text:node.title});}
         if(match('menu.rerun')&&editable.length){e.preventDefault();u.act(()=>api.runSelection(editable));}
         if (match('menu.delete.50') && (selected.length || selectedWires.length)) {
@@ -1223,11 +1435,23 @@
         }
         const plainKey=!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.shiftKey;
         const key=e.key.toLowerCase();
+        if(!u.modal && !findOpen && !editingNote && plainKey && key === 'n'){
+          e.preventDefault();
+          if (node?.type === 'note') setEditingNote({id: node.id, text: node.params?.text || ''});
+          else addInlineNote(center);
+          return;
+        }
         if(!u.modal&&(match('menu.open')||plainKey&&key==='i')&&node&&(isGroup(node)||node.params?.session_file)&&(key==='i'||!e.target.closest?.('button'))){
           e.preventDefault();
           openNode(node);
         }
         const canLeave=parent||(s.sessionBreadcrumbs||[]).length;
+        if (!u.modal && key === 'escape') {
+          if (findOpen) { e.preventDefault(); setFindOpen(false); return; }
+          if (editingNote) { e.preventDefault(); setEditingNote(null); return; }
+          if (handoffOpen) { e.preventDefault(); setHandoffOpen(false); return; }
+          if (runView && !parent && !selected.length && !selectedWires.length) { e.preventDefault(); setCanvasRunView(null); return; }
+        }
         if (!u.modal&&(key==='escape'||plainKey&&key==='u'&&canLeave)) {
           clearTimeout(groupMenuTimer.current);
           setRejected(null);
@@ -1316,10 +1540,33 @@
     const ownerSocket = (id, port) => {const owner=s.graph.nodes.find(n=>n.fixed&&n.type!=='thing.session'&&port?.startsWith(n.id+':'));return owner ? {id:owner.id,port:port.slice(owner.id.length+1)} : {id,port};};
     const connect = async (out, input) => {
       out=ownerSocket(out.id,out.port);input=ownerSocket(input.id,input.port);
-      const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
-      if (out.id === input.id) return;
-      const outputPort = s.graph.nodes.find(n=>n.id===out.id)?.outputs.find(p=>p.id===out.port),
-        inputPort = s.graph.nodes.find(n=>n.id===input.id)?.inputs.find(p=>p.id===input.port);
+      const outNode = s.graph.nodes.find(n=>n.id===out.id), inNode = s.graph.nodes.find(n=>n.id===input.id);
+      const outputPort = outNode?.outputs.find(p=>p.id===out.port),
+        inputPort = inNode?.inputs.find(p=>p.id===input.port);
+      const word = p => (TYPE_NAME[p?.type] || p?.type || 'any').toLowerCase();
+      // Cycle check: a wire from a node to itself or from a downstream node back to an ancestor creates a cycle.
+      const reachesSource = (() => {
+        if (out.id === input.id) return true;
+        const queue = [input.id], visited = new Set([input.id]);
+        while (queue.length) {
+          const cur = queue.shift();
+          for (const w of s.graph.wires) {
+            const fromId = w.memberFrom?.node ?? w.from, toId = w.memberTo?.node ?? w.to;
+            if (fromId === cur && !visited.has(toId)) {
+              if (toId === out.id) return true;
+              visited.add(toId);
+              queue.push(toId);
+            }
+          }
+        }
+        return false;
+      })();
+      if (reachesSource) {
+        const cycleReason = 'Cycle detected: ' + (outNode?.title || out.id) + ' cannot wire back into ' + (inNode?.title || input.id) + '.';
+        u.setToast({text: cycleReason, tone: 'warn'});
+        if (outputPort && inputPort) setRejected({from: out, to: input, outType: word(outputPort), inType: word(inputPort), reason: cycleReason, cycle: true});
+        return;
+      }
       if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) return;
       if (!api.socketCompatible(outputPort, inputPort)) {
         // Spec d9c0d514: an invalid drop draws the wire red at the drop and offers the converter on the target socket; no modal, nothing written.
@@ -1336,7 +1583,11 @@
         toPort: input.port
       }));
       // A refusal from the owner lands in the same inline state as a client-side type check: red wire, converter on the socket.
-      if (result && !result.ok) setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort), reason:result.error || result.reason || ''});
+      if (result && !result.ok) {
+        const errText = result.error || result.reason || '';
+        if (/cycle/i.test(errText)) u.setToast({text: /Cycle detected/i.test(errText) ? errText : 'Cycle detected: ' + errText, tone: 'warn'});
+        setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort), reason:errText, cycle:/cycle/i.test(errText)});
+      }
     };
     const insertConverter = async () => {
       const r = rejected, a = r && s.graph.nodes.find(n => n.id === r.from.id), b = r && s.graph.nodes.find(n => n.id === r.to.id);
@@ -1374,12 +1625,12 @@
       const members=(n.frameMembers||n.children).map(id=>visible.find(row=>row.id===id)||s.graph.nodes.find(row=>row.id===id)).filter(Boolean);
       const width=Math.max(241,...members.map(child=>child.x+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetWidth||241)-n.x))+24;
       const height=Math.max(100,...members.map(child=>child.y+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetHeight||160)-n.y))+24;
-      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header" onClick={event=>{if(!event.target.closest('button'))showGroupMenu(event,n,!n.frameMembers);}}><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button>}<button type="button" className="dx-quiet nodrag" data-group-menu="" aria-label={n.title+' menu'} aria-haspopup="menu" aria-expanded={u.modal?.kind==='Group menu'&&u.modal?.id===n.id} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();}} onClick={event=>executeAction('projects.controls.activate',{handler:()=>showGroupMenu(event,n)},event)}>⋯</button></header>
+      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header" onClick={event=>{if(!event.target.closest('button'))showGroupMenu(event,n,!n.frameMembers);}}><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<><button type="button" className="button-reset nodrag" data-design="group.open" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openNode(n)},event)}>Open</button><button type="button" className="button-reset nodrag" data-design="group.ungroup" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.ungroupNode(n.id))},event)}>Ungroup</button><button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button></>}<button type="button" className="dx-quiet nodrag" data-group-menu="" aria-label={n.title+' menu'} aria-haspopup="menu" aria-expanded={u.modal?.kind==='Group menu'&&u.modal?.id===n.id} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();}} onClick={event=>executeAction('projects.controls.activate',{handler:()=>showGroupMenu(event,n)},event)}>⋯</button></header>
         {/* The border takes the pointer, the inside does not: a click on it selects the group, a double-click enters it. The three sides start under the 34px header, which already takes it. */}
         <svg className="v22g-group-edge" data-design="group.edge" aria-hidden="true">{[['0','34','0','100%'],['0','100%','100%','100%'],['100%','34','100%','100%']].map(([x1,y1,x2,y2])=><line key={x1+y1} x1={x1} y1={y1} x2={x2} y2={y2} pointerEvents="stroke" />)}</svg></div>;
     };
     const socket = (n, p, side) => {
-      const locked = !!preview || p.connectable === false || p.read_only;
+      const locked = !!preview || !!runView || p.connectable === false || p.read_only;
       return <RF.Handle type={side === 'out' ? 'source' : 'target'} position={side === 'out' ? RF.Position.Right : RF.Position.Left} id={p.id} isConnectable={!locked}
         data-port-key={`${n.id}:${side}:${p.id}`} className="socket" data-port-type={p.type} data-port-list={p.list || undefined}
         title={`${p.name} · ${p.type}${p.list ? " list" : ""}${p.unit ? " · "+p.unit : ""}`} aria-disabled={locked || undefined} aria-label={`${n.title} ${side} ${p.name}`}
@@ -1387,7 +1638,7 @@
           e.preventDefault();
           e.stopPropagation();
           u.show('Port menu', {...ownerSocket(n.id,p.id), anchor: {x: e.clientX, y: e.clientY}});
-        }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => w.to === n.id && w.toPort === p.id) || undefined} /></RF.Handle>;
+        }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => (w.memberTo?.node ?? w.to) === n.id && (w.memberTo?.port ?? w.toPort) === p.id || w.to === n.id && w.toPort === p.id) || undefined} /></RF.Handle>;
     };
     const renderNode = (n, isSelected) => {
       const placed = new Set(s.graph.nodes.map(row => row.id));
@@ -1403,8 +1654,42 @@
         }
       }
       const members = [...childMembers, ...chips];
-      if(n.type==='note'&&!n.children?.length&&!n.frameMembers)return <div className="v22g-note node-header" style={{background:n.color||undefined}} onDoubleClick={()=>u.show('Note',{id:n.id,text:n.params.text||''})}>{n.params.text||n.title}</div>;
-      return <FlowCard onOpen={()=>openNode(n)} n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
+      if (n.type === 'note' && !n.children?.length && !n.frameMembers) {
+        if (editingNote?.id === n.id) {
+          const saveInlineNote = () => {
+            const txt = editingNote.text.trim() || 'Note';
+            setEditingNote(null);
+            setLastUndoLabel('Edit note');
+            setLastRedoLabel('');
+            return u.act(() => api.setNodeParam(n.id, 'text', txt));
+          };
+          const cancelInlineNote = () => {
+            const wasNew = editingNote.isNew;
+            setEditingNote(null);
+            if (wasNew) return u.act(() => api.deleteSelection([n.id], []));
+            return {ok: true};
+          };
+          return <div className="v22g-note node-header nodrag" data-note-node={n.id} data-note-editor={n.id} style={{background: n.color || undefined, display: 'grid', gap: 6, minWidth: 210}} onPointerDown={e => e.stopPropagation()}>
+            <textarea aria-label="Note" data-design="field.note" className="nodrag nowheel" autoFocus rows={3} value={editingNote.text} onChange={e => setEditingNote(cur => cur ? {...cur, text: e.target.value} : cur)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); void cancelInlineNote(); }
+                else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); void saveInlineNote(); }
+              }}
+              style={{width: '100%', boxSizing: 'border-box', background: A.bgPanel, color: A.ink, border: '1px solid ' + A.line, borderRadius: 4, padding: 6, font: 'inherit'}} />
+            <div className="flex" style={{justifyContent: 'flex-end', gap: 6}}>
+              <button type="button" className="button-reset nodrag" onClick={event => executeAction('projects.controls.activate', {handler: cancelInlineNote}, event)}>Cancel</button>
+              <button type="button" className="button-reset nodrag" style={{color: A.accent, fontWeight: 600}} onClick={event => executeAction('projects.controls.activate', {handler: saveInlineNote}, event)}>Save</button>
+            </div>
+          </div>;
+        }
+        return <div className="v22g-note node-header" data-note-node={n.id} style={{background: n.color || undefined, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8}}
+          onDoubleClick={e => { e.stopPropagation(); if (!runView) setEditingNote({id: n.id, text: n.params.text || ''}); }}>
+          <span>{n.params.text || n.title}</span>
+          {!runView && <button type="button" className="button-reset nodrag" aria-label="Edit note" style={{fontSize: 11, color: A.inkSoft}} onClick={event => executeAction('projects.controls.activate', {handler: () => setEditingNote({id: n.id, text: n.params.text || ''})}, event)}>Edit</button>}
+        </div>;
+      }
+      const cardNode = runView && n.id in (runView.results || {}) ? {...n, status: runView.status === 'Failed' ? 'Error' : 'Done', output: runView.results[n.id]} : n;
+      return <FlowCard onOpen={()=>openNode(n)} n={cardNode} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} onDismissRefusal={() => setRejected(null)} members={members} socket={(p, side = 'in') => socket(n, p, side)}
         onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
         onDetach={(m, event) => { const under = document.elementFromPoint(event.clientX, event.clientY); if (under && under.closest && under.closest('[data-graph-node="' + n.id + '"]')) return; u.act(() => api.detachMember(n.id, {id: m.id, title: m.title, agent: m.agent || m.id}, toFlow(event))); }}
         menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} data-group-menu={editableGroup(n)?'':undefined} aria-haspopup={editableGroup(n)?'menu':undefined} aria-expanded={editableGroup(n)?u.modal?.kind==='Group menu'&&u.modal?.id===n.id:undefined} onKeyDown={event=>{if(editableGroup(n)&&(event.key==='Enter'||event.key===' '))event.stopPropagation();}} onClick={event=>editableGroup(n)?showGroupMenu(event,n):executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u,canvas:canvasActions({x:n.x,y:n.y})},event)}>⋯</button>} />;
@@ -1441,15 +1726,16 @@
       window.addEventListener('keydown', esc, true);
       return () => window.removeEventListener('keydown', esc, true);
     }, [following]);
-    const scopeNodes = parent ? new Map(s.graph.nodes.map(n=>[n.id,n])) : null;
+    const scopeNodes = React.useMemo(() => new Map(s.graph.nodes.map(n=>[n.id,n])), [s.graph.nodes]);
     const scopeEnd = (id,port,ports) => {
       if(shownIds.has(id))return {node:id,port};
       const seen=new Set([id]);
       let owner=scopeNodes.get(scopeNodes.get(id)?.parent);
       while(owner&&!seen.has(owner.id)){
         if(shownIds.has(owner.id)&&owner.collapsed){
-          const exposed=owner[ports].find(p=>p.member?.node===id&&p.member.port===port);
-          if(exposed)return {node:owner.id,port:exposed.id};
+          const ownerShown = visible.find(v => v.id === owner.id) || owner;
+          const exposed=(ownerShown[ports] || []).find(p=>(p.member?.node===id&&p.member.port===port)||p.id===id+':'+port);
+          return {node:owner.id,port:exposed ? exposed.id : id+':'+port};
         }
         seen.add(owner.id);
         owner=scopeNodes.get(owner.parent);
@@ -1458,11 +1744,11 @@
     };
     // Wires are rebuilt only when the graph, scope or wire selection changes, not on every drag or pan frame.
     const edges = React.useMemo(() => {
-    const scopedWires = scopeNodes ? s.graph.wires.map(wire=>{
+    const scopedWires = s.graph.wires.map(wire=>{
       const from=scopeEnd(wire.memberFrom?.node??wire.from,wire.memberFrom?.port??wire.fromPort,'outputs');
       const to=scopeEnd(wire.memberTo?.node??wire.to,wire.memberTo?.port??wire.toPort,'inputs');
       return {...wire,from:from.node,fromPort:from.port,to:to.node,toPort:to.port};
-    }).filter(wire=>wire.from!==wire.to) : s.graph.wires;
+    }).filter(wire=>wire.from!==wire.to);
     return (rejected ? [...scopedWires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : scopedWires)
       .filter(w => !(foldedOwner(s.graph.nodes.find(n=>n.id===w.from)) && foldedOwner(s.graph.nodes.find(n=>n.id===w.to))))
       .map(w => { const projected={...w}; if(sessionNode)for(const side of ['from','to']){const owner=s.graph.nodes.find(n=>n.id===w[side]);if(foldedOwner(owner)&&owner.id!==sessionNode.id){projected[side]=sessionNode.id;projected[side+'Port']=owner.id+':'+w[side+'Port'];}} return projected; })
@@ -1546,13 +1832,13 @@
     const cards = React.useRef(null);
     cards.current = {renderNode, renderFrame, openNode};
     const canvasContext = React.useMemo(() => ({renderNode: (...args) => cards.current.renderNode(...args), renderFrame: (...args) => cards.current.renderFrame(...args),
-      openNode: n => cards.current.openNode(n), preview: !!preview, flow: flowView}), [s, u, rejected, preview, parent, layout, selected.join(','), requestState, flowView]);
+      openNode: n => cards.current.openNode(n), preview: !!preview, flow: flowView}), [s, u, rejected, preview, parent, layout, selected.join(','), requestState, flowView, editingNote, runView]);
     // COMMANDREGISTRY: expose this active Canvas's existing selection/actions to Ctrl K.
     React.useLayoutEffect(() => {
       if (preview || !active) return;
       const read = event => {
         const node = s.graph.nodes.find(n=>n.id===selected.at(-1));
-        return {kind: selected.length>1?'Selection menu':editableGroup(node)?'Group menu':node?'Node menu':wireId?'Wire menu':'Canvas menu',
+        return {kind: selected.length>1?'Selection menu':editableGroup(node)?'Group menu':node?.params?.session_file?'Embed menu':node?'Node menu':wireId?'Wire menu':'Canvas menu',
           id:node?.id,wireId,selected,open:node?()=>openNode(node):undefined,canvas:canvasActions(toFlow(event))};
       };
       window.UI.canvasCommandContext = read;
@@ -1566,7 +1852,7 @@
       connections: () => { setSelected([]); setWireId(s.graph.wires[0]?.id || null); u.setToast(s.graph.wires.length ? 'Select a connection to inspect its declared types.' : 'This workflow has no connections.'); },
       fit: () => fit(),
       more: () => setMore(value => !value),
-      arrange: () => u.act(() => api.arrangeGraph())
+      arrange: () => arrangeWithToast()
     }));
     // One click shows or hides the whole Library (the bar button and More › Show Library).
     const toggleLibrary = () => { setPeek(''); u.setLibraryOpen(open => !open); };
@@ -1590,27 +1876,147 @@
       u.setToast(menuTask.title + ' is archived. Its file stays on disk: Open… in this menu opens it again.');
       return result;
     });
-    // Agents still on this task (a live lease, or a live agent declared on it): the confirm names them before archiving.
+    const deleteTaskNow = async () => {
+      if (!menuTask) return;
+      setDeletingTask(true);
+      setDeleteError('');
+      try {
+        const receipt = await api.deleteTask(menuTask.id, menuTask.revision);
+        if (receipt?.ok !== true || receipt.deleted !== true || receipt.id !== menuTask.id) {
+          setDeleteError(receipt?.message || receipt?.error || 'ArchHub did not confirm this deletion.');
+          return;
+        }
+        setDeleteAsk(false);
+        if (u.canvasTabs?.tabs?.some(tab => tab.id === menuTask.id)) await u.act(() => u.closeTaskTab(menuTask.id));
+      } catch (err) {
+        setDeleteError(err?.message || 'ArchHub did not confirm this deletion.');
+      } finally {
+        setDeletingTask(false);
+      }
+    };
+    // Agents still on this task (a live lease, or a live agent declared on it): the confirm names them before archiving or deleting.
     const working = menuTask ? [...new Set([...(menuTask.members || []).filter(m => m.live).map(m => m.name),
       ...(s.liveAgents || []).filter(agent => agent.task === menuTask.id).map(agent => agent.name || agent.agent)].filter(Boolean))] : [];
     const archiveConfirm = archiveAsk && menuTask && <div role="alertdialog" aria-label="Archive task" data-design="task.archive" className="v48-archive-ask">
       <p><b>Archive {menuTask.title}?</b> It is archived: it leaves the active list and Home. Its file stays on disk and Open… opens it again. Nothing is deleted.</p>
       {working.length > 0 && <p role="alert" data-archive-working="">An agent is still working on this task: {working.join(', ')}. Archive it only if that work can stop.</p>}
       <div className="flex"><Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => setArchiveAsk(false)}, event)}>Cancel</Btn><Btn p sm onClick={event => executeAction('projects.controls.activate', {handler: archiveTask}, event)}>Archive</Btn></div></div>;
-    const actionsMenu = <> {archiveConfirm}{more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
+    const deleteConfirm = deleteAsk && menuTask && <div className="overlay"><section role="alertdialog" aria-modal="true" aria-label="Delete task" data-design="task.delete" className="dialog v22g-form">
+      <h2>Delete task</h2>
+      <p>Delete {menuTask.title}? Its file and history are removed. This cannot be undone.</p>
+      {working.length > 0 && <p data-delete-working="" style={{color: A.warn}}>An agent is still working on this task: {working.join(', ')}. Delete it only if that work can stop.</p>}
+      {deleteError && <p role="alert">{deleteError}</p>}
+      <div className="flex"><Btn sm disabled={deletingTask} onClick={event => executeAction('projects.controls.activate', {handler: () => { setDeleteAsk(false); setDeleteError(''); }}, event)}>Cancel</Btn>
+        <Btn sm danger disabled={deletingTask} onClick={event => executeAction('projects.controls.activate', {handler: deleteTaskNow}, event)}>Delete</Btn></div>
+    </section></div>;
+    const handoffMessages = menuTask ? (window.UI.homeTaskMessages?.(menuTask) || []) : [];
+    const handoffPeople = [...new Set(['You', ...(menuTask?.agents || []), ...handoffMessages.map(m => m.who).filter(Boolean)])];
+    const handoffSteps = s.graph.nodes.filter(n => !n.fixed && !n.application);
+    const handoffDialog = handoffOpen && <div className="overlay" onMouseDown={e => { if (e.target === e.currentTarget) setHandoffOpen(false); }}>
+      <section role="dialog" aria-modal="true" aria-label="Handoff map" data-design="handoff.dialog" className="dialog v22g-form" style={{width: 'min(560px, 92vw)', display: 'grid', gap: 12}}>
+        <header className="spread"><h2 style={{margin: 0}}>Handoff map</h2><Btn sm ghost aria-label="Close Handoff map" onClick={event => executeAction('projects.controls.activate', {handler: () => setHandoffOpen(false)}, event)}>×</Btn></header>
+        <p className="muted" style={{margin: 0}}>Who handed work to whom in {menuTask?.title || s.graph.name}.</p>
+        <div data-handoff-chain="" className="flex" style={{flexWrap: 'wrap', gap: 6}}>
+          {handoffPeople.map((who, idx) => <React.Fragment key={who}>{idx > 0 && <span aria-hidden="true" style={{color: A.inkSoft}}>→</span>}<Chip>{who}</Chip></React.Fragment>)}
+        </div>
+        <div style={{maxHeight: 260, overflow: 'auto', border: '1px solid ' + A.lineSoft, borderRadius: 6}}>
+          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12}}>
+            <thead><tr style={{textAlign: 'left', color: A.inkSoft, borderBottom: '1px solid ' + A.lineSoft}}><th style={{padding: '6px 8px'}}>Step</th><th style={{padding: '6px 8px'}}>Owner</th><th style={{padding: '6px 8px'}}>Status</th></tr></thead>
+            <tbody>{handoffSteps.length ? handoffSteps.map(step => <tr key={step.id} style={{borderBottom: '1px solid ' + A.lineSoft}}>
+              <td style={{padding: '6px 8px'}}>{step.title}</td>
+              <td style={{padding: '6px 8px', color: A.inkSoft}}>{step.params?.agent || menuTask?.agents?.[0] || s.graph.name}</td>
+              <td style={{padding: '6px 8px'}}>{nodeState(step, false)[0]}</td>
+            </tr>) : <tr><td colSpan={3} style={{padding: '8px', color: A.inkSoft}}>No steps in this workflow yet.</td></tr>}</tbody>
+          </table>
+        </div>
+        <div className="flex" style={{justifyContent: 'flex-end'}}><Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => setHandoffOpen(false)}, event)}>Close</Btn></div>
+      </section>
+    </div>;
+    const undoName = String(s.graph?.undoLabel || s.undoLabel || s.graph?.lastAction || s.lastAction || lastUndoLabel || '').trim();
+    const redoName = String(s.graph?.redoLabel || s.redoLabel || s.graph?.nextAction || s.nextAction || lastRedoLabel || '').trim();
+    const undoWithToast = () => u.act(async () => {
+      const snapNodes = doc => JSON.stringify((doc?.nodes || []).map(n => [n.id, n.title, n.position || [n.x, n.y], n.params]));
+      const beforeSnap = snapNodes(api.getSessionDocument?.() || s.graph);
+      const res = await api.undo();
+      const afterSnap = snapNodes(api.getSessionDocument?.() || api.getSnapshot().graph);
+      if (beforeSnap === afterSnap && !undoName) u.setToast('Nothing to undo in this session.');
+      else {
+        const label = undoName || 'last edit';
+        setLastRedoLabel(label);
+        setLastUndoLabel('');
+        u.setToast('Undid: ' + label);
+      }
+      return res;
+    });
+    const redoWithToast = () => u.act(async () => {
+      const res = await api.redo();
+      if (redoName) {
+        setLastUndoLabel(redoName);
+        setLastRedoLabel('');
+        u.setToast('Redid: ' + redoName);
+      }
+      return res;
+    });
+    const checkpointsOnHome = Boolean(menuTask?.checkpointsOnHome ?? api.getSessionDocument?.()?.properties?.checkpointsOnHome ?? api.getSessionDocument?.()?.properties?.taskContext?.checkpointsOnHome);
+    const groupCrumbs = React.useMemo(() => {
+      const chain = [], seen = new Set();
+      let cur = parent ? s.graph.nodes.find(n => n.id === parent) : null;
+      while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        chain.unshift(cur);
+        cur = cur.parent ? s.graph.nodes.find(n => n.id === cur.parent) : null;
+      }
+      return chain;
+    }, [parent, s.graph.nodes]);
+    const findMatches = React.useMemo(() => {
+      if (!findOpen) return [];
+      const q = findQuery.trim().toLowerCase();
+      return s.graph.nodes.filter(n => !n.application && (!foldedOwner(n) || n.type === 'thing.session'))
+        .filter(n => !q || (n.title || '').toLowerCase().includes(q) || (n.kind || '').toLowerCase().includes(q))
+        .slice(0, 12);
+    }, [findOpen, findQuery, s.graph.nodes, u.canvasTabs?.expanded]);
+    const pickFoundNode = targetNode => u.act(async () => {
+      if (!targetNode) return {ok: false};
+      const ancestors = [], seen = new Set();
+      let ancId = targetNode.parent;
+      while (ancId && !seen.has(ancId)) {
+        seen.add(ancId);
+        const grp = s.graph.nodes.find(x => x.id === ancId);
+        if (!grp) break;
+        ancestors.unshift(grp);
+        ancId = grp.parent;
+      }
+      for (const grp of ancestors) {
+        if (grp.collapsed && typeof api.setGroupCollapsed === 'function') await api.setGroupCollapsed(grp.id, false);
+      }
+      setParent(null);
+      setFindOpen(false);
+      setSelected([targetNode.id]);
+      u.setSelectedNodeId(targetNode.id);
+      window.UI.centreWhenShown = {nodeId: targetNode.id, path: api.getSessionPath?.()};
+      window.requestAnimationFrame(() => centreOn(targetNode));
+      return {ok: true};
+    });
+    const notePoint = () => ({x: ((area.current?.clientWidth || 600) / 2 - view.current.pan.x) / view.current.zoom, y: ((area.current?.clientHeight || 400) / 2 - view.current.pan.y) / view.current.zoom, ...(parent ? {parent} : {})});
+    const actionsMenu = <> {archiveConfirm}{deleteConfirm}{handoffDialog}{more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}><div aria-label="Workflow status" style={{padding:'6px 8px',color:A.inkSoft,fontSize:11}}>{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div>{[
-            ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
+            ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})],
+            ['Find a node', openFindBar],
+            ['Add note', () => addInlineNote(notePoint())],
+            ['Handoff map', () => { onHandoff?.(); setHandoffOpen(true); }],
+            ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
             ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
             ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
             ...(embedded ? [['Thread', () => u.setTaskFace(u.taskFace==='split'?'canvas':'split')]] : []),
-            ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
             [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', toggleLibrary], ...(onResetDock ? [['Reset panel layout', onResetDock]] : []), ['Group · Ctrl G', group, selected.length < 2],
             ['Run all again', () => executeAction('projects.ds_screens.Run.15', {api,u,again:true})],
             ...(selected.length===1&&s.graph.nodes.find(n=>n.id===selected[0])?.status==='Unconfirmed' ? [
               ['Check result',()=>u.act(()=>api.recoverRun(selected[0],'check')),s.graph.nodes.find(n=>n.id===selected[0])?.type!=='thing.file.write'],
               ['Run this step again',()=>u.act(()=>api.recoverRun(selected[0],'retry'))],
             ] : []),
-            ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
+            ['Undo' + (undoName ? ' ' + undoName : '') + ' · Ctrl Z', undoWithToast],
+            ['Redo' + (redoName ? ' ' + redoName : '') + ' · Ctrl Shift Z', redoWithToast],
+            ['Arrange', arrangeWithToast],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
             // This task (design More menu): each item runs through its owner.
@@ -1618,6 +2024,7 @@
               ['Rename…', () => u.show('Rename task', {id: menuTask.id, text: menuTask.title || ''})],
               ['Show on Home', () => { u.setTask(menuTask.id); return u.go('home'); }],
               [menuTask.homePinned ? 'Stop keeping at the top of Home' : 'Keep at the top of Home', () => u.act(() => api.setTaskSession(menuTask.id, {homePinned: !menuTask.homePinned}))],
+              [checkpointsOnHome ? 'Remove checkpoint on Home' : 'Mark checkpoint on Home', () => u.act(() => api.setTaskSession(menuTask.id, {checkpointsOnHome: !checkpointsOnHome})).then(r => { if (r) u.setToast(checkpointsOnHome ? 'Removed checkpoints from Home.' : 'Checkpoints shown on Home.'); })],
               ['Connection checks', () => u.show('Connection checks')],
               ['Test this workflow', () => u.act(async () => {
                 if (typeof api.solveNow === 'function') await api.solveNow();
@@ -1628,7 +2035,7 @@
               ['Publish to Community', () => u.go('community')],
               ['Keyboard shortcuts', () => u.show('Keyboard shortcuts')],
               ['Archive task…', () => setArchiveAsk(true)],
-              ['Delete task…', () => u.show('Delete task', {id:menuTask.id, title:menuTask.title, revision:menuTask.revision})],
+              ['Delete task…', () => { setDeleteError(''); setDeleteAsk(true); }],
             ] : []),
           ].map(([label, run, disabled]) => <button key={label} data-design={label === 'Delete task…' ? 'menu.delete' : undefined} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>} </>;
@@ -1657,7 +2064,11 @@
         background: A.bgPanel, fontSize: 'calc(13px * var(--text-scale,1))'
       }}><div className="flex" style={{minWidth:0}}><button className="button-reset" title={s.graph.name} aria-label="Workflows" style={{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
         {(s.sessionBreadcrumbs||[]).length>0 && <button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}
-        {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
+        {parent && <><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>
+          <nav aria-label="Group breadcrumb" data-design="group.breadcrumb" className="flex" style={{gap:4}}>
+            <button type="button" className="dx-quiet" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setParent(null);setSelected(groupCrumbs[0]?[groupCrumbs[0].id]:[]);}},event)}>{s.graph.name}</button>
+            {groupCrumbs.map((crumb,idx)=><React.Fragment key={crumb.id}><span aria-hidden="true">›</span><button type="button" className="dx-quiet" aria-current={idx===groupCrumbs.length-1?'location':undefined} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setParent(crumb.id);setSelected([]);}},event)}>{crumb.title}</button></React.Fragment>)}
+          </nav></>}
         {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
       <div className="flex" style={{position:'relative',flexShrink:0}}> <Btn variant="controls" sm ghost data-design="canvas.library" aria-pressed={u.libraryOpen} aria-label={u.libraryOpen ? 'Hide Library' : 'Show Library'} onClick={event => executeAction('projects.controls.activate', {handler: toggleLibrary}, event)}>Library</Btn>
          <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
@@ -1669,14 +2080,14 @@
       {libraryRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Library" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='library'?'':'library')},event)}>Library</button> : <window.UI.LibraryShelf onClose={()=>u.setLibraryOpen(false)} />}
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <WorkPanel id="canvas-work" minSize={240}>
-   <div ref={attachArea} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
+   <div ref={attachArea} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-run-view={runView ? 'true' : undefined} data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         onPointerDownCapture={event=>{stopAutoFrame();if(!event.target.closest?.('.react-flow__node,.v48-presence,[data-follow]'))stopFollow();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={()=>{stopAutoFrame();stopFollow();}} onDragStartCapture={stopAutoFrame}
-        onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
+        onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&!findOpen&&!editingNote&&!handoffOpen&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
         onDragOver={e => { stopAutoFrame(); e.preventDefault(); }} onDrop={e => {
           e.preventDefault();
-          if(preview)return;
+          if(preview || runView)return;
           if(e.dataTransfer.files?.length){u.act(()=>api.importSession(e.dataTransfer.files[0]));return;}
           const session=e.dataTransfer.getData('session');
           const task=e.dataTransfer.getData('task');
@@ -1694,13 +2105,42 @@
             canvas:canvasActions(toFlow(e))
           });
         }}>
+    {!preview && runView && <div data-canvas-overlay="" data-run-view-bar="" role="region" aria-label="Run view" className="spread" style={{position:'absolute',top:embedded ? 10 : 54,left:16,right:16,zIndex:16,padding:'6px 12px',borderRadius:6,background:A.bgPanel,border:'1px solid '+A.line,fontSize:12}}>
+      <span className="flex" style={{gap:8}}><window.AHIcon name="clock" size={13}/><span>Run view · <b>{runView.time || 'Recent'}</b> · {runView.kind || 'Manual'} · <b style={{color:runView.status==='Failed'?A.err:A.ok}}>{runView.status || 'Done'}</b></span></span>
+      <Btn sm ghost onClick={event => executeAction('projects.controls.activate', {handler: () => setCanvasRunView(null)}, event)}>Exit run view</Btn>
+    </div>}
+    {!preview && findOpen && <div data-canvas-overlay="" data-find-bar="" role="search" aria-label="Find a node" style={{position:'absolute',top:embedded ? 12 : 56,left:'50%',transform:'translateX(-50%)',width:'min(360px, calc(100% - 32px))',zIndex:18,background:A.bgPanel,border:'1px solid '+A.line,borderRadius:8,padding:8,boxShadow:'0 10px 28px rgba(0,0,0,0.45)',display:'grid',gap:6}}>
+      <div className="flex" style={{gap:6}}>
+        <input ref={findInputRef} data-design="find.input" aria-label="Find a node" placeholder="Find a node on this canvas" value={findQuery} onChange={e => { setFindQuery(e.target.value); setFindIndex(0); }}
+          onKeyDown={e => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setFindOpen(false); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); setFindIndex(i => Math.min(Math.max(0, findMatches.length - 1), i + 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setFindIndex(i => Math.max(0, i - 1)); }
+            else if (e.key === 'Enter' && findMatches[findIndex]) { e.preventDefault(); void pickFoundNode(findMatches[findIndex]); }
+          }}
+          style={{flex:1,minWidth:0,background:A.bgSoft,color:A.ink,border:'1px solid '+A.lineSoft,borderRadius:4,padding:'5px 8px',font:'inherit',fontSize:12}} />
+        <button type="button" className="button-reset" aria-label="Close Find a node" onClick={event => executeAction('projects.controls.activate', {handler: () => setFindOpen(false)}, event)}>×</button>
+      </div>
+      <div style={{maxHeight:220,overflow:'auto',display:'grid',gap:2}}>
+        {findMatches.map((mNode, idx) => {
+          const grp = mNode.parent ? s.graph.nodes.find(x => x.id === mNode.parent) : null;
+          const [stLabel] = nodeState(mNode, false);
+          return <button key={mNode.id} type="button" data-find-node={mNode.id} aria-selected={idx === findIndex} className="listbutton spread" style={{padding:'5px 8px',fontSize:12,background:idx===findIndex?A.bgSoft:undefined}}
+            onClick={event => executeAction('projects.controls.activate', {handler: () => pickFoundNode(mNode)}, event)}>
+            <span><b>{mNode.title}</b>{grp ? <span style={{color:A.inkSoft}}>{' · in ' + grp.title}</span> : null}</span>
+            <kbd style={{fontSize:10,color:A.inkSoft}}>{stLabel.split(' · ')[0]}</kbd>
+          </button>;
+        })}
+        {!findMatches.length && <span style={{padding:'4px 6px',fontSize:12,color:A.inkSoft}}>No matching nodes</span>}
+      </div>
+    </div>}
     <CanvasContext.Provider value={canvasContext}>
-     <FlowStage nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview&&!flowView} elevateNodesOnSelect={false}
+     <FlowStage nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview&&!runView} nodesConnectable={!preview&&!flowView&&!runView} elevateNodesOnSelect={false}
        defaultViewport={{x: pan.x, y: pan.y, zoom}} onInit={inst => { flow.current = inst; inst.setViewport({x: view.current.pan.x, y: view.current.pan.y, zoom: view.current.zoom}); }}
        onMove={(event,v) => { if (event instanceof window.Event) { view.current = {zoom: v.zoom, pan: {x: v.x, y: v.y}}; viewSource.emit(); } }}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) { if (v.zoom !== zoom) saveZoomPreference(v.zoom); setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
-       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
-       onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
+       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}if(f.data.n.type==='note'){if(!runView)setEditingNote({id:f.id,text:f.data.n.params?.text||''});return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
+       onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':node.data.n?.params?.session_file?'Embed menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
@@ -1720,7 +2160,7 @@
     </CanvasContext.Provider>
     {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{steps?steps.done:visible.filter(n=>!n.fixed&&n.status==='Done').length} of {steps?steps.total:visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
     {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(areaWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{(count=>count+' more step'+(count>1?'s':'')+' →')(visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(areaWidth||paneWidth)-32).length)}</button>}
-    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
+    <div data-canvas-overlay="" className="canvas-toolbar" ref={zoomBar} style={zoomRise == null ? undefined : {bottom: zoomRise}}>{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <nav aria-label="Group breadcrumb" data-design="group.breadcrumb" className="flex" style={{gap:4}}><button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button><button type="button" className="dx-quiet" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setParent(null);setSelected(groupCrumbs[0]?[groupCrumbs[0].id]:[]);}},event)}>{menuTask?.title || s.graph.name}</button>{groupCrumbs.map((crumb,idx)=><React.Fragment key={crumb.id}><span aria-hidden="true">›</span><button type="button" className="dx-quiet" aria-current={idx===groupCrumbs.length-1?'location':undefined} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setParent(crumb.id);setSelected([]);}},event)}>{crumb.title}</button></React.Fragment>)}</nav>}<button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom"><LiveZoom source={viewSource} /></button><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{flowTab && <button type="button" data-design="canvas.flow" className="dx-quiet" aria-pressed={flowView} title="Flow view: one socket in and out per node, only the workflow. A view, it changes no file." onClick={event => executeAction('projects.controls.activate', {handler: toggleFlow}, event)}>Flow</button>}</div>
 
    </div>
    </WorkPanel>
@@ -1862,6 +2302,8 @@
   }
   window.UI.HomeMap = HomeMap;
   window.UI.RunModeChip = RunModeChip;
+  window.UI.setCanvasRunView = setCanvasRunView;
+  window.UI.getCanvasRunView = () => activeRunView;
   window.UI.ValueWidget = ValueWidget;  // the Inspector's Session group edits the same values as the Session card
   // Memoized: Home's own state changes (its Inspector, rails, thread width) do not re-render the canvas; the
   // canvas still follows the store and the app context it reads.
@@ -1979,7 +2421,7 @@ function projectsdsscreensjsxRun15({api,u,again=false}, event) {
 function projectsdsscreensjsxNodeMenu16({n,openNode,setSelected,u,canvas}, event) {
   const handler = () => {
                   setSelected([n.id]);
-                  u.show('Node menu', {
+                  u.show(n.params?.session_file ? 'Embed menu' : 'Node menu', {
                     id: n.id,
                     open: () => openNode(n), canvas, selected: [n.id]
                   });

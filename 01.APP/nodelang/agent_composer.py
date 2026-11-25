@@ -76,6 +76,14 @@ operations exist or ran. If the needed input or intent is unclear, ask for it
 instead of preparing execution. The user still reviews and approves the draft.
 """
 
+_SYSTEM += """
+Check "prefer_no_agent" in CANVAS CONTEXT. When "prefer_no_agent" is true, prefer
+deterministic catalogue and host steps (place or node) with no agent first, and
+use work agent steps only when no deterministic step can perform the work. When
+"prefer_no_agent" is false, choose freely between deterministic steps and work
+agent steps as needed.
+"""
+
 _DRAFT_OPERATIONS = frozenset({
     "place", "node", "work", "select", "group", "ungroup", "set_property", "wire", "open", "run",
 })
@@ -194,6 +202,40 @@ def _answer_text(raw: str) -> str:
     return text
 
 
+def _prefer_no_agent(projection: Mapping[str, object]) -> bool:
+    for key in ("prefer_no_agent", "preferNoAgent"):
+        if isinstance(projection.get(key), bool):
+            return bool(projection[key])
+    raw_props = projection.get("properties")
+    if isinstance(raw_props, Mapping):
+        for key in ("prefer_no_agent", "preferNoAgent"):
+            if isinstance(raw_props.get(key), bool):
+                return bool(raw_props[key])
+    elif isinstance(raw_props, (list, tuple)):
+        for row in raw_props:
+            if isinstance(row, Mapping) and row.get("label") in ("prefer_no_agent", "Prefer steps with no agent"):
+                if isinstance(row.get("value"), bool):
+                    return bool(row["value"])
+    for node in projection.get("nodes", ()):
+        if not isinstance(node, Mapping):
+            continue
+        params = node.get("params")
+        if isinstance(params, Mapping) and isinstance(params.get("prefer_no_agent"), bool):
+            return bool(params["prefer_no_agent"])
+        if isinstance(params, (list, tuple)):
+            for row in params:
+                if isinstance(row, Mapping) and row.get("label") in ("prefer_no_agent", "Prefer steps with no agent"):
+                    if isinstance(row.get("value"), bool):
+                        return bool(row["value"])
+        node_props = node.get("properties")
+        if isinstance(node_props, (list, tuple)):
+            for row in node_props:
+                if isinstance(row, Mapping) and row.get("label") in ("prefer_no_agent", "Prefer steps with no agent"):
+                    if isinstance(row.get("value"), bool):
+                        return bool(row["value"])
+    return True
+
+
 def _canvas_context(projection: Mapping[str, object]) -> str:
     nodes = [
         {"id": node["id"], "label": node.get("label", ""),
@@ -221,6 +263,7 @@ def _canvas_context(projection: Mapping[str, object]) -> str:
         "scope": (projection.get("scope") or {}).get("current"),
         "selection": projection.get("selection", ()),
         "selected": projection.get("selected"),
+        "prefer_no_agent": _prefer_no_agent(projection),
         "nodes": nodes,
         "catalogue": catalog,
         "selected_properties": properties,

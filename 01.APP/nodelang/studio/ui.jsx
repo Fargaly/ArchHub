@@ -28,7 +28,12 @@
     if (state === 'limit reached' || task.capacity === 'LIMIT_REACHED') return 'limit reached';
     return blockedDependencyReason();
   };
-  const useData = () => React.useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot);
+  const noopSubscribe = () => () => {};
+  const emptySnapshot = () => ({});
+  const useData = () => {
+    const a = api || window.ArchHubAPI || window.UI?.api;
+    return React.useSyncExternalStore(a?.subscribe || noopSubscribe, a?.getSnapshot || emptySnapshot, a?.getSnapshot || emptySnapshot);
+  };
   const actionIcons = {
     'Start': 'play',
     'Review': 'eye',
@@ -177,7 +182,7 @@
     person = false,
     selectionNodeId
   }) => {
-    const s = useData();
+    const s = (window.UI?.useData && window.UI.useData !== useData ? window.UI.useData : useData)() || {};
     const [open, setOpen] = React.useState(false);
     const p = (s.agents||[]).find(p => p.id === id) || (s.providers||[]).find(p => p.id === id) || (s.people||[]).find(p => p.id === id || p.name === id) || {
       name: id,

@@ -3435,7 +3435,7 @@ def _social_record(value):
     return None
 
 
-def save_social_credential(body, *, before_replace=None, verified=False):
+def save_social_credential(body, *, before_replace=None, verified=False, account=True):
     """Enroll one social account record in the protected store.
 
     The physical protocol is save_provider_key's: the app's Windows OS store
@@ -3490,6 +3490,8 @@ def save_social_credential(body, *, before_replace=None, verified=False):
         return True
 
     _mutate_credential(name, put, before_replace=before_replace)
+    if account:
+        _follow_account("put", name, record)
     return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
             # provider-verified only when the provider itself named this account
             # (social_linkedin_signin: /v2/userinfo sub); it is the stored record's binding.
@@ -3497,7 +3499,7 @@ def save_social_credential(body, *, before_replace=None, verified=False):
             "state": "enrolled", "source": "secrets store"}
 
 
-def revoke_social_credential(body, *, before_replace=None):
+def revoke_social_credential(body, *, before_replace=None, account=True):
     """Remove one operator-declared social account record from local protected custody.
 
     Local removal only: the provider token is not revoked at LinkedIn or Meta and
@@ -3535,9 +3537,28 @@ def revoke_social_credential(body, *, before_replace=None):
 
     removed = _mutate_credential(name, remove, before_replace=before_replace,
                                         not_admitted="removal_not_admitted", unconfirmed="removal_unconfirmed")
+    if account:
+        _follow_account("delete", name)
     return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
             "state": "removed" if removed else "absent", "provider_token_revoked": False,
             "source": "secrets store"}
+
+
+def _follow_account(action, name, record=None):
+    """D-051: a local connection change follows the ArchHub account (secrets.dat is its cache).
+
+    Best effort: an unreached account is retried by account_sync.pull_and_restore at the next sign-in.
+    account=False is passed only by that restore, which is itself applying the account.
+    """
+    try:
+        from . import account_sync
+        path = "connections/" + name + ".json"
+        if action == "put":
+            account_sync.put(path, account_sync.canonical(record))
+        else:
+            account_sync.delete(path)
+    except Exception as missed:
+        _LOG.warning("connection change not yet on the ArchHub account (%s); retried at sign-in", type(missed).__name__)
 
 
 def list_social_credentials():

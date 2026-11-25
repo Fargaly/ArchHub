@@ -472,6 +472,10 @@ class SignIn:
                 return
             from .cloud_session import remember_verified_account
             remember_verified_account({"token": token, "cloud_base_url": self.base_url}, _status, me)
+        if self.path == cloud_session_path():
+            from . import account_sync, social_custody
+            social_custody.register_with_account()
+            account_sync.restore_in_background()  # D-051: the account's items reach this PC
         if self._on_complete is not None:
             try:
                 self._on_complete(email)

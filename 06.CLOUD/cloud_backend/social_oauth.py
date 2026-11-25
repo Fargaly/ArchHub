@@ -26,6 +26,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
+import account_sync
 import config
 import db
 
@@ -387,6 +388,8 @@ def exchange_and_profile(provider: str, code: str, *, verifier: str = "") -> dic
     result = {"provider": provider, "account_id": account_id,
               "name": str(who.get("username") or who.get("display_name") or who.get("name") or "")[:120],
               "access_token": token}
+    # Kept encrypted on the cloud (account_sync) for server-side refresh; never sent to the desktop.
+    result.update({key: payload[key] for key in ("refresh_token", "expires_in") if payload.get(key)})
     if provider in _META_NETWORKS:
         public_pages, page_secrets = _meta_pages(token)
         result.update({"pages": public_pages, "page_secrets": page_secrets})
@@ -584,6 +587,7 @@ def consume(provider: str, body: dict, authorization: str | None = Header(None),
     if provider == "whatsapp":
         db.link_whatsapp_number(phone_number_id=record["account_id"], user_id=record["user_id"])
         _request_history_sync(record["account_id"], grant_payload["access_token"])
+    account_sync.keep_connection(record["user_id"], provider, record["account_id"], record.get("name", ""), grant_payload)
     answer = {"ok": True, "provider": provider, "account_id": record["account_id"],
               "name": record.get("name", ""), "access_token": grant_payload["access_token"]}
     if provider in _META_NETWORKS:

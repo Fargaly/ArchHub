@@ -70,6 +70,8 @@ def connection(provider, *, accounts=None, attempt=None):
 
 
 def rows():
+    from . import account_sync
+    account_sync.pull_and_restore("connections/")  # the account's connections, cached on this PC first
     accounts = model_router.list_social_credentials()["items"]
     return [connection(provider, accounts=accounts) for provider in NETWORKS]
 

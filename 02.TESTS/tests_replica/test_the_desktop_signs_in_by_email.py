@@ -396,12 +396,16 @@ def _saved_desktop_session(cloud, record):
 
 def test_desktop_access_fails_closed_and_recovers_with_a_fresh_cloud_answer(cloud, tmp_path):
     record = tmp_path / "cloud.json"
-    gate = DesktopAccess(record)
+    now = [1000.0]
+    gate = DesktopAccess(record, clock=lambda: now[0])
     assert gate.check()["state"] == "signed_out" and cloud.seen == []
     _saved_desktop_session(cloud, record)
     assert gate.check() == {"ok": True, "admitted": True, "state": "admitted",
                             "subject": "u-42", "email": "ahmed@example.com"}
     cloud.me_status = 503
+    # A short outage keeps the same account admitted; past the grace it locks (founder 2026-11-25).
+    assert gate.check()["state"] == "admitted"
+    now[0] += 301
     assert gate.check() == {"ok": True, "admitted": False, "state": "unavailable",
                             "subject": None, "email": None}
     cloud.me_status = 401
@@ -453,7 +457,7 @@ def test_desktop_http_admission_protects_work_and_rebinds_initial_canvas(cloud, 
         return {"ok": True, "path": "first-user-original.archhub"}
 
     monkeypatch.setattr(SessionFiles, "dispatch", initial)
-    server = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+    server = NoGraphServer(state, desktop_access=DesktopAccess(record, offline_grace=-1)).start()
 
     def call(path, body=None, *, subject="u-42"):
         req = urllib.request.Request(server.public_url + path,
@@ -553,7 +557,7 @@ def test_simultaneous_admissions_share_only_the_inflight_cloud_verdict(cloud, tm
             release.set()
         assert first.result()["admitted"] and second.result()["admitted"]
     assert len(calls) == 1
-    assert gate.check()["state"] == "unavailable"
+    assert gate.check()["state"] == "admitted"  # one unanswered check inside the grace keeps work going
     assert len(calls) == 2
 
 
@@ -594,7 +598,7 @@ def test_queued_canvas_write_is_refused_even_if_the_cloud_reconnects(cloud, tmp_
 
     monkeypatch.setattr(canvas_documents, "locked", observing_lock)
     monkeypatch.setattr(NoGraphServer, "_start_admitted_services", lambda _server: None)
-    server = NoGraphServer(tmp_path / "profile", desktop_access=DesktopAccess(record)).start()
+    server = NoGraphServer(tmp_path / "profile", desktop_access=DesktopAccess(record, offline_grace=-1)).start()
     payload = {"action": "autosave", "path": str(path), "document": {**document, "title": "After"}}
     try:
         with ThreadPoolExecutor(max_workers=1) as workers:
@@ -695,7 +699,7 @@ def test_same_verified_account_recovers_after_ordinary_sign_in_rotation(cloud, t
     document = new_document("Retain across account credential changes")
     write_document(path, document)
     original = path.read_bytes()
-    app = NoGraphServer(state, desktop_access=DesktopAccess(record)).start()
+    app = NoGraphServer(state, desktop_access=DesktopAccess(record, offline_grace=-1)).start()
 
     def call(action, subject="u-42", **body):
         return _desktop_request(app, "/api/session-files", subject=subject, body={"action": action, **body})

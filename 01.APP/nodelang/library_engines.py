@@ -3969,6 +3969,8 @@ ENGINE_SOCKETS["blender.render_scene"] = {"source": ("image", "out"), "target": 
 LIBRARY_ITEM_ENGINES["max_render_view"] = {
     "engine": "max.render_view",
     "program": "3ds Max",
+    "approvalRequired": True,
+    "effect": True,
     "params": {"Camera": "Camera01", "Quality": "Draft"},
     "paramDefs": [
         {"id": "Camera", "name": "Camera", "type": "text"},
@@ -3994,6 +3996,8 @@ LIBRARY_ITEM_ENGINES["rhino_bake_geometry"] = {
 LIBRARY_ITEM_ENGINES["blender_render_scene"] = {
     "engine": "blender.render_scene",
     "program": "Blender",
+    "approvalRequired": True,
+    "effect": True,
     "params": {"Samples": int(_WHOLE_DESIGN_LIMITS["params"]["default_render_samples"])},
     "paramDefs": [{
         "id": "Samples",

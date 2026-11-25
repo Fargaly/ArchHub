@@ -129,6 +129,9 @@ def test_ag16_three_typed_host_nodes_unreachable_and_live_execution(tmp_path: Pa
     assert max_card["params"] == {"Camera": "Camera01", "Quality": "Draft"}
     assert {"id": "task", "type": "event"} in max_card["ports"]["target"]
     assert max_card["ports"]["source"] == [{"id": "image", "type": "file"}]
+    # A render runs code in 3ds Max and writes a file: an effect behind the Approve card.
+    assert max_card["pure"] is False and is_pure("max.render_view") is False
+    assert max_card["approvalRequired"] is True
     max_defs = {d["id"]: d for d in max_card["paramDefs"]}
     assert max_defs["Camera"]["type"] == "text"
     assert max_defs["Quality"]["type"] == "choice" and max_defs["Quality"]["options"] == ["Draft", "Final"]
@@ -150,6 +153,8 @@ def test_ag16_three_typed_host_nodes_unreachable_and_live_execution(tmp_path: Pa
     assert blender_card["params"] == {"Samples": 64}
     assert {"id": "task", "type": "event"} in blender_card["ports"]["target"]
     assert blender_card["ports"]["source"] == [{"id": "image", "type": "file"}]
+    assert blender_card["pure"] is False and is_pure("blender.render_scene") is False
+    assert blender_card["approvalRequired"] is True
     s_def = next(d for d in blender_card["paramDefs"] if d["id"] == "Samples")
     assert (s_def["type"], s_def["min"], s_def["max"], s_def["step"]) == ("integer", 8, 1024, 8)
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import html
 import json
 import re
 import shutil
@@ -53,6 +54,9 @@ MONTHS = "January|February|March|April|May|June|July|August|September|October|No
 BUILD_MENTION = re.compile(r"\b20\d{6}-\d{4,6}(?:-[\w]+)*?-([0-9a-f]{7,40})\b|\(([0-9a-f]{8,40})\)"
                            rf"|\b((?:{MONTHS}) \d{{1,2}} stable build)\b")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
+# The sign-in contract every released build documents (SPEC §9.5), and the retired optional-sign-in wording.
+SIGNIN_REQUIRED = "Desktop work needs an internet connection and a verified"
+SIGNIN_STALE = ("sign in later", "without an account", "sign-in is optional")
 
 # The area READMEs: purpose and links (relative to the area folder) stay as the coordinator set them.
 AREAS = {
@@ -124,16 +128,24 @@ def foreign_builds(text: str, rel: dict) -> list[str]:
     return found
 
 
-def docs_text(revision: str | None = None) -> str:
-    """The in-app guide templates (site_export._DOCS_TEMPLATES) at a revision, never imported."""
-    path = "01.APP/nodelang/site_export.py"
-    source = None
-    if revision:
-        shown = subprocess.run(["git", "-C", str(ROOT), "show", f"{revision}:{path}"],
-                               capture_output=True, text=True, encoding="utf-8")
-        source = shown.stdout if shown.returncode == 0 else None
-    if source is None:
-        source = (ROOT / path).read_text(encoding="utf-8")
+def docs_problems(text: str, rel: dict) -> list[str]:
+    """Other builds named, retired optional-sign-in wording, or the account-required wording missing."""
+    flat = re.sub(r"\s+", " ", text)
+    problems = foreign_builds(flat, rel) + [phrase for phrase in SIGNIN_STALE if phrase in flat.lower()]
+    return problems + ([] if SIGNIN_REQUIRED in flat else ["account-required sign-in wording missing"])
+
+
+def docs_text(revision: str | None) -> str | None:
+    """The in-app guides at the released revision; None when that revision cannot be read (never the working tree)."""
+    if not revision:
+        return None
+    shown = subprocess.run(["git", "-C", str(ROOT), "show", f"{revision}:01.APP/nodelang/site_export.py"],
+                           capture_output=True, text=True, encoding="utf-8")
+    return templates_text(shown.stdout) if shown.returncode == 0 else None
+
+
+def templates_text(source: str) -> str:
+    """The guide templates (site_export._DOCS_TEMPLATES) from source text, never imported."""
     tree = ast.parse(source)
     value = next(node.value for node in tree.body if isinstance(node, ast.Assign)
                  and getattr(node.targets[0], "id", "") == "_DOCS_TEMPLATES")
@@ -263,11 +275,13 @@ def check(rel: dict, areas: Path | None, get=fetch, notion=notion_page) -> list[
     page = get(SITE + "/changelog/") or ""
     court("website changelog", site_heading(build) in page, f"heading {site_heading(build)!r} " + ("found" if site_heading(build) in page else "absent"))
     docs_page = get(SITE + "/docs/getting-started/")
-    stale = foreign_builds(re.sub(r"<[^>]+>", " ", docs_page or ""), rel)
-    court("website docs", docs_page and not stale, "unreadable" if docs_page is None else f"other builds named: {stale[:3]}")
+    stale = docs_problems(html.unescape(re.sub(r"<[^>]+>", " ", docs_page or "")), rel)
+    court("website docs", docs_page and not stale, "unreadable" if docs_page is None else f"problems: {stale[:4]}")
 
-    stale = foreign_builds(docs_text(rel["source"] or None), rel)
-    court("in-app docs", not stale, f"other builds named at {rel['source'][:8] or 'working tree'}: {stale[:3]}")
+    guides = docs_text(rel["source"])
+    stale = docs_problems(guides or "", rel)
+    court("in-app docs", guides is not None and not stale,
+          f"revision {rel['source'][:8] or '(none)'} unreadable" if guides is None else f"problems at {rel['source'][:8]}: {stale[:4]}")
 
     page = notion()
     current = re.search(r"Current build:\S*\s*([^\s(\\]+)", page or "")
@@ -325,10 +339,21 @@ def posted_research(query=None) -> set[str] | None:
             query = notion_mcp.call_tool
         sql = f'SELECT "Name" FROM "{RESEARCH_DB}" WHERE "Name" LIKE \'%(res-%\''
         answer = query("notion-query-data-sources", {"data": {"mode": "sql", "data_source_urls": [RESEARCH_DB], "query": sql}})
-        rows = answer.get("structuredContent", {}).get("results", [])
-        return {m for row in rows for m in re.findall(r"\((res-\d+)\)", row.get("Name", ""))}
+        return research_ids(answer)
     except Exception as exc:  # any client, grant or network failure means de-duplication is unverified
         return unreadable("Research Library", exc)
+
+
+def research_ids(answer: dict) -> set[str]:
+    """res ids in any Notion tool answer: structuredContent rows, or the JSON text in content[].text
+    (notion-search answers carry only text, with results[].title like "R&D: 2026-11-23 (res-075)")."""
+    rows = list((answer.get("structuredContent") or {}).get("results", []))
+    for part in answer.get("content", []):
+        try:
+            rows += json.loads(part.get("text", "")).get("results", [])
+        except (ValueError, AttributeError) as exc:
+            unreadable("Notion text part", exc)
+    return {m for row in rows for key in ("Name", "title") for m in re.findall(r"\((res-\d+)\)", str(row.get(key, "")))}
 
 
 def research_rows(ids: list[str], folder: Path, posted: set[str] | None) -> list[dict]:

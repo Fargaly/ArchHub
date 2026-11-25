@@ -18,6 +18,7 @@ BODY = ("- WhatsApp Business supports inbox reads for linked numbers.\n"
         "- The desktop keeps a verified sign-in through a brief connection failure.\n\n"
         "## Build\nBUILD_ID: 20261125-1227-0d3464c\nBUILT_AT: 2026-11-25T09:01:38Z\n"
         "SHA256 ArchHub-Setup-0.exe: " + "b" * 64 + "\nSOURCE_REVISION: 0d3464c786933c5156f04b4a3bdedf26e00ad27e\n")
+GOOD_DOCS = "<p>Build 20261125-1227-0d3464c. Desktop work needs an internet connection and a verified ArchHub account.</p>"
 RELEASES = [{"tag_name": "build-20261124-1422-7a222b2", "published_at": "2026-11-24T14:00:00Z", "body": "## Build\nBUILD_ID: 20261124-1422-7a222b2\n"},
             {"tag_name": "build-20261125-1227-0d3464c", "published_at": "2026-11-25T09:30:00Z", "body": BODY}]
 
@@ -41,9 +42,30 @@ def test_foreign_builds_flags_other_builds_only():
     assert rs.foreign_builds(text, rel) == ["November 20 stable build", "(9d03226d)", "20261124-0344-a4980b0"]
 
 
-def test_current_in_app_docs_name_no_other_build():
+def test_current_in_app_docs_pass_the_docs_court():
     rel = rs.released(RELEASES)
-    assert rs.foreign_builds(rs.docs_text(None), rel) == []
+    source = (ROOT / "01.APP/nodelang/site_export.py").read_text(encoding="utf-8")
+    assert rs.docs_problems(rs.templates_text(source), rel) == []
+
+
+def test_docs_court_rejects_optional_sign_in_and_requires_the_account_wording():
+    rel = rs.released(RELEASES)
+    assert rs.docs_problems("Sign in later.", rel) == ["sign in later", "account-required sign-in wording missing"]
+    assert rs.docs_problems("Nothing about accounts.", rel) == ["account-required sign-in wording missing"]
+    assert rs.docs_problems(GOOD_DOCS, rel) == []
+
+
+def test_unreadable_release_revision_is_not_replaced_by_the_working_tree():
+    assert rs.docs_text("0" * 40) is None
+    assert rs.docs_text("") is None
+
+
+def test_research_ids_read_text_only_notion_search_answers():
+    text = json.dumps({"results": [{"id": "423f57b4", "title": "R&D: 2026-11-23 (res-075)"},
+                                   {"id": "x", "title": "Unrelated page"}]})
+    assert rs.research_ids({"content": [{"type": "text", "text": text}]}) == {"res-075"}
+    assert rs.research_ids({"structuredContent": {"results": [{"Name": "R&D: 2026-11-24 (res-077)"}]}}) == {"res-077"}
+    assert rs.research_ids({"content": [{"type": "text", "text": "not json"}]}) == set()
 
 
 def test_check_passes_when_every_surface_agrees_and_fails_each_that_does_not(tmp_path, monkeypatch):
@@ -52,12 +74,12 @@ def test_check_passes_when_every_surface_agrees_and_fails_each_that_does_not(tmp
     fly.write_text('[env]\n  ARCHHUB_VERSION = "0"\n', encoding="utf-8")
     monkeypatch.setattr(rs, "FLY_TOML", fly)
     monkeypatch.setattr(rs, "ROOT", tmp_path)
-    monkeypatch.setattr(rs, "docs_text", lambda revision: "guides for this build")
+    monkeypatch.setattr(rs, "docs_text", lambda revision: GOOD_DOCS if revision else None)
     (tmp_path / "CHANGELOG.md").write_text("## Next build\n\n## " + rel["build_id"] + "\n\n"
                                            + "".join(f"- {n}\n" for n in rel["notes"]), encoding="utf-8")
     pages = {rs.SITE + "/download.json": json.dumps({"build_id": rel["build_id"]}),
              rs.SITE + "/changelog/": "<h2>2026-11-25 · 12:27</h2>",
-             rs.SITE + "/docs/getting-started/": "<p>Build 20261125-1227-0d3464c</p>",
+             rs.SITE + "/docs/getting-started/": GOOD_DOCS,
              rs.CLOUD + "/healthz": json.dumps({"ok": True, "version": rel["build_id"]})}
     notion = lambda: "Current build:** 20261125-1227-0d3464c ([download]"  # noqa: E731
     areas = tmp_path / "areas"
@@ -77,11 +99,15 @@ def test_check_passes_when_every_surface_agrees_and_fails_each_that_does_not(tmp
 
     stale = dict(pages)
     stale[rs.SITE + "/changelog/"] = "<h2>2026-11-24 · 03:44</h2>"
-    stale[rs.SITE + "/docs/getting-started/"] = "<p>The November 20 stable build (9d03226d)</p>"
+    stale[rs.SITE + "/docs/getting-started/"] = "<p>Sign in later.</p>"
     (areas / "12.WEBSITE" / "notes.txt").write_text("loose", encoding="utf-8")
     (areas / "14.DOCS" / "README.md").write_text("[gone](../11.ARCHHUB-APP/missing.md)", encoding="utf-8")
     failed = [s for s, ok, _ in rs.check(rel, areas, get=stale.get, notion=lambda: None) if not ok]
     assert failed == ["website changelog", "website docs", "notion", "area 12.WEBSITE", "area 14.DOCS"]
+
+    unreleased = dict(rel, source="")
+    failed = [s for s, ok, _ in rs.check(unreleased, None, get=pages.get, notion=notion) if not ok]
+    assert failed == ["in-app docs"]
 
 
 def test_area_readme_never_carries_the_fly_user_and_keeps_links_relative():
@@ -108,3 +134,22 @@ def test_research_rows_skip_posted_ids_and_follow_the_library_schema(tmp_path):
     assert props["Status"] == "Read" and props["date:Read on:start"] == "2026-11-24"
     with pytest.raises(SystemExit):
         rs.research_rows(["099"], tmp_path, posted)
+
+
+def test_a_refused_github_api_is_one_line_naming_the_cause(monkeypatch):
+    import urllib.error
+
+    def refuse(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 403, "rate limit exceeded", {}, None)
+
+    monkeypatch.setattr(rs.sync_changelog.urllib.request, "urlopen", refuse)
+    with pytest.raises(SystemExit) as refused:
+        rs.sync_changelog.fetch_releases("")
+    assert str(refused.value) == ("GitHub releases API refused: HTTP 403 (rate limit); "
+                                  "set GH_TOKEN or GITHUB_TOKEN, or sign in with gh")
+    monkeypatch.setenv("GH_TOKEN", "")
+    monkeypatch.setenv("GITHUB_TOKEN", "placeholder-env")
+    seen = []
+    monkeypatch.setattr(rs.sync_changelog.urllib.request, "urlopen",
+                        lambda request, timeout: seen.append(request.get_header("Authorization")) or __import__("io").BytesIO(b"[]"))
+    assert rs.sync_changelog.fetch_releases() == [] and seen == ["Bearer placeholder-env"]

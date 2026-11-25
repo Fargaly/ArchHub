@@ -100,14 +100,19 @@ def _entry(path):
 def _account_record(vault_entry):
     """The account's record for this entry (None: not signed in, offline, or not yet on the account)."""
     from . import account_sync
+    from .model_router import protected_credential_entry
     record = account_sync.connection(vault_entry)
     if record is account_sync.MISSING:
+        try:  # confirmed revocation: this PC's cached copy goes too
+            revoked = json.loads(protected_credential_entry(vault_entry))
+            _drop(_path(vault_entry), {"provider": revoked["provider"], "account_id": revoked["account_id"]})
+        except Exception as missed:
+            logging.getLogger(__name__).warning("revoked connection left in this PC's cache (%s)", type(missed).__name__)
         raise ValueError("social connection was removed from your ArchHub account")
     if not isinstance(record, dict):
         return None
     raw = account_sync.canonical(record).decode("ascii")
     try:  # the account rotated the token (refresh, another PC): this PC's cache follows
-        from .model_router import protected_credential_entry
         cached = protected_credential_entry(vault_entry)
     except Exception:
         cached = None

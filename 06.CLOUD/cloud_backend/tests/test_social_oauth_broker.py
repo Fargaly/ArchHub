@@ -975,7 +975,10 @@ def test_account_connections_are_per_account_encrypted_and_listed_without_tokens
     assert opened["record"]["token"] == "x-access-1"
     # Removing it from the account (a tombstone) stops every PC from resolving it.
     assert _sync_put(client, owner, "connections/social-x-101.json", None, sha).status_code == 200
-    assert client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(owner)).status_code == 404
+    removed = client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(owner))
+    assert removed.status_code == 410 and removed.json() == {"removed": True}
+    # Never stored is not "removed": a plain 404.
+    assert client.post("/v1/account-sync/connection/social-x-999", headers=_sync_headers(owner)).status_code == 404
     assert client.get("/v1/account-sync/manifest").status_code == 401
 
 

@@ -32,6 +32,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 import brain_replica
 import db
@@ -407,5 +408,14 @@ def connection(entry: str, authorization: str | None = Header(None)) -> dict:
     except SyncKeyUnavailable as exc:
         raise _unavailable(exc)
     if record is None:
+        if _removed(user["id"], _CONNECTIONS + entry + ".json"):
+            # The one revocation answer the desktop honours; any other miss reads as unavailable there.
+            return JSONResponse({"removed": True}, status_code=410)
         raise HTTPException(status_code=404, detail="account_sync_connection_missing")
     return {"ok": True, "record": record}
+
+
+def _removed(user_id: str, logical_path: str) -> bool:
+    with _manifest(_root(user_id)) as con:
+        head = con.execute("SELECT deleted FROM items WHERE logical_path = ?", (logical_path,)).fetchone()
+    return bool(head and head["deleted"])

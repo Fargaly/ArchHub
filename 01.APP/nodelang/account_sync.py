@@ -144,9 +144,9 @@ def connection(entry):
     code, answer = _call("POST", f"/v1/account-sync/connection/{entry}")
     if code == 200 and isinstance(answer.get("record"), dict):
         return answer["record"]
-    if code == 404 and "connections/" + urllib.parse.unquote(entry) + ".json" in _state()["base"]:
-        return MISSING
-    return None
+    if code == 410 and answer == {"removed": True}:
+        return MISSING  # only the account-sync route's explicit removal answer revokes
+    return None  # a missing route, a bare 404, 5xx or no answer: unavailable, this PC's cache serves
 
 
 def _fetch(path, sha256):
@@ -184,7 +184,7 @@ def _restore(prefix, hooks, heads, state):
     for path, (meta, content) in local.items():
         if path in remote or path in state["pending_delete"]:
             continue
-        if path in state["base"]:  # removed from the account on another PC
+        if path in state["base"] and heads.get(path, {}).get("deleted") is True:  # removed on another PC (tombstone)
             hooks["drop"](path, meta)
             state["base"].pop(path)
             counts["dropped"] += 1

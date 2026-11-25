@@ -112,6 +112,8 @@ class _FakeAccount:
     def __init__(self):
         self.heads = {}  # path -> bytes (absent = removed)
         self.lost = set()  # paths sealed under a key the cloud lost
+        self.removed = set()  # paths the account removed (answer 410 {"removed": true})
+        self.bare_404 = False  # a cloud without the account-sync routes
         self.calls = []
 
     def put_record(self, path, record):
@@ -126,6 +128,8 @@ class _FakeAccount:
         import gzip
         import hashlib
         assert bearer == "account-bearer"
+        if self.bare_404:
+            return 404, {"detail": "Not Found"}
         route = url.split("/v1/account-sync/", 1)[1]
         self.calls.append((method, route.split("?")[0]))
         if route.startswith("manifest"):
@@ -135,16 +139,20 @@ class _FakeAccount:
         if route == "item":
             if body.get("deleted"):
                 self.heads.pop(body["logical_path"], None)
+                self.removed.add(body["logical_path"])
                 return 200, {"sha256": ""}
             content = gzip.decompress(base64.b64decode(body["content_b64"]))
             self.heads[body["logical_path"]] = content
             self.lost.discard(body["logical_path"])
+            self.removed.discard(body["logical_path"])
             return 200, {"sha256": hashlib.sha256(content).hexdigest()}
         if route.startswith("blob/"):
             path = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["logical_path"][0]
             return 200, {"content_b64": base64.b64encode(gzip.compress(self.heads[path])).decode()}
         path = "connections/" + route.split("/", 1)[1] + ".json"
-        return (200, {"record": json.loads(self.heads[path])}) if path in self.heads else (404, {})
+        if path in self.heads:
+            return 200, {"record": json.loads(self.heads[path])}
+        return (410, {"removed": True}) if path in self.removed else (404, {"detail": "account_sync_connection_missing"})
 
 
 def _signed_in_account(monkeypatch, entries, user="user-a"):
@@ -202,13 +210,14 @@ def test_a_new_pc_receives_the_account_connections_and_removal_follows_the_accou
     assert json.loads(entries["social-x-101"])["token"] == "x-account-1"
     # Removed from the account on another PC: refused here, then dropped from this PC's cache.
     account.heads.clear()
+    account.removed.add(X_PATH)
     try:
         social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101")
         raise AssertionError("a connection removed from the account still resolved")
     except ValueError as refused:
         assert "removed from your ArchHub account" in str(refused)
-    assert account_sync.pull_and_restore("connections/")["connections/"]["dropped"] == 1
-    assert entries == {}
+    assert entries == {}  # the confirmed revocation dropped the cached copy at once
+    assert account_sync.pull_and_restore("connections/")["connections/"]["dropped"] == 0
     # Connecting on this PC puts it on the account; removing it here removes it from the account.
     model_router.save_social_credential({"vault_entry": "social-x-101", "provider": "x", "account_id": "101",
                                          "token": "x-local-3", "display_name": "Studio X"}, verified=True)
@@ -254,3 +263,31 @@ def test_a_connection_the_account_can_no_longer_open_heals_from_this_pc_or_asks_
     row = social_connections.connection("x", accounts=[], attempt={"phase": "idle"})
     assert row["state"] == "blocked" and row["blocker"].startswith("Reconnect")
     assert X_PATH in account.heads
+
+
+def test_a_cloud_without_the_route_or_a_bare_404_serves_the_cache_never_removed(monkeypatch):
+    from nodelang import account_sync
+    entries = {"social-x-101": _x_local("x-local-1")}
+    account = _signed_in_account(monkeypatch, entries)
+    account_sync.pull_and_restore("connections/")  # previously synced
+    account.bare_404 = True  # the deployed cloud has no /v1/account-sync yet
+    assert social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101") == "x-local-1"
+    account.bare_404 = False
+    account.heads.clear()  # never stored there and not removed: a plain 404 is not a revocation
+    assert social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101") == "x-local-1"
+    assert "social-x-101" in entries
+
+
+def test_only_the_explicit_410_removed_answer_revokes_and_drops_the_cache(monkeypatch):
+    from nodelang import account_sync
+    entries = {"social-x-101": _x_local("x-local-1")}
+    account = _signed_in_account(monkeypatch, entries)
+    account_sync.pull_and_restore("connections/")
+    account.heads.clear()
+    account.removed.add(X_PATH)
+    try:
+        social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101")
+        raise AssertionError("a revoked connection still resolved")
+    except ValueError as refused:
+        assert "removed from your ArchHub account" in str(refused)
+    assert entries == {}

@@ -190,8 +190,8 @@
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
     // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
     const paused=row=>row.paused===true||[row.status,row.outcome,row.rowState].some(value=>String(value).toLowerCase()==='paused');
-    const interruptedWork=row=>!row.workingNow&&!paused(row)&&row.status!=='DONE'&&row.status!=='ARCHIVED'&&
-      (row.outcome==='interrupted'||window.UI.taskRowReason?.(row)==='interrupted'||pieceOfWork(row)&&(row.outcome==='unknown'||!!row.stale||!(row.members||[]).some(isLiveMember)));
+    const interruptedWork=row=>pieceOfWork(row)&&!row.workingNow&&!paused(row)&&
+      (row.outcome==='interrupted'||window.UI.taskRowReason?.(row)==='interrupted'||row.outcome==='unknown'||!!row.stale||!(row.members||[]).some(isLiveMember));
     const sectionOf=row=>{
       if(row.approval||waiting.has(row.id))return 'Needs you';  // a held run needs him, whoever is working
       if(paused(row))return 'Paused';
@@ -277,6 +277,7 @@
         parent: row?.parent || '', title: session.title,
         project: rows.projectLabel(session.project?.id, session.project?.label),
         kind: declared && session.authoredRegistration ? 'workflow' : row?.kind || session.kind || 'agent-session', older: archived || (!!row && rows.sectionOf(row) === 'Older / archived'),
+        inProgress: Boolean(row && row.status === 'WIP' && !declared && !archived),
         pinned: !!session.pinned, ...fact, state, running, armed, paused,
         finished: fact.finished || session.state === 'done' || row?.status === 'DONE', links: session.inputLinks || []};
     });
@@ -289,6 +290,7 @@
       project: rows.projectLabel(row.workspace, row.project),
       pinned: !!row.homePinned, ...facts(row, null, row.approval && row.who ? [{name: row.who}] : row.members || []), armed: 0, links: [],
       kind: row.kind || 'agent-session', older: !row.approval && rows.sectionOf(row) === 'Older / archived',
+      inProgress: row.status === 'WIP',
       ...(row.approval ? {state: 'Needs you', need: {text: row.title + ' needs your approval', approval: row.approval}} : {}), ...(row.status === 'DONE' ? {finished: true} : {})}));
     const every = [...files.filter(card => !card.registration || history && card.authoredRegistration), ...loose];
     // Projects > tasks > subtasks (one task owner, parent_id): a subtask sits in its top task's group, wired from its parent,
@@ -301,7 +303,7 @@
     const selected = card => focus && card.task ? card.task === focus : sameHomePath(card.path, focusPath);
     const active = every.filter(card => !hidden.includes(card.taskIdentity) &&
       (card.need?.approval || (!card.archived && (card.pinned || card.armed || card.running || selected(card) ||
-        ['Failed','Working','Needs you','Paused'].includes(card.state) || (card.state === 'Planned' && !card.finished)))));
+        ['Failed','Working','Needs you','Paused'].includes(card.state) || ((card.state === 'Planned' || (card.inProgress && !card.older)) && !card.finished)))));
     const available = (history ? every : active).filter(card => !chainUp(card).some(up => up.subtasksFolded));
     const matches = card =>
       (p.done === 'Show' || !card.finished || card.pinned || card.running || card.armed || card.need?.approval) &&
@@ -1411,7 +1413,7 @@
                         const attention = window.UI.deliveryAttention?.(m);
                         const who = m.sender_key || m.who || sender;
                         const open = detailId === (m.id || who);
-                        return <article key={m.id} data-design="thread.message" data-pinned={task?.pinnedMessages?.includes(m.id)} className="dx-msg" onContextMenu={e=>{e.preventDefault();u.show('Task message menu',{taskId:task.id,message:m,open:()=>replyToMessage(m)});}}><span className="dx-avatar" style={{background:'var(--color-bg-soft)',color:'var(--color-ink-soft)'}} aria-hidden="true" title={sender}>{own && (!s.profile.name || s.profile.name === 'You') ? 'You' : String(own ? s.profile.name : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><div className="dx-msg-heading"><b>{sender}</b><span>→ {m.to ? (people.whoIs ? people.whoIs(m.to).name : m.to) : own ? ownerOf(task) || 'Agent' : 'You'}</span></div><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><span hidden={!attention} className="dx-delivery-chip" data-delivery-attention={attention || undefined} role="status">{attention}</span>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
+                        return <article key={m.id} data-design="thread.message" data-pinned={task?.pinnedMessages?.includes(m.id)} className="dx-msg" onContextMenu={e=>{e.preventDefault();u.show('Task message menu',{taskId:task.id,message:m,open:()=>replyToMessage(m)});}}><span className="dx-avatar" style={{background:'var(--color-bg-soft)',color:'var(--color-ink-soft)'}} aria-hidden="true" title={sender}>{own && (!s.profile.name || s.profile.name === 'You') ? 'You' : String(own ? s.profile.name : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><div className="dx-msg-heading"><b>{sender}</b><span>→ {m.to ? (people.whoIs ? people.whoIs(m.to).name : m.to) : own ? ownerOf(task) || 'Agent' : 'You'}</span></div><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><span hidden={!attention} className="dx-delivery-chip" data-delivery-attention={attention || undefined} role="status">{attention}</span>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions" style={{pointerEvents: 'auto'}}><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
                       })}
                       {/* Design: a held step of this task is answered inside the thread too: Review shows the step, Ask why asks the agent in the composer. */}
                       {approvalSteps.map(({card}) => { const step = s.graph.nodes.find(node => node.id === card.nodeId)?.title || card.title;

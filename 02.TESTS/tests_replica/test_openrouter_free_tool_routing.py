@@ -15,11 +15,19 @@ class _Answer(io.BytesIO):
         return False
 
 
+def _forget_router_memory():
+    model_router._reset_openrouter_free_tool_catalogue_cache()
+    # A 429 in one case marks that model unavailable for the session; each case starts fresh.
+    with model_router._SESSION_MODEL_LOCK:
+        model_router._UNAVAILABLE_UNTIL.clear()
+        model_router._OPENROUTER_FREE_ANSWERED_AT.clear()
+
+
 @pytest.fixture(autouse=True)
 def _reset_tool_catalogue_cache():
-    model_router._reset_openrouter_free_tool_catalogue_cache()
+    _forget_router_memory()
     yield
-    model_router._reset_openrouter_free_tool_catalogue_cache()
+    _forget_router_memory()
 
 
 class _Wire:
@@ -214,7 +222,8 @@ def test_openrouter_free_tool_turn_never_sends_tools_to_non_tool_model():
     else:
         raise AssertionError("expected non-tool free model refusal")
 
-    assert failure.reason_code == "non_chat_model"
+    # Not listed as tool-capable is a catalogue miss; non_chat_model is kept for safety classifiers (SWITCHFIX).
+    assert failure.reason_code == "tool_catalogue_unavailable"
     assert wire.chat_requests == []
 
 

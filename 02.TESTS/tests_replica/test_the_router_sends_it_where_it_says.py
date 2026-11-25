@@ -18,11 +18,13 @@ import urllib.error
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from nodelang import model_catalogue, model_router
+from nodelang import model_catalogue, model_router, nograph_server
 from nodelang.model_router import (
     LM_STUDIO_CHAT,
     ModelRouteRefused,
@@ -1630,120 +1632,188 @@ def test_openrouter_catalogue_excludes_safety_models_from_chat_rows():
     assert "nvidia/nemotron-3.5-lightning:free" in routes
 
 
-def test_the_server_hands_the_picker_routes_and_the_refusal_as_words():
-    server = (ROOT / "01.APP/nodelang" / "application_server.py").read_text(encoding="utf-8")
-    assert "groups_with_routes(live_model_groups(session))" in server
-    branch = server[server.index("'/api/universal/agent'"):]
-    branch = branch[:branch.index("'/api/universal/run-graph'")]
-    assert "ModelRouteRefused" in branch, "the router's refusal is caught here"
-    assert "'answer': str(refused)" in branch, "and comes back as the answer to show"
+# The composer's owners now: the NoGraph routes (/api/universal/models, /api/router/chat,
+# /api/router/settings) over model_router. application_server.py and studio-lm.jsx are retired.
+# These run the real route code; the provider call (model_router.route_chat) is the only fake.
+
+class _Stream:
+    """The composer's request as /api/router/chat sees it, and everything written back to it."""
+
+    def __init__(self, body):
+        self._body = body
+        self.wfile = io.BytesIO()
+        self.status = None
+        self.close_connection = False
+
+    def body(self):
+        return self._body
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, name, value):
+        pass
+
+    def end_headers(self):
+        pass
+
+    @property
+    def events(self):
+        text = self.wfile.getvalue().decode("utf-8")
+        return [json.loads(chunk[len("data: "):]) for chunk in text.split("\n\n") if chunk]
 
 
-def _jsx():
-    return (ROOT / "01.APP/nodelang" / "studio" / "studio-lm.jsx").read_text(encoding="utf-8")
+_ADMITTED = SimpleNamespace(ensure_current_desktop_access=lambda admission: None,
+                            admit_chat=lambda: (lambda: False), _desktop_epoch=0)
 
 
-def _block(source, opening, closing):
-    start = source.index(opening)
-    return source[start:source.index(closing, start)]
+def _ask(body):
+    stream = _Stream(body)
+    nograph_server.NoGraphServer._router_chat(_ADMITTED, stream)
+    return stream
 
 
-def test_the_canvas_composer_asks_the_model_that_is_selected():
-    jsx = _jsx()
-    composer = _block(jsx, "const ScopeComposer = ", "const InspectorTabs = ")
-    assert "const route = nodeRoute || modelRoute(model);" in composer, "the picked/default model reaches the moved composer"
-    assert "target.kind === 'graph'" in composer and "graph:true" in composer, "empty selection sends the graph target"
-    assert "request_id:requestId" in composer, "canvas sends carry the idempotency key"
-    rail = _block(jsx, "const NodeRail = ", "// ─── Conversation rail")
-    assert "<ScopeComposer target={target} model={model}" in rail, "the one composer sits in the selection panel"
-    assert "node:inspectedNode.graphNode ? null : inspectedNode" in rail, "node selection targets that node"
-    workspace = _block(jsx, "const Workspace = ", "// The string the server's router reads")
-    assert "<NodeCanvas" in workspace and "addNodeFromLibrary={addNodeFromLibrary} model={model}" in workspace
-    assert "<NodeRail" in workspace and "model={model}" in workspace
-    assert "<NodeCanvas" in jsx and "addNodeFromLibrary={addNodeFromLibrary} model={model}" in jsx
-    ask = _block(jsx, "const InlineAsk = ", "const NodeBody = ")
-    # Canvas asks use the picked route; focused node asks use the node's
-    # committed route, so the box cannot silently drift to another model.
-    assert "const route = node ? nodeModelRoute(node) : modelRoute(picked);" in ask
-    assert "window.ARCHHUB_AGENT(said, route," in ask
-    assert "window.ARCHHUB_PICKED_MODEL" in ask
-    assert "window.ARCHHUB_PICKED_MODEL = model;" in jsx, "the choice is published once"
-    assert "model?.route" not in jsx, "the routable string, not the raw id"
+@pytest.fixture
+def router_seen(monkeypatch):
+    seen = {"routes": [], "answers": []}
+
+    def provider(route, messages, **options):
+        seen["routes"].append(route)
+        seen["roles"] = [message["role"] for message in messages]
+        delta = options.get("on_delta")
+        if seen.get("refuse"):
+            if delta and seen.get("partial"):
+                delta(seen["partial"])
+            raise ModelRouteRefused(seen["refuse"], reason_code="provider_rate_limited")
+        text = seen.get("text", "ok")
+        if delta:
+            delta(text[:10])
+        return {"text": text, "model": route, "provider": "fixture", "usage": {}}
+
+    def recorded(question, answer, model, task=None, to="Router"):
+        seen["answers"].append((question, answer, model, task))
+
+    from nodelang import workshop_live
+    monkeypatch.setattr(model_router, "route_chat", provider)
+    monkeypatch.setattr(workshop_live, "record_answer", recorded)
+    return seen
 
 
-def test_the_answer_is_rendered_where_the_person_typed():
-    jsx = _jsx()
-    composer = _block(jsx, "const ScopeComposer = ", "const InspectorTabs = ")
-    assert "const [state, setState] = React.useState('')" in composer
-    assert "setState(answer)" in composer, "the ask reports back into the box"
-    assert "{state && <div role=\"status\" data-chat-turn=\"error\"" in composer, "and the box draws it"
-    assert "whiteSpace:'pre-wrap'" in composer, "a whole answer, not a 60 character stub"
-    ask = _block(jsx, "const InlineAsk = ", "const NodeBody = ")
-    assert "report(answer)" in ask and "report('refused: '" in ask
+_HELD = {"ok": True, "count": 2, "groups": [
+    {"name": "LOCAL · this machine", "items": [{"route": "lmstudio/qwen2.5-coder-7b", "tag": "LOCAL"}]},
+    {"name": "OpenRouter", "items": [{"route": "nvidia/nemotron-3.5-lightning:free", "tag": "BYO"}]},
+]}
 
 
-def test_the_chat_rail_and_the_composer_use_the_same_route_string():
-    jsx = _jsx()
-    assert "const modelRoute = (m) => String((m && (m.routed || m.route)) || '');" in jsx
-    routed = jsx.count("modelRoute(model)") + jsx.count("modelRoute(picked)")
-    assert routed >= 3, "chat rail, composer, and every inline ask: %d" % routed
-    picker = _block(jsx, "const ModelPicker = ", "// ──────────────────────── DOCS")
-    assert "fetch('/api/universal/models'" in picker
-    assert "modelRoute(m) === selectedRoute" in picker
-    assert "routed:'cloud/" not in picker, "the picker is live-only; no seeded cloud rows"
+def _picker(monkeypatch):
+    """GET /api/universal/models: the held catalogue through the server's own probe and route."""
+    from nodelang import cloud_relay
+    monkeypatch.setattr(model_catalogue, "held_model_groups_read_only", lambda *args, **kwargs: _HELD)
+    monkeypatch.setattr(cloud_relay, "load_cloud_session", lambda *args, **kwargs: None)
+    probed = nograph_server.NoGraphServer._probe_models()
+    owner = SimpleNamespace(_models=SimpleNamespace(get=lambda: probed, running=False))
+    return nograph_server.r_providers(owner, SimpleNamespace(path="/api/universal/models"))
+
+
+def _rows(listing):
+    return [item for group in listing["groups"] for item in group["items"]]
+
+
+def test_the_server_hands_the_picker_routes_and_the_refusal_as_words(monkeypatch, router_seen):
+    listing = _picker(monkeypatch)
+    assert [row["routed"] for row in _rows(listing)] == [
+        "lmstudio/qwen2.5-coder-7b", "openrouter/nvidia/nemotron-3.5-lightning:free"]
+    assert listing["selected_route"] == listing["default_route"] == model_router.DEFAULT_FREE_ROUTE
+    router_seen["refuse"] = "OpenRouter refused this request: HTTP 429. Try again later or pick another model."
+    with pytest.raises(nograph_server.Refused) as refused:
+        _ask({"prompt": "how many walls", "agent": "Tester", "model": "lmstudio/qwen2.5-coder-7b"})
+    assert refused.value.status == 400
+    assert str(refused.value) == router_seen["refuse"], "the router's refusal, word for word"
+    router_seen["partial"] = "Four"
+    streamed = _ask({"prompt": "how many walls", "agent": "Tester", "model": "openrouter/free"})
+    assert streamed.events == [{"delta": "Four"}, {"error": router_seen["refuse"]}], (
+        "once an answer is streaming, the refusal arrives in the same stream")
+
+
+def test_the_canvas_composer_asks_the_model_that_is_selected(router_seen):
+    router_seen["text"] = "Four walls."
+    stream = _ask({"prompt": "how many walls", "agent": "Tester", "model": "lmstudio/qwen2.5-coder-7b"})
+    assert router_seen["routes"] == ["lmstudio/qwen2.5-coder-7b"], "the picked route, unchanged"
+    assert router_seen["roles"] == ["system", "user"]
+    assert stream.events[-1]["result"]["model"] == "lmstudio/qwen2.5-coder-7b"
+
+
+def test_the_answer_is_rendered_where_the_person_typed(router_seen):
+    whole = "The plan has four walls and one door. " * 6  # far past the old 60 character stub
+    router_seen["text"] = whole
+    stream = _ask({"prompt": "how many walls", "agent": "Tester", "model": "openrouter/free"})
+    assert stream.status == 200
+    assert stream.events[0] == {"delta": whole[:10]}, "streamed into the asking request as it arrives"
+    assert stream.events[-1]["result"]["answer"] == whole, "and settled whole in that same request"
+    assert router_seen["answers"] == [("how many walls", whole, "openrouter/free", None)], "and kept in the thread"
+
+
+def test_the_chat_rail_and_the_composer_use_the_same_route_string(monkeypatch, router_seen):
+    listing = _picker(monkeypatch)
+    for row in _rows(listing):
+        assert _ask({"prompt": "how many walls", "agent": "Tester", "model": row["routed"]}).events[-1]["result"]["ok"]
+    assert router_seen["routes"] == [row["routed"] for row in _rows(listing)], "the picker's string is the one sent"
+    model_router.composer_chat({"prompt": "how many walls", "agent": "BABOOM"})
+    assert router_seen["routes"][-1] == listing["selected_route"], "no pick: the route the picker shows as selected"
 
 
 def test_the_studio_source_still_compiles():
-    """A composer that does not parse shows nothing at all, silently."""
+    """A composer that does not parse shows nothing at all, silently. Studio ships what compile_studio.cjs builds."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not on this machine")
-    script = (
-        "const fs=require('fs'),vm=require('vm');"
-        "const s={navigator:{userAgent:'node'},console};"
-        "s.window=s;s.self=s;s.global=s;vm.createContext(s);"
-        "vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),s,{filename:'babel.js'});"
-        "const out=s.Babel.transform(fs.readFileSync(process.argv[2],'utf8'),{presets:['react']});"
-        "process.stdout.write(String(out.code.length));"
-    )
-    done = subprocess.run(
-        [node, "-e", script,
-         str(ROOT / "01.APP/nodelang" / "studio" / "vendor" / "babel.js"),
-         str(ROOT / "01.APP/nodelang" / "studio" / "studio-lm.jsx")],
-        capture_output=True, text=True, timeout=180,
-    )
-    assert done.returncode == 0, done.stderr[-600:]
-    assert int(done.stdout) > 100_000
+    for extra in ([], ["--check"]):
+        done = subprocess.run(
+            [node, "--max-old-space-size=512", str(ROOT / "03.TOOLS/packaging/compile_studio.cjs"), *extra],
+            cwd=ROOT, capture_output=True, text=True, timeout=180,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        assert done.returncode == 0, done.stderr[-600:]
+    assert (ROOT / "01.APP/nodelang/studio/compiled/ds_workshop3.js").stat().st_size > 0, "the composer is built"
 
 
-def test_there_is_no_hidden_default_model():
+def test_there_is_no_hidden_default_model(monkeypatch, router_seen):
     """A model nobody chose answered for months: the composer fell back to a
     route hidden in the source, on OpenRouter, for money. A default is DECLARED
     or it does not exist; without one and without a pick, the composer says
     what to pick instead of guessing."""
-    import inspect
-
+    probe = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "os.environ.pop('ARCHHUB_AGENT_MODEL', None)\n"
+        "from nodelang import agent_composer as ac\n"
+        "try:\n"
+        "    print('answered by ' + ac.chosen_model_route(''))\n"
+        "except ValueError as said:\n"
+        "    print(str(said) == ac.NO_MODEL_CHOSEN)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", probe, str(ROOT / "01.APP")],
+                          capture_output=True, text=True, timeout=120)
+    assert done.stdout.strip() == "True", done.stdout + done.stderr[-600:]
     from nodelang import agent_composer as ac
-
-    src = inspect.getsource(ac)
-    assert 'os.environ.get("ARCHHUB_AGENT_MODEL", "")' in src
-    assert 'os.environ.get(' + chr(10) + '    "ARCHHUB_AGENT_MODEL", "anthropic/claude-sonnet-4.5"' not in src, (
-        "the old hidden route must not survive as a fallback")
-    assert '"ARCHHUB_AGENT_MODEL", "anthropic' not in src
-    assert "raise InvalidCell(NO_MODEL_CHOSEN)" in src
     assert "picker" in ac.NO_MODEL_CHOSEN and "ARCHHUB_AGENT_MODEL" in ac.NO_MODEL_CHOSEN
+    monkeypatch.setattr(ac, "_DEFAULT_MODEL", "openrouter/free")
+    assert ac.chosen_model_route("") == "openrouter/free", "a declared default is used"
+    assert ac.chosen_model_route("lmstudio/qwen") == "lmstudio/qwen", "a pick wins over it"
+    with pytest.raises(nograph_server.Refused) as refused:
+        _ask({"prompt": "how many walls", "agent": "Tester"})
+    assert str(refused.value) == "Choose a model for this agent in Settings before sending."
+    assert router_seen["routes"] == [], "nothing was asked of a model nobody chose"
 
 
-def test_the_studio_pick_is_remembered_for_the_companion():
-    """BABOOM and the relay have no picker; they used to fall through to the
-    hidden default. They ride the founder's last studio pick now."""
-    from pathlib import Path
-
-    server = (Path(__file__).resolve().parents[2] / "01.APP/nodelang" / "application_server.py").read_text(encoding="utf-8")
-    assert "def _read_agent_model(self) -> str:" in server
-    assert "model=owner._read_agent_model() or owner._default_agent_model()[0]" in server
-    assert "or owner._read_agent_model()" in server
-    assert 'model="",' not in server.split("def answer_open_question")[1].split("answered = dict(payload)")[0]
+def test_the_studio_pick_is_remembered_for_the_companion(monkeypatch, router_seen):
+    """BABOOM has no picker; it rides the founder's last studio pick (settings/router.json)."""
+    pick = "openrouter/nvidia/nemotron-3.5-lightning:free"
+    saved = nograph_server.r_router_settings(None, SimpleNamespace(method="POST", body={"default_model": pick}, query={}))
+    assert saved["default_model"] == pick
+    model_router.composer_chat({"prompt": "how many walls", "agent": "BABOOM"})
+    assert router_seen["routes"] == [pick], "the companion asks the picked model"
+    assert _picker(monkeypatch)["selected_route"] == pick, "and the picker reads the same pick back"
 
 
 SEE = [{"role": "user", "content": [

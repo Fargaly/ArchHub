@@ -36,8 +36,9 @@ for i in range(146):
     if i == 0: doc['nodes'] = [{'id':'agent', 'title':'Agent node', 'type':'thing.agent', 'params':{}, 'position':{'x':0,'y':0}}]
     target = owner.directory / (str(i) + '.archhub')
     target.write_text(json.dumps(doc), encoding='utf-8')
-first = owner.directory / '0.archhub'
-owner.dispatch({'action':'open', 'path':str(first)})
+# The account's files are the ones it opened (signed pointers); 0 is opened last, so it stays current.
+for i in [*range(145, 0, -1), 0]:
+    owner.dispatch({'action':'open', 'path':str(owner.directory / (str(i) + '.archhub'))})
 # Desktop work needs a verified ArchHub account (cd19d5d4); this isolated owner is signed in.
 class Admitted:
     def check(self, *, expected_bearer=None, bind_resume=False):
@@ -88,7 +89,7 @@ finally:
   });
   await page.route(connection.url+'/', route => route.fulfill({contentType:'text/html', body:'<div id="root"></div>'}));
   await page.route('**/api/universal/desktop-access', route => route.fulfill({
-    json: {ok: true, admitted: true, state: 'admitted', subject: 'studio-test', email: 'studio@example.test'}
+    json: {ok: true, admitted: true, state: 'admitted', subject: 'workflowscat-fixture', email: 'studio@example.test'}  // the isolated owner's admitted account: a different subject is refused
   }));
   async function load(name, homeFixtures=undefined) {
     await page.goto(connection.url);
@@ -210,8 +211,9 @@ finally:
   await load('LibraryShelf');
   await page.locator('[data-library-category="trigger"] > .shelf-category[aria-expanded="true"]').waitFor();
   assert.equal(await page.locator('[data-library-category="host"] > .shelf-category').getAttribute('aria-expanded'),'false');
+  // The admitted account's subject rides every desktop request (cd19d5d4), so the refusal below is the owner's own 409.
   const rejected = await page.evaluate(async()=>{
-    const response=await fetch('/api/universal/settings-action',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':window.ARCHHUB_BOOT.token,'X-ArchHub-CSRF':window.ARCHHUB_BOOT.csrf},body:JSON.stringify({function:'setLibraryCollapsed',args:[['unknown']]})});return response.status;
+    const response=await fetch('/api/universal/settings-action',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':window.ARCHHUB_BOOT.token,'X-ArchHub-CSRF':window.ARCHHUB_BOOT.csrf,'X-ArchHub-Desktop-Subject':'workflowscat-fixture'},body:JSON.stringify({function:'setLibraryCollapsed',args:[['unknown']]})});return response.status;
   });
   assert.equal(rejected,409);
   let refuseFilterRead = true;

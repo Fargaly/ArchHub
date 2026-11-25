@@ -62,10 +62,14 @@ async function refreshDesktopAccess(force=false){
    showDesktopAccess({admitted:true,state:'admitted',notice:'',subject:answer.subject,email:answer.email||null,ready:ready&&!switching});
    if(switching&&ready){if(sessionDocument)projectFile();else await api.newSession();showDesktopAccess({ready:true});void refreshAccount().catch(()=>{});void api.listWorkspaces().catch(()=>{});}
    for(const resolve of desktopWaiters)resolve();desktopWaiters.clear();return desktopAccess;
-  }catch(error){if(generation===desktopGeneration)lockDesktop('unavailable');return desktopAccess;}
+  }catch(error){
+   // Keep the last verified identity on transport failure. The server checks every protected request.
+   if(generation===desktopGeneration&&desktopAccess.state==='pending')lockDesktop('unavailable');
+   return desktopAccess;
+  }
  })();desktopCheck=work;try{return await work;}finally{if(desktopCheck===work)desktopCheck=null;}
 }
-window.addEventListener('offline',()=>lockDesktop('unavailable'));
+window.addEventListener('offline',()=>{void refreshDesktopAccess(true);});
 window.addEventListener('online',()=>{void refreshDesktopAccess(true);});
 let activeSurface='home', canvasRefresh=null;
 let providerRoster=[], workingAgents=[], agentsChecked=false;

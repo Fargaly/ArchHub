@@ -38,7 +38,7 @@ function fixture(storage=new Map(),previousView=null){
   }};
  context.window=context;vm.createContext(context);
  for(const name of ['studio-authority.js','api.js'])vm.runInContext(fs.readFileSync(path.join(studio,name),'utf8'),context,{filename:name});
- return {context,api:context.ArchHubAPI,calls,storage,signin:value=>{signin=value;},holdStatus:()=>{let release;pendingStatus=new Promise(resolve=>{release=()=>{pendingStatus=null;resolve();};});return release;},set:subject=>{access=subject?{ok:true,admitted:true,state:'admitted',subject,email:subject+'@example.test'}:{ok:true,admitted:false,state:'unavailable',subject:null,email:null};},refuse:value=>{refuse=value;},close:()=>context.dispatchEvent(new Event('offline'))};
+ return {context,api:context.ArchHubAPI,calls,storage,signin:value=>{signin=value;},holdStatus:()=>{let release;pendingStatus=new Promise(resolve=>{release=()=>{pendingStatus=null;resolve();};});return release;},set:subject=>{access=subject?{ok:true,admitted:true,state:'admitted',subject,email:subject+'@example.test'}:{ok:true,admitted:false,state:'unavailable',subject:null,email:null};},refuse:value=>{refuse=value;},close:async()=>{access={ok:true,admitted:false,state:'unavailable',subject:null,email:null};await context.ArchHubAPI.refreshDesktopAccess(true);}};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('initial desktop admission does not load work or expose a document',async()=>{
@@ -47,31 +47,31 @@ test('initial desktop admission does not load work or expose a document',async()
  f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
  assert.equal(f.api.getSessionDocument().id,'fixture-A');
  assert(f.calls.filter(call=>!call.url.endsWith('/desktop-access')).every(call=>call.headers.get('X-ArchHub-Desktop-Subject')==='A'));
- f.close();
+ await f.close();
 });
 test('disconnect preserves dirty document and rejects edits without replaying a write on reconnect',async()=>{
  const f=fixture();f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
- await f.api.addNote('UNSAVED A',{x:10,y:20});const held=f.api.getSessionDocument();f.close();f.set(null);
+ await f.api.addNote('UNSAVED A',{x:10,y:20});const held=f.api.getSessionDocument();f.set(null);f.context.dispatchEvent(new Event('offline'));await settle();
  assert.equal(f.api.getSessionDocument(),null);await assert.rejects(f.api.addNote('DENIED',{x:0,y:0}));
  const writes=f.calls.filter(call=>['save','autosave'].includes(call.body?.action)).length;
  f.set('A');await f.api.refreshDesktopAccess(true);assert.deepEqual(f.api.getSessionDocument(),held);
- assert.equal(f.calls.filter(call=>['save','autosave'].includes(call.body?.action)).length,writes);f.close();
+ assert.equal(f.calls.filter(call=>['save','autosave'].includes(call.body?.action)).length,writes);await f.close();
 });
 test('real refusal code locks immediately, and account switching quarantines old document and view',async()=>{
  const f=fixture();f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
  await f.api.addNote('PRIVATE A',{x:1,y:1});f.api.rememberDesktopView({route:'settings/Projects'});const held=f.api.getSessionDocument();
  f.refuse(true);await assert.rejects(f.api.listWorkspaces());assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);f.refuse(false);
  f.set('B');await f.api.refreshDesktopAccess(true);assert.notEqual(f.api.getSessionDocument().id,held.id);assert(!JSON.stringify(f.api.getSnapshot()).includes('PRIVATE A'));
- f.set('A');await f.api.refreshDesktopAccess(true);assert.deepEqual(f.api.getSessionDocument(),held);assert.equal(f.api.readDesktopView().route,'settings/Projects');f.close();
+ f.set('A');await f.api.refreshDesktopAccess(true);assert.deepEqual(f.api.getSessionDocument(),held);assert.equal(f.api.readDesktopView().route,'settings/Projects');await f.close();
 });
 
 test('closing A then launching B preserves A recovery bytes without automatically exposing them',async()=>{
  const storage=new Map(),a=fixture(storage);a.set('A');await a.api.refreshDesktopAccess(true);await a.api.ready;
- await a.api.addNote('PRIVATE CLOSED A',{x:1,y:1});a.close();a.context.dispatchEvent(new Event('pagehide'));
+ await a.api.addNote('PRIVATE CLOSED A',{x:1,y:1});await a.close();a.context.dispatchEvent(new Event('pagehide'));
  const saved=[...storage].filter(([key])=>key.startsWith('archhub.draft.'));assert(saved.length);assert(saved.some(([_key,value])=>value.includes('PRIVATE CLOSED A')));
  const oldView=JSON.parse(saved[0][1]).view;const b=fixture(storage,oldView);b.set('B');await b.api.refreshDesktopAccess(true);await b.api.ready;await b.api.recoverLocalWork();
  assert(!JSON.stringify(b.api.getSnapshot()).includes('PRIVATE CLOSED A'));
- for(const [key,value]of saved)assert.equal(storage.get(key),value);assert(!b.calls.some(call=>call.body?.action==='edit_state'&&call.body.retire===oldView));b.close();
+ for(const [key,value]of saved)assert.equal(storage.get(key),value);assert(!b.calls.some(call=>call.body?.action==='edit_state'&&call.body.retire===oldView));await b.close();
 });
 
 test('the shipped streamed composer carries the subject and consumes a real refusal code',async()=>{
@@ -79,13 +79,13 @@ test('the shipped streamed composer carries the subject and consumes a real refu
  assert.equal((await f.api.sendToBaboom('Synthetic stream')).answer,'Fixture streamed answer');
  assert.equal(f.calls.find(call=>call.url==='/api/router/chat').headers.get('X-ArchHub-Desktop-Subject'),'A');
  await f.api.addNote('Pagehide subject',{x:1,y:1});f.context.dispatchEvent(new Event('pagehide'));assert.equal(f.calls.findLast(call=>call.body?.action==='autosave').headers.get('X-ArchHub-Desktop-Subject'),'A');
- f.refuse(true);await assert.rejects(f.api.sendToBaboom('Refused stream'));assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);f.close();
+ f.refuse(true);await assert.rejects(f.api.sendToBaboom('Refused stream'));assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);await f.close();
 });
 test('a late prior status cannot unlock after signout or overwrite a newer account',async()=>{
  const f=fixture();f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
  const release=f.holdStatus(),old=f.api.refreshDesktopAccess(true);await settle();
  const logout=f.api.signIn(false);await settle();release();await Promise.all([old,logout]);assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);
- f.set('B');await f.api.refreshDesktopAccess(true);assert.equal(f.api.getSnapshot().desktopAccess.subject,'B');f.close();
+ f.set('B');await f.api.refreshDesktopAccess(true);assert.equal(f.api.getSnapshot().desktopAccess.subject,'B');await f.close();
 });
 
 test('locked sign-in reports dispatch failure safely and retries without granting access',async()=>{
@@ -118,7 +118,7 @@ test('first admitted Home reads shared-with-you once per account, and an account
  f.set('B');await f.api.refreshDesktopAccess(true);await f.api.ready;await settle();await settle();
  assert.equal(reads().length,2);assert.equal(reads()[1].headers.get('X-ArchHub-Desktop-Subject'),'B');
  assert.deepEqual(f.api.getSnapshot().watching.watching,[],'B never sees A\'s shared sessions');
- f.close();
+ await f.close();
 });
 
 test('optional 15000 ms update status timeout preserves a concurrent workspace read and its admitted subject', async t => {
@@ -170,10 +170,17 @@ test('a rejected network request preserves admission and subsequent workspace re
  const fetch=f.context.fetch;
  f.context.fetch=()=>Promise.reject(new TypeError('fixture network failure'));
  await assert.rejects(f.api.listWorkspaces());
+ await f.api.refreshDesktopAccess(true);
  assert.equal(f.api.getSnapshot().desktopAccess.admitted,true);
  assert.equal(f.api.getSnapshot().desktopAccess.subject,'A');
  f.context.fetch=fetch;
  assert(Array.isArray(await f.api.listWorkspaces()));
+ f.set(null);
+ await f.api.refreshDesktopAccess(true);
+ const access=f.api.getSnapshot().desktopAccess;
+ assert.equal(access.state,'unavailable');
+ assert.equal(access.admitted,false);
+ assert.equal(f.api.getSessionDocument(),null);
 });
 
 for(const state of ['signed_out','session_invalid']){
@@ -188,3 +195,24 @@ for(const state of ['signed_out','session_invalid']){
   assert.equal(f.api.getSessionDocument(),null);
  });
 }
+
+test('an offline event asks the verifier and locks only when it reports access unavailable',async t=>{
+ const f=fixture();t.after(f.close);
+ f.set('A');await f.api.refreshDesktopAccess(true);await f.api.ready;
+ const reads=()=>f.calls.filter(call=>call.url==='/api/universal/desktop-access').length;
+ const before=reads();
+ const release=f.holdStatus();
+ f.context.dispatchEvent(new Event('offline'));
+ assert.equal(reads(),before+1);
+ assert.equal(f.api.getSnapshot().desktopAccess.subject,'A');
+ release();await settle();
+ assert.equal(f.api.getSnapshot().desktopAccess.admitted,true);
+ assert.equal(f.api.getSessionDocument().id,'fixture-A');
+ f.set(null);
+ f.context.dispatchEvent(new Event('offline'));
+ await settle();
+ assert.equal(reads(),before+2);
+ assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);
+ assert.equal(f.api.getSnapshot().desktopAccess.state,'unavailable');
+ assert.equal(f.api.getSessionDocument(),null);
+});

@@ -1085,7 +1085,7 @@ function socialOperation(op,args=[]) {
 }
 const socialOperations={refreshSocialState:'get_state',updateOfficePage:'update_office_page',
  saveSocialDraft:'save_social_draft',discardSocialDraft:'discard_social_draft',readSocialMessage:'read_social_message',
- replySocialMessage:'reply_social_message',triageSocialInbox:'triage_social_inbox',setSocialGroupRule:'set_social_group_rule',
+ replySocialMessage:'reply_social_message',triageSocialInbox:'triage_social_inbox',readWhatsappInbox:'read_whatsapp_inbox',setSocialGroupRule:'set_social_group_rule',
  setSocialDigest:'set_social_digest',generateSocialDigest:'generate_social_digest',addSlide:'add_slide',editSlide:'edit_slide',
  removeSlide:'remove_slide',reorderSlide:'reorder_slide',setPrototype:'set_prototype',rebaselinePrototype:'rebaseline_prototype',
  checkVerdictPattern:'check_verdict_pattern',setMeeting:'set_meeting',setMeetingActionOwner:'set_meeting_action_owner'};

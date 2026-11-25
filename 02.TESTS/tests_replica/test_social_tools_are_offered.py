@@ -22,6 +22,7 @@ def test_the_native_owner_offers_the_two_social_work_tools():
     assert "social.work_prepare" in schemas and "social.work_execute" in schemas
     assert set(schemas["social.work_prepare"]["properties"]) == {"work_root", "note"}
     assert set(schemas["social.work_execute"]["properties"]) == {"work_root"}
+    assert set(schemas["social.whatsapp_messages"]["properties"]) == {"contact", "since"}
     for name in ("social.work_prepare", "social.work_execute"):
         assert schemas[name].get("additionalProperties") is False, name
     # Reachable by the agent: executing a draft that was never prepared posts nothing and says what to do first.

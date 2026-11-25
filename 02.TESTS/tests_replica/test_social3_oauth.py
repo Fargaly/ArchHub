@@ -153,3 +153,51 @@ def test_whatsapp_opens_only_cloud_origin_sdk_kickoff(launch, accepted):
     assert opened == ([launch] if accepted else [])
     if not accepted:
         assert attempt.status()["error"] == "WhatsApp Embedded Signup launch did not match the ArchHub cloud"
+
+
+def test_whatsapp_messages_reads_the_cloud_inbox_with_contact_filter_in_the_body(monkeypatch):
+    monkeypatch.setattr(oauth, "_session", lambda path: ("fake-cloud-session", "https://fake-broker.test"))
+    seen = []
+
+    def fake_http(method, url, *, bearer, body=None, headers=None, timeout=10):
+        seen.append((method, url, body))
+        assert bearer == "fake-cloud-session"
+        return 200, {"ok": True, "messages": [{"id": 7, "wamid": "wamid.7", "direction": "in", "contact": "201111111111",
+                                              "contact_name": "Sample Contact", "kind": "text", "text": "hello", "sent_at": 1}],
+                     "next": 7}
+
+    answer = oauth.whatsapp_messages("Sample", 3, http=fake_http)
+    assert answer["ok"] is True and answer["next"] == 7 and answer["messages"][0]["text"] == "hello"
+    # The contact never rides in the URL (the cloud access log records URLs).
+    assert seen == [("POST", "https://fake-broker.test/oauth/whatsapp/messages", {"contact": "Sample", "since": 3, "limit": 50})]
+    monkeypatch.setattr(oauth, "_session", lambda path: ("", "https://fake-broker.test"))
+    assert oauth.whatsapp_messages(http=fake_http)["state"] == "signin_required"
+
+
+def test_social_node_reads_new_whatsapp_messages_into_its_inbox(monkeypatch):
+    from nodelang.social_surface import SocialSurface
+
+    class Store:
+        held = {"state": {}}
+
+        def read(self):
+            return self.held
+
+        def update(self, patch):
+            self.held = {**self.held, **patch}
+
+    pages = {0: {"ok": True, "messages": [
+                {"id": 1, "wamid": "wamid.1", "direction": "in", "contact": "201111111111", "contact_name": "Sample Contact", "text": "first", "sent_at": 1},
+                {"id": 2, "wamid": "wamid.2", "direction": "out", "contact": "201111111111", "contact_name": "", "text": "my reply", "sent_at": 2}],
+                 "next": 2},
+             2: {"ok": True, "messages": [], "next": 2}}
+    monkeypatch.setattr(oauth, "whatsapp_messages", lambda since=0, limit=50, **_: pages[since])
+    owner = SocialSurface(Store())
+    out = owner.dispatch("read_whatsapp_inbox", [])
+    assert out["result"] == {"added": 1, "cursor": 2}
+    inbox = out["state"]["social"]["inbox"]
+    assert [(m["from"], m["platform"], m["text"], m["unread"]) for m in inbox] == [("Sample Contact", "WhatsApp Business", "first", True)]
+    assert owner.dispatch("read_whatsapp_inbox", [])["result"] == {"added": 0, "cursor": 2}  # cursor: no duplicates
+    monkeypatch.setattr(oauth, "whatsapp_messages", lambda **_: {"ok": False, "state": "signin_required", "messages": []})
+    with pytest.raises(ValueError, match="Sign in"):
+        owner.dispatch("read_whatsapp_inbox", [])

@@ -250,6 +250,32 @@ CREATE TABLE IF NOT EXISTS social_oauth_grants (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+-- WhatsApp Business coexistence inbox: which ArchHub account connected a phone
+-- number (written when its Embedded Signup grant is consumed), and the bounded
+-- message copy the Meta webhook delivers for that number.
+CREATE TABLE IF NOT EXISTS whatsapp_numbers (
+    phone_number_id TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    linked_at       INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    phone_number_id TEXT NOT NULL,
+    wamid           TEXT NOT NULL,
+    direction       TEXT NOT NULL,
+    contact         TEXT NOT NULL,
+    contact_name    TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    sent_at         INTEGER NOT NULL,
+    received_at     INTEGER NOT NULL,
+    UNIQUE (phone_number_id, wamid)
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user ON whatsapp_messages(user_id, id);
+
 CREATE TABLE IF NOT EXISTS tokens (
     token         TEXT PRIMARY KEY,   -- token_digest(bearer), never the bearer
     user_id       TEXT NOT NULL,
@@ -1639,6 +1665,72 @@ def consume_social_oauth_grant(*, handle: str, user_id: str, device_id: str,
         if removed.rowcount != 1:
             return None
         return record
+
+
+WHATSAPP_RETENTION_SECONDS = 30 * 86400
+WHATSAPP_MAX_PER_NUMBER = 5000
+
+
+def link_whatsapp_number(*, phone_number_id: str, user_id: str) -> None:
+    """The account that finished Embedded Signup for this number owns its inbox."""
+    with connect() as con:
+        con.execute(
+            "INSERT INTO whatsapp_numbers (phone_number_id, user_id, linked_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(phone_number_id) DO UPDATE SET user_id = excluded.user_id,"
+            " linked_at = excluded.linked_at",
+            (phone_number_id, user_id, int(time.time())),
+        )
+
+
+def whatsapp_number_owner(phone_number_id: str) -> Optional[str]:
+    with connect() as con:
+        row = con.execute("SELECT user_id FROM whatsapp_numbers WHERE phone_number_id = ?",
+                          (phone_number_id,)).fetchone()
+    return row["user_id"] if row else None
+
+
+def store_whatsapp_messages(rows: Iterable[dict]) -> int:
+    """Insert webhook messages once each (Meta redelivers), then prune to the bound."""
+    now = int(time.time())
+    stored, numbers = 0, set()
+    with connect() as con:
+        for row in rows:
+            changed = con.execute(
+                "INSERT OR IGNORE INTO whatsapp_messages (user_id, phone_number_id, wamid,"
+                " direction, contact, contact_name, kind, text, sent_at, received_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (row["user_id"], row["phone_number_id"], row["wamid"], row["direction"],
+                 row["contact"], row["contact_name"], row["kind"], row["text"],
+                 int(row["sent_at"]), now),
+            )
+            stored += changed.rowcount
+            numbers.add(row["phone_number_id"])
+        con.execute("DELETE FROM whatsapp_messages WHERE received_at < ?",
+                    (now - WHATSAPP_RETENTION_SECONDS,))
+        for number in numbers:
+            con.execute(
+                "DELETE FROM whatsapp_messages WHERE phone_number_id = ? AND id NOT IN"
+                " (SELECT id FROM whatsapp_messages WHERE phone_number_id = ?"
+                "  ORDER BY id DESC LIMIT ?)",
+                (number, number, WHATSAPP_MAX_PER_NUMBER),
+            )
+    return stored
+
+
+def list_whatsapp_messages(*, user_id: str, contact: str = "", since: int = 0,
+                           limit: int = 50) -> list[dict]:
+    """One account's messages after `since`, optionally for one contact (phone digits or name)."""
+    sql = ("SELECT id, phone_number_id, wamid, direction, contact, contact_name, kind, text,"
+           " sent_at FROM whatsapp_messages WHERE user_id = ? AND id > ?")
+    args: list = [user_id, int(since)]
+    digits = "".join(ch for ch in contact if ch.isdigit())
+    if contact.strip():
+        sql += " AND (" + ("contact = ? OR " if digits else "") + "lower(contact_name) LIKE ?)"
+        args += ([digits] if digits else []) + ["%" + contact.strip().lower() + "%"]
+    sql += " ORDER BY id LIMIT ?"
+    args.append(max(1, min(int(limit), 200)))
+    with connect() as con:
+        return [dict(row) for row in con.execute(sql, args).fetchall()]
 
 
 def token_digest(token: str) -> str:

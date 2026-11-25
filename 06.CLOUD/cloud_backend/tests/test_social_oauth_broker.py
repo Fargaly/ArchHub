@@ -112,7 +112,10 @@ def test_whatsapp_phone_identity_comes_from_granted_waba_not_pasted_id(monkeypat
         assert "/123/phone_numbers?" in url and token == "fake-business-token"
         return {"data": [{"id": "456", "display_phone_number": "+123456"}]}
     monkeypatch.setattr(social_oauth, "_get_json", fake_graph)
+    subscribed = []
+    monkeypatch.setattr(social_oauth, "_post_bearer", lambda url, token: subscribed.append(url) or {"success": True})
     assert social_oauth._whatsapp_profile("fake-business-token") == {"id": "456", "name": "+123456"}
+    assert subscribed == ["https://graph.facebook.com/v25.0/123/subscribed_apps"]
 
 
 def test_whatsapp_never_guesses_between_multiple_granted_business_phones(monkeypatch):
@@ -259,6 +262,10 @@ def test_whatsapp_real_sdk_code_exchange_and_phone_discovery_use_fake_graph(monk
         elif "/debug_token?" in request.full_url:
             assert request.get_header("Authorization") == "Bearer fake-publisher-app|fake-cloud-secret"
             payload = {"data": {"granular_scopes": [{"scope": "whatsapp_business_management", "target_ids": ["123"]}]}}
+        elif request.full_url.endswith("/123/subscribed_apps"):
+            assert request.get_method() == "POST"
+            assert request.get_header("Authorization") == "Bearer fake-business-token"
+            payload = {"success": True}
         else:
             assert "/123/phone_numbers?" in request.full_url
             assert request.get_header("Authorization") == "Bearer fake-business-token"
@@ -267,7 +274,7 @@ def test_whatsapp_real_sdk_code_exchange_and_phone_discovery_use_fake_graph(monk
     monkeypatch.setattr(social_oauth.urllib.request, "urlopen", fake_urlopen)
     grant = social_oauth.exchange_and_profile("whatsapp", "sdk-business-code")
     assert grant == {"provider": "whatsapp", "account_id": "456", "name": "+123456", "access_token": "fake-business-token"}
-    assert len(urls) == 3
+    assert len(urls) == 4
 
 
 @pytest.fixture
@@ -644,3 +651,109 @@ def test_desktop_start_creates_local_grant_consumer_and_holds_token_until_finish
         time.sleep(0.02)
     from nodelang import social_linkedin_signin
     assert social_linkedin_signin.take_verified() == ("urn:li:person:desktopUser", "AQX-dev-tok")
+
+
+# ------------------------------------------------ WhatsApp inbound webhook --
+
+def _wa_post(client, body: dict, secret: str = "fake-cloud-secret"):
+    import hashlib
+    import hmac
+    raw = json.dumps(body).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    return client.post("/webhooks/whatsapp", content=raw,
+                       headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature})
+
+
+def _wa_body(number_id: str, sender: str, name: str, wamid: str, text: str, field: str = "messages") -> dict:
+    value = {"messaging_product": "whatsapp",
+             "metadata": {"display_phone_number": "+20 100 000 0000", "phone_number_id": number_id}}
+    message = {"from": sender, "id": wamid, "timestamp": "1764000000", "type": "text", "text": {"body": text}}
+    if field == "smb_message_echoes":
+        value["message_echoes"] = [{**message, "from": "201000000000", "to": sender}]
+    else:
+        value["contacts"] = [{"profile": {"name": name}, "wa_id": sender}]
+        value["messages"] = [message]
+    return {"object": "whatsapp_business_account", "entry": [{"id": "waba", "changes": [{"field": field, "value": value}]}]}
+
+
+def test_whatsapp_webhook_verification_handshake_uses_derived_token(client, monkeypatch):
+    import config
+    import social_oauth
+    _social3_config(monkeypatch)
+    token = social_oauth.whatsapp_verify_token()
+    assert token and "fake-cloud-secret" not in token
+    ok = client.get("/webhooks/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": token, "hub.challenge": "1158201444"})
+    assert ok.status_code == 200 and ok.text == "1158201444"
+    assert client.get("/webhooks/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": "guess", "hub.challenge": "1"}).status_code == 403
+    monkeypatch.setattr(config, "META_OAUTH_APP_SECRET", "")
+    assert client.get("/webhooks/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": token, "hub.challenge": "1"}).status_code == 503
+
+
+def test_whatsapp_webhook_refuses_bad_or_missing_signature_and_stores_nothing(client, monkeypatch):
+    import config
+    import db
+    _social3_config(monkeypatch)
+    user = db.get_or_create_user("wa-sig@social3.test")
+    db.link_whatsapp_number(phone_number_id="456", user_id=user["id"])
+    body = _wa_body("456", "201111111111", "Contact", "wamid.sig", "hello")
+    assert _wa_post(client, body, secret="wrong-secret").status_code == 403
+    assert client.post("/webhooks/whatsapp", json=body).status_code == 403
+    monkeypatch.setattr(config, "META_OAUTH_APP_SECRET", "")
+    assert _wa_post(client, body).status_code == 503
+    assert db.list_whatsapp_messages(user_id=user["id"]) == []
+
+
+def test_whatsapp_ingest_then_read_filtered_by_sender_with_cursor(client, monkeypatch):
+    import db
+    _social3_config(monkeypatch)
+    token = _token_for("wa-read@social3.test")
+    user = db.user_for_token(token)
+    db.link_whatsapp_number(phone_number_id="456", user_id=user["id"])
+    for body in (_wa_body("456", "201111111111", "Sample Contact", "wamid.1", "first"),
+                 _wa_body("456", "202222222222", "Someone Else", "wamid.2", "other"),
+                 _wa_body("456", "201111111111", "Sample Contact", "wamid.3", "second"),
+                 _wa_body("456", "201111111111", "", "wamid.4", "my reply", field="smb_message_echoes")):
+        answer = _wa_post(client, body)
+        assert answer.status_code == 200 and answer.json() == {"ok": True, "stored": 1}
+    assert _wa_post(client, _wa_body("456", "201111111111", "x", "wamid.1", "first")).json()["stored"] == 0  # redelivery
+    headers = {"Authorization": "Bearer " + token}
+    by_name = client.post("/oauth/whatsapp/messages", json={"contact": "sample"}, headers=headers).json()
+    assert [(m["text"], m["direction"]) for m in by_name["messages"]] == [("first", "in"), ("second", "in")]
+    by_phone = client.post("/oauth/whatsapp/messages", json={"contact": "+20 111 111 1111"}, headers=headers).json()
+    assert [m["text"] for m in by_phone["messages"]] == ["first", "second", "my reply"]
+    after = client.post("/oauth/whatsapp/messages", json={"contact": "201111111111", "since": by_phone["messages"][0]["id"]}, headers=headers).json()
+    assert [m["text"] for m in after["messages"]] == ["second", "my reply"]
+    assert len(client.post("/oauth/whatsapp/messages", json={}, headers=headers).json()["messages"]) == 4
+    assert client.post("/oauth/whatsapp/messages", json={}).status_code == 401
+    assert client.post("/oauth/whatsapp/messages", json={"since": "0"}, headers=headers).status_code == 400
+
+
+def test_whatsapp_messages_are_isolated_per_account_and_unlinked_numbers_dropped(client, monkeypatch):
+    import db
+    _social3_config(monkeypatch)
+    owner, other = _token_for("wa-owner@social3.test"), _token_for("wa-other@social3.test")
+    db.link_whatsapp_number(phone_number_id="456", user_id=db.user_for_token(owner)["id"])
+    db.link_whatsapp_number(phone_number_id="789", user_id=db.user_for_token(other)["id"])
+    assert _wa_post(client, _wa_body("456", "201111111111", "A", "wamid.a", "for owner")).json()["stored"] == 1
+    assert _wa_post(client, _wa_body("789", "201111111111", "A", "wamid.b", "for other")).json()["stored"] == 1
+    assert _wa_post(client, _wa_body("999", "201111111111", "A", "wamid.c", "nobody")).json()["stored"] == 0
+    read = lambda token: [m["text"] for m in client.post("/oauth/whatsapp/messages", json={}, headers={"Authorization": "Bearer " + token}).json()["messages"]]
+    assert read(owner) == ["for owner"]
+    assert read(other) == ["for other"]
+
+
+def test_whatsapp_consume_links_the_phone_number_to_the_signed_in_account(client, monkeypatch):
+    import db
+    import social_oauth
+    _social3_config(monkeypatch)
+    token = _token_for("wa-link@social3.test")
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(_social3_start(client, "whatsapp", token).json()["auth_url"]).query)["state"][0]
+    monkeypatch.setattr(social_oauth, "_exchange", lambda *args: {"access_token": "fake-business-token"})
+    monkeypatch.setattr(social_oauth, "_profile", lambda *args: {"id": "456", "name": "+123456"})
+    location = client.get("/oauth/whatsapp/callback", params={"code": "c", "state": state}, follow_redirects=False).headers["location"]
+    grant = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)["grant"][0]
+    assert db.whatsapp_number_owner("456") is None  # not before the desktop takes the grant
+    consumed = client.post("/oauth/whatsapp/consume", json={"grant": grant},
+                           headers={"Authorization": "Bearer " + token, "X-ArchHub-Device-Session": "social3-device"})
+    assert consumed.status_code == 200
+    assert db.whatsapp_number_owner("456") == db.user_for_token(token)["id"]

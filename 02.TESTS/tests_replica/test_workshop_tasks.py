@@ -679,3 +679,139 @@ def test_permanent_delete_cleans_private_run_history_and_preserves_shared_histor
             assert path.read_bytes() == sibling.read_bytes() == saved and log.read_bytes() == original_history
         else:
             assert workshop_tasks.get(reopened, task["id"]) is None and not path.exists() and not log.exists()
+def test_child_task_has_one_accountable_owner(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "Shared project", "founder")
+        child = workshop_tasks.create(history, "One piece", "founder", parent=parent["id"])["id"]
+
+    gate = threading.Barrier(2)
+    def compete(agent):
+        with application_history(busy_timeout_seconds=5) as history:
+            gate.wait(timeout=5)
+            return workshop_tasks.claim(history, child, agent, agent)
+
+    from concurrent.futures import ThreadPoolExecutor
+    agents = ["agent-a", "agent-b"]
+    with ThreadPoolExecutor(2) as pool:
+        wins = list(pool.map(compete, agents))
+    assert sorted(wins) == [False, True]
+    owner, other = agents[wins.index(True)], agents[wins.index(False)]
+    with application_history() as history:
+        assert workshop_tasks.mark_writing(history, child, owner)
+        assert workshop_tasks.claim(history, child, owner, owner)
+        assert workshop_tasks.get(history, child)["write_open"]
+        assert not workshop_tasks.mark_writing(history, child, other)
+        assert not workshop_tasks.complete(history, child, other)
+        assert workshop_tasks.release(history, child, owner)
+        assert workshop_tasks.claim(history, child, other, other)
+        assert not workshop_tasks.mark_writing(history, child, owner)
+
+def test_verified_progress_is_scoped_to_installed_build(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(workshop_tasks, "_running_build", lambda: "first-build")
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Acceptance", "founder")["id"]
+        assert workshop_tasks.claim(history, task, "builder", "Builder")
+        update = lambda actor, values: workshop_tasks.acceptance_update(history, task, actor, values)
+        update("builder", {"criteria": ["One", "Two", "Three", "Four"], "reviewer": "reviewer"})
+        verdict = {"criterion": "One", "build": "first-build", "passed": True, "evidence": "Saved and reopened."}
+        with pytest.raises(ValueError):
+            update("builder", verdict)
+        update("reviewer", verdict)
+        summary = update("reviewer", {**verdict, "criterion": "Two"})
+        assert (summary["verified"], summary["total"]) == (2, 4)
+    with application_history() as history:
+        row = workshop_tasks.get(history, task)
+        assert workshop_tasks.verification_summary(row["acceptance"], "first-build") == summary
+        monkeypatch.setattr(workshop_tasks, "_running_build", lambda: "next-build")
+        with pytest.raises(ValueError):
+            update("reviewer", verdict)
+        failed = update("reviewer", {**verdict, "passed": False, "build": "next-build"})
+        assert failed["verified"] == 0 and failed["total"] == 4
+
+@pytest.mark.parametrize("interruption", ["paused", "lease_expired"])
+def test_handover_offers_one_named_successor_and_blocks_replay(tmp_path, monkeypatch, interruption):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "Parent", "founder")
+        task = workshop_tasks.create(history, "Child", "founder", parent=parent["id"])["id"]
+        history._db.execute("UPDATE workshop_tasks SET project='Example' WHERE id=?", (task,))
+        assert workshop_tasks.claim(history, task, "first", "First")
+        workshop_tasks.update_session(history, task, {"agents": ["Second"]})
+        assert workshop_tasks.mark_writing(history, task, "first")
+        if interruption == "paused":
+            assert workshop_tasks.release(history, task, "first", reason="paused")
+        else:
+            history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (task,))
+            workshop_tasks.reap_stalled(history)
+        with pytest.raises(workshop_tasks.TaskLeaseLost):
+            workshop_tasks.begin_run(history, task, "first", "First")
+        assert not workshop_tasks.claim(history, task, "first", "First")
+        candidate = {"session":"second", "agent":"Second", "current":True, "project":"Example",
+                     "runtime":"codex", "native_session_id":"second-test"}
+        workshop_tasks.offer_handovers(history, [{**candidate, "project":"Other"}])
+        assert "offered" not in workshop_tasks.get(history, task)["handover_route"]
+        workshop_tasks.offer_handovers(history, [candidate])
+        workshop_tasks.offer_handovers(history, [candidate])
+        assert workshop_tasks.get(history, task)["handover_route"]["offered"] == "second"
+        assert history._db.execute("SELECT count(*) FROM messages WHERE content LIKE 'To Second:%Workshop handover%'").fetchone()[0] == 1
+        assert not workshop_tasks.claim(history, task, "third", "Third")
+    with application_history() as history:
+        assert workshop_tasks.claim(history, task, "second", "Second")
+        assert not workshop_tasks.mark_writing(history, task, "second")
+        assert not workshop_tasks.complete(history, task, "second")
+        workshop_tasks.reconcile_handover(history, task, "second", {"applied":True, "observation":"One matching target receipt."})
+        assert not workshop_tasks.mark_writing(history, task, "second")
+        assert workshop_tasks.complete(history, task, "second", "Confirmed existing receipt.")
+
+def test_mailbox_retries_reuse_work_and_acknowledged_effect(tmp_path, monkeypatch):
+    from nodelang.workshop_mailbox import _task
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "One workspace", "founder")["id"]
+        me = {"sender_key":"one", "sender_label":"First"}
+        peer = {"sender_key":"two", "sender_label":"Second"}
+        create = {"title":"Feature check", "parent":parent, "piece":"item-3"}
+        task = _task(history, "task_create", create, me)["task"]["id"]
+        assert _task(history, "task_create", create, peer)["task"]["id"] == task
+        assert len(workshop_tasks.rows(history)) == 2
+        assert _task(history, "task_claim", {"id":task}, me)["ok"]
+        assert not _task(history, "task_claim", {"id":task}, peer)["ok"]
+        start = {"id":task, "begin_write":True}
+        assert _task(history, "task_set_session", start, me)["ok"]
+        assert not _task(history, "task_set_session", start, me)["ok"]
+        _task(history, "task_set_session", {"id":task, "reconcile":{"applied":True, "observation":"Target receipt 1"}}, me)
+        assert _task(history, "task_release", {"id":task, "reason":"paused"}, me)["ok"]
+        assert _task(history, "task_claim", {"id":task}, peer)["ok"]
+        assert not _task(history, "task_set_session", start, peer)["ok"]
+        assert _task(history, "task_complete", {"id":task}, peer)["ok"]
+
+
+def test_agents_resume_the_same_task_or_create_a_child_in_its_session(tmp_path, monkeypatch):
+    from nodelang.workshop_mailbox import _task
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        def start(who, title, **fields):
+            return _task(history, "task_create", {"title": title, **fields},
+                         {"sender_key": who, "sender_label": who})
+        first = start("builder", "Review plans", intent="plan-review")
+        task = first["task"]["id"]
+        for resumed in [start("reviewer", "review plans"),
+                        start("builder", "Check sheets", intent="plan-review"),
+                        start("reviewer", "Finish review", continue_task=task)]:
+            assert resumed["joined"] and resumed["task"]["id"] == task
+            assert resumed["session"]["path"] == first["session"]["path"]
+        child = start("builder", "Check dimensions", parent=task)
+        assert start("builder", "Check dimensions")["task"]["id"] == child["task"]["id"]
+        assert child["task"]["parent_id"] == task
+        assert child["session"]["path"] == first["session"]["path"]
+        assert workshop_tasks.declared(history, "peer", "other-request", "Review plans", "working",
+                                       "checker", "Checker") == task
+        assert workshop_tasks.declared(history, "peer", "other-request", "Resume it", "working",
+                                       "checker", "Checker", continue_task=task) == task
+        with history._transaction(write=True):
+            history._db.execute("UPDATE workshop_tasks SET project='Project B' WHERE id=?", (task,))
+        assert workshop_tasks._matching_open_task(history, "Project B", "Review plans", "") == task
+        assert workshop_tasks._matching_open_task(history, "Project A", "Review plans", "") is None
+        assert len(workshop_tasks.rows(history)) == 2

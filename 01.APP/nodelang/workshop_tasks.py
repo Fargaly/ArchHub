@@ -116,6 +116,10 @@ def _ensure(history):
         _add_column(history, "capacity TEXT")
     if "members" not in names:
         _add_column(history, "members TEXT")
+    if "handover_route" not in names:
+        _add_column(history, "handover_route TEXT")
+    if "acceptance" not in names:
+        _add_column(history, "acceptance TEXT")
     if "legacy_parent_id" not in names:
         _add_column(history, "legacy_parent_id TEXT")
     if "legacy_session_path" not in names:
@@ -135,11 +139,11 @@ def _write(history, sql, values):
 def _locked(history, task):
     _ensure(history)
     found = history._db.execute(
-        "SELECT revision, status, owner, owner_label, lease_until, members FROM workshop_tasks WHERE id=?", (task,)).fetchone()
+        "SELECT revision, status, owner, owner_label, lease_until, members, parent_id, outcome FROM workshop_tasks WHERE id=?", (task,)).fetchone()
     if found is None:
         return None
     return {"revision": found[0], "status": found[1], "owner": found[2],
-            "members": _member_list(found[5], found[2], found[3], found[4])}
+            "parent_id": found[6], "outcome": found[7], "members": _member_list(found[5], found[2], found[3], found[4])}
 
 
 def _member_list(text, owner=None, label=None, lease=None):
@@ -185,7 +189,8 @@ def _live(members, now=None):
 
 
 def _holds(row, owner):
-    return row["status"] == "claimed" and any(m["owner"] == owner for m in _live(row["members"]))
+    return (row["status"] == "claimed" and (not row.get("parent_id") or row["owner"] == owner)
+            and any(m["owner"] == owner for m in _live(row["members"])))
 
 
 def _seat(members, now):
@@ -236,13 +241,86 @@ def _update(history, task, revision, statement, *, holder=None):
         raise TaskConflict(task, revision)
 
 
+@lru_cache(maxsize=1)
+def _running_build():
+    from pathlib import Path
+    from .quiet_update import installed_build_id
+    return installed_build_id(Path(__file__).resolve().parents[1])
+
+
+def verification_summary(acceptance, build):
+    criteria = acceptance.get("criteria", [])
+    results = acceptance.get("results", {}).get(build, {}) if build else {}
+    verified = sum(results.get(item, {}).get("passed") is True for item in criteria)
+    return {"verified": verified, "total": len(criteria), "build": build,
+            "results": {item: results[item] for item in criteria if item in results}}
+
+
+def acceptance_update(history, task, actor, change):
+    """The owner names the checks and independent reviewer. Only that reviewer can attest on this build."""
+    if type(change) is not dict:
+        raise ValueError("Expected acceptance criteria or a verifier result.")
+    with history._transaction(write=True):
+        row = get(history, task)
+        if not row:
+            raise TaskNotFound(task)
+        held = row["acceptance"]
+        if set(change) == {"criteria", "reviewer"}:
+            if not _holds(row, actor) or row["owner"] != actor:
+                raise TaskLeaseLost(task)
+            criteria = _text_list(change["criteria"], "acceptance criteria")
+            reviewer = _text(change["reviewer"], "reviewer", 256)
+            if len(criteria) != len(set(criteria)) or reviewer == actor or any(m["owner"] == reviewer for m in row["members"]):
+                raise ValueError("Use distinct criteria and an independent reviewer.")
+            if held.get("reviewer") != reviewer or held.get("criteria") != criteria:
+                prior = held.get("history", [])
+                if held.get("criteria"):
+                    prior = [*prior, {key: held[key] for key in ("criteria", "reviewer", "results")}]
+                retained = {build: {k: v for k, v in results.items() if k in criteria}
+                            for build, results in held.get("results", {}).items()} if held.get("reviewer") == reviewer else {}
+                held = {"criteria": criteria, "reviewer": reviewer, "results": retained, "history": prior}
+        elif set(change) == {"criterion", "passed", "evidence", "build"}:
+            if actor != held.get("reviewer") or actor == row["owner"] or any(m["owner"] == actor for m in row["members"]):
+                raise ValueError("Only the designated independent reviewer may record evidence.")
+            item = _text(change["criterion"], "criterion", 500)
+            build = _running_build()
+            if not build or change["build"] != build or item not in held["criteria"] or type(change["passed"]) is not bool:
+                raise ValueError("Check the installed build, criterion and verdict.")
+            evidence = _clean_note(history, row, _text(change["evidence"], "observed evidence", 1000))
+            held["results"].setdefault(build, {})[item] = {"passed": change["passed"], "evidence": evidence,
+                                                          "reviewer": actor, "at": _now()}
+        else:
+            raise ValueError("Supply criteria and reviewer, or criterion, passed, evidence and build.")
+        history._db.execute("UPDATE workshop_tasks SET acceptance=?,revision=revision+1,updated_at=? WHERE id=?",
+                            (json.dumps(held), _now(), task))
+        return verification_summary(held, _running_build())
+
+
+def reconcile_handover(history, task, actor, receipt):
+    from .workshop_mailbox import record_activity
+    if type(receipt) is not dict or set(receipt) != {"applied", "observation"} or type(receipt["applied"]) is not bool:
+        raise ValueError("Re-read the target and report applied and observation.")
+    with history._transaction(write=True):
+        row = get(history, task)
+        if not row or not row["parent_id"] or not _holds(row, actor) or not (row["outcome"] == "unknown" or row["write_open"]):
+            raise TaskLeaseLost(task)
+        observed = _clean_note(history, row, _text(receipt["observation"], "observed target result", 1000))
+        outcome = "reconciled_applied" if receipt["applied"] else "reconciled_absent"
+        history._db.execute("UPDATE workshop_tasks SET outcome=?,write_open=0,revision=revision+1,updated_at=? WHERE id=?",
+                            (outcome, _now(), task))
+        record_activity(history, actor, "reconcile", task, outcome=outcome, observation=observed)
+        return {"outcome": outcome, "observation": observed}
+
+
 def _settle_lapsed(history):
     """A claimed row whose lease has passed is closed, then returned to the queue.
 
     Interrupted when the owner was between writes. Unknown when a write was still open.
     """
     now = time.time()
-    _write(history, "UPDATE workshop_tasks SET outcome=CASE WHEN IFNULL(write_open,0)=1 THEN 'unknown' "
+    _write(history, "UPDATE workshop_tasks SET handover_route=CASE WHEN parent_id IS NOT NULL THEN "
+           "json_object('previous',owner,'reason','lease_expired','revision',revision) END, "
+           "outcome=CASE WHEN outcome='reconciled_applied' THEN outcome WHEN IFNULL(write_open,0)=1 OR outcome='unknown' THEN 'unknown' "
            "ELSE 'interrupted' END, status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
            # The session stays open for the next agent; every member's lease ends with it, the members stay listed.
            "members=CASE WHEN json_valid(members) THEN (SELECT json_group_array(json_set(value,'$.lease_until',NULL)) "
@@ -263,7 +341,8 @@ def mark_writing(history, task, owner, revision=None):
     """The holder has started a write. A lease that lapses before it finishes is outcome unknown."""
     def writing(expected):
         return ("UPDATE workshop_tasks SET write_open=1, updated_at=?, revision=revision+1 "
-                "WHERE id=? AND revision=? AND status='claimed'",
+                "WHERE id=? AND revision=? AND status='claimed' "
+                "AND (parent_id IS NULL OR (write_open=0 AND COALESCE(outcome,'') NOT IN ('unknown','reconciled_applied')))",
                 (_now(), task, expected))
     return _update(history, task, revision, writing, holder=owner)
 
@@ -303,8 +382,11 @@ def rename(history, task, title, revision=None):
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 
-def create(history, title, creator, *, agent='', workspace='', zoom=1, parent='', fork=None, canvas_task=''):
-    task = uuid4().hex
+def create(history, title, creator, *, agent='', workspace='', zoom=1, parent='', fork=None, canvas_task='', piece=''):
+    if piece and not parent:
+        raise ValueError("A reusable work item needs its parent task.")
+    task = (sha256((parent + "\0" + _text(piece, "work item", 256)).encode()).hexdigest()[:32]
+            if piece else uuid4().hex)
     title = _text(title, "title", 2000)
     above = None
     if parent:
@@ -332,6 +414,12 @@ def create(history, title, creator, *, agent='', workspace='', zoom=1, parent=''
     # A subtask sits in its parent's project unless its own workspace names one.
     project = project or (above or {}).get('project') or (fork or {}).get('project') or ''
     with history._transaction(write=True):
+        if piece:
+            existing = get(history, task)
+            if existing:
+                if existing["parent_id"] != parent or existing["session_path"] != path:
+                    raise ValueError("This work item already belongs to another canvas.")
+                return existing
         if canvas:
             from . import canvas_documents
             from .session_files import task_context, read_document, session_fields
@@ -370,7 +458,7 @@ def _members_now(history, task):
 
 
 def claim(history, task, owner, label, lease_seconds=None, revision=None):
-    """Join the session as a member, or renew this member's lease. Any agent may join; done stays done."""
+    """Join a shared session, or acquire or renew the exclusive claim on a child task."""
     lease_seconds = TASKS_NODE['params']['lease_seconds'] if lease_seconds is None else lease_seconds
     if type(lease_seconds) is not int or not 30 <= lease_seconds <= 86400:
         raise ValueError("Lease must be 30 to 86400 seconds")
@@ -392,40 +480,48 @@ def claim(history, task, owner, label, lease_seconds=None, revision=None):
         mine.pop("left", None)
         _, _, _, lease = _seat(members, now)
         return ("UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, members=?, "
-                "outcome=NULL, write_open=0, updated_at=?, revision=revision+1 WHERE id=? AND revision=? "
-                "AND status!='done'",
-                (owner, label, lease, json.dumps(members), _now(), task, expected))
+                "outcome=CASE WHEN parent_id IS NOT NULL AND outcome IN ('unknown','reconciled_applied') THEN outcome END, "
+                "write_open=CASE WHEN owner=? THEN write_open ELSE 0 END, handover_route=NULL, "
+                "updated_at=?, revision=revision+1 WHERE id=? AND revision=? "
+                "AND status!='done' AND IFNULL(archived,0)=0 AND (parent_id IS NULL OR owner IS NULL OR owner=?) "
+                "AND (json_extract(handover_route,'$.previous') IS NOT ? OR owner=?) "
+                "AND (json_extract(handover_route,'$.offered') IS NULL OR json_extract(handover_route,'$.offered')=?)",
+                (owner, label, lease, json.dumps(members), owner, _now(), task, expected, owner, owner, owner, owner))
     return _update(history, task, revision, statement)
 
 
 def _leave(history, task, owner, now):
     """This member's lease ends; it stays listed. The latest live member, if any, keeps the session."""
-    members = _members_now(history, task)
+    row = _locked(history, task)
+    members = row["members"]
     for member in members:
-        if member["owner"] == owner:
+        if row["parent_id"] or member["owner"] == owner:
             member["lease_until"] = None
             member["left"] = True
     return members, _seat(members, now)
 
 
 COORDINATOR_SEAT_ID = "seat-coordinator"
-_RELEASE_REASONS = frozenset({"", "quota", "stalled", "manual"})
+_RELEASE_REASONS = frozenset({"", "quota", "stalled", "manual", "paused"})
 
 
 def release(history, task, owner, revision=None, *, reason="", handover=None):
     if type(reason) is not str or reason not in _RELEASE_REASONS:
-        raise ValueError("Release reason must be quota, stalled, or manual")
-    if handover is not None:
-        update_session(history, task, {"handover": handover})
+        raise ValueError("Release reason must be quota, stalled, paused, or manual")
     def statement(expected):
         members, (status, holder, label, lease) = _leave(history, task, owner, time.time())
         return ("UPDATE workshop_tasks SET status=?, owner=?, owner_label=?, lease_until=?, members=?, "
+                "handover_route=CASE WHEN parent_id IS NOT NULL THEN json_object('previous',owner,'reason',?,'revision',revision) END, "
+                "outcome=CASE WHEN write_open=1 AND parent_id IS NOT NULL THEN 'unknown' ELSE outcome END, "
+                "write_open=CASE WHEN parent_id IS NOT NULL THEN 0 ELSE write_open END, "
                 "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND status='claimed'",
-                (status, holder, label, lease, json.dumps(members), _now(), task, expected))
-    won = _update(history, task, revision, statement, holder=owner)
-    if won:
-        from .workshop_mailbox import record_activity
-        with history._transaction(write=True):
+                (status, holder, label, lease, json.dumps(members), reason or "manual", _now(), task, expected))
+    with history._transaction(write=True):
+        won = _update(history, task, revision, statement, holder=owner)
+        if won:
+            if handover is not None:
+                update_session(history, task, {"handover": handover})
+            from .workshop_mailbox import record_activity
             record_activity(history, owner, "release", task, reason=reason or "manual", handover=handover is not None)
     return won
 
@@ -454,12 +550,14 @@ def reap_stalled(history, *, now=None, alive_fn=None, quota_fn=None):
                 continue
             outcome = "unknown" if write_open else "interrupted"
             updated = history._db.execute(
-                "UPDATE workshop_tasks SET outcome=?, status='open', owner=NULL, owner_label=NULL, "
+                "UPDATE workshop_tasks SET outcome=CASE WHEN outcome IN ('unknown','reconciled_applied') THEN outcome ELSE ? END, "
+                "handover_route=CASE WHEN parent_id IS NOT NULL THEN json_object('previous',owner,'reason',?,'revision',revision) END, "
+                "status='open', owner=NULL, owner_label=NULL, "
                 "lease_until=NULL, write_open=0, "
                 "members=CASE WHEN json_valid(members) THEN (SELECT json_group_array(json_set(value,'$.lease_until',NULL)) "
                 "FROM json_each(workshop_tasks.members)) ELSE members END, "
                 "revision=revision+1 WHERE id=? AND revision=? AND status!='done' AND owner=?",
-                (outcome, row_id, revision, owner),
+                (outcome, reason, row_id, revision, owner),
             ).rowcount == 1
             if not updated:
                 continue
@@ -515,7 +613,9 @@ def complete(history, task, owner, result="", revision=None):
     is a failed step on the canvas and refuses Done (three failures block it). No check is today's behaviour."""
     _settle_lapsed(history)
     held = get(history, task)
-    if held and held.get("session_path") and not any(m["owner"] != owner for m in _live(held["members"])):
+    if held and held.get("parent_id") and held.get("outcome") == "unknown":
+        return False
+    if held and _holds(held, owner) and held.get("session_path") and not any(m["owner"] != owner for m in _live(held["members"])):
         _done_check(task, held)
 
     def statement(expected):
@@ -560,6 +660,8 @@ def begin_run(history, task, owner, label, revision=None, lease_seconds=None):
             "SELECT COUNT(*) FROM workshop_tasks WHERE status='claimed' AND lease_until IS NOT NULL "
             "AND lease_until>=? AND id!=?", (now, task)).fetchone()[0]
         holds = row["status"] == "claimed" and row["owner"] == owner
+        if row.get("parent_id") and (not _holds(row, owner) or row.get("outcome") in ("unknown", "reconciled_applied")):
+            raise TaskLeaseLost(task)
         if running >= cap and not holds:
             changed = history._db.execute(
                 "UPDATE workshop_tasks SET capacity='LIMIT_REACHED', updated_at=?, revision=revision+1 "
@@ -571,7 +673,7 @@ def begin_run(history, task, owner, label, revision=None, lease_seconds=None):
         else:
             changed = history._db.execute(
                 "UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, "
-                "outcome=NULL, write_open=0, capacity=NULL, updated_at=?, revision=revision+1 "
+                "outcome=NULL, write_open=CASE WHEN parent_id IS NULL THEN 0 ELSE write_open END, capacity=NULL, updated_at=?, revision=revision+1 "
                 "WHERE id=? AND revision=? AND status!='done' AND (owner IS NULL OR owner=?)",
                 (owner, label, now + lease_seconds, _now(), task, expected, owner)).rowcount == 1
             if not changed:
@@ -878,7 +980,63 @@ def _request_of(request_id):
     return "" if str(request_id or "").strip().casefold() in _NO_REQUEST else request_id
 
 
-def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True, kind="refresh"):
+def _matching_open_task(history, project, title, intent, parent=None):
+    query = ("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK +
+             " AND IFNULL(project,'')=? AND (lower(trim(title))=lower(trim(?)) OR (? != '' AND purpose=?))")
+    values = [project, title, intent, intent]
+    if parent is not None:
+        query += " AND IFNULL(parent_id,'')=?"
+        values.append(parent)
+    rows = history._db.execute(query + " LIMIT 2", values).fetchall()
+    if len(rows) > 1:
+        raise ValueError("Several open tasks match. Choose the task to continue by its id.")
+    return rows[0][0] if rows else None
+
+
+def agent_task_session(history, title, creator, owner, *, project='', intent='', continue_task='', parent='', canvas_task='', piece=''):
+    """Choose or create inside one write transaction so simultaneous agents reuse one file."""
+    title = _text(title, "title", 2000)
+    intent = _text(intent, "intent", 256) if intent else ''
+    from .workspace_roots_catalogue import read_registered_roots
+    with history._transaction(write=True):
+        _ensure(history)
+        enclosing = get(history, parent or canvas_task) if parent or canvas_task else None
+        if (parent or canvas_task) and not enclosing:
+            raise TaskNotFound(parent or canvas_task)
+        canvas = get(history, canvas_task) if canvas_task else None
+        if canvas_task and not canvas:
+            raise TaskNotFound(canvas_task)
+        if enclosing:
+            if project and enclosing.get('project') and project != enclosing['project']:
+                raise ValueError("The selected task belongs to another project.")
+            project = enclosing.get('project') or project
+        roots, _ = read_registered_roots()
+        workspaces = [key for key, info in roots.items() if (info.get('label') or key) == project]
+        if project and len(workspaces) != 1:
+            raise ValueError("The project name must identify one registered workspace.")
+        if continue_task:
+            row = _open_session(history, _text(continue_task, "task", 64))
+            if not row or (project and row.get('project') != project) or (parent and row['parent_id'] != parent):
+                raise ValueError("Choose an open task in this project.")
+            task = row['id']
+        else:
+            task = _matching_open_task(history, project, title, intent, parent or None)
+        if task:
+            if canvas and get(history, task)['session_path'] != canvas['session_path']:
+                raise ValueError("The selected task belongs to another canvas.")
+            view = open_session(history, task, select=False)
+        else:
+            workspace = workspaces[0] if workspaces else ''
+            view = create_session(history, title, creator, select=False, workspace=workspace, parent=parent,
+                                  canvas_task=canvas_task, piece=piece)
+            task = view["taskId"]
+            if intent:
+                history._db.execute("UPDATE workshop_tasks SET purpose=? WHERE id=? AND IFNULL(purpose,'')=''", (intent, task))
+        joined = claim(history, task, owner, creator)
+        return {"task": get(history, task), "session": view, "joined": bool(joined)}
+
+
+def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True, kind="refresh", continue_task=""):
     """An agent's declare joins one session (a piece of work) and returns its task id, or False.
 
     Founder 2026-11-19: a session is the work; agents join it, they are never sessions. A declare only joins work
@@ -889,13 +1047,19 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     """
     title = _text(title, "title", 2000)
     request = _request_of(request_id)
-    if not request and (status == "done" or kind == "alias"):
+    if not request and not continue_task and (status == "done" or kind == "alias"):
         return False
     task = request if request and get(history, request) else ""
+    if continue_task:
+        row = _open_session(history, _text(continue_task, "task", 64))
+        if not row or (project and row.get("project") != project):
+            raise ValueError("Choose an open task in this project.")
+        task = row["id"]
     if not task:
         with history._transaction(write=True):
             _ensure(history)
-            task = _session_for(history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"], kind)
+            task = _matching_open_task(history, project, title, request) or _session_for(
+                history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"], kind)
             if not task:
                 return False  # no such work: a declaration only, never a new session row or file
     if status == 'done':
@@ -907,9 +1071,10 @@ def declared(history, root, request_id, title, status, owner, label, project="",
         return task if won else False
     held = get(history, task)
     already = bool(held) and any(m["owner"] == owner for m in _live(held.get("members") or []))
-    _leave_other_sessions(history, task, owner)
     won = claim(history, task, owner, label)
-    if request and (changed or not already):
+    if won:
+        _leave_other_sessions(history, task, owner)
+    if won and request and (changed or not already):
         record_step(history, task, owner, label, title, status, request=request_id)
     return task if won else False
 
@@ -1373,13 +1538,79 @@ def _declaration_for(row, declarations, index=None):
     return (current or matched or [None])[0]
 
 
-def maintain_tasks(history):
+def offer_handovers(history, declarations, paused=None):
+    """Offer the existing piece to one of its named agents through ordinary Workshop delivery."""
+    from .workshop_mailbox import _send
+    pending = history._db.execute(
+        "SELECT id,project,session_path,revision,handover_route FROM workshop_tasks "
+        "WHERE handover_route IS NOT NULL AND status='open' AND IFNULL(archived,0)=0 "
+        "ORDER BY updated_at").fetchall()
+    for task, project, path, revision, raw in pending:
+        route = json.loads(raw)
+        if not project or not path:
+            continue
+        context = _session_context(path, task_row={"id": task, "project": project})
+        if context.get("removedFromCanvas"):
+            continue
+        nominated = (context.get("handover") or {}).get("successor")
+        names = [nominated] if nominated else context.get("agents") or []
+        candidates = sorted((r for r in declarations if r.get("current") and r.get("project") == project
+                             and r.get("session") != route["previous"]
+                             and (r.get("session") in names or r.get("agent") in names)),
+                            key=lambda r: r["session"])
+        if candidates:
+            from .session_files import read_document
+            try:
+                document = read_document(path)
+            except (OSError, ValueError):
+                continue
+            session = next((n for n in document["nodes"] if n.get("fixed") and n["type"] == "thing.session"), {})
+            read_only = set(session.get("params", {}).get("read_only_agents") or [])
+            candidates = [r for r in candidates if read_only.isdisjoint(
+                (r.get("agent"), r.get("session"), r.get("display_name")))]
+        if paused:
+            candidates = [r for r in candidates if r.get("runtime") and r.get("native_session_id")
+                          and not paused(r["runtime"], r["native_session_id"])]
+        if any(r["session"] == route.get("offered") for r in candidates):
+            continue
+        with history._transaction(write=True):
+            candidate = candidates[0] if candidates else None
+            if not candidate and not route.get("offered"):
+                continue
+            if candidate:
+                route["offered"] = candidate["session"]
+            else:
+                route.pop("offered", None)
+            changed = history._db.execute(
+                "UPDATE workshop_tasks SET handover_route=?,revision=revision+1 WHERE id=? AND revision=? "
+                "AND status='open' AND archived=0", (json.dumps(route), task, revision)).rowcount
+            if not changed or not candidate:
+                continue
+            _send(history, {"to": candidate["agent"],
+                            "text": "Workshop handover for task " + task + ". Read its handover and claim the same task "
+                                    "before resuming. Reconcile any unknown external result before another effect.",
+                            "idempotency_key": "task-handover-" + task + "-" + str(revision)},
+                  {"sender": "Workshop", "sender_key": "workshop", "sender_label": "Workshop"},
+                  queued=(task,), explicit=[candidate], sender_binding={"project": project})
+
+
+def maintain_tasks(history, paused=None):
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         from .workshop_mailbox import read_declarations
         _ensure(history)
-        reap_stalled(history)
+        declarations = read_declarations(history._db, include_archived=True)
+        paused_sessions = set()
+        if paused:
+            owners = {r[0] for r in history._db.execute(
+                "SELECT DISTINCT owner FROM workshop_tasks WHERE parent_id IS NOT NULL AND status='claimed'")}
+            for declaration in declarations:
+                if (declaration.get("session") in owners and declaration.get("runtime") and declaration.get("native_session_id")
+                        and paused(declaration["runtime"], declaration["native_session_id"])):
+                    paused_sessions.add(declaration["session"])
+        reap_stalled(history, quota_fn=paused_sessions.__contains__ if paused_sessions else None)
         _settle_lapsed(history)
-        fold_declarations(history, read_declarations(history._db, include_archived=True))
+        offer_handovers(history, declarations, paused)
+        fold_declarations(history, declarations)
 
 
 def column(history, project=None, stale_hours=None, *, include_archived=False, settle=True):
@@ -1471,6 +1702,8 @@ def _column_entry(row, session, declaration, project, state, last, threads, live
     activity = list(session.get("activity") or [])
     if not activity and (declaration or row.get("result") or owner):
         activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
+    if row.get("handover_route") and shown == "PLANNED":
+        waiting = "Handover offered" if row["handover_route"].get("offered") else "Waiting for a successor"
     return ({'id': row['id'], 'title': short_title(session.get('anchorTitle') or row['title']), 'description': session.get('anchorTitle') or row['title'],
          'owner': owner, 'revision': row.get('revision') or 0,
          'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
@@ -1488,6 +1721,7 @@ def _column_entry(row, session, declaration, project, state, last, threads, live
          'members': member_presence(row.get('members') or [], declarations, by_owner),
          'references': list(session.get("references") or []),
          'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
+         'verification': verification_summary(row.get('acceptance') or {}, _running_build()),
          'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
          'checkpoints': list(session.get("checkpoints") or []),
          'workflow': list(session.get("workflow") or []), 'activity': activity,
@@ -1550,7 +1784,7 @@ def set_status(history, task, status, revision=None):
     if status == "PLANNED":
         def planned(expected):
             return ("UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, "
-                    "lease_until=NULL, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
+                    "lease_until=NULL, handover_route=NULL, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
                     (_now(), task, expected))
         won = _update(history, task, revision, planned)
         if won:
@@ -1570,7 +1804,7 @@ def set_status(history, task, status, revision=None):
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
            "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
-           "revision", "outcome", "write_open", "capacity", "members", "parent_id", "archive_previous", "archive_revision", "legacy_session_path", "legacy_parent_id")
+           "revision", "outcome", "write_open", "capacity", "members", "parent_id", "archive_previous", "archive_revision", "legacy_session_path", "legacy_parent_id", "acceptance", "handover_route")
 
 
 def rows(history, task=None, *, include_archived=True, settle=True):
@@ -1592,6 +1826,8 @@ def rows(history, task=None, *, include_archived=True, settle=True):
         f"SELECT {fields} FROM workshop_tasks WHERE (? IS NULL OR id=?) "
         f"AND (? OR {archived}=0) ORDER BY created_at DESC LIMIT 500", (task, task, show))]
     for row in found:
+        row["acceptance"] = json.loads(row["acceptance"] or "{}")
+        row["handover_route"] = json.loads(row["handover_route"] or "{}")
         row["lease_expired"] = row["status"] == "claimed" and not _lease_active(row["lease_until"], now)
         row["members"] = _member_list(row["members"], row["owner"], row["owner_label"], row["lease_until"])
     return found
@@ -2100,7 +2336,7 @@ def duplicate_home_task(history, task, path, files):
     return {'ok':True, 'taskId':created['id'], 'path':created['session_path']}
 
 
-def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace='', parent='', canvas_task=''):
+def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace='', parent='', canvas_task='', piece=''):
     """A new task and the .archhub file that holds its session; parent makes it a subtask of that task."""
     if type(agent) is not str or len(agent) > 80 or '\0' in agent:
         raise ValueError('Choose a task agent.')
@@ -2109,12 +2345,12 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
     if workspace:
         from .settings_owner import SettingsOwner
         SettingsOwner(None)._workspace(workspace)
-    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom, parent=parent, canvas_task=canvas_task)
+    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom, parent=parent, canvas_task=canvas_task, piece=piece)
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 
 _SESSION_FIELDS = {"materializePlan", "scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned", "project"}
-_HANDOVER = ("done", "next", "results", "summary", "next_step", "files_touched", "blocker", "resume_prompt", "updated_at")
+_HANDOVER = ("done", "next", "results", "summary", "next_step", "files_touched", "blocker", "resume_prompt", "successor", "updated_at")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
 _ABSOLUTE = re.compile(
     r"(?:\b[A-Za-z]:|\\\\[^\\/\s\"'<>|*?:]+)(?:\\[^\\/\n\"'<>|*?:]+)*\\(?:[^\\/\s\"'<>|*?:,](?:(?!\.[A-Za-z0-9]{1,8}\s|[.;)!?]\s)[^\\/\n\"'<>|*?:,])*(?=[.,;)!?](?:\s|$)|[/\\\n]|$)|[^\\/\s\"'<>|*?:]+)"   # C:\a b\c.txt, \\server\share, C:\John Smith

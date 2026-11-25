@@ -17,6 +17,10 @@ const {chromium} = require('playwright');
       const context = await browser.newContext({viewport: {width, height: 900}});
       await context.addCookies([{name: 'archhub_studio', value: input.cookie, url: input.url}]);
       const page = await context.newPage();
+      // This isolated Studio server has no cloud account.
+      await page.route('**/api/universal/desktop-access', route => route.fulfill({
+        json:{ok:true, admitted:true, state:'admitted', subject:'home-test', email:'home@example.test'}
+      }));
       const errors = [], at = ' at ' + width;
       page.on('pageerror', error => { errors.push(error.message); console.error('PAGEERROR ' + error.message); });
       // Two live Claude Code sessions in one folder with no task, as on his PC: the agent owner's answer is stood in for here.
@@ -68,9 +72,9 @@ const {chromium} = require('playwright');
       assert.equal(await page.locator('[data-home-kind], .home-map-kind button').filter({hasText: 'Agent sessions'}).count(), 0, 'the map has no Agent sessions filter' + at);
       // Every name on Home, the docks included, is readable: no raw session id; the map's bar words do not overlap.
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /session-[0-9a-f]{6,}/i, 'no raw session id anywhere on Home' + at);
-      const bar = await page.evaluate(() => [...document.querySelectorAll('.home-map-bar>button')].filter(b => b.getClientRects().length).map(b => { const r = b.getBoundingClientRect(); return [r.left, r.right, b.scrollWidth <= b.clientWidth + 1]; }));
+      const bar = await page.evaluate(() => [...document.querySelectorAll('.home-map-bar>button')].filter(b => b.getClientRects().length).map(b => { const r = b.getBoundingClientRect(); return [r.left, r.right, b.scrollWidth <= b.clientWidth + 1, b.textContent.trim()]; }));
       for (let i = 1; i < bar.length; i++) assert.ok(bar[i][0] >= bar[i - 1][1] - 1, 'the map bar buttons do not overlap' + at + ': ' + JSON.stringify(bar));
-      assert.ok(bar.every(b => b[2]), 'no map bar word is cut' + at);
+      assert.ok(bar.every(b => b[2]), 'no map bar word is cut' + at + ': ' + bar.filter(b => !b[2]).map(b => b[3]).join(', '));
       // At every width a card's name is drawn at a readable size (the map wraps to its room).
       const nameSize = await page.evaluate(() => Math.min(...[...document.querySelectorAll('[data-design="home.card"] .home-card-head b')].map(b => b.getBoundingClientRect().height)));
       assert.ok(nameSize >= 11, 'card names are readable' + at + ': ' + nameSize);
@@ -134,6 +138,7 @@ const {chromium} = require('playwright');
       // A card selects its session: the Inspector says the title once (a step named like the session adds nothing).
       await card(input.echo).locator('.home-card-head').click();
       await inspector.locator('.resume-heading h1').filter({hasText: input.echo}).waitFor();
+      await inspector.getByText('Acceptance list missing', {exact:true}).first().waitFor();
       const said = await inspector.evaluate((element, title) => ({line: element.querySelector('.resume-heading p').textContent, steps: [...element.querySelectorAll('.resume-step>header b')].map(b => b.textContent.trim()).includes(title)}), input.echo);
       assert.ok(!said.line.includes(input.echo) && !said.steps, 'the title is said once' + at + ': ' + JSON.stringify(said));
       // Two levels of one thing: a double-click enters the session; the path reads Home › <session>; the rail has one Home entry;

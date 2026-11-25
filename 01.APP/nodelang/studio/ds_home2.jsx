@@ -361,6 +361,14 @@
   // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
   // sessions, run budget. Done when and input links are the session model's (POST /api/session-model); read-only agents and
   // the run budget are the Session node's own values, the same ones its card shows. One value, one owner each.
+  function VerifiedWork({task}) {
+    const {verified = 0, total = 0, results = {}} = task?.verification || {};
+    const latest = Object.values(results).sort((a, b) => b.at.localeCompare(a.at))[0];
+    return <div aria-label="Installed verification"><p>{total
+      ? verified + ' of ' + total + ' checks verified (' + Math.round(100 * verified / total) + '%)'
+      : 'Acceptance list missing'}</p>{latest && <small>Latest evidence · {latest.evidence}</small>}</div>;
+  }
+
   function SessionInspector({s, u, task}) {
     const path = api.getSessionPath(), session = s.graph.nodes.find(row => row.fixed && row.type === 'thing.session');
     const [attempt, setAttempt] = React.useState(0), [load, setLoad] = React.useState({status: 'waiting'});
@@ -389,7 +397,7 @@
       <label className="grid">Done when<select data-design="inspector.session.donewhen" aria-label="Done when" value={done?.node || ''} onChange={event => setDone(event.target.value)}>
         <option value="">{checks.length ? 'Pick a check on this canvas…' : 'Add a Check node to this canvas first'}</option>{checks.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
       <p className="muted" data-design="inspector.session.donestate">{doneState}{done ? ' · three failures in a row block Done' : ''}</p>
-      <h4>Who works on it</h4>
+      <VerifiedWork task={task}/><h4>Who works on it</h4>
       {members.length ? members.map(name => <label key={name} className="v48-session-param"><span>{name}</span><span>Read only <input type="checkbox" disabled={!session} aria-label={name + ' read only'} checked={readOnly.includes(name)} onChange={event => setReadOnly(name, event.target.checked)}/></span></label>) : <p className="muted">No agent yet.</p>}
       <h4>Inputs from other sessions</h4>
       {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span>{link.source.path}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
@@ -871,7 +879,7 @@
     // Coming up from a session (the path's Home, Esc or the rail) its card is the selected one: the same owner record.
     const pickedCard = picked === 'none' ? null : chart.nodes.find(node => !node.group && (picked ? node.id === picked : !!node.task && node.task === focus)) || null, pickedTask = pickedCard && task && task.id === pickedCard.task;
     React.useEffect(() => { if (!fileWorkspace) homeShown = cardTask(pickedCard)?.id || ''; }, [fileWorkspace, pickedCard?.id]);  // what the rail's Canvas opens from Home
-    const resumeView = task ? <section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1>{task.sessionTitle||task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
+    const resumeView = task ? <section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1>{task.sessionTitle||task.title}</h1><p>{stepLine}</p><VerifiedWork task={task}/></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
                 {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=>repeats(step)&&!step.output&&!approvalSteps.some(row=>row.index===index)?null:<article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-made={step.output?'':undefined} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.output&&<div className="v48-step-preview resume-made"><window.UI.ResultPreview value={step.value??step.preview}/></div>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
                 {approvalSteps.filter(row=>row.index<0).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}
                 {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}

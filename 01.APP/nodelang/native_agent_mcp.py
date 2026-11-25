@@ -310,7 +310,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
 
     @server.tool(name="declare")
     def declare(task: str, paths: list[str], status: str, request_id: str, ctx: Context,
-                display_name: str = "", model: str = "", role: str = "", title: str = "") -> dict[str, object]:
+                display_name: str = "", model: str = "", role: str = "", title: str = "", continue_task: str = "") -> dict[str, object]:
         """Keep your Workshop node current: plain task, exact paths/hosts, founder request id,
         and working/blocked/done. Call at start and whenever scope or status changes.
         Overlaps post a shared coordination thread; they never lock anyone's work.
@@ -321,7 +321,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         body = {"task": task, "paths": paths, "status": status,
                 "request_id": request_id, **({"display_name": display_name} if display_name else {}),
                 **({"model": model} if model else {}), **({"role": role} if role else {}),
-                **({"title": title} if title else {})}
+                **({"title": title} if title else {}), **({"continue_task": continue_task} if continue_task else {})}
         result = call("declare", body, context)
         with lock:
             declarations[tuple(context.items())] = body
@@ -360,10 +360,10 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
 
     # Workshop tasks: one table in the Workshop store; a claim is one conditional UPDATE (ok false = another agent holds it).
     @server.tool(name="task.create")
-    def task_create(title: str, ctx: Context, parent: str = "", canvas_task: str = "") -> dict[str, object]:
-        """Add an open task and the .archhub file that holds its session. Does not switch the open canvas.
-        parent: add a subtask on its parent canvas. canvas_task: add a task on that existing canvas."""
-        return call("task_create", {"title": title, **({"parent": parent} if parent else {}), **({"canvas_task": canvas_task} if canvas_task else {})}, _caller_context(ctx))
+    def task_create(title: str, ctx: Context, parent: str = "", canvas_task: str = "", piece: str = "", continue_task: str = "", intent: str = "") -> dict[str, object]:
+        """Join existing open work by title, intent or explicit continue_task id; new work gets one session.
+        parent: add a subtask on its parent canvas. Supply a stable piece ID to reuse it on retry. canvas_task: add a task on that existing canvas."""
+        return call("task_create", {"title": title, **({"continue_task": continue_task} if continue_task else {}), **({"intent": intent} if intent else {}), **({"piece": piece} if piece else {}), **({"parent": parent} if parent else {}), **({"canvas_task": canvas_task} if canvas_task else {})}, _caller_context(ctx))
 
     @server.tool(name="task.list", annotations=ToolAnnotations(destructiveHint=False))
     def task_list(ctx: Context) -> dict[str, object]:
@@ -398,15 +398,22 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
     def task_set_session(id: str, ctx: Context, scope: str = "", rules: list[str] | None = None,
                          agents: list[str] | None = None, plan: list[str] | None = None,
                          progress: dict[str, str] | None = None, folders: list[str] | None = None,
-                         references: list[str] | None = None,
+                         references: list[str] | None = None, reconcile: dict[str, object] | None = None,
+                         acceptance: dict[str, object] | None = None, begin_write: bool = False,
                          handover: dict[str, object] | None = None) -> dict[str, object]:
         """Write this task's session fields into its .archhub file. Does not switch the open canvas.
+        begin_write: true alone before starting a child task effect. Repeating an outstanding write is refused.
+        reconcile: {applied, observation} after re-reading an interrupted external effect.
+        acceptance: by itself, {criteria, reviewer (sender key)} to assign checks, or
+        {criterion, passed, evidence, build} to attest as that independent reviewer.
         handover: what is done, what is next and where the results are, for the next agent of any vendor."""
         values: dict[str, object] = {}
+        if begin_write:
+            values["begin_write"] = True
         if scope:
             values["scope"] = scope
         for key, value in (("rules", rules), ("agents", agents), ("plan", plan), ("progress", progress),
-                           ("folders", folders), ("references", references), ("handover", handover)):
+                           ("folders", folders), ("references", references), ("acceptance", acceptance), ("reconcile", reconcile), ("handover", handover)):
             if value is not None:
                 values[key] = value
         return call("task_set_session", {"id": id, **values}, _caller_context(ctx))

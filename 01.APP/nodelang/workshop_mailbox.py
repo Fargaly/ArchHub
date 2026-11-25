@@ -1420,7 +1420,7 @@ class WorkshopInjection:
             if now >= self._next_task_maintenance:
                 from .library_engines import LIBRARY_ITEM_ENGINES
                 from .workshop_tasks import maintain_tasks
-                maintain_tasks(history)
+                maintain_tasks(history, paused=self._paused)
                 self._next_task_maintenance = now + 60 * float(LIBRARY_ITEM_ENGINES['tool_workshop']['params']['tick_cadence_minutes'])
 
     def _tick(self, history, now, *, message_id=None):
@@ -1817,7 +1817,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
         from .workshop_tasks import declared
         work = declared(history, root, row["request_id"], row["task"], row["status"],
                         identity["sender_key"], identity["sender_label"], row["project"],
-                        inherited=_inherited_work(history, root, row["process_lineage"]), changed=changed, kind=kind)
+                        inherited=_inherited_work(history, root, row["process_lineage"]), changed=changed, kind=kind, continue_task=body.get("continue_task") or "")
         if work:
             row["work"] = work
             with history._transaction(write=True):
@@ -1910,10 +1910,10 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 "declare": {"task", "paths", "status", "request_id"},  # optional kind: start, refresh (default), alias
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind"}, "pending":set(), "seen":set(),
-                "task_create": {"parent"}, "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": {"reason", "handover"},
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind", "continue_task"}, "pending":set(), "seen":set(),
+                "task_create": {"parent", "canvas_task", "piece", "continue_task", "intent"}, "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": {"reason", "handover"},
                 "task_complete": {"result"},
-                "task_set_session": {"scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},
+                "task_set_session": {"begin_write", "reconcile", "acceptance", "scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},
                 "task_open": set(), "task_archive": set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
@@ -1953,7 +1953,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     result = _seen(selected, body, identity, runtime)
                     target, detail = None, {"channel":body["channel"], "messages":len(body["message_ids"])}
                 elif method.startswith("task_"):
-                    return _task(selected, method, body, identity)
+                    return _task(selected, method, body, identity, project_of(getattr(peer, "cwd", "")) if method == "task_create" else "")
                 elif method == "declare":
                     result = _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
                     target, detail = result["declaration"]["request_id"], {"status":body["status"]}
@@ -2039,18 +2039,34 @@ def attach_meeting_notes(history, task, text):
                           idempotency_key='meeting-notes:' + sha256((task + '\0' + text).encode()).hexdigest())
 
 
-def _task(history, method, body, identity):
+def _task(history, method, body, identity, project=""):
     from . import workshop_tasks
     me, label = identity["sender_key"], identity["sender_label"]
     if method == "task_create":
-        view = workshop_tasks.create_session(history, body["title"], label, select=False, parent=body.get("parent") or "", canvas_task=body.get("canvas_task") or "")
-        return {"task": workshop_tasks.get(history, view["taskId"]), "session": view}
+        return workshop_tasks.agent_task_session(history, body["title"], label, me, project=project,
+            **{key: body.get(key) or "" for key in ("parent", "canvas_task", "piece", "continue_task", "intent")})
     if method == "task_list":
         return {"tasks": workshop_tasks.rows(history, include_archived=False)}
     task = _text(body["id"], "task id", 64)
     if method == "task_set_session":
+        if "begin_write" in body:
+            if set(body) != {"id", "begin_write"} or body["begin_write"] is not True:
+                raise ValueError("Begin a write separately from session edits.")
+            return {"ok": workshop_tasks.mark_writing(history, task, me)}
+        if "reconcile" in body:
+            if set(body) != {"id", "reconcile"}:
+                raise ValueError("Reconcile an external effect separately from other changes.")
+            return workshop_tasks.reconcile_handover(history, task, me, body["reconcile"])
+        if "acceptance" in body:
+            if set(body) != {"id", "acceptance"}:
+                raise ValueError("Record acceptance separately from session edits.")
+            return {"verification": workshop_tasks.acceptance_update(history, task, me, body["acceptance"])}
         fields = ("scope", "rules", "agents", "plan", "handover", "progress", "folders", "references")
-        return {"session": workshop_tasks.update_session(history, task, {key: body[key] for key in fields if key in body})}
+        with history._transaction(write=True):
+            row = workshop_tasks.get(history, task)
+            if row and row.get("parent_id") and not workshop_tasks._holds(row, me):
+                raise workshop_tasks.TaskLeaseLost(task)
+            return {"session": workshop_tasks.update_session(history, task, {key: body[key] for key in fields if key in body})}
     if method == "task_open":
         return {"session": workshop_tasks.open_session(history, task)}
     if method == "task_archive":

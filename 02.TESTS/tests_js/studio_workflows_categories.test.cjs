@@ -14,7 +14,7 @@ test('real owner: All 146, Workflows 31, Agent sessions 115; filters and collaps
   let browser;
   const env = {...process.env, USERPROFILE:profile, HOME:profile, LOCALAPPDATA:path.join(profile,'local'),
     APPDATA:path.join(profile,'roaming'), ARCHHUB_TEST_STATE_DIR:path.join(profile,'state'),
-    ARCHHUB_TEST_SECRET_STORE:'memory', PYTHONDONTWRITEBYTECODE:'1',
+    ARCHHUB_TEST_SECRET_STORE:'memory', PYTHONDONTWRITEBYTECODE:'1', ARCHHUB_DISABLE_WORKSHOP_WATCH:'1',
     PATH:path.dirname(process.env.ARCHHUB_TEST_PYTHON)+path.delimiter+process.env.PATH,
     PYTHONPATH:path.resolve(studio,'../..')};
   const server = spawn(process.env.ARCHHUB_TEST_PYTHON, ['-u', '-c', `
@@ -26,7 +26,10 @@ from nodelang.library_engines import LIBRARY_ITEMS_WITHOUT_ENGINE, LIBRARY_PRESE
 # Exercise the owner's declared unavailable state in this isolated server only.
 missing = next(item for _, rows in LIBRARY_PRESENTATION for item, _, _ in rows if item in LIBRARY_ITEM_ENGINES)
 LIBRARY_ITEMS_WITHOUT_ENGINE[missing] = 'Fixture engine is unavailable'
-owner = SessionFiles()
+# Session files belong to the admitted account: they are written under its resume signer (cloud_session.DesktopAccess.check).
+from nodelang.cloud_session import _ResumeSigner
+signer = _ResumeSigner(b'isolated-test-key', 'isolated', 'workflowscat-fixture', 'isolated')
+owner = SessionFiles(sign_resume_pointer=signer)
 for i in range(146):
     doc = new_document(('Workflow ' if i < 31 else 'Agent ') + str(i))
     if i >= 31: doc['properties']['taskContext'] = {'task': 'task-' + str(i)}
@@ -35,7 +38,12 @@ for i in range(146):
     target.write_text(json.dumps(doc), encoding='utf-8')
 first = owner.directory / '0.archhub'
 owner.dispatch({'action':'open', 'path':str(first)})
-server = NoGraphServer(Path(os.environ['ARCHHUB_TEST_STATE_DIR']))
+# Desktop work needs a verified ArchHub account (cd19d5d4); this isolated owner is signed in.
+class Admitted:
+    def check(self, *, expected_bearer=None, bind_resume=False):
+        return {'ok': True, 'admitted': True, 'state': 'admitted', 'subject': 'workflowscat-fixture', 'email': None,
+                '_sign_resume_pointer': signer}
+server = NoGraphServer(Path(os.environ['ARCHHUB_TEST_STATE_DIR']), desktop_access=Admitted())
 thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
 thread.start()
 print(json.dumps({'url':server.public_url, 'token':server.browser_session_token, 'csrf':server.browser_csrf_token}), flush=True)

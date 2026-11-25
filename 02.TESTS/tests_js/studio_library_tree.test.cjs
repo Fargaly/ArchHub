@@ -20,7 +20,7 @@ test('LIBRARY tree: owner categories under plain labels, closed first, every opt
   let browser;
   const env = {...process.env, USERPROFILE:profile, HOME:profile, LOCALAPPDATA:path.join(profile,'local'),
     APPDATA:path.join(profile,'roaming'), ARCHHUB_TEST_STATE_DIR:path.join(profile,'state'),
-    ARCHHUB_TEST_SECRET_STORE:'memory', PYTHONDONTWRITEBYTECODE:'1',
+    ARCHHUB_TEST_SECRET_STORE:'memory', PYTHONDONTWRITEBYTECODE:'1', ARCHHUB_DISABLE_WORKSHOP_WATCH:'1',
     PATH:path.dirname(python)+path.delimiter+process.env.PATH,
     PYTHONPATH:path.resolve(studio,'../..')};
   const server = spawn(python, ['-u', '-c', `
@@ -28,14 +28,22 @@ import json, os, sys, threading
 from pathlib import Path
 from nodelang.session_files import SessionFiles, new_document
 from nodelang.nograph_server import NoGraphServer
-owner = SessionFiles()
+# Session files belong to the admitted account: they are written under its resume signer (cloud_session.DesktopAccess.check).
+from nodelang.cloud_session import _ResumeSigner
+signer = _ResumeSigner(b'isolated-test-key', 'isolated', 'librarytree-fixture', 'isolated')
+owner = SessionFiles(sign_resume_pointer=signer)
 for name in ('door-schedule', 'sheet-check'):
     (owner.directory / (name + '.archhub')).write_text(json.dumps(new_document(name)), encoding='utf-8')
 talk = new_document('agent-talk')
 talk['properties']['taskContext'] = {'task': 'task-1'}
 (owner.directory / 'agent-talk.archhub').write_text(json.dumps(talk), encoding='utf-8')
 owner.dispatch({'action':'open', 'path':str(owner.directory / 'door-schedule.archhub')})
-server = NoGraphServer(Path(os.environ['ARCHHUB_TEST_STATE_DIR']))
+# Desktop work needs a verified ArchHub account (cd19d5d4); this isolated owner is signed in.
+class Admitted:
+    def check(self, *, expected_bearer=None, bind_resume=False):
+        return {'ok': True, 'admitted': True, 'state': 'admitted', 'subject': 'librarytree-fixture', 'email': None,
+                '_sign_resume_pointer': signer}
+server = NoGraphServer(Path(os.environ['ARCHHUB_TEST_STATE_DIR']), desktop_access=Admitted())
 thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
 thread.start()
 print(json.dumps({'url':server.public_url, 'token':server.browser_session_token, 'csrf':server.browser_csrf_token}), flush=True)

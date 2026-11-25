@@ -108,6 +108,7 @@ AUTH_ROUTES = {
     "/oauth/whatsapp/embedded": SOCIAL,     # renders only for signed state minted by /start
     "/oauth/{provider}/callback": SOCIAL,   # spends that signed state once
     "/oauth/{provider}/consume": SOCIAL,    # needs the user's bearer session and a signed grant
+    "/oauth/whatsapp/messages": SOCIAL,     # reads the bearer's own WhatsApp messages; signs no one in
 }
 _AUTH_SHAPED = ("auth", "login", "logout", "signin", "sign-in", "sign_in",
                 "register", "magic", "claim", "browser-code", "password",

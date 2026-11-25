@@ -278,13 +278,16 @@ def test_whatsapp_real_sdk_code_exchange_and_phone_discovery_use_fake_graph(monk
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     from fastapi.testclient import TestClient
     import main
     import social_oauth
     with social_oauth._LOCK:
         social_oauth._STATES.clear()
         social_oauth._GRANTS.clear()
+    # No test reaches Meta: the app webhook counts as registered and history-sync posts are recorded.
+    monkeypatch.setattr(social_oauth, "_WEBHOOK_STATE", {"ok": True, "error": ""})
+    monkeypatch.setattr(social_oauth, "_post_bearer", lambda url, token, body=None: {"success": True})
     social_oauth._exchange = None
     social_oauth._profile = None
     social_oauth._pages = None
@@ -757,3 +760,77 @@ def test_whatsapp_consume_links_the_phone_number_to_the_signed_in_account(client
                            headers={"Authorization": "Bearer " + token, "X-ArchHub-Device-Session": "social3-device"})
     assert consumed.status_code == 200
     assert db.whatsapp_number_owner("456") == db.user_for_token(token)["id"]
+
+
+def test_whatsapp_status_registers_the_app_webhook_once_without_founder_steps(client, monkeypatch):
+    import social_oauth
+    _social3_config(monkeypatch)
+    monkeypatch.setattr(social_oauth, "_WEBHOOK_STATE", {"ok": False, "error": ""})
+    calls = []
+    monkeypatch.setattr(social_oauth, "_post_form", lambda url, form: calls.append((url, form)) or {"success": True})
+    headers = {"Authorization": "Bearer " + _token_for("wa-hook@social3.test")}
+    first = client.get("/oauth/whatsapp/status", headers=headers).json()
+    assert first["webhook_url"].startswith("https://") and first["webhook_url"].endswith("/webhooks/whatsapp")
+    assert "receive_blocker" not in first
+    url, form = calls[0]
+    assert url == "https://graph.facebook.com/v25.0/fake-publisher-app/subscriptions"
+    assert "fake-cloud-secret" not in url  # the app token rides in the body only
+    assert form["object"] == "whatsapp_business_account"
+    assert form["callback_url"] == first["webhook_url"]
+    assert form["verify_token"] == social_oauth.whatsapp_verify_token()
+    assert set(form["fields"].split(",")) == {"messages", "smb_message_echoes", "history"}
+    assert form["access_token"] == "fake-publisher-app|fake-cloud-secret"
+    client.get("/oauth/whatsapp/status", headers=headers)
+    assert len(calls) == 1  # idempotent: registered once per process
+
+
+def test_whatsapp_webhook_registration_failure_is_a_status_line_without_secrets(client, monkeypatch, caplog):
+    import io
+    import urllib.error
+    import social_oauth
+    _social3_config(monkeypatch)
+    monkeypatch.setattr(social_oauth, "_WEBHOOK_STATE", {"ok": False, "error": ""})
+    calls = []
+
+    def refused(url, form):
+        calls.append(url)
+        body = json.dumps({"error": {"code": 100, "message": "bad token fake-cloud-secret"}}).encode()
+        raise urllib.error.HTTPError(url + "?access_token=fake-cloud-secret", 400, "Bad Request", {}, io.BytesIO(body))
+    monkeypatch.setattr(social_oauth, "_post_form", refused)
+    headers = {"Authorization": "Bearer " + _token_for("wa-hook-fail@social3.test")}
+    with caplog.at_level("WARNING"):
+        answer = client.get("/oauth/whatsapp/status", headers=headers).json()
+    assert answer["receive_blocker"] == "WhatsApp webhook not registered: Meta answered HTTP 400"
+    assert "fake-cloud-secret" not in json.dumps(answer) and "fake-cloud-secret" not in caplog.text
+    assert "Meta answered HTTP 400" in caplog.text
+    client.get("/oauth/whatsapp/status", headers=headers)
+    assert len(calls) == 2  # a failure is retried on the next status read
+    monkeypatch.setattr(social_oauth, "_post_form", lambda url, form: {"success": True})
+    assert "receive_blocker" not in client.get("/oauth/whatsapp/status", headers=headers).json()
+
+
+def test_whatsapp_consume_requests_coexistence_history_and_survives_refusal(client, monkeypatch):
+    import urllib.error
+    import social_oauth
+    _social3_config(monkeypatch)
+    sent = []
+    monkeypatch.setattr(social_oauth, "_post_bearer", lambda url, token, body=None: sent.append((url, token, body)) or {"success": True})
+    token = _token_for("wa-history@social3.test")
+    headers = {"Authorization": "Bearer " + token, "X-ArchHub-Device-Session": "social3-device"}
+    monkeypatch.setattr(social_oauth, "_exchange", lambda *args: {"access_token": "fake-business-token"})
+    monkeypatch.setattr(social_oauth, "_profile", lambda *args: {"id": "456", "name": "+123456"})
+
+    def connect():
+        state = urllib.parse.parse_qs(urllib.parse.urlsplit(_social3_start(client, "whatsapp", token).json()["auth_url"]).query)["state"][0]
+        location = client.get("/oauth/whatsapp/callback", params={"code": "c", "state": state}, follow_redirects=False).headers["location"]
+        grant = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)["grant"][0]
+        return client.post("/oauth/whatsapp/consume", json={"grant": grant}, headers=headers)
+
+    assert connect().status_code == 200
+    assert sent == [("https://graph.facebook.com/v25.0/456/smb_app_data", "fake-business-token",
+                     {"messaging_product": "whatsapp", "sync_type": kind}) for kind in ("smb_app_state_sync", "history")]
+
+    def refused(url, token, body=None):
+        raise urllib.error.URLError("offline")
+    monkeypatch.setattr(social_oauth, "_post_bearer", refused)
+    assert connect().status_code == 200  # the connection stands when Meta refuses history sync

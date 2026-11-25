@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -258,9 +259,9 @@ def _get_json(url: str, token: str, *, timeout: float = 20.0) -> dict:
         return json.loads(response.read(65536).decode("utf-8"))
 
 
-def _post_bearer(url: str, token: str, *, timeout: float = 20.0) -> dict:
-    request = urllib.request.Request(url, data=b"", method="POST",
-                                     headers={"Accept": "application/json",
+def _post_bearer(url: str, token: str, body: dict | None = None, *, timeout: float = 20.0) -> dict:
+    request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8") if body else b"", method="POST",
+                                     headers={"Accept": "application/json", "Content-Type": "application/json",
                                               "Authorization": "Bearer " + token})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read(65536).decode("utf-8") or "{}")
@@ -401,8 +402,7 @@ def status(provider: str, authorization: str | None = Header(None)) -> dict:
             "state": "blocked" if configured(provider) and blocker else "configured" if configured(provider) else "missing",
             **({"blocker": blocker} if blocker else {}),
             **({"publish_blocker": review, "review_state": "pending" if pending else "unverified"} if review else {}),
-            # The callback URL to register in the Meta app's WhatsApp webhook settings.
-            **({"webhook_url": config.PUBLIC_URL.rstrip("/") + "/webhooks/whatsapp"} if provider == "whatsapp" else {})}
+            **(_whatsapp_receive_status() if provider == "whatsapp" else {})}
 
 
 @router.get("/oauth/{provider}/start")
@@ -581,6 +581,7 @@ def consume(provider: str, body: dict, authorization: str | None = Header(None),
         raise HTTPException(status_code=400, detail={"error": str(exc)})
     if provider == "whatsapp":
         db.link_whatsapp_number(phone_number_id=record["account_id"], user_id=record["user_id"])
+        _request_history_sync(record["account_id"], grant_payload["access_token"])
     answer = {"ok": True, "provider": provider, "account_id": record["account_id"],
               "name": record.get("name", ""), "access_token": grant_payload["access_token"]}
     if provider in _META_NETWORKS:
@@ -603,6 +604,66 @@ def whatsapp_verify_token() -> str:
     """Meta's webhook verify token, derived from the app secret: no extra secret to hold."""
     return hmac.new(_app_secret().encode("utf-8"), b"archhub-whatsapp-webhook-verify",
                     "sha256").hexdigest()
+
+
+_WEBHOOK_STATE = {"ok": False, "error": ""}
+_LOG = logging.getLogger(__name__)
+
+
+def _graph_error(exc: Exception) -> str:
+    """A loggable failure: the HTTP status or error class only, never a URL, token or body text."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return "Meta answered HTTP %d" % exc.code
+    return "Meta could not be reached (" + type(exc).__name__ + ")"
+
+
+def ensure_whatsapp_webhook() -> str:
+    """Register this cloud as the app's WhatsApp webhook; '' when registered, else the reason.
+
+    Idempotent (Meta overwrites the same object subscription); a success is
+    remembered for the process, a failure is retried on the next status read.
+    """
+    app_id, secret, _redirect = _client_values("whatsapp")
+    if not app_id or not secret:
+        return "Meta app id or app secret missing on the cloud"
+    with _LOCK:
+        if _WEBHOOK_STATE["ok"]:
+            return ""
+    try:
+        # The app access token rides in the POST body, never in the URL.
+        answer = _post_form("https://graph.facebook.com/v25.0/" + urllib.parse.quote(app_id, safe="") + "/subscriptions", {
+            "object": "whatsapp_business_account",
+            "callback_url": config.PUBLIC_URL.rstrip("/") + "/webhooks/whatsapp",
+            "verify_token": whatsapp_verify_token(),
+            "fields": ",".join(sorted(_WEBHOOK_FIELDS)),
+            "include_values": "true",
+            "access_token": app_id + "|" + secret})
+        error = "" if answer.get("success") is True else "Meta did not confirm the webhook subscription"
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        error = _graph_error(exc)
+    with _LOCK:
+        _WEBHOOK_STATE.update(ok=not error, error=("WhatsApp webhook not registered: " + error) if error else "")
+    if error:
+        _LOG.warning("whatsapp webhook registration failed: %s", error)
+    return _WEBHOOK_STATE["error"]
+
+
+def _whatsapp_receive_status() -> dict:
+    url = config.PUBLIC_URL.rstrip("/") + "/webhooks/whatsapp"
+    blocker = ensure_whatsapp_webhook()
+    return {"webhook_url": url, **({"receive_blocker": blocker} if blocker else {})}
+
+
+def _request_history_sync(phone_number_id: str, token: str) -> None:
+    """Coexistence onboarding: ask Meta to send the WhatsApp Business app's contacts
+    and chat history (the user approves sharing on the phone). Best effort: the
+    connection stands even when Meta refuses or the 24-hour window has passed."""
+    url = "https://graph.facebook.com/v25.0/" + phone_number_id + "/smb_app_data"
+    for sync_type in ("smb_app_state_sync", "history"):
+        try:
+            _post_bearer(url, token, {"messaging_product": "whatsapp", "sync_type": sync_type})
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            _LOG.warning("whatsapp %s request failed: %s", sync_type, _graph_error(exc))
 
 
 def _digits(value: object) -> str:

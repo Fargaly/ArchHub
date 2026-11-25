@@ -678,3 +678,15 @@ Replaces: nothing. No new store or file: the read targets the throwaway workshop
 Budgets: the composer witness runs in seconds (local run: 12/12 seats, two sends). Not measured: hosted-runner wall time.
 
 Verification: 03.TOOLS/tools/real_app_check/upgrade_persistence.py composer_fanout_snapshot, run locally against main's modules: both sends 12/12 first reads, 0 excluded, 0 repeats, 12 receipts each.
+
+## D-051 — Connections: social and connector grants follow the ArchHub account (2026-11-25)
+
+Request: F426 (NEWPC-PORTABILITY, connections section of D-051 "Everything moves to another PC with nothing lost") and the founder 2026-11-25: "كل الكيز دي المفروض تبقى مربوطة بكسم الأكونت بتاعي أصلا أنا مش فاهم ليه كل مرة بنقعد نزيد ونعيد" + "الأكونت بتاعي في اركهب" (every key is bound to his ArchHub account; nothing is re-entered or reconnected after a reinstall, a new profile or a new PC).
+
+Prior art: Zapier connections -> OAuth grants held per account on the server, refreshed there, usable from any device. n8n Cloud credentials -> encrypted at rest with an instance key, listed without secrets, decrypted only at execution. Make connections -> one connection per account, reused by every scenario and removed once for all. Fit: connections ride the one D-051 account-sync owner as namespace connections/; no second store.
+
+Replaces: machine-only custody of social tokens in this PC's DPAPI secrets.dat (social_custody.py). secrets.dat stays only as this PC's cache and offline fallback. The cloud owner (06.CLOUD/cloud_backend/account_sync.py) keeps each account's items under its replica folder; connections/ blobs are sealed with a random key the cloud generates on first boot (account_sync.key on the /data volume, owner-only, beside the replicas). The key is never derived from or wrapped with an OAuth secret, never in env, logs or answers. Platform app secrets (Meta, LinkedIn, X, TikTok) stay Fly secrets. Refresh tokens stay on the cloud and are refreshed there; the desktop only ever receives the access token. On volume loss each connection reads needs_reconnect (never a wrong decrypt): a PC still holding it re-uploads and heals it, otherwise Settings > Social shows Reconnect. Removing a connection on any PC removes it from the account and every PC.
+
+Budgets: one manifest read per sign-in or Settings > Social open; one POST per credential resolve (falls back to the PC cache when offline); each connection record is under 1 KB. Not measured on the installed app.
+
+Verification: 06.CLOUD/cloud_backend/tests/test_social_oauth_broker.py and 02.TESTS/tests_replica/test_cloud_social_oauth_finish.py (per-account isolation, no plaintext at rest, manifest without tokens, removal, server refresh, key survives restart and secret rotation, lost key -> needs_reconnect -> heal, one-time migration, new-PC restore, cache follows the account).

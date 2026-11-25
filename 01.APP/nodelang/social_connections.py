@@ -6,7 +6,7 @@ node use the same browser routes, and only provider-confirmed callbacks enroll.
 from __future__ import annotations
 
 from . import cloud_social_oauth as broker
-from . import model_router, social_custody
+from . import account_sync, model_router, social_custody
 
 NETWORKS = {
     "instagram": "Instagram", "facebook": "Facebook", "linkedin": "LinkedIn",
@@ -42,6 +42,9 @@ def connection(provider, *, accounts=None, attempt=None):
                    custody_provider=account["provider"], vault_entry=account["vault_entry"])
     elif held:
         row.update(state="blocked", blocker="Reconnect through provider sign-in to verify this account")
+    elif any(_matches(provider, {"provider": entry.split("-")[1], "vault_entry": entry}) for entry in (
+            path[len("connections/"):-len(".json")] for path in account_sync.needs_reconnect("connections/"))):
+        row.update(state="blocked", blocker="Reconnect: your ArchHub account could not open this saved connection")
     current = attempt if attempt is not None else broker.current_status(provider)
     phase = current.get("phase", "idle")
     if phase == "select_account":
@@ -70,7 +73,6 @@ def connection(provider, *, accounts=None, attempt=None):
 
 
 def rows():
-    from . import account_sync
     account_sync.pull_and_restore("connections/")  # the account's connections, cached on this PC first
     accounts = model_router.list_social_credentials()["items"]
     return [connection(provider, accounts=accounts) for provider in NETWORKS]

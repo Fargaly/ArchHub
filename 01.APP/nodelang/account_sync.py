@@ -23,6 +23,7 @@ import urllib.parse
 from . import cloud_social_oauth as _cloud
 
 MISSING = object()  # the account says this item was removed
+_NEEDS_RECONNECT: set = set()  # account items sealed under a key the cloud lost (last restore)
 _NAMESPACES: dict[str, dict] = {}
 _LOCK = threading.RLock()
 _http = None     # tests replace the cloud request
@@ -191,6 +192,14 @@ def _restore(prefix, hooks, heads, state):
             counts["uploaded"] += 1
     for path, row in remote.items():
         held = local.get(path)
+        _NEEDS_RECONNECT.discard(path)
+        if row.get("needs_reconnect"):
+            # The account lost the key that sealed this item: this PC's copy heals it, else it must be reconnected.
+            if held and _upload(path, held[1], state):
+                counts["healed"] = counts.get("healed", 0) + 1
+            else:
+                _NEEDS_RECONNECT.add(path)
+            continue
         if held and hashlib.sha256(held[1]).hexdigest() == row["sha256"]:
             state["base"][path] = row["sha256"]
             continue
@@ -206,6 +215,11 @@ def _restore(prefix, hooks, heads, state):
             state["base"][path] = row["sha256"]
             counts["pulled"] += 1
     return counts
+
+
+def needs_reconnect(prefix):
+    """Account items under prefix that no PC can open any more (shown as Reconnect, never dropped)."""
+    return sorted(path for path in _NEEDS_RECONNECT if path.startswith(prefix))
 
 
 def restore_in_background():

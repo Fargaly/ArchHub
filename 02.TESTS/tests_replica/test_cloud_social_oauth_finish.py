@@ -111,6 +111,7 @@ class _FakeAccount:
 
     def __init__(self):
         self.heads = {}  # path -> bytes (absent = removed)
+        self.lost = set()  # paths sealed under a key the cloud lost
         self.calls = []
 
     def put_record(self, path, record):
@@ -128,7 +129,8 @@ class _FakeAccount:
         route = url.split("/v1/account-sync/", 1)[1]
         self.calls.append((method, route.split("?")[0]))
         if route.startswith("manifest"):
-            return 200, {"items": [{"logical_path": p, "sha256": hashlib.sha256(c).hexdigest(), "deleted": False}
+            return 200, {"items": [{"logical_path": p, "sha256": hashlib.sha256(c).hexdigest(), "deleted": False,
+                                    **({"needs_reconnect": True} if p in self.lost else {})}
                                    for p, c in sorted(self.heads.items())]}
         if route == "item":
             if body.get("deleted"):
@@ -136,6 +138,7 @@ class _FakeAccount:
                 return 200, {"sha256": ""}
             content = gzip.decompress(base64.b64decode(body["content_b64"]))
             self.heads[body["logical_path"]] = content
+            self.lost.discard(body["logical_path"])
             return 200, {"sha256": hashlib.sha256(content).hexdigest()}
         if route.startswith("blob/"):
             path = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["logical_path"][0]
@@ -231,3 +234,23 @@ def test_each_account_keeps_its_own_sync_record(monkeypatch):
     assert X_PATH in account_sync._state()["base"]
     monkeypatch.setattr(account_sync, "_account", lambda: "user-b")
     assert account_sync._state()["base"] == {}  # another account on this PC starts its own migration
+
+
+def test_a_connection_the_account_can_no_longer_open_heals_from_this_pc_or_asks_to_reconnect(monkeypatch):
+    from nodelang import account_sync, social_connections
+    entries = {"social-x-101": _x_local("x-local-1")}
+    account = _signed_in_account(monkeypatch, entries)
+    monkeypatch.setattr(cloud_social_oauth, "status", lambda provider: {"state": "saved"})
+    account_sync.pull_and_restore("connections/")
+    # The cloud lost its key: this PC still holds the connection, so it goes up again.
+    account.lost.add(X_PATH)
+    assert account_sync.pull_and_restore("connections/")["connections/"].get("healed") == 1
+    assert X_PATH not in account.lost and account.token(X_PATH) == "x-local-1"
+    # A new PC with nothing local: Settings > Social shows Reconnect, nothing is dropped from the account.
+    entries.clear()
+    monkeypatch.setattr(account_sync, "_account", lambda: "user-a-new-pc")
+    account.lost.add(X_PATH)
+    assert account_sync.pull_and_restore("connections/")["connections/"]["pulled"] == 0
+    row = social_connections.connection("x", accounts=[], attempt={"phase": "idle"})
+    assert row["state"] == "blocked" and row["blocker"].startswith("Reconnect")
+    assert X_PATH in account.heads

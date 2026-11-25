@@ -229,12 +229,15 @@ class Supervisor:
         except OSError as error:
             print("ArchHub MCP supervisor: call report not removed: %s" % error, file=sys.stderr, flush=True)
 
-    def _drain(self):
-        """Wait until the calls the connector is answering are done; meanwhile new calls are told to retry.
+    def _drain(self, bound=10.0):
+        """Wait briefly for the calls the connector is answering; meanwhile new calls are told to retry.
 
         Setup does not wait on this: the connector holds no file Setup replaces. The swap only loads the new build.
+        Past the bound the connector is closed anyway (founder 2026-11-25: Update closes everything); its
+        unanswered calls get POSSIBLY_COMMITTED so the agent can check and retry.
         """
-        while not self.closed:
+        deadline = time.monotonic() + bound
+        while not self.closed and time.monotonic() < deadline:
             with self.lock:
                 if not self.pending:
                     return

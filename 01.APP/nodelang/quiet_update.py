@@ -1000,9 +1000,6 @@ def preflight_refusal(app_dir: Path, *, desktop_pids, process_iter=None, can_ter
     root = Path(app_dir).resolve()
     can_terminate = can_terminate or _can_terminate
     chain_of = chain_of or _process_chain
-    reasons = connector_acknowledgements(root, None, process_iter=process_iter)
-    if reasons:
-        return _CONNECTOR_DEFERRED + "; ".join(reasons)[:400]
     for process, pid, _executable in _install_processes(root, process_iter):
         if pid in desktop_pids:
             continue
@@ -1092,8 +1089,6 @@ def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: fl
     return [process.pid for process in stopped]
 
 
-_CONNECTORS_HELD = (_CONNECTOR_DEFERRED + "%d agent connector(s) did not confirm this install attempt idle within %ds "
-                    "(%s); admission reopened, nothing stopped")
 DRAIN_REQUEST = "drain-request.json"  # ArchHub-Runtime\\connectors: while it names an attempt, no new call starts
 
 
@@ -1156,7 +1151,7 @@ def reopen_connectors(app_dir: Path, attempt: str) -> None:
 
 
 def drain_connectors(app_dir: Path, attempt: str, *, acknowledgements=connector_acknowledgements,
-                     sleep=time.sleep, bound: float = 60.0) -> None:
+                     sleep=time.sleep, bound: float = 10.0) -> None:
     """Close admission for `attempt`, then wait until every live supervisor confirms it idle; raise to defer.
 
     Order matters: admission is closed first, so no call can start after the all-clear. A deferral
@@ -1176,8 +1171,10 @@ def drain_connectors(app_dir: Path, attempt: str, *, acknowledgements=connector_
         if not reasons:
             return
         if waited >= bound:
-            reopen_connectors(app_dir, attempt)
-            raise ValueError(_CONNECTORS_HELD % (len(reasons), bound, "; ".join(reasons)[:400]))
+            # Founder 2026-11-25 "بيقفل كل حاجة ويعمل ريستارت عادي": Update closes busy agent connections and
+            # goes ahead. Admission stays closed; Setup's install marker makes each supervisor end its connector.
+            print("update: closing busy agent connections: " + "; ".join(reasons)[:400], file=sys.stderr, flush=True)
+            return
         sleep(poll)
         waited += poll
 
@@ -1226,21 +1223,12 @@ def setup_admission(app_dir: Path, build_id: str, *, expected: str | None = None
         if not ours:
             raise ValueError(_CONNECTOR_DEFERRED + "a connector drain request from another install attempt (%s) is in place; "
                              "it was left as it is" % held[:80])
-        reasons = acknowledgements(app_dir, held)
-        if reasons:
-            raise ValueError(_CONNECTOR_DEFERRED + "agent connectors have not confirmed this install attempt idle (%s); "
-                             "nothing touched" % "; ".join(reasons)[:400])
+        # A busy agent connection does not hold Setup: the install marker makes its supervisor close it.
         return "existing", held
     if expected:
         raise ValueError(_CONNECTOR_DEFERRED + "the updater's connector drain request is missing; nothing touched")
-    unknown = [reason for reason in acknowledgements(app_dir, None)
-               if "no report" in reason or "unreadable" in reason or "no call count" in reason]
-    if unknown:
-        raise ValueError(_CONNECTOR_DEFERRED + "%d agent connector(s) cannot confirm they are idle (%s); close and reopen "
-                         "that agent's ArchHub connection, then run Setup again. Nothing touched"
-                         % (len(unknown), "; ".join(unknown)[:400]))
     attempt = "setup-%s-%d-%d" % (build_id, os.getpid(), clock())
-    drain(Path(app_dir), attempt)  # raises and reopens when a call does not finish in time
+    drain(Path(app_dir), attempt)  # waits briefly for calls in flight, then goes ahead
     return "owned", attempt
 
 

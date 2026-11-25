@@ -96,18 +96,18 @@ def _legacy_supervisor(runtime):
     return script
 
 
-def test_manual_setup_holds_on_a_legacy_supervisor_and_its_call_keeps_running(tmp_path):
+def test_manual_setup_goes_ahead_past_a_legacy_supervisor_and_its_call_keeps_running(tmp_path):
+    """Founder 2026-11-25: Update closes everything; a connector that cannot report no longer holds Setup."""
     app, runtime, fixture = _layout(tmp_path)
     proc = _start(_legacy_supervisor(runtime), app, fixture, report=False)
     try:
         _init(proc)
         _send(proc, {"jsonrpc": "2.0", "id": 5, "method": "slow", "params": {"seconds": 4}})
         time.sleep(0.5)  # the call is in flight in the legacy supervisor's connector
-        with pytest.raises(ValueError, match="cannot confirm they are idle") as held:
-            qu.setup_admission(app, "B1")
-        assert "no report (older supervisor)" in str(held.value)
-        assert not (app / ".archhub-installing").exists(), "no marker before admission"
-        assert not (runtime / "connectors" / qu.DRAIN_REQUEST).exists(), "nothing touched"
+        drain = lambda d, a: qu.drain_connectors(d, a, sleep=lambda _s: None, bound=1.0)
+        mode, attempt = qu.setup_admission(app, "B1", drain=drain)
+        assert mode == "owned" and (runtime / "connectors" / qu.DRAIN_REQUEST).exists()
+        qu.reopen_connectors(app, attempt)
         answered = _reply(proc, 5)
         assert "result" in answered, "the legacy supervisor's call got its real answer, not a cut"
         assert proc.poll() is None
@@ -162,8 +162,8 @@ def test_setup_inherits_only_the_drain_of_the_updater_that_launched_it(tmp_path)
     request.write_text(json.dumps({"attempt": "A"}), encoding="utf-8")
     before = request.read_bytes()
     assert qu.setup_admission(app, "B3", expected="A", acknowledgements=idle) == ("existing", "A")
-    for kwargs, match in (({"expected": "A", "acknowledgements": busy}, "not confirmed"),
-                          ({"expected": "Z", "acknowledgements": idle}, "another install attempt"),
+    assert qu.setup_admission(app, "B3", expected="A", acknowledgements=busy) == ("existing", "A")  # busy never holds
+    for kwargs, match in (({"expected": "Z", "acknowledgements": idle}, "another install attempt"),
                           ({"acknowledgements": idle, "ancestors": lambda: [4242]}, "another install attempt")):
         with pytest.raises(ValueError, match=match):
             qu.setup_admission(app, "B3", **kwargs)
@@ -200,14 +200,14 @@ def test_malformed_foreign_or_stale_requests_hold_setup_and_are_left_as_they_are
     assert request.read_text(encoding="utf-8") == raw
 
 
-def test_a_call_that_does_not_finish_reopens_admission_and_holds_setup(tmp_path):
+def test_a_call_that_does_not_finish_in_the_bound_no_longer_holds_setup(tmp_path):
     app, runtime, _fixture = _layout(tmp_path)
     request = runtime / "connectors" / qu.DRAIN_REQUEST
     busy = lambda _d, attempt: ["pid 7: 1 call(s) in flight"] if attempt else []
     drain = lambda d, a: qu.drain_connectors(d, a, acknowledgements=busy, sleep=lambda _s: None, bound=1.0)
-    with pytest.raises(ValueError, match="did not confirm"):
-        qu.setup_admission(app, "B4", acknowledgements=busy, drain=drain)
-    assert not request.exists(), "a held Setup reopens agent connectors"
+    mode, attempt = qu.setup_admission(app, "B4", acknowledgements=busy, drain=drain)
+    assert mode == "owned" and json.loads(request.read_text(encoding="utf-8")) == {"attempt": attempt}
+    qu.reopen_connectors(app, attempt)
 
 
 def test_the_setup_command_prints_its_owned_attempt_for_the_installer(tmp_path, capsys):
@@ -315,15 +315,14 @@ def _setup(court, tmp_path, app, runtime, *extra):
             seen.read_text(encoding="utf-8") if seen.exists() else None)
 
 
-def test_compiled_setup_holds_on_a_live_legacy_supervisor_before_marker_or_files(court, tmp_path):
+def test_compiled_setup_installs_past_a_live_legacy_supervisor(court, tmp_path):
     app, runtime, fixture = _layout(tmp_path)
     proc = _start(_legacy_supervisor(runtime), app, fixture, report=False)
     try:
         _init(proc)
         _send(proc, {"jsonrpc": "2.0", "id": 5, "method": "slow", "params": {"seconds": 6}})
-        code, refused, seen = _setup(court, tmp_path, app, runtime)
-        assert code != 0 and "cannot confirm they are idle" in refused
-        assert seen is None and not (app / "payload.txt").exists(), "no program file was written"
+        code, refused, _seen = _setup(court, tmp_path, app, runtime)
+        assert (code, refused) == (0, "") and (app / "payload.txt").exists()
         assert not (app / ".archhub-installing").exists() and not (runtime / "connectors" / qu.DRAIN_REQUEST).exists()
         assert "result" in _reply(proc, 5), "the legacy supervisor's call still got its real answer"
     finally:

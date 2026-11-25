@@ -297,7 +297,9 @@ def test_drain_closes_admission_first_then_waits_for_every_acknowledgement(tmp_p
 
 @pytest.mark.parametrize("body", [None, '{"pending": 0, "admission": "open", "attempt": "A"}', "{bad json",
                                   '{"pending": 2, "admission": "closed", "attempt": "A"}'])
-def test_anything_short_of_an_acknowledgement_defers_reopens_and_stops_nothing(tmp_path, monkeypatch, body):
+def test_a_busy_agent_connection_is_closed_and_the_update_goes_ahead(tmp_path, body):
+    """Founder 2026-11-25 "بيقفل كل حاجة ويعمل ريستارت عادي": Update closes everything and restarts. A connector
+    that does not confirm idle within the short bound no longer defers it; admission stays closed for Setup."""
     release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
     app = _installed_app(tmp_path / "LOCAL" / "ArchHub", "old", "2026-11-17T16:08:00Z")
     state = tmp_path / "updater-state"
@@ -308,18 +310,15 @@ def test_anything_short_of_an_acknowledgement_defers_reopens_and_stops_nothing(t
         return qu.drain_connectors(directory, attempt, sleep=lambda _s: None, bound=3,
                                    acknowledgements=lambda d, a: qu.connector_acknowledgements(d, a, process_iter=processes))
 
-    result = qu.apply_staged(state, app, runner=lambda *a, **k: pytest.fail("Setup ran"),
-                             stop_runtime=lambda _d: pytest.fail("stopped a process"), drain=drain)
-    assert result["applied"] is False and result["reason"].startswith("deferred: 1 agent connector(s) did not confirm")
-    assert not (folder / qu.DRAIN_REQUEST).exists()   # admission reopened before the deferral was reported
-    assert qu.staged_update(state, app)["status"] == "staged"
-    monkeypatch.setattr(qu, "state_directory", lambda: state)
-    monkeypatch.setattr(qu, "_desktop_running", lambda: False)
-    monkeypatch.setattr(qu, "apply_staged", lambda *a, **k: result)
-    monkeypatch.setattr(qu, "_relaunch", lambda *_a: None)
-    qu.hand_off(app, relaunch=False, sleep=lambda _s: None)
-    assert "update: error deferred: 1 agent connector(s) did not confirm" in \
-        (state / "logs" / "updates.log").read_text(encoding="utf-8")
+    ran = []
+
+    def setup(argv, **_options):
+        assert (folder / qu.DRAIN_REQUEST).exists()   # no new agent call starts while Setup copies
+        ran.append(argv[0])
+        return type('Result', (), {'returncode': 1})()
+
+    qu.apply_staged(state, app, runner=setup, stop_runtime=lambda _d: [], drain=drain)
+    assert len(ran) == 1
 
 
 def test_a_refusal_after_the_drain_reopens_admission(tmp_path):
@@ -1570,23 +1569,28 @@ def test_the_minute_by_minute_close_reopen_loop_cannot_happen(tmp_path):
     assert qu.staged_update(state, app)["status"] == "staged"   # the verified package is kept for Retry
 
 
-@pytest.mark.parametrize("report, expected", [
-    (None, "no report (older supervisor)"),
-    ('{"pending": 1, "admission": "open", "attempt": null}', "1 call(s) in flight"),
-    ('{"admission": "open", "attempt": null}', "no call count"),
-    ("unsupervised", "runs without its supervisor"),
-])
-def test_connector_preflight_keeps_studio_open_and_retries_after_exit(tmp_path, report, expected):
-    app, state = _held_fixture(tmp_path)
+@pytest.mark.parametrize("report", [None, '{"pending": 1, "admission": "open", "attempt": null}',
+                                    '{"admission": "open", "attempt": null}'])
+def test_busy_agent_connections_never_keep_the_studio_open_for_an_update(tmp_path, report):
+    """Founder 2026-11-25: Update closes everything. Agent calls in flight, or a connector that cannot report,
+    are no reason to refuse; Setup's install marker closes those connectors."""
+    app, _state = _held_fixture(tmp_path)
     folder = qu._runtime_connectors(app)
     folder.mkdir(parents=True)
     pid = 2000000311
-    script = str(folder.parent / "mcp_supervisor.py")
-    transport = _fake_process(pid, str(app / ".venv" / "Scripts" / "python.exe"))
-    supervisor = SimpleNamespace(info={"pid": pid, "cmdline": ["python.exe", script, str(app)]})
-    processes = [transport if report == "unsupervised" else supervisor]
-    if report is not None and report != "unsupervised":
+    supervisor = SimpleNamespace(info={"pid": pid, "cmdline": ["python.exe", str(folder.parent / "mcp_supervisor.py"), str(app)]})
+    if report is not None:
         (folder / ("%d.json" % pid)).write_text(report, encoding="utf-8")
+    assert qu.preflight_refusal(app, desktop_pids=set(), process_iter=lambda _a: [supervisor],
+                                can_terminate=lambda _pid: True, chain_of=lambda _p: []) == ""
+
+
+def test_an_unsupervised_agent_transport_still_keeps_the_studio_open_and_retries_after_exit(tmp_path):
+    app, state = _held_fixture(tmp_path)
+    folder = qu._runtime_connectors(app)
+    folder.mkdir(parents=True)
+    transport = _fake_process(2000000311, str(app / ".venv" / "Scripts" / "python.exe"))
+    processes = [transport]
     restarts = []
 
     def preflight(directory, *, desktop_pids):
@@ -1594,13 +1598,12 @@ def test_connector_preflight_keeps_studio_open_and_retries_after_exit(tmp_path, 
                                     can_terminate=lambda _pid: pytest.fail("queried termination rights"),
                                     chain_of=lambda _p: _transport_chain(app, "codex", supervised=False))
 
-    assert expected in preflight(app, desktop_pids=set())
+    assert "runs without its supervisor" in preflight(app, desktop_pids=set())
     tick = _ticking_desktop(state, app, preflight, restarts)
     tick()
     tick()
     assert restarts == []
     assert qu.auto_install_held(state) == ""
-    assert not (folder / qu.DRAIN_REQUEST).exists()
     transport.terminate.assert_not_called()
     processes.clear()
     tick()

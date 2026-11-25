@@ -1191,13 +1191,17 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       document.addEventListener('keydown',capture,true);
       return()=>document.removeEventListener('keydown',capture,true);
     },[capturing]);
+    const groupOf = row => row.contexts.includes('navigation') ? 'Everywhere' : row.contexts.includes('session') ? 'In a task' : 'Canvas';
     return <div className="sheet-keybindings"><p>Keyboard shortcuts use the selected scope. One shortcut per action, shared by menus and the actual command. Choose a key, then press its replacement. Escape cancels.</p>
       {load.status==='error'&&<div role="alert">{load.message}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(failed.current||(()=>api.refreshSettingsControls()))},event)}>Retry keyboard shortcuts</Btn></div>}
       {capturing&&<p role="status">Press the new shortcut. Escape cancels.</p>}
       {load.status==='waiting'&&<p role="status">Reading keyboard shortcuts...</p>}{load.status==='empty'&&<p>No keyboard shortcuts to show.</p>}
-      {load.status==='loaded'&&<div>{rows.map(row=><div className="spread row" key={row.id} data-setting={'Keyboard.'+row.id}><span><b>{row.label}</b><small className="muted" style={{display:'block'}}>{row.contexts.includes('navigation')?'Everywhere':row.contexts.includes('session')?'In a task':'Canvas'}</small></span><div className="flex"><Btn sm disabled={!destination||s.settingsScopePending} aria-label={'Change shortcut for '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCapturing(row.id)},event)}>{capturing===row.id?'Press keys...':row.value||'Unbound'}</Btn>{row.changed&&<Btn sm ghost disabled={!destination||s.settingsScopePending} aria-label={'Reset shortcut for '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(()=>api.setKeybinding(row.id,null,destination))},event)}>Reset</Btn>}<Btn sm ghost disabled={!destination||s.settingsScopePending||!row.value} aria-label={'Unbind '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(()=>api.setKeybinding(row.id,'',destination))},event)}>Clear</Btn></div></div>)}</div>}
+      {load.status==='loaded'&&['Everywhere','In a task','Canvas'].map(group=>{
+        const commands=rows.filter(row=>groupOf(row)===group);
+        return commands.length>0 && <section key={group} aria-label={group}><h3>{group}</h3>{commands.map(row=><div className="spread row" key={row.id} data-setting={'Keyboard.'+row.id}><span><b>{row.label}</b></span><div className="flex"><Btn sm disabled={!destination||s.settingsScopePending} aria-label={'Change shortcut for '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCapturing(row.id)},event)}>{capturing===row.id?'Press keys...':row.value||'Unbound'}</Btn>{row.changed&&<Btn sm ghost disabled={!destination||s.settingsScopePending} aria-label={'Reset shortcut for '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(()=>api.setKeybinding(row.id,null,destination))},event)}>Reset</Btn>}<Btn sm ghost disabled={!destination||s.settingsScopePending||!row.value} aria-label={'Unbind '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(()=>api.setKeybinding(row.id,'',destination))},event)}>Clear</Btn></div></div>)}</section>;
+      })}
       <Btn sm ghost disabled={!destination||s.settingsScopePending} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.confirm('Reset all keyboard shortcuts?',()=>run(()=>api.resetKeybindings(destination)))},event)}>Reset all shortcuts</Btn>
-      <p className="muted">Fixed: Escape backs out; Space-drag pans; wheel zooms.</p>
+      <section aria-label="Fixed"><h3>Fixed</h3><p><kbd>Escape</kbd> Back out</p><p><kbd>Space + drag</kbd> Pan the canvas</p><p><kbd>Wheel</kbd> Zoom at the pointer</p></section>
     </div>;
   }
   function DependenciesLink() {
@@ -1461,6 +1465,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
   }
   window.UI.Settings = Settings;
   window.UI.requestGroups = requestGroups;
+  window.UI.KeyboardSettings = KeyboardSettings;
   window.UI.Account = Account;
   window.UI.Connections = Connections;
   window.UI.WorkspaceRows = WorkspaceRows;

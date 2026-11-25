@@ -814,7 +814,7 @@
         m,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Raw log') {
+      }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Keyboard shortcuts') body = <window.UI.KeyboardSettings />;else if (k === 'Raw log') {
       const messages = logTask ? window.UI.homeTaskMessages(logTask) : [];
       body = <div className="rawlog">{messages.length ? messages.map((row, index) => <p key={row.id || index}>{row.at && <time dateTime={row.at}>{row.at} </time>}<b>{row.who}</b> {row.text}</p>) : <p>No messages in this thread.</p>}</div>;
     } else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Workflows') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Legacy workflows') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {

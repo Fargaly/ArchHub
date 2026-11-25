@@ -1620,7 +1620,7 @@
               ['Show on Home', () => { u.setTask(menuTask.id); return u.go('home'); }],
               [menuTask.homePinned ? 'Stop keeping at the top of Home' : 'Keep at the top of Home', () => u.act(() => api.setTaskSession(menuTask.id, {homePinned: !menuTask.homePinned}))],
               ['Connection checks', null, true, true], ['Test this workflow', null, true, true], ['Publish to Community', null, true, true],
-              ['Keyboard shortcuts', null, true, true], ['Archive task…', () => setArchiveAsk(true)],
+              ['Keyboard shortcuts', () => u.show('Keyboard shortcuts')], ['Archive task…', () => setArchiveAsk(true)],
               ['Delete task…', () => u.show('Delete task', {id:menuTask.id, title:menuTask.title, revision:menuTask.revision})],
             ] : []),
           ].map(([label, run, disabled, soon]) => { const item = <button key={label} data-design={label === 'Delete task…' ? 'menu.delete' : undefined} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}

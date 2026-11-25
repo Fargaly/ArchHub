@@ -9306,7 +9306,7 @@
     },
     "FIXAGENTS": {
       "source": "Founder FIXAGENTS 717: app shows which agents are really working; approved DESIGN-TRUTH Agents section and AGENTS-TRUTH cases. One session identity joined to revalidated existing runtime observer; Working/Idle/Not running/Status unknown, truthful task/model fallbacks, providers separate availability and null sign-in unchecked; identical Home Workshop footer summaries. Isolated fixture/source patch only, no founder profile/screen/session control/install. Review 1 Run 2: exclude Electron/Desktop helpers, reuse one existing process table and generation-validated metadata cache; complete 1000-process/185-candidate scan within 300ms; Last known status and Check again on failure. Review 2 Run 3: table-driven desktop-host and non-session server exclusion across runtimes; preserve declared desktop sessions and individual CLI sessions; 1000-process court proves six Claude CLI and three Codex exec rows without service/helper rows.",
-      "scope": ["02.TESTS/tests_replica/test_alive_cache_keeps_dead_verdicts.py", 
+      "scope": ["02.TESTS/tests_replica/test_declarations_scan_cost.py", "01.APP/nodelang/workshop_tasks.py", "01.APP/nodelang/workshop_mailbox.py", "02.TESTS/tests_replica/test_alive_cache_keeps_dead_verdicts.py", 
         "01.APP/nodelang/agent_declarations.py",
         "01.APP/nodelang/agent_runtime_registry.py",
         "01.APP/nodelang/host_brokers.py",

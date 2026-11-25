@@ -690,3 +690,15 @@ Replaces: machine-only custody of social tokens in this PC's DPAPI secrets.dat (
 Budgets: one manifest read per sign-in or Settings > Social open; one POST per credential resolve (falls back to the PC cache when offline); each connection record is under 1 KB. Not measured on the installed app.
 
 Verification: 06.CLOUD/cloud_backend/tests/test_social_oauth_broker.py and 02.TESTS/tests_replica/test_cloud_social_oauth_finish.py (per-account isolation, no plaintext at rest, manifest without tokens, removal, server refresh, key survives restart and secret rotation, lost key -> needs_reconnect -> heal, one-time migration, new-PC restore, cache follows the account).
+
+## D-052 Connections reads Antigravity and Cursor sign-in presence from their own state database (2026-11-25)
+
+Request: founder screenshot 2026-11-25: Settings > Connections shows Antigravity and Cursor as "Installed · sign-in not checked" with a Sign in button, although he is signed in to both. F27 (R79: the router sees every provider on the machine; CUSTOMMCP: "status and Sign in in Settings").
+
+Prior art: VS Code and its forks (Cursor, Antigravity) -> keep their own sign-in in User/globalStorage/state.vscdb (SQLite ItemTable key/value), which Cursor usage tools read for cursorAuth/accessToken. GitHub CLI gh auth status -> reports sign-in by checking the tool's own stored credential in place, as the existing Codex and Claude rows do. Fit: model_router.cli_signed_in asks each app's own file whether its sign-in key is present.
+
+Replaces: the None ("sign-in not checked") answer for antigravity and cursor. No new store or file: the read opens the app's existing database with mode=ro (not immutable, the app may be writing), selects only 1 WHERE the key's value is non-empty, never the value, and closes. Missing, locked or unreadable -> None, never an error into Settings.
+
+Budgets: one read-only query per row per Settings > Connections refresh, SQLite default lock wait. Not measured on the installed app.
+
+Verification: 02.TESTS/tests_replica/test_custom_mcp.py test_antigravity_and_cursor_sign_in_is_read_from_their_state_database (present -> True, empty -> False, missing or corrupt -> None); live read on this PC: antigravity True, cursor True.

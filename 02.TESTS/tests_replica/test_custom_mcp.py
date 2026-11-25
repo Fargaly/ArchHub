@@ -369,6 +369,26 @@ def test_cli_sign_in_is_read_from_its_own_file_and_opens_its_own_login(tmp_path)
         model_router.sign_in_launch("grok")
 
 
+def test_antigravity_and_cursor_sign_in_is_read_from_their_state_database(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setattr(model_router.sys, "platform", "win32")
+    env = {"USERPROFILE": str(tmp_path), "APPDATA": str(tmp_path / "Roaming")}
+    assert model_router.cli_signed_in("antigravity", env) is None  # no database: cannot tell
+    for app, key, value in (("Antigravity", "antigravityUnifiedStateSync.oauthToken", "tok"),
+                            ("Cursor", "cursorAuth/accessToken", "")):
+        folder = tmp_path / "Roaming" / app / "User" / "globalStorage"
+        folder.mkdir(parents=True)
+        con = sqlite3.connect(folder / "state.vscdb")
+        con.execute("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+        con.execute("INSERT INTO ItemTable VALUES (?, ?)", (key, value))
+        con.commit()
+        con.close()
+    assert model_router.cli_signed_in("antigravity", env) is True
+    assert model_router.cli_signed_in("cursor", env) is False  # empty value = signed out
+    (tmp_path / "Roaming" / "Cursor" / "User" / "globalStorage" / "state.vscdb").write_bytes(b"not sqlite")
+    assert model_router.cli_signed_in("cursor", env) is None
+
+
 def test_provider_rows_carry_sign_in_and_name_grok(tmp_path):
     rows = model_router.provider_rows(environ={"USERPROFILE": str(tmp_path), "PATH": ""},
                                       secrets_loader=lambda name: "", cloud_session=None,

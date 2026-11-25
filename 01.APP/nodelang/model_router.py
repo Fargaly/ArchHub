@@ -1021,6 +1021,33 @@ _SIGN_IN_FILES = {
     "gemini-cli": ((".gemini", "oauth_creds.json"),),
     "opencode": ((".local", "share", "opencode", "auth.json"),),
 }
+# VS Code-based apps keep their sign-in in their own state database; only the key's presence is read.
+_SIGN_IN_STATE_KEYS = {
+    "antigravity": ("Antigravity", "antigravityUnifiedStateSync.oauthToken"),
+    "cursor": ("Cursor", "cursorAuth/accessToken"),
+}
+
+
+def _app_state_signed_in(app, key, home, env):
+    if sys.platform == "win32":
+        base = Path(env.get("APPDATA") or Path(home, "AppData", "Roaming"))
+    elif sys.platform == "darwin":
+        base = Path(home, "Library", "Application Support")
+    else:
+        base = Path(home, ".config")
+    db = base / app / "User" / "globalStorage" / "state.vscdb"
+    if not db.is_file():
+        return None
+    try:  # mode=ro, not immutable: the app may be writing the file right now
+        con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT 1 FROM ItemTable WHERE key = ? AND length(value) > 0 LIMIT 1", (key,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        _LOG.info("%s sign-in state unreadable: %s", app, exc)
+        return None
+    return row is not None
 
 
 def cli_signed_in(row_id, environ=None):
@@ -1037,6 +1064,8 @@ def cli_signed_in(row_id, environ=None):
         except (OSError, ValueError):
             return False
         return bool(isinstance(data, dict) and data.get("logged_in_users"))
+    if row_id in _SIGN_IN_STATE_KEYS:
+        return _app_state_signed_in(*_SIGN_IN_STATE_KEYS[row_id], home, env)
     files = _SIGN_IN_FILES.get(row_id)
     if files is None:
         return None

@@ -173,7 +173,13 @@
     // One row per piece of work: a further live agent on it is an avatar on that row, never a second row.
     for(const agent of (s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working')){
       const row=sessionRows.find(row=>row.id===agent.task);
-      if(row){row.workingNow=true;if(agent.name&&!(row.members||[]).some(member=>member.id===agent.id||(member.roots||[]).includes(agent.id)||!member.id&&member.name===agent.name))row.members=[...(row.members||[]),{id:agent.id,roots:[agent.id],name:agent.name,live:true}];}
+      if(row){
+        row.workingNow=true;
+        const members=[...(row.members||[])];
+        const idx=members.findIndex(member=>member.id===agent.id||(member.roots||[]).includes(agent.id)||!member.id&&member.name===agent.name);
+        if(idx>=0){members[idx]={...members[idx],live:true};row.members=members;}
+        else if(agent.name){row.members=[...members,{id:agent.id,roots:[agent.id],name:agent.name,live:true}];}
+      }
     }
     // A held run that belongs to no listed session is a row too: it needs him, so it is shown and counted.
     for(const card of held.filter((card,index)=>held.findIndex(other=>(other.input_digest||other.id)===(card.input_digest||card.id))===index))
@@ -226,15 +232,20 @@
       const failed = steps.find(step => step.kind === 'error') ||
         (row && (['FAILED','ERROR'].includes(row.status) || ['failed','error'].includes(row.outcome)) ? {title: 'Session'} : null);
       const at = steps.findIndex(step => ['working', 'awaiting', 'error'].includes(step.kind)), done = steps.filter(step => step.kind === 'done').length;
+      // The lead is the card's agent; everyone else on this piece of work is a small avatar on the same card, never a second card.
+      const isLive = m => m && (typeof m === 'object' ? (m.live === true || (m.live !== false && !m.left && !m.stale)) : Boolean(m));
+      const memberName = m => typeof m === 'object' && m ? m.name : String(m || '');
+      const liveList = members.filter(isLive);
+      const cardLead = liveList[0] || members[0];
+      const cardMembers = (liveList.length > 0 ? liveList.slice(1) : members.slice(1).filter(isLive)).map(memberName).filter(Boolean);
       return {steps, done, finished: steps.length > 0 && done === steps.length,
         now: at >= 0 ? 'Step ' + (at + 1) + ' of ' + steps.length + ' · ' + steps[at].title : steps.length ? done + ' of ' + steps.length + ' steps done'
           : row && window.UI.taskRowReason?.(row) ? 'Stopped: ' + window.UI.taskRowReason(row) : 'No steps yet',
         // Work that lost its agent (F337) stays open with Continue: any agent picks it up on the same graph and thread.
         need: held ? {text: (held.title || 'A run') + ' needs your approval', approval: held.id} : failed ? {text: failed.title + ' failed', failed: true}
           : row && rows.interruptedWork(row) ? {text: 'Interrupted · waiting for an agent', resume: true} : null,
-        // The lead is the card's agent; everyone else on this piece of work is a small avatar on the same card, never a second card.
-        agent: humanLabel(members[0]?.name || ''),
-        members: members.slice(1).map(member => member.name).filter(Boolean),
+        agent: humanLabel(memberName(cardLead) || ''),
+        members: cardMembers,
         state: held ? 'Needs you' : row && rows.working(row) ? 'Working' : failed ? 'Failed' : row && rows.sectionOf(row) === 'Paused' ? 'Paused' :
           row && rows.needs(row) ? 'Needs you' : row?.status === 'PLANNED' ? 'Planned' : 'Idle'};
     };

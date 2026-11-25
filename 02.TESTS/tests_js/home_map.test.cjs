@@ -456,3 +456,72 @@ test('taskless workflows appear only while monitored or running, and pause stays
   assert.equal(at(paused,'timer').state, 'Paused');
   assert.deepEqual([paused.running, paused.armed, paused.paused], [0,0,1]);
 });
+
+test('Home card with historical session members renders strictly live member avatars with no index numbers', () => {
+  const React = require('react');
+  const {renderToStaticMarkup} = require('react-dom/server');
+  const uiContext = vm.createContext({
+    React,
+    window: {
+      executeAction() {},
+      registerActions() {},
+      ArchHubAPI: {subscribe: () => () => {}, getSnapshot: () => ({agents: [], providers: [], agentGraph: {sessions: []}, tasks: []})},
+      AH: {userAv: '#888', accent: '#3b82f6', blue: '#2563eb', purple: '#8b5cf6', ok: '#10b981', warn: '#f59e0b', cyan: '#06b6d4'},
+      AH_DS: {Avatar: ({agent, size}) => React.createElement('span', {className: 'ds-avatar', 'data-size': size}, agent.ini)},
+      UI: {}
+    },
+    console
+  });
+  const uiSrc = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/ui.jsx'), 'utf8');
+  vm.runInContext(transformSync(uiSrc, {loader: 'jsx'}).code, uiContext);
+  const Av = uiContext.window.UI.Av;
+
+  const historical = Array.from({length: 80}, (_, i) => ({
+    id: 'session-hist-' + i,
+    name: 'Historical Agent ' + (i + 1),
+    live: false,
+    left: 1700000000 + i
+  }));
+  const liveMembers = [
+    {id: 'live-lead', name: 'Live Lead Agent', live: true},
+    {id: 'live-peer', name: 'Live Peer Agent', live: true}
+  ];
+  const allMembers = [...historical, ...liveMembers];
+
+  const cardTask = task('multi-members', {status: 'WIP', members: allMembers});
+  const cardSession = session('multi', 'Collaborative Session', 'Tower', {task: cardTask.id});
+  const rows = homeRows({workspaces: [{id: 'Tower', name: 'Tower'}], tasks: [cardTask], graphs: [], approvals: [], agentGraph: {sessions: []}}, {});
+  const chart = homeMap({
+    listed: {groups: [{sessions: [cardSession]}]},
+    rows,
+    params: DEFAULT,
+    hidden: [],
+    titleOf: r => r.title,
+    history: true
+  });
+  const node = at(chart, 'multi');
+  assert.ok(node, 'card node exists in home map');
+  assert.equal(node.agent, 'Live Lead Agent');
+  assert.deepEqual(node.members, ['Live Peer Agent']);
+
+  const cardElement = React.createElement('header', {className: 'home-card-head'},
+    node.agent ? React.createElement(Av, {id: node.agent, size: 28}) : null,
+    React.createElement('div', null,
+      React.createElement('b', null, node.title),
+      React.createElement('small', null, node.agent || 'No agent yet')
+    ),
+    node.members?.length > 0 ? React.createElement('span', {className: 'home-card-members', title: 'Also on this work: ' + node.members.join(', ')},
+      node.members.slice(0, 3).map(name => React.createElement(Av, {key: name, id: name, size: 18}))
+    ) : null,
+    React.createElement('span', {className: 'home-card-state', 'data-state': node.state}, node.state)
+  );
+
+  const html = renderToStaticMarkup(cardElement);
+  const avatarMatches = html.match(/class="agent-avatar"/g) || [];
+  assert.equal(avatarMatches.length, 2, 'strictly live members rendered as avatars');
+
+  const avatarSubstrings = [...html.matchAll(/<span class="agent-avatar"[^>]*>([\s\S]*?)<\/span>/g)].map(m => m[1]);
+  for (const inner of avatarSubstrings) {
+    assert.equal(inner.includes('<small>'), false, 'agent-avatar contains no <small> index tag');
+  }
+});

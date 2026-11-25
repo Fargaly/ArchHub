@@ -122,11 +122,9 @@
       col: A.userAv
     };
     const name=String(p.name||id||'Agent').split(/\s+\/\s+/).at(-1).trim();
-    const peers=[...new Set([...(s.agents||[]).map(a=>a.name),...(s.agentGraph?.sessions||[]).map(a=>a.name),...(s.tasks||[]).flatMap(t=>[t.owner,...(t.agents||[])])].filter(Boolean).map(String))].sort();
     const initials=name.split(/[\s._-]+/).filter(Boolean).map(word=>word[0].toUpperCase()).join('').slice(0,2)||'?';
-    const index=peers.indexOf(String(p.name||id));
     const hue=Array.from(String(p.name||id)).reduce((hash,char)=>(hash*31+char.charCodeAt(0))%360,0);
-    return <span className="agent-avatar" title={p.name||id}><D.Avatar agent={{...p,name,ini:initials,col:[A.accent,A.blue,A.purple,A.ok,A.warn,A.cyan][hue%6]}} size={size}/>{index>=0&&<small>{index+1}</small>}</span>;
+    return <span className="agent-avatar" title={p.name||id}><D.Avatar agent={{...p,name,ini:initials,col:[A.accent,A.blue,A.purple,A.ok,A.warn,A.cyan][hue%6]}} size={size}/></span>;
   };
   function Heading({
     title,

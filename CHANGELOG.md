@@ -2,6 +2,15 @@
 
 ## Next build
 
+## 20261125-1700-ec8471c
+
+- Home removes the number badges over agent avatars. Checking for active agents now remembers which processes have ended.
+- The router uses updated OpenRouter model IDs for free requests.
+- A previously saved connection stays available on this PC if the account service is temporarily unavailable. An explicit removal from the account clears the local copy.
+- This desktop build can receive Facebook Page Messenger and Instagram messages when those channels are enabled for your connected account.
+
+Source: ec8471c3.
+
 ## 20261125-1227-0d3464c
 
 - Home lets you permanently delete a saved task. You can cancel before the file is removed.

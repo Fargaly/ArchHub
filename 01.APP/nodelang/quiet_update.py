@@ -924,6 +924,8 @@ def _session_zero(pid):
 
 
 _CONNECTOR_DEFERRED = "deferred: "
+_SETUP_AGENT_BUSY = "installer failed: An agent is still using ArchHub ("
+_AGENT_BUSY_NOTICE = "Agents were busy, so the update waits. It stays downloaded and installs when they finish."
 _UNSUPERVISED_TRANSPORT = (_CONNECTOR_DEFERRED + "an agent's ArchHub connector runs without its supervisor; "
                            "Setup would cut that agent's connection, so the update waits for it to end")
 # Programs that host agent connectors. A process below one of them is that agent's work, never ArchHub's to stop.
@@ -1322,6 +1324,13 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                     for line in raw.decode(encoding, errors='replace').splitlines():
                         if 'ArchHub Setup refused: ' in line:
                             reason = "installer failed: " + line.split('ArchHub Setup refused: ', 1)[1]
+                if reason.startswith(_SETUP_AGENT_BUSY):
+                    # Setup's own connector check found an agent busy: nothing was installed and the
+                    # same build stays eligible, so the next idle moment or Update retries it.
+                    append_update_log(state_dir, "update: waiting for agent connectors (%s)" % reason[:600])
+                    _marker(updates, {**data, "phase": "staged"})
+                    return {"staged": True, "applied": False, "status": "waiting", "build_id": data["build_id"],
+                            "reason": _AGENT_BUSY_NOTICE}
                 # Recorded as failed for this build: the next start opens the installed build
                 # instead of running the same installer again; a newer release replaces it.
                 _marker(updates, {**data, "phase": "rolled_back", "rollback_reason": reason})
@@ -1480,7 +1489,7 @@ def apply_unattended(state_dir: Path, app_dir: Path, opener=urllib.request.urlop
         return {**staged, "applied": False, "status": "waiting",
                 "reason": "waiting for a safe moment"}
     result = apply_staged(state_dir, app_dir, runner=runner, stop_runtime=stop_runtime)
-    if result.get("applied") is True:
+    if result.get("applied") is True or result.get("status") == "waiting":
         return result
     reason = str(result.get("reason") or "installer failed")
     if "fail" not in reason.lower():

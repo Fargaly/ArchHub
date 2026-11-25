@@ -1178,6 +1178,29 @@ def test_postinstall_failure_is_reported_and_stale_identity_never_applied(tmp_pa
     assert _state_fingerprint(state) == before
 
 
+def test_setup_finding_an_agent_busy_keeps_the_same_build_staged_for_a_retry(tmp_path):
+    """UPDATERWORKS: Setup's own connector check refused (an agent was busy). That was recorded as a failed
+    update, so the founder's updater waited for a newer release and never retried 7a222b2."""
+    release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20260923-1945-72bcaae", "2026-09-23T15:57:49Z")
+    state = _fixture_state(tmp_path / "ArchHub-Test")
+    qu.stage_if_newer(state, app, opener=_local_github(release))
+
+    def busy_installer(argv, **options):
+        log = Path(next(arg[len('/LOG='):] for arg in argv if arg.startswith('/LOG=')))
+        log.write_text('ArchHub Setup refused: An agent is still using ArchHub (deferred: pid 46352: 1 call(s) '
+                       'in flight; nothing touched). Your installed files were kept.\n')
+        return type('Result', (), {'returncode': 1})()
+
+    result = qu.apply_staged(state, app, runner=busy_installer, stop_runtime=None)
+    assert result['status'] == 'waiting' and result['applied'] is False
+    assert 'pid' not in result['reason'] and 'deferred' not in result['reason']
+    assert (app / 'BUILD_ID').read_text() == '20260923-1945-72bcaae'
+    again = qu.staged_update(state, app)
+    assert again['staged'] is True and again['status'] == 'staged'
+    assert again['build_id'] == '20260924-0900-abc1234'
+
+
 @pytest.mark.parametrize("outcome", ["installed", "failed"])
 def test_hand_off_waits_for_the_closing_desktop_then_installs_or_reopens_the_old_build(tmp_path, monkeypatch, outcome):
     """UPDATERWORKS: Restart used to relaunch while the old desktop still held its profile; the

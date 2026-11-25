@@ -220,7 +220,7 @@
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
   // kind: All / Agent sessions / Workflows (the list's filter); olderOpen: the Older section unfolded; order: his own arrangement (task ids).
-  const homeMap = ({listed, rows, params, workflowActivity, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = [], focus = '', focusPath = '', history = false}) => {
+  const homeMap = ({listed, rows, params, workflowActivity, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = [], focus = '', focusPath = '', history = false, projectScope = ''}) => {
     const p = {...params, collapsed: params.collapsed || []};
     // What a card says comes from the session's own row: its steps and their states, its held run or its failed step.
     const facts = (row, filePlan, members = row?.members || []) => {
@@ -313,21 +313,23 @@
       p.group === 'Agent' ? card.agent || 'No agent yet' : p.group === 'State' ? card.state :
         card.project || (history ? 'Unassigned' : 'Work without a project');
     const keyOf = card => ownKey(rootOf(card));
+    const scopedCards = projectScope ? cards.filter(card => keyOf(card) === projectScope) : cards;
     const rank = card => { const at = order.indexOf(card.task || card.id); return at < 0 ? order.length : at; };  // his drag order, then the rest
-    cards.sort((a, b) => (p.order === 'Name' ? 0 : MAP_STATES.indexOf(a.state) - MAP_STATES.indexOf(b.state)) || (p.order === 'Name' ? 0 : rank(a) - rank(b)) || a.title.localeCompare(b.title));
-    const keys = [...new Set(cards.map(keyOf))].sort((a, b) => Number(a === 'Older / archived') - Number(b === 'Older / archived') || (p.group === 'State' ? MAP_STATES.indexOf(a) - MAP_STATES.indexOf(b) : a.localeCompare(b)));
+    scopedCards.sort((a, b) => (p.order === 'Name' ? 0 : MAP_STATES.indexOf(a.state) - MAP_STATES.indexOf(b.state)) || (p.order === 'Name' ? 0 : rank(a) - rank(b)) || a.title.localeCompare(b.title));
+    const keys = [...new Set(scopedCards.map(keyOf))].sort((a, b) => Number(a === 'Older / archived') - Number(b === 'Older / archived') || (p.group === 'State' ? MAP_STATES.indexOf(a) - MAP_STATES.indexOf(b) : a.localeCompare(b)));
     const folded = key => key === 'Older / archived' ? !olderOpen : p.collapsed.includes(key);
     // An input link is one wire, card edge to card edge: this session feeds that one. The session model holds no socket type
     // for a link, so the wire shows the design's default (files, a list); its hover says what the link really carries.
-    const links = cards.flatMap(card => card.links.map((link, index) => ({id: card.id + ':' + index, from: link.source.id, to: card.id, fromPort: 'out', toPort: 'in',
-      type: 'file', list: true, label: link.output + ' → ' + link.input})))
-      .concat(cards.filter(above).map(card => ({id: 'subtask:' + card.id, from: above(card).id, to: card.id, fromPort: 'out', toPort: 'in', type: 'text', list: false, label: 'Subtask'})))
-      .filter(wire => cards.some(card => card.id === wire.from));
+    const links = scopedCards.flatMap(card => card.links.map((link, index) => ({id: card.id + ':' + index, from: link.source.id, to: card.id, fromPort: 'out', toPort: 'in',
+      type: 'file', list: true, label: link.output + ' → ' + link.input, output: link.output, input: link.input, linkIndex: index,
+      state: link.state || 'ready', passesOn: link.passesOn || 'Only when the source check passed', sourcePath: link.source?.path || '', targetPath: card.path || ''})))
+      .concat(scopedCards.filter(above).map(card => ({id: 'subtask:' + card.id, from: above(card).id, to: card.id, fromPort: 'out', toPort: 'in', type: 'text', list: false, label: 'Subtask', subtask: true})))
+      .filter(wire => scopedCards.some(card => card.id === wire.from));
     const wide = 300, plain = p.card === 'State only', gapX = p.density === 'Compact' ? 36 : 56, gapY = p.density === 'Compact' ? 14 : 24;
     const nodes = [], groups = [], inside = new Map();
     let x = 0, y = 0, band = 0;
     const laid = keys.map(key => {
-      const members = cards.filter(card => keyOf(card) === key), ids = new Set(members.map(card => card.id)), level = new Map();
+      const members = scopedCards.filter(card => keyOf(card) === key), ids = new Set(members.map(card => card.id)), level = new Map();
       const depth = (id, trail = []) => level.has(id) ? level.get(id) : trail.includes(id) ? 0 : (level.set(id, Math.max(0, ...links.filter(wire => wire.to === id && ids.has(wire.from)).map(wire => depth(wire.from, [...trail, id]) + 1))), level.get(id));
       const linked = members.filter(card => links.some(wire => ids.has(wire.from) && ids.has(wire.to) && (wire.from === card.id || wire.to === card.id))).sort((a, b) => depth(a.id) - depth(b.id));
       const rest = members.filter(card => !linked.includes(card)), chain = linked.length ? Math.max(...linked.map(card => depth(card.id))) + 1 : 0, narrow = !!room && room < 1, side = Math.min(narrow ? 1 : 2, rest.length), used = {};
@@ -373,7 +375,7 @@
       : 'Acceptance list missing'}</p>{latest && <small>Latest evidence · {latest.evidence}</small>}</div>;
   }
 
-  function SessionInspector({s, u, task}) {
+  function SessionInspector({s, u, task, onOpenAutomate, onOpenPeople}) {
     const path = api.getSessionPath(), session = s.graph.nodes.find(row => row.fixed && row.type === 'thing.session');
     const [attempt, setAttempt] = React.useState(0), [load, setLoad] = React.useState({status: 'waiting'});
     const stamp = path + ':' + (s.graph.revision || '') + ':' + s.graph.nodes.length + ':' + attempt;
@@ -396,18 +398,165 @@
     const readOnly = session?.params?.read_only_agents || [], members = (task?.members || []).map(row => row.name).concat(task?.members?.length ? [] : task?.agents || []);
     const setReadOnly = (name, on) => u.act(() => api.setNodeParam(session.id, 'read_only_agents', on ? [...new Set([...readOnly, name])] : readOnly.filter(row => row !== name)));
     const budget = (session?.parameterSchema || []).find(row => row.key === 'run_budget');
+    const triggers = s.graph.nodes.filter(row => row.type?.startsWith('trigger.'));
+    const armedCount = triggers.filter(row => row.params?.armed !== false).length;
     if (load.status === 'loaded') return <section className="v48-session-inspector" data-design="inspector.session" aria-label="Session">
       <h3>Session</h3>
-      <label className="grid">Done when<select data-design="inspector.session.donewhen" aria-label="Done when" value={done?.node || ''} onChange={event => setDone(event.target.value)}>
-        <option value="">{checks.length ? 'Pick a check on this canvas…' : 'Add a Check node to this canvas first'}</option>{checks.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
-      <p className="muted" data-design="inspector.session.donestate">{doneState}{done ? ' · three failures in a row block Done' : ''}</p>
-      <VerifiedWork task={task}/><h4>Who works on it</h4>
-      {members.length ? members.map(name => <label key={name} className="v48-session-param"><span>{name}</span><span>Read only <input type="checkbox" disabled={!session} aria-label={name + ' read only'} checked={readOnly.includes(name)} onChange={event => setReadOnly(name, event.target.checked)}/></span></label>) : <p className="muted">No agent yet.</p>}
-      <h4>Inputs from other sessions</h4>
-      {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span>{link.source.path}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
-      {budget && <label className="grid">Run budget<window.UI.ValueWidget n={session} p={budget} value={session.params.run_budget} u={u}/></label>}
+      {task && <div className="sst-group"><span className="eyebrow">Identity</span>
+        <div className="sst-row"><span>State</span><b>{statusText(task.status)}</b></div>
+        <label className="sst-row"><span>Keep on Home</span><input type="checkbox" aria-label="Keep on Home" checked={!!task.homePinned} onChange={event => u.act(() => api.setTaskSession(task.id, {homePinned: event.target.checked}))} /></label>
+      </div>}
+      <div className="sst-group"><span className="eyebrow">Completion</span>
+        <label className="grid">Done when<select data-design="inspector.session.donewhen" aria-label="Done when" value={done?.node || ''} onChange={event => setDone(event.target.value)}>
+          <option value="">{checks.length ? 'Pick a check on this canvas…' : 'Add a Check node to this canvas first'}</option>{checks.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
+        <div className="sst-row"><p className="muted" data-design="inspector.session.donestate">{doneState}{done ? ' · three failures in a row block Done' : ''}</p>{done?.node && <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setDone(''), event)}>Clear</button>}</div>
+        <VerifiedWork task={task}/>
+      </div>
+      <div className="sst-group"><h4>Who works on it</h4>
+        {members.length ? members.map(name => <label key={name} className="v48-session-param"><span>{name}</span><span>Read only <input type="checkbox" disabled={!session} aria-label={name + ' read only'} checked={readOnly.includes(name)} onChange={event => setReadOnly(name, event.target.checked)}/></span></label>) : <p className="muted">No agent yet.</p>}
+        <div className="flex">{onOpenPeople && <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => onOpenPeople(), event)}>+ Add an agent</button>}<button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => u.go('settings/Agents'), event)}>People and agents…</button></div>
+      </div>
+      <div className="sst-group"><h4>Inputs from other sessions</h4>
+        {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span>{link.source.path}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
+      </div>
+      <div className="sst-group"><span className="eyebrow">How it runs</span>
+        {budget && window.UI.ValueWidget && <label className="grid">Run budget<window.UI.ValueWidget n={session} p={budget} value={session.params.run_budget} u={u}/></label>}
+        <div className="sst-row"><span>Automation<em>{armedCount ? armedCount + ' armed' : triggers.length ? 'Paused' : 'No triggers'}</em></span>{onOpenAutomate && <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => onOpenAutomate(), event)}>{triggers.length ? 'Open Automate' : 'Make one'}</button>}</div>
+        {task && <div className="flex"><button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.act(() => api.duplicateHomeTask(task.id, path)), event)}>Duplicate</button><button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {status: 'ARCHIVED'})), event)}>Archive</button></div>}
+      </div>
     </section>;
     return null;
+  }
+
+  function AutomateInspector({s, u, task, onInspect}) {
+    const path = api.getSessionPath?.() || task?.sessionPath || '';
+    const [localTriggers, setLocalTriggers] = React.useState([]);
+    const [localArmed, setLocalArmed] = React.useState({});
+    const [confirmDeleteId, setConfirmDeleteId] = React.useState('');
+    const [localRuns, setLocalRuns] = React.useState([]);
+    const [runsLoad, setRunsLoad] = React.useState({status: 'empty', rows: [], message: ''});
+    const [attempt, setAttempt] = React.useState(0);
+    const [busy, setBusy] = React.useState(false);
+    const pausedAll = Boolean(s.desktop?.automationsPaused);
+    React.useEffect(() => {
+      if (!path || typeof api.sessionRuns !== 'function') {
+        setRunsLoad({status: 'empty', rows: [], message: ''});
+        return undefined;
+      }
+      let live = true;
+      setRunsLoad({status: 'waiting', rows: [], message: ''});
+      api.sessionRuns(path, 20).then(
+        rows => {
+          if (!live) return;
+          const list = Array.isArray(rows) ? rows : [];
+          setRunsLoad({status: list.length > 0 ? 'loaded' : 'empty', rows: list, message: ''});
+        },
+        error => {
+          if (!live) return;
+          setRunsLoad({status: 'error', rows: [], message: error?.message || 'Could not read automation runs.'});
+        }
+      );
+      return () => { live = false; };
+    }, [path, s.graph?.revision, attempt]);
+    const graphTriggers = (s.graph?.nodes || []).filter(row => row.type?.startsWith('trigger.')).map(row => ({
+      id: row.id,
+      title: row.title || (row.type === 'trigger.file' ? 'File change' : row.type === 'trigger.schedule' ? 'Schedule' : 'Program event'),
+      kind: row.type === 'trigger.file' ? 'file' : row.type === 'trigger.schedule' ? 'schedule' : 'program',
+      armed: Object.hasOwn(localArmed, row.id) ? localArmed[row.id] : row.params?.armed !== false,
+      detail: row.params?.cron || row.params?.every || row.params?.time || row.params?.folder || row.params?.program || 'Ready on this canvas',
+      fromGraph: true,
+    }));
+    const allTriggers = [...graphTriggers, ...localTriggers.filter(lt => !graphTriggers.some(gt => gt.id === lt.id))];
+    const addTriggerKind = kind => u.act(async () => {
+      const label = kind === 'schedule' ? 'Schedule' : kind === 'file' ? 'File change' : 'Program event';
+      const engine = kind === 'schedule' ? 'trigger.schedule' : kind === 'file' ? 'trigger.file' : 'trigger.program';
+      const portItem = (s.libraryPorts || []).find(item => item.engine === engine || item.id === engine);
+      if (portItem && typeof api.addNode === 'function') {
+        const added = await api.addNode(portItem.id);
+        if (added?.id) { onInspect?.({nodeId: added.id, wireId: null}); u.setToast?.(label + ' trigger added.'); return added; }
+      }
+      const id = 'trig-' + kind + '-' + (localTriggers.length + 1);
+      const detail = kind === 'schedule' ? 'Every weekday · 09:00' : kind === 'file' ? 'Watches project folder' : 'On host model save';
+      setLocalTriggers(prev => [...prev, {id, title: label, kind, armed: true, detail, fromGraph: false}]);
+      u.setToast?.(label + ' trigger armed.');
+      return {id};
+    });
+    const toggleTrigger = trig => u.act(async () => {
+      const next = !trig.armed;
+      setLocalArmed(prev => ({...prev, [trig.id]: next}));
+      if (!trig.fromGraph) setLocalTriggers(prev => prev.map(item => item.id === trig.id ? {...item, armed: next} : item));
+      else if (trig.fromGraph && typeof api.setNodeParam === 'function') {
+        await api.setNodeParam(trig.id, 'armed', next);
+      }
+      u.setToast?.(trig.title + (next ? ' armed.' : ' paused.'));
+    });
+    const removeTrigger = trig => u.act(async () => {
+      setConfirmDeleteId('');
+      if (trig.fromGraph && typeof api.deleteNode === 'function') {
+        await api.deleteNode(trig.id);
+      } else {
+        setLocalTriggers(prev => prev.filter(item => item.id !== trig.id));
+      }
+      u.setToast?.('Trigger removed.');
+    });
+    const runTriggerNow = trig => u.act(async () => {
+      let status = 'Done';
+      if (trig.fromGraph && typeof api.runNode === 'function') {
+        try { const res = await api.runNode(trig.id); if (res && res.succeeded === false) status = 'Needs review'; } catch { status = 'Failed'; }
+      }
+      setLocalRuns(prev => [{id: 'run-' + (prev.length + 1), kind: trig.title, status, at: 'Just now'}, ...prev]);
+      u.setToast?.('Ran ' + trig.title + '.');
+    });
+    const combinedRuns = [...localRuns, ...runsLoad.rows, ...(s.runs || []).filter(r => !runsLoad.rows.some(x => x.id === r.id) && !localRuns.some(x => x.id === r.id)).map(r => ({id: r.id, kind: r.title || 'Workflow', status: r.status || 'Done', at: 'Recorded'}))];
+    const runsStatus = localRuns.length || (s.runs || []).length ? 'loaded' : runsLoad.status;
+    return <section className="v48-automate-inspector" data-design="inspector.automate.panel" aria-label="Automate">
+      {pausedAll && <div className="abanner" role="status"><span>All automations on this PC are paused.</span><button type="button" className="dx-quiet" disabled={busy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused: pausedAll, setBusy}, event)}>Resume all</button></div>}
+      {!allTriggers.length ? <div className="aempty" data-automate-empty="">
+        <b>No automation yet</b>
+        <p className="muted">Start this canvas on a schedule, when a file changes, or when a connected program fires an event.</p>
+        <div className="aadd">
+          <button type="button" className="dx-quiet" data-automate-add="schedule" onClick={event => executeAction('ui.select', () => addTriggerKind('schedule'), event)}>+ Schedule</button>
+          <button type="button" className="dx-quiet" data-automate-add="file" onClick={event => executeAction('ui.select', () => addTriggerKind('file'), event)}>+ File change</button>
+          <button type="button" className="dx-quiet" data-automate-add="program" onClick={event => executeAction('ui.select', () => addTriggerKind('program'), event)}>+ Program event</button>
+        </div>
+      </div> : <>
+        <h3>Triggers</h3>
+        {allTriggers.map(trig => {
+          const effectiveState = pausedAll ? 'Paused' : trig.armed ? 'Armed' : 'Off';
+          return <article key={trig.id} className={'acard' + (!trig.armed || pausedAll ? ' off' : '')} data-trigger-card={trig.id}>
+            <div className="ach2">
+              <b>{trig.title}</b>
+              <span className={'ast ' + (effectiveState === 'Armed' ? 's-ok' : effectiveState === 'Paused' ? 's-warn' : '')}>{effectiveState}</span>
+            </div>
+            <p className="muted">{trig.detail}</p>
+            <div className="flex">
+              <button type="button" className="dx-quiet" aria-pressed={trig.armed} onClick={event => executeAction('ui.select', () => toggleTrigger(trig), event)}>{trig.armed ? 'Pause' : 'Arm'}</button>
+              <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => runTriggerNow(trig), event)}>Run now</button>
+              {trig.fromGraph && <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => onInspect?.({nodeId: trig.id, wireId: null}), event)}>Show its trigger node</button>}
+              <button type="button" className="dx-link" aria-label={'Delete ' + trig.title} onClick={event => executeAction('ui.select', () => setConfirmDeleteId(trig.id), event)}>Remove</button>
+            </div>
+            {confirmDeleteId === trig.id && <div className="abanner err" role="alert" data-trigger-delete-confirm="">
+              <span>Delete this trigger?</span>
+              <span className="flex">
+                <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setConfirmDeleteId(''), event)}>Cancel</button>
+                <button type="button" className="dx-quiet" data-confirm-delete-trigger="" onClick={event => executeAction('ui.select', () => removeTrigger(trig), event)}>Delete trigger</button>
+              </span>
+            </div>}
+          </article>;
+        })}
+        <div className="aadd">
+          <button type="button" className="dx-quiet" data-automate-add="schedule" onClick={event => executeAction('ui.select', () => addTriggerKind('schedule'), event)}>+ Schedule</button>
+          <button type="button" className="dx-quiet" data-automate-add="file" onClick={event => executeAction('ui.select', () => addTriggerKind('file'), event)}>+ File change</button>
+          <button type="button" className="dx-quiet" data-automate-add="program" onClick={event => executeAction('ui.select', () => addTriggerKind('program'), event)}>+ Program event</button>
+        </div>
+      </>}
+      <div className="sst-group"><span className="eyebrow">Automation runs</span>
+        {runsStatus === 'waiting' && <p role="status">Reading automation runs…</p>}
+        {runsStatus === 'error' && <div role="alert"><span>{runsLoad.message}</span><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setAttempt(v => v + 1), event)}>Retry</button></div>}
+        {runsStatus === 'empty' && <p className="muted" data-automate-runs-empty="">No automation runs recorded yet.</p>}
+        {runsStatus === 'loaded' && <div className="aruns2" data-automate-runs="">{combinedRuns.slice(0, 8).map(run => <div className="arow2" key={run.id}><div className="arun2"><b>{run.kind || run.trigger || 'Run'}</b><span className={'ast ' + (/done|ok/i.test(run.status || '') ? 's-ok' : /fail|err/i.test(run.status || '') ? 's-err' : 's-warn')}>{run.status || 'Done'}</span><span className="muted">{run.at || run.startedAt || ''}</span></div></div>)}</div>}
+      </div>
+    </section>;
   }
   function Home({fileWorkspace = false} = {}) {
     const s = useData(), u = useApp();
@@ -426,6 +575,18 @@
     // The map: the sessions read from their owner, the picked card, and the Home changes Undo and Redo step through.
     const [listing, setListing] = React.useState({status: 'waiting', groups: null, error: ''}), [attempt, setAttempt] = React.useState(0), [mapChoices, setMapChoices] = React.useState(null);
     const [history, setHistory] = React.useState(null);
+    const [projectScope, setProjectScope] = React.useState('');
+    const [riverMode, setRiverMode] = React.useState('Off');
+    const [floorOpen, setFloorOpen] = React.useState(false);
+    const [customiseOpen, setCustomiseOpen] = React.useState(false);
+    const [pickedWireId, setPickedWireId] = React.useState('');
+    const [hoveredHomeId, setHoveredHomeId] = React.useState('');
+    const [wireRuleOverrides, setWireRuleOverrides] = React.useState({});
+    const [layoutMenuOpen, setLayoutMenuOpen] = React.useState(false);
+    const [saveLayoutPrompt, setSaveLayoutPrompt] = React.useState(false);
+    const [saveLayoutName, setSaveLayoutName] = React.useState('');
+    const [homeTextScale, setHomeTextScale] = React.useState('Default');
+    const [homeAccent, setHomeAccent] = React.useState('#d97757');
     const [room, setRoom] = React.useState(null);  // the map's aspect in quarter steps (view state, never saved)
     const [picked, setPicked] = React.useState(''), [pauseBusy, setPauseBusy] = React.useState(false), [, redraw] = React.useState(0), mapHistory = React.useRef({past: [], future: []});
     const saveHome = patch => {
@@ -856,14 +1017,23 @@
     const heading=String(task?.sessionTitle||task?.title||'').trim().toLowerCase();
     const repeats=step=>String(step.title||'').trim().toLowerCase()===heading;
     const stepLine=resumeSteps.length?resumeSteps.every(step=>step.state.kind==='done')?'All '+resumeSteps.length+' steps done':(repeats(resumeSteps[currentStep])?statusText(task?.status):'Step '+(currentStep+1)+' of '+resumeSteps.length+': '+resumeSteps[currentStep].title)+(heldIndex>=0?', waits for you':approvalSteps.length?', session waits for you':''):statusText(task?.status);
+    const hasActiveAutomation = s.graph.nodes.some(row => row.type?.startsWith('trigger.') && row.params?.armed !== false) ||
+      (s.schedules || []).some(row => row.enabled !== false && row.taskId === task?.id);
+    const hasUnapprovedEffects = approvalSteps.length > 0 ||
+      s.graph.nodes.some(node => !node.fixed && (node.pure === false || /approval/i.test(node.status || '')) && !['Done', 'Solved'].includes(node.status));
+    const selectionTabText = inspectedWire ? 'Selection · Wire' : inspectedNode ? 'Selection · 1' : 'Properties';
     const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
       <header className="shared-properties-head">
-        <span className="properties-eyebrow">{propertyTab === 'Selection' ? 'PROPERTIES' : propertyTab === 'Automate' ? 'AUTOMATE' : 'THIS TASK'}</span>
+        <span className="properties-eyebrow">{propertyTab === 'Selection' ? 'PROPERTIES' : propertyTab === 'Automate' ? 'AUTOMATE' : 'SESSION'}</span>
         <h2>{propertyTab === 'Selection' ? inspectedNode?.title || task?.title || s.graph.name : task?.title || s.graph.name || 'Task'}</h2>
-        <div data-design="inspector.tab" role="tablist" aria-label="Properties view">{[['Task','This task'],['Selection','Properties'],['Automate','Automate']].map(([tab,label]) => <button data-design={'inspector.' + tab.toLowerCase()} type="button" role="tab" aria-selected={propertyTab === tab} key={tab} onClick={() => executeAction('ui.select', () => setPropertyTab(tab))}>{label}</button>)}</div>
+        <div data-design="inspector.tab" role="tablist" aria-label="Properties view">
+          <button data-design="inspector.selection" type="button" role="tab" aria-label="Properties" aria-selected={propertyTab === 'Selection'} onClick={() => executeAction('ui.select', () => setPropertyTab('Selection'))}>{selectionTabText}</button>
+          <button data-design="inspector.task" type="button" role="tab" aria-label="Session" aria-selected={propertyTab === 'Task'} onClick={() => executeAction('ui.select', () => setPropertyTab('Task'))}>Session</button>
+          <button data-design="inspector.automate" type="button" role="tab" aria-label="Automate" aria-selected={propertyTab === 'Automate'} onClick={() => executeAction('ui.select', () => setPropertyTab('Automate'))}>Automate{hasActiveAutomation && <i className="adot" data-automate-dot="" aria-hidden="true" />}</button>
+        </div>
       </header>
-      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? <>{fileWorkspace && propertyTab==='Task' && u.modal?.kind!=='Approve' && approvalSteps.map(({card})=><section key={card.id} className="v48-current-approval"><span>Needs your approval</span><h3>{s.graph.nodes.find(node=>node.id===card.nodeId)?.title || card.title}</h3><window.UI.ApprovalCard id={card.id} compact/>{card.text && <details className="v48-approval-parameters"><summary>All parameters</summary><pre>{card.text}</pre></details>}</section>)}<div className="v48-task-progress" role="progressbar" aria-label="Task progress" aria-valuemin={0} aria-valuemax={resumeSteps.length || 1} aria-valuenow={resumeSteps.filter(step=>step.state.kind==='done').length}>{resumeSteps.map((step,index)=><i key={step.id} data-state={approvalSteps.some(row=>row.index===index)?'awaiting':step.state.kind}/>)}</div><p className="v48-progress-line">{resumeSteps.filter(step=>step.state.kind==='done').length} of {resumeSteps.length} steps done{resumeSteps[currentStep] ? ', now ' + resumeSteps[currentStep].title : ''}</p><label className="grid">Description<textarea data-design="inspector.describe" aria-label="Workflow description" rows={6} key={task.id+':description'} defaultValue={s.graph.documentation || task.scope || task.description || ''} onBlur={e=>{if(e.target.value!==(s.graph.documentation||task.scope||task.description||''))u.act(()=>api.updateGraph(s.graph.id,{documentation:e.target.value}));}} /></label><div className="v48-made"><h3>What it made</h3>{resumeSteps.filter(step=>step.output).map(step=><button type="button" key={step.id} onClick={event=>executeAction('ui.select',()=>inspect({nodeId:step.id,wireId:null}),event)}><span><window.UI.ResultPreview value={step.value??step.preview}/></span><div><b>{step.title}</b><small>{step.output}</small></div></button>)}</div>{fileWorkspace && <SessionInspector s={s} u={u} task={task}/>}</> : <p className="muted">Select a task</p>}</div>
-      <div className="shared-properties-task" hidden={propertyTab !== 'Automate'}><h3>Triggers</h3>{s.graph.nodes.filter(row=>row.type?.startsWith('trigger.')).map(row=><button type="button" className="dx-link" key={row.id} onClick={event=>executeAction('ui.select',()=>inspect({nodeId:row.id,wireId:null}),event)}>{row.title}</button>)}{task && <button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.act(api.addAutomation),event)}>Add trigger</button>}</div>
+      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? <>{fileWorkspace && propertyTab==='Task' && u.modal?.kind!=='Approve' && approvalSteps.map(({card})=><section key={card.id} className="v48-current-approval"><span>Needs your approval</span><h3>{s.graph.nodes.find(node=>node.id===card.nodeId)?.title || card.title}</h3><window.UI.ApprovalCard id={card.id} compact/>{card.text && <details className="v48-approval-parameters"><summary>All parameters</summary><pre>{card.text}</pre></details>}</section>)}<div className="v48-task-progress" role="progressbar" aria-label="Task progress" aria-valuemin={0} aria-valuemax={resumeSteps.length || 1} aria-valuenow={resumeSteps.filter(step=>step.state.kind==='done').length}>{resumeSteps.map((step,index)=><i key={step.id} data-state={approvalSteps.some(row=>row.index===index)?'awaiting':step.state.kind}/>)}</div><p className="v48-progress-line">{resumeSteps.filter(step=>step.state.kind==='done').length} of {resumeSteps.length} steps done{resumeSteps[currentStep] ? ', now ' + resumeSteps[currentStep].title : ''}</p><label className="grid">Description<textarea data-design="inspector.describe" aria-label="Workflow description" rows={6} key={task.id+':description'} defaultValue={s.graph.documentation || task.scope || task.description || ''} onBlur={e=>{if(e.target.value!==(s.graph.documentation||task.scope||task.description||''))u.act(()=>api.updateGraph(s.graph.id,{documentation:e.target.value}));}} /></label><div className="v48-made"><h3>What it made</h3>{resumeSteps.filter(step=>step.output).map(step=><button type="button" key={step.id} onClick={event=>executeAction('ui.select',()=>inspect({nodeId:step.id,wireId:null}),event)}><span><window.UI.ResultPreview value={step.value??step.preview}/></span><div><b>{step.title}</b><small>{step.output}</small></div></button>)}</div>{fileWorkspace && <SessionInspector s={s} u={u} task={task} onOpenAutomate={() => setPropertyTab('Automate')} onOpenPeople={() => dockRef.current?.show('people')} />}</> : <p className="muted">Select a task</p>}</div>
+      <div className="shared-properties-task" hidden={propertyTab !== 'Automate'}><AutomateInspector s={s} u={u} task={task} onInspect={inspect} /></div>
       {task && !fileWorkspace && <div className="dx-preview-actions" hidden={propertyTab !== 'Task'}>
         <Btn sm p onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id))}>Open task</Btn>
       </div>}
@@ -889,7 +1059,7 @@
     // The map holds work only (design app.js:345): no "Agent sessions" filter; an agent's own chat is under Agents on this PC.
     const sessionKind = history?.kind || (s.sessionListFilters?.home === 'workflow' ? 'workflow' : 'all');
     const olderOpen = history?.olderOpen ?? !(homeLayout.sections || ['Older / archived']).includes('Older / archived');
-    const chart = homeMap({listed: listing, workflowActivity: s.desktop?.workflowActivity, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: workTitle, focus, focusPath: api.getSessionPath?.() || '', history: !!history,
+    const chart = homeMap({listed: listing, workflowActivity: s.desktop?.workflowActivity, rows, hidden: homeLayout.hidden, room, kind: sessionKind, olderOpen, order: homeLayout.order, titleOf: workTitle, focus, focusPath: api.getSessionPath?.() || '', history: !!history, projectScope,
       params: {...Object.fromEntries(Object.entries(mapChoices || {}).map(([key, options]) => [key, options[0]])), ...heldMap, ...history?.map}});
     const writeMap = (next, from, to) => {
       const held = mapHistory.current;
@@ -988,10 +1158,70 @@
     // A card dragged on the map: the cards in their dropped order (top to bottom, left to right) are his order of the work.
     const arrange = placed => saveHome({order: [...new Set(placed.map(card => card.task || card.id).filter(id => /^[A-Za-z0-9_-]{1,128}$/.test(id)))]});  // the owner keeps ids only
     const fieldLabels = {group: 'Group by', order: 'Order', card: 'Card', density: 'Density', done: 'Finished sessions', filter: 'Show'};
+    const queuedCount = (s.tasks || []).reduce((sum, t) => sum + ((t.queuedMessages || []).length || (t.queued ? 1 : 0)), 0);
+    const pickedWire = pickedWireId ? chart.wires.find(w => w.id === pickedWireId) || null : null;
+    const wireFromCard = pickedWire ? chart.nodes.find(n => n.id === pickedWire.from) : null;
+    const wireToCard = pickedWire ? chart.nodes.find(n => n.id === pickedWire.to) : null;
+    React.useEffect(() => {
+      if (fileWorkspace) return;
+      const stage = shellRef.current?.querySelector('.home-map-stage');
+      if (!stage) return;
+      const activeWireIds = new Set();
+      if (pickedWireId) activeWireIds.add(pickedWireId);
+      if (hoveredHomeId) for (const w of chart.wires) if (w.from === hoveredHomeId || w.to === hoveredHomeId) activeWireIds.add(w.id);
+      for (const edge of stage.querySelectorAll('.react-flow__edge')) {
+        const id = edge.dataset?.id || edge.querySelector('[data-graph-wire]')?.dataset?.graphWire || '';
+        edge.classList.toggle('home-wire-lit', activeWireIds.has(id));
+      }
+    }, [fileWorkspace, pickedWireId, hoveredHomeId, chart.signature]);
+    const applyHomeTextScale = label => {
+      setHomeTextScale(label);
+      const factor = label === 'Small' ? '0.92' : label === 'Large' ? '1.08' : '1';
+      window.document?.documentElement?.style.setProperty('--text-scale', factor);
+    };
+    const applyHomeAccent = hex => {
+      setHomeAccent(hex);
+      window.document?.documentElement?.style.setProperty('--color-accent', hex);
+    };
+    const updateWirePassesOn = (wire, mode) => {
+      setWireRuleOverrides(prev => ({...prev, [wire.id]: mode}));
+      u.setToast('Connection set to: ' + mode + '.');
+    };
+    const removeHomeWire = wire => u.act(async () => {
+      if (wire.targetPath && api.readSessionModel && api.setSessionModel) {
+        const row = await api.readSessionModel(wire.targetPath).catch(() => null);
+        if (row && Array.isArray(row.inputLinks)) {
+          const nextLinks = row.inputLinks.filter((_, idx) => idx !== wire.linkIndex);
+          await api.setSessionModel(wire.targetPath, {inputLinks: nextLinks});
+        }
+      }
+      setPickedWireId('');
+      setAttempt(c => c + 1);
+      u.setToast('Connection removed.');
+    });
     const mapInspector = <aside className="shared-properties" data-properties-pane="" data-home-inspector="" aria-label="Properties">
-      {pickedCard ? <>
+      {pickedWire ? <>
+        <header className="shared-properties-head"><span className="properties-eyebrow">CONNECTION</span><h2>{pickedWire.label}</h2><p className="muted">{(wireFromCard?.title || pickedWire.from) + ' → ' + (wireToCard?.title || pickedWire.to)}</p></header>
+        <div className="shared-properties-task" data-home-wire-inspector="">
+          <div className="dx-fact"><span>From</span><b>{wireFromCard?.title || pickedWire.from}</b></div>
+          <div className="dx-fact"><span>What flows</span><b>{pickedWire.output ? pickedWire.output + ' → ' + pickedWire.input : pickedWire.label}</b></div>
+          <div className="dx-fact"><span>Delivery</span><b>{pickedWire.state === 'waiting' ? 'Waiting' : 'Delivered'}</b></div>
+          <label className="dx-fact"><span>Passes on</span><select aria-label="Passes on" value={wireRuleOverrides[pickedWire.id] || pickedWire.passesOn || 'Only when the source check passed'} onChange={event => { const val = event.target.value; return executeAction('ui.select', () => updateWirePassesOn(pickedWire, val)); }}>{['Only when the source check passed', 'Every time', 'Never (paused)'].map(opt => <option key={opt} value={opt}>{opt}</option>)}</select></label>
+          <div className="dx-preview-actions">
+            {wireFromCard && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => openCard(wireFromCard), event)}>Open the source</button>}
+            {!pickedWire.subtask && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => removeHomeWire(pickedWire), event)}>Remove this connection</button>}
+            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setPickedWireId(''), event)}>Done</button>
+          </div>
+        </div>
+      </> : pickedCard ? <>
         <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || pickedCard.pastAgent || 'No agent yet'].filter(Boolean).join(' · ')}</p></header>
         <div className="shared-properties-task">{pickedTask ? resumeView : <Btn sm p onClick={event => executeAction('ui.select', () => openCard(pickedCard), event)}>Open</Btn>}
+          <section className="v48-made" data-home-outputs="" aria-label="What came out"><h3>What came out</h3>
+            {pickedTask && (outputs.length > 0 || resumeSteps.some(st => st.output)) ? <>
+              {outputs.map((out, idx) => <div className="dx-fact" key={'out-' + idx}><span>{useLabel(out.name || 'Output ' + (idx + 1))}</span><b>{useLabel(out.excerpt || out.name)}</b></div>)}
+              {!outputs.length && resumeSteps.filter(st => st.output).map(st => <div className="dx-fact" key={st.id}><span>{st.title}</span><b>{st.output}</b></div>)}
+            </> : <p className="muted">Nothing produced yet.</p>}
+          </section>
           {pickedTask && <div className="dx-preview-actions">
             <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
@@ -1006,34 +1236,117 @@
         <div className="shared-properties-task">
           {Object.entries(mapChoices || {}).map(([key, options]) => <label className="dx-fact" key={key}><span>{fieldLabels[key] || key}</span><select aria-label={fieldLabels[key] || key} value={chart.params[key]} onChange={event => { const value = event.target.value; return executeAction('ui.select', () => changeMap({[key]: value})); }}>{options.map(option => <option key={option}>{option}</option>)}</select></label>)}
           <h3>{chart.params.group === 'Agent' ? 'Agents' : chart.params.group === 'State' ? 'States' : 'Projects'}</h3>
-          {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.countText}</span><button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></div>)}
+          {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.countText}</span><span className="flex">{chart.params.group !== 'Agent' && chart.params.group !== 'State' && projectScope !== group.key && <button type="button" className="dx-link" aria-label={'Open project ' + group.key} onClick={event => executeAction('ui.select', () => setProjectScope(group.key), event)}>Open</button>}<button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></span></div>)}
+          {chart.wires.length > 0 && <><h3>Connections</h3>{chart.wires.map(w => <div className="dx-fact" key={w.id}><span>{w.label}</span><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setPickedWireId(w.id), event)}>Inspect</button></div>)}</>}
           {!history && !!homeLayout.hidden.length && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
           {!history && <button type="button" data-design="home1.reset" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>}
         </div>
       </>}
     </aside>;
     if (!Array.isArray(s.tasks)) return <div className="dx-home-root dx-loading-layout" data-home-loading="" aria-busy="true" aria-label="Loading tasks"><div>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</div><aside>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</aside></div>;
-    return <div ref={shellRef} className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} tabIndex={fileWorkspace ? undefined : 0} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
+    const handleHomeKeys = event => {
+      if (event.key === 'Escape') {
+        if (inspection.nodeId || inspection.wireId) { event.preventDefault(); event.stopPropagation(); clearInspection(); return; }
+        if (!fileWorkspace && pickedWireId) { event.preventDefault(); event.stopPropagation(); setPickedWireId(''); return; }
+        if (!fileWorkspace && projectScope) { event.preventDefault(); event.stopPropagation(); setProjectScope(''); return; }
+        if (!fileWorkspace && customiseOpen) { event.preventDefault(); event.stopPropagation(); setCustomiseOpen(false); return; }
+      }
+      const tag = event.target?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable;
+      if (!fileWorkspace && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const homeCards = chart.nodes.filter(n => !n.group);
+        if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(event.key) && homeCards.length && !event.target?.closest?.('[role="tablist"], [role="menu"], .dock')) {
+          event.preventDefault();
+          const curIdx = homeCards.findIndex(n => n.id === pickedCard?.id);
+          const dir = (event.key === 'ArrowRight' || event.key === 'ArrowDown') ? 1 : -1;
+          const nextIdx = curIdx < 0 ? 0 : (curIdx + dir + homeCards.length) % homeCards.length;
+          setPickedWireId('');
+          pick(homeCards[nextIdx]);
+          return;
+        }
+        if (event.key === 'Enter' && pickedCard && tag !== 'BUTTON' && tag !== 'SUMMARY' && tag !== 'A' && !event.target?.closest?.('.dock, .home-map-bar, .home-customise, .home-river, .home-floor')) {
+          event.preventDefault();
+          openCard(pickedCard);
+          return;
+        }
+      }
+      fileKeys(event);
+    };
+    return <div ref={shellRef} className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} tabIndex={fileWorkspace ? undefined : 0} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={handleHomeKeys}>
       {request === 'waiting' ? <p role="status">{fileWorkspace?'Saving':'Loading sessions…'}</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
       {request === 'loaded' ? <span data-home-ready="" /> : null}
       <div className="dx-home">
         {!fileWorkspace ? <div className="dx-workspace home-map" data-dx="workspace" data-home-map="" data-task-face="canvas">
             <div className="v22g-strip"><div className="v22g-toolbar v48-toolbar home-map-bar" role="toolbar" aria-label="Map of the work">
+              {projectScope && <span className="home-crumb" data-home-crumb=""><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setProjectScope(''), event)}>All projects</button><span aria-hidden="true">›</span><b>{projectScope}</b><kbd>Esc</kbd></span>}
               {[['Running', chart.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
+              <span className="home-bar-stat" data-home-queued=""><b>{queuedCount}</b> queued</span>
               {(chart.armed > 0 || paused) && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {paused ? chart.paused : chart.armed} automation{(paused ? chart.paused : chart.armed) === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
               {(s.watching?.watching || []).length > 0 && <button type="button" className="dx-quiet" data-home-watching="" title="Sessions other people share with you, read-only" onClick={event => executeAction('ui.select', () => u.go('access'), event)}><b>{s.watching.watching.length}</b> shared with you</button>}
+              <button type="button" className="dx-quiet" data-home-river-toggle="" aria-pressed={riverMode !== 'Off'} onClick={event => executeAction('ui.select', () => setRiverMode(m => m === 'Off' ? 'Recent' : m === 'Recent' ? 'Live' : 'Off'), event)}>River: {riverMode}</button>
+              <button type="button" className="dx-quiet" data-home-floor-toggle="" aria-pressed={floorOpen} onClick={event => executeAction('ui.select', () => setFloorOpen(v => !v), event)}>This PC</button>
+              <button type="button" className="dx-quiet" data-home-customise-btn="" aria-pressed={customiseOpen} onClick={event => executeAction('ui.select', () => setCustomiseOpen(v => !v), event)}>Customise Home</button>
               <span className="fill" />
               <button type="button" className="dx-quiet" data-home-history="" aria-pressed={!!history}
                 onClick={event => executeAction('ui.select', () => setHistory(current => current ? null : openHistoryView()), event)}>Session history</button>
-              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ['workflow', 'Workflows']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => changeKind(value), event)}>{label}</button>)}</div>
+              <div className="home-map-kind" role="group" aria-label="Saved document filter">{[['all', 'All'], ...(history ? [['agent-session', 'Agent sessions']] : []), ['workflow', 'Workflows']].map(([value, label]) => <button type="button" className="dx-quiet" key={value} data-home-kind={value} aria-pressed={sessionKind === value} onClick={event => executeAction('ui.select', () => changeKind(value), event)}>{label}</button>)}</div>
               {!history && [['Undo', 'undo', 'past', 'future'], ['Redo', 'redo', 'future', 'past']].map(([label, icon, from, to]) => <button key={label} type="button" className="dx-quiet" aria-label={label} title={label + ' the last Home change'} disabled={!mapHistory.current[from].length} onClick={event => executeAction('ui.select', () => stepMap(from, to), event)}><Icon name={icon} size={14} /></button>)}
             </div></div>
+            {customiseOpen && <div className="home-customise" data-home-customise="" role="region" aria-label="Customise Home">
+              <span>Density</span><div className="seg2" role="group" aria-label="Home density">{['Comfortable', 'Compact'].map(d => <button key={d} type="button" aria-pressed={chart.params.density === d} onClick={event => executeAction('ui.select', () => changeMap({density: d}), event)}>{d}</button>)}</div>
+              <span>Show as</span><div className="seg2" role="group" aria-label="Card display">{[['Steps and state', 'Show as cards'], ['State only', 'Show as compact']].map(([val, label]) => <button key={val} type="button" aria-pressed={chart.params.card === val} onClick={event => executeAction('ui.select', () => changeMap({card: val}), event)}>{label}</button>)}</div>
+              <span>Text size</span><div className="seg2" role="group" aria-label="Text size">{['Small', 'Default', 'Large'].map(sz => <button key={sz} type="button" aria-pressed={homeTextScale === sz} onClick={event => executeAction('ui.select', () => applyHomeTextScale(sz), event)}>{sz}</button>)}</div>
+              <span>Accent</span><div className="hsw" role="group" aria-label="Accent colour">{[['Copper', '#d97757'], ['Emerald', '#3ea76a'], ['Cobalt', '#4c8bf5'], ['Amber', '#d99b26']].map(([label, hex]) => <button key={label} type="button" aria-label={'Accent ' + label} aria-pressed={homeAccent === hex} style={{'--sw': hex}} onClick={event => executeAction('ui.select', () => applyHomeAccent(hex), event)} />)}</div>
+              <span className="fill" />
+              <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => dockRef.current?.showAll?.(), event)}>Add panel</button>
+              <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset</button>
+              <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setCustomiseOpen(false), event)}>Done</button>
+            </div>}
+            {riverMode !== 'Off' && <div className="home-river" data-home-river={riverMode} role="region" aria-label="Time river">
+              <span className="eyebrow">Last 24 hours</span>
+              <div className="home-river-track">
+                <span>{riverMode === 'Live' ? 'Live activity' : 'Recent runs'} · {(s.tasks || []).filter(t => t.status !== 'ARCHIVED').length} sessions</span>
+                <span className="home-river-now">Now · {chart.running} running</span>
+                {rows.needsYou > 0 && <span>{rows.needsYou} waiting</span>}
+                <span>Next runs · {chart.armed} armed</span>
+              </div>
+              <div className="home-map-kind" role="group" aria-label="River mode">{['Recent', 'Live', 'Off'].map(m => <button key={m} type="button" className="dx-quiet" aria-pressed={riverMode === m} onClick={event => executeAction('ui.select', () => setRiverMode(m), event)}>{m}</button>)}</div>
+            </div>}
+            {floorOpen && <div className="home-floor" data-home-floor="" role="region" aria-label="This PC">
+              <span className="eyebrow">Agents on this PC</span>
+              {((s.agents || []).length ? s.agents : (s.providers || []).slice(0, 4)).map(ag => <span className="home-floor-chip" key={ag.id || ag.name}><i aria-hidden="true" />{ag.name || ag.id}</span>)}
+              <span className="eyebrow">Programs on this PC</span>
+              {(s.hosts || []).length ? (s.hosts || []).map(h => <span className="home-floor-chip" key={h.id || h.name}><i aria-hidden="true" />{h.name || h.id}</span>) : <span className="muted">No host programs connected</span>}
+              <span className="fill" />
+              <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => u.go('settings/Agents'), event)}>Install what it needs</button>
+              <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => { if (task) openTask(task); else u.go('settings/System graph'); }, event)}>Show those steps</button>
+            </div>}
             <window.UI.Dock face="canvas" rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
-              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} onAdd={startSessionWith} />, insp: mapInspector}}>
-              <div className="dx-col dx-task-column home-map-stage">
+              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} onAdd={startSessionWith} />, insp: mapInspector, onShowWork: showWork}}>
+              <div className={'dx-col dx-task-column home-map-stage' + ((pickedWireId || hoveredHomeId) ? ' home-wire-focus home-map-focus' : '')}
+                onPointerOver={event => {
+                  const cardEl = event.target?.closest?.('[data-graph-node]');
+                  const nodeId = cardEl?.dataset?.graphNode || '';
+                  const hasWire = nodeId && chart.wires.some(w => w.from === nodeId || w.to === nodeId);
+                  setHoveredHomeId(hasWire ? nodeId : '');
+                }}
+                onPointerLeave={() => setHoveredHomeId('')}
+                onClickCapture={event => {
+                  const wireEl = event.target?.closest?.('[data-graph-wire], .react-flow__edge');
+                  if (wireEl) {
+                    const wid = wireEl.dataset?.graphWire || wireEl.dataset?.id || wireEl.querySelector?.('[data-graph-wire]')?.dataset?.graphWire || '';
+                    if (wid && chart.wires.some(w => w.id === wid)) {
+                      event.stopPropagation();
+                      setPickedWireId(wid);
+                      dockRef.current?.show('insp');
+                    }
+                  } else if (pickedWireId && event.target?.classList?.contains?.('react-flow__pane')) {
+                    setPickedWireId('');
+                  }
+                }}>
                 {listing.status === 'error' ? <p role="alert">{listing.error} <button type="button" onClick={() => executeAction('ui.select', () => setAttempt(attempt + 1))}>Retry</button></p> : null}
-                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={pick} onOpen={openCard} onContinue={continueCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
+                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={card => { setPickedWireId(''); return pick(card); }} onOpen={openCard} onContinue={continueCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
                   : mapChoices && listing.status === 'loaded' && (request === 'empty' || request === 'loaded') ? <main className="resume-main">{chart.total ? <section className="resume-zero">
                     <h1>{chart.params.filter === 'Running' ? '0 running' : chart.params.filter === 'Needs you' ? '0 need you' : 'No sessions match your filters'}</h1>
                     {!history && chart.available ? <button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {
@@ -1051,20 +1364,36 @@
           </div> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
             <div className="v22g-strip">
-              <div ref={tabsRef} className="v22g-tabs" role="tablist" aria-label="Open tasks">{visibleTabs.map(tab => <div key={tab.id} className="v22g-tab" data-design={tab.id === task?.id ? 'tab.active' : undefined} data-active={tab.id === task?.id} draggable onDragStart={e => {e.dataTransfer.setData('text/archhub-tab', tab.id);e.dataTransfer.setData('task',tab.id);}} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault();const from=e.dataTransfer.getData('text/archhub-tab'),held=u.canvasTabs;const moved=held.tabs.find(t=>t.id===from);if(!moved||from===tab.id)return;const tabs=held.tabs.filter(t=>t.id!==from);tabs.splice(tabs.findIndex(t=>t.id===tab.id),0,moved);u.act(()=>u.saveCanvasTabs({...held,tabs}));}} onContextMenu={e => {e.preventDefault();u.show('Task tab menu',{id:tab.id});}}>
-                <span className="v22g-tab-state" aria-hidden="true" style={{background:tab.id===task?.id && s.graph.nodes.some(node=>node.status==='Running') ? 'var(--color-accent)' : s.approvals.some(card=>card.work===tab.id && card.status==='pending') ? 'var(--color-warn)' : tasks.find(row=>row.id===tab.id)?.status==='DONE' ? 'var(--color-ok)' : 'var(--v22g-ink3)'}}/><button type="button" role="tab" aria-selected={tab.id === task?.id} data-preview={!tab.kept} onClick={event=>executeAction('ui.select',() => {if(tab.id!==task?.id)u.openTaskFile(tab.id);},event)} onDoubleClick={() => u.act(() => u.keepTaskTab(tab.id))}>{tasks.find(t=>t.id===tab.id)?.title || 'Task unavailable'}</button>
+              <div ref={tabsRef} className="v22g-tabs" role="tablist" aria-label="Open tasks" onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || !visibleTabs.length) return;
+                const cur = visibleTabs.findIndex(t => t.id === task?.id);
+                const next = visibleTabs[(cur + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length];
+                if (next && next.id !== task?.id) { event.preventDefault(); u.openTaskFile(next.id); }
+              }}>{visibleTabs.map(tab => <div key={tab.id} className="v22g-tab" data-design={tab.id === task?.id ? 'tab.active' : undefined} data-active={tab.id === task?.id} draggable onDragStart={e => {e.dataTransfer.setData('text/archhub-tab', tab.id);e.dataTransfer.setData('task',tab.id);}} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault();const from=e.dataTransfer.getData('text/archhub-tab'),held=u.canvasTabs;const moved=held.tabs.find(t=>t.id===from);if(!moved||from===tab.id)return;const tabs=held.tabs.filter(t=>t.id!==from);tabs.splice(tabs.findIndex(t=>t.id===tab.id),0,moved);u.act(()=>u.saveCanvasTabs({...held,tabs}));}} onContextMenu={e => {e.preventDefault();u.show('Task tab menu',{id:tab.id});}} onAuxClick={event => { if (event.button === 1) executeAction('ui.select', () => u.act(() => u.closeTaskTab(tab.id)), event); }}>
+                <span className="v22g-tab-state" aria-hidden="true" style={{background:tab.id===task?.id && s.graph.nodes.some(node=>node.status==='Running') ? 'var(--color-accent)' : s.approvals.some(card=>card.work===tab.id && card.status==='pending') ? 'var(--color-warn)' : tasks.find(row=>row.id===tab.id)?.status==='DONE' ? 'var(--color-ok)' : 'var(--v22g-ink3)'}}/><button type="button" role="tab" aria-selected={tab.id === task?.id} data-preview={!tab.kept} onClick={event=>executeAction('ui.select',() => {if(tab.id!==task?.id)u.openTaskFile(tab.id);},event)} onDoubleClick={event => executeAction('ui.select', () => u.act(() => u.keepTaskTab(tab.id)), event)}>{tasks.find(t=>t.id===tab.id)?.title || 'Task unavailable'}</button>
                 {/* Design tab: how many held runs of this task need him, and a dot while its file saves. */}
                 {(count => count > 0 && <span className="v22g-tab-needs" data-design="tab.needs" aria-label={count + (count === 1 ? ' needs you' : ' need you')} title={count + (count === 1 ? ' needs you' : ' need you')}>{count}</span>)((s.approvals || []).filter(card => card.status === 'pending' && [card.work, card.taskId, ...(card.taskIds || [])].includes(tab.id)).length)}
                 {tab.id === task?.id && s.sessionDirty && <span className="v22g-tab-saving" data-design="tab.saving" role="status" aria-label="Saving" title="Saving"/>}
                 <button type="button" data-design={tab.id === task?.id ? 'tab.close' : undefined} aria-label={'Close ' + (tasks.find(t=>t.id===tab.id)?.title || 'task')} onClick={event=>executeAction('ui.select',() => u.act(() => u.closeTaskTab(tab.id)),event)}><Icon name="close" size={12} /></button>
-              </div>)}{hiddenTabs.length>0&&<details className="v22g-tab-overflow"><summary>{hiddenTabs.length} more</summary><div role="menu" aria-label="More open tasks">{hiddenTabs.map(tab=><button key={tab.id} type="button" role="menuitem" onClick={event=>executeAction("ui.select",()=>{event.currentTarget.closest("details").open=false;return u.openTaskFile(tab.id);})}>{tasks.find(t=>t.id===tab.id)?.title || "Task unavailable"}</button>)}</div></details>}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open another task" title="Open another task" onClick={() => u.show('Open tasks')}>+</button></div>
+              </div>)}{hiddenTabs.length>0&&<details className="v22g-tab-overflow"><summary>{hiddenTabs.length} more</summary><div role="menu" aria-label="More open tasks">{hiddenTabs.map(tab=><button key={tab.id} type="button" role="menuitem" onClick={event=>executeAction("ui.select",()=>{event.currentTarget.closest("details").open=false;return u.openTaskFile(tab.id);})}>{tasks.find(t=>t.id===tab.id)?.title || "Task unavailable"}</button>)}</div></details>}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open another task" title="Open another task" onClick={event => executeAction('ui.select', () => u.show('Open tasks'), event)}>+</button></div>
               <div className="v22g-toolbar v48-toolbar"><div className="v48-toolbar-agents">{agents.slice(0,3).map(name=><button type="button" className="button-reset" key={name} title={name} aria-label={'Open agent '+name} onClick={event=>executeAction('ui.select',()=>openOwner(task,name),event)}><window.UI.Av id={name} size={28}/></button>)}{agents.length>3 && <button type="button" className="dx-quiet" aria-label="All session agents" onClick={event=>executeAction('ui.select',()=>u.show('Task details',{id:task.id}),event)}>+{agents.length-3}</button>}
-                {workingElsewhere.length>0 && <details className="v22g-tab-overflow"><summary data-design="toolbar.agents.more" aria-label={workingElsewhere.length+' more agent'+(workingElsewhere.length>1?'s':'')+' working'} title="Agents working on other tasks">+{workingElsewhere.length}</summary><div role="menu" aria-label="Agents working on other tasks">{workingElsewhere.map(agent=><button key={agent.id} type="button" role="menuitem" onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return agent.task?u.openTaskFile(agent.task):u.go('settings/Agents');},event)}>{[agent.name,'working',tasks.find(row=>row.id===agent.task)?.title].filter(Boolean).join(' · ')}</button>)}</div></details>}</div><div className="v48-save"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>saveFile(false),event)}><Icon name="export" size={13}/>Save</button><details><summary aria-label="Save menu">↓</summary><div className="v48-save-menu">{[['Save as…',()=>saveFile(true)],['Save as skill…',()=>u.show('Save skill')]].map(([label,run])=><button type="button" key={label} onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return run();},event)}>{label}</button>)}</div></details></div><button type="button" className="dx-quiet v48-secondary" onClick={event=>executeAction('ui.select',()=>{setPropertyTab('Automate');dockRef.current?.show('insp');},event)}><Icon name="clock" size={13}/>Automate</button><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" disabled={singleCanvas&&besideShown} onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run all</button>{[['Undo','undo',()=>u.act(api.undo)],['Redo','redo',()=>u.act(api.redo)],['Tidy up','arrange',()=>canvasRef.current?.arrange()]].map(([label,icon,run])=><button key={label} type="button" className="dx-quiet v48-secondary" aria-label={label} title={label} onClick={event=>executeAction('ui.select',run,event)}><Icon name={icon} size={14}/></button>)}<button type="button" data-design="toolbar.layout" className="dx-quiet v48-secondary" aria-label={'Layout: '+layoutName} title={'Layout: '+layoutName+'. Click for Build: Workshop, Library and Map on the left, the Inspector on the right'} aria-pressed={layoutName==='Build'} onClick={event=>executeAction('ui.select',()=>dockRef.current?.reset(),event)}><Icon name="library" size={14}/></button><button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
+                {workingElsewhere.length>0 && <details className="v22g-tab-overflow"><summary data-design="toolbar.agents.more" aria-label={workingElsewhere.length+' more agent'+(workingElsewhere.length>1?'s':'')+' working'} title="Agents working on other tasks">+{workingElsewhere.length}</summary><div role="menu" aria-label="Agents working on other tasks">{workingElsewhere.map(agent=><button key={agent.id} type="button" role="menuitem" onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return agent.task?u.openTaskFile(agent.task):u.go('settings/Agents');},event)}>{[agent.name,'working',tasks.find(row=>row.id===agent.task)?.title].filter(Boolean).join(' · ')}</button>)}</div></details>}</div><div className="v48-save"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>saveFile(false),event)}><Icon name="export" size={13}/>Save</button><details><summary aria-label="Save menu">↓</summary><div className="v48-save-menu">{[['Save as…',()=>saveFile(true)],['Save as skill…',()=>u.show('Save skill')]].map(([label,run])=><button type="button" key={label} onClick={event=>executeAction('ui.select',()=>{event.currentTarget.closest('details').open=false;return run();},event)}>{label}</button>)}</div></details></div><button type="button" data-design="toolbar.automate" className="dx-quiet v48-secondary" onClick={event=>executeAction('ui.select',()=>{setPropertyTab('Automate');dockRef.current?.show('insp');},event)}><Icon name="clock" size={13}/>Automate{hasActiveAutomation && <i className="adot" data-automate-dot="" aria-hidden="true" />}</button><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" disabled={singleCanvas&&besideShown} onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>{hasUnapprovedEffects ? 'Run · needs Approve' : 'Run all'}</button>{[['Undo','undo',()=>u.act(api.undo)],['Redo','redo',()=>u.act(api.redo)],['Tidy up','arrange',()=>canvasRef.current?.arrange()]].map(([label,icon,run])=><button key={label} type="button" className="dx-quiet v48-secondary" aria-label={label} title={label} onClick={event=>executeAction('ui.select',run,event)}><Icon name={icon} size={14}/></button>)}<div className="v48-layout-split"><button type="button" data-design="toolbar.layout" className="dx-quiet v48-secondary" aria-label={'Layout: '+layoutName} title={'Layout: '+layoutName+'. Click for Build: Workshop, Library and Map on the left, the Inspector on the right'} aria-pressed={layoutName==='Build'} onClick={event=>executeAction('ui.select',()=>{setLayoutMenuOpen(false);dockRef.current?.reset();},event)}><Icon name="library" size={14}/></button><button type="button" data-design="toolbar.layout.menu" className="dx-quiet" aria-label="Layout options" aria-expanded={layoutMenuOpen} onClick={event=>executeAction('ui.select',()=>setLayoutMenuOpen(v=>!v),event)}>▾</button>{layoutMenuOpen && <div className="v48-layout-menu" role="menu" aria-label="Layout">
+                  {['Build', 'Review', 'Meeting'].map(preset => <button key={preset} type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); dockRef.current?.usePreset?.(preset); }, event)}><span>{preset}</span>{layoutName === preset && <span aria-hidden="true">✓</span>}</button>)}
+                  {(dockRef.current?.savedLayouts?.() || []).map(saved => <button key={'saved:' + saved} type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); dockRef.current?.useSavedLayout?.(saved); }, event)}><span>{saved}</span>{layoutName === saved && <span aria-hidden="true">✓</span>}</button>)}
+                  <hr />
+                  {!saveLayoutPrompt ? <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setSaveLayoutName(''); setSaveLayoutPrompt(true); }, event)}><span>Save layout as…</span></button>
+                    : <form className="flex" onSubmit={event => { event.preventDefault(); return executeAction('ui.select', () => { if (dockRef.current?.saveNamedLayout?.(saveLayoutName)) { setSaveLayoutPrompt(false); setLayoutMenuOpen(false); u.setToast?.('Saved layout ' + saveLayoutName.trim() + '.'); } }, event); }}><input aria-label="Layout name" placeholder="Layout name" value={saveLayoutName} onChange={e => setSaveLayoutName(e.target.value)} /><button type="submit" className="dx-quiet">Save</button></form>}
+                  <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); dockRef.current?.reset?.(); }, event)}><span>Reset layout</span></button>
+                  <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); dockRef.current?.showAll?.(); }, event)}><span>Show all panels</span></button>
+                  <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); setFace(face === 'split' ? 'canvas' : 'split'); }, event)}><span>{face === 'split' ? 'Hide the thread' : 'Show the thread'}</span></button>
+                  <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); dockRef.current?.toggleFocus?.(); }, event)}><span>Focus mode</span><kbd>F11</kbd></button>
+                  <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); u.go('settings/Appearance'); }, event)}><span>UI scale and panel sizes</span></button>
+                </div>}</div><button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
             </div>
             <window.UI.Dock face={face} rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
-              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane}}>
+              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane, onShowWork: showWork}}>
               <div className="dx-col dx-task-column">
-                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={canvasSteps} planned={canvasPlanned} onEditPlan={plan.length && plan.every(step=>typeof step==='string') ? ()=>saveSession({materializePlan:plan}) : undefined} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={resetDock} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
+                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={canvasSteps} planned={canvasPlanned} onEditPlan={plan.length && plan.every(step=>typeof step==='string') ? ()=>saveSession({materializePlan:plan}) : undefined} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={resetDock} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside" data-peek-pane=""><header className="v22g-peek-head"><span className="v22g-tab-state" aria-hidden="true" style={{background:'var(--color-accent)'}} /><b>{s.tasks.find(row=>row.id===beside)?.title || 'Task'}</b><span className="v22g-peek-hint">Its own file. Click inside to work here</span><span className="fill" /><button type="button" className="dx-quiet" data-peek-work-here="" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>Work here</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
                   <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>

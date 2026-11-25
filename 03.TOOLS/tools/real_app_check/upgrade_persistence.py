@@ -563,5 +563,198 @@ def main():
         receipt.write_text(json.dumps(record, indent=2), encoding='utf-8')
 
 
+def upgrade_json(path):
+    return json.loads(plain_path(path).read_text(encoding="utf-8-sig"))
+
+
+def sha(path):
+    with plain_path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def wait_for_native(label, get, seconds):
+    import time
+    from nodelang.mcp_supervisor import BACKOFF
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        value = get()
+        if value:
+            return value
+        time.sleep(BACKOFF[0])
+    raise RuntimeError("Timed out waiting for " + label)
+
+
+def check_busy_setup(app, evidence, build, setup, log, switches, proof):
+    """Hold one real tool-list request across native Setup on the disposable Windows runner."""
+    import queue
+    import subprocess
+    import threading
+    import time
+    import psutil
+
+    deadline = time.monotonic() + int(os.environ["VERIFY_MINUTES"]) * 60
+
+    def remaining():
+        return max(1, deadline - time.monotonic())
+
+    prior = upgrade_json(evidence / "previous-install.json")
+    pin = upgrade_json(evidence / "install.json")
+    seed = upgrade_json(evidence / "upgrade-seed.json")
+    installed = plain_path(app / "BUILD_ID")
+    runtime = plain_path(app.parent / "ArchHub-Runtime/mcp_supervisor.py")
+    previous_source = plain_path(app / "nodelang/mcp_supervisor.py")
+    if (setup != Path(os.environ["RUNNER_TEMP"]) / "ArchHub-Setup-0.exe" or log != evidence / "setup.log"
+            or Path(sys.executable).resolve() != app / ".venv/Scripts/python.exe"
+            or installed.read_text().strip() != prior["installed_build"] or prior["installed_build"] == build
+            or not pin["setup_verified"] or pin["build"] != build or sha(setup) != pin["expected_sha256"]
+            or seed["result"] != "PASS" or seed["connectors"]["shipped_sha256"] != sha(previous_source)
+            or runtime.read_bytes() != STALE_CONNECTOR or sha(runtime) != seed["connectors"]["runtime_sha256"]):
+        raise RuntimeError("Pinned upgrade or synthetic connector seed does not match this runner.")
+    sys.path.insert(0, str(app))
+    from nodelang.client_mcp_installation import base_python
+    python = base_python(app)
+    if not python or python.is_relative_to(app):
+        raise RuntimeError("The registered agent's external Python is unavailable.")
+    proof.update(previous_build=prior["installed_build"], candidate_build=build,
+                 setup_sha256=pin["expected_sha256"], old_supervisor_sha256=sha(previous_source))
+    # Start the actual previous client entry, then restore the passive fixture before Setup sees it.
+    # Only the old Python process keeps the authentic relay loaded; neither installed package is patched.
+    client = worker = installer = None
+    suspended = stub_restored = False
+    try:
+        runtime.write_bytes(previous_source.read_bytes())
+        client = subprocess.Popen([str(python), "-I", "-B", str(runtime), str(app)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+        replies = queue.Queue()
+        seen = set()
+
+        def listen():
+            try:
+                for line in client.stdout:
+                    message = json.loads(line)
+                    if "id" in message and "method" not in message:
+                        replies.put(message)
+            finally:
+                replies.put(None)
+
+        threading.Thread(target=listen, daemon=True).start()
+
+        def send(method, identity=None, params=None):
+            msg = {"jsonrpc": "2.0", "method": method}
+            if identity is not None:
+                msg["id"] = identity
+            if params is not None:
+                msg["params"] = params
+            client.stdin.write((json.dumps(msg) + "\n").encode())
+            client.stdin.flush()
+
+        def reply(identity, seconds=30):
+            item = replies.get(timeout=seconds)
+            if item is None or item.get("id") != identity or identity in seen:
+                raise RuntimeError("The agent pipe ended, repeated an answer, or returned an unexpected request ID.")
+            seen.add(identity)
+            return item
+
+        send("initialize", 1, {"protocolVersion": "2025-06-18", "capabilities": {},
+                               "clientInfo": {"name": "archhub-upgrade-check", "version": "1"}})
+        if "serverInfo" not in reply(1, 90).get("result", {}):
+            raise RuntimeError("The previous installed connector did not answer initialize.")
+        send("notifications/initialized")
+        runtime.write_bytes(STALE_CONNECTOR)
+        stub_restored = True
+        supervisor = psutil.Process(client.pid)
+
+        def native_worker():
+            # The Windows venv redirector can have the same command line as the worker it launched.
+            matches, parents = [], set()
+            for child in supervisor.children(recursive=True):
+                try:
+                    if any("nodelang.native_agent_mcp" in part for part in child.cmdline()):
+                        parents.add(child.ppid())
+                        matches.append(child)
+                except psutil.NoSuchProcess:
+                    continue
+            leaves = [p for p in matches if p.pid not in parents]
+            return leaves[0] if len(leaves) == 1 else None
+
+        worker = wait_for_native("the previous installed connector", native_worker, 20)
+        worker.suspend()
+        suspended = True
+        send("tools/list", 2)
+        state = runtime.parent / "connectors" / (str(client.pid) + ".json")
+        wait_for_native("one admitted call", lambda: state.exists() and upgrade_json(state).get("pending") == 1, 10)
+        proof.update(client_pid=client.pid, old_worker_pid=worker.pid, pending_before_setup=1)
+        installer = subprocess.Popen([str(setup), *switches, "/LOG=" + str(log)],
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
+        marker = app / ".archhub-installing"
+
+        def copying():
+            if installer.poll() is not None:
+                raise RuntimeError(f"Native Setup exited {installer.returncode} before reaching file installation.")
+            return marker.exists() and marker.read_text().strip() == build
+
+        started = time.monotonic()
+        wait_for_native("native installation with the previous request outstanding", copying, 180)
+        pending = upgrade_json(state)
+        if (pending["pending"] != 1 or pending["admission"] != "closed"
+                or not str(pending.get("attempt", "")).startswith("setup-" + build + "-")):
+            raise RuntimeError("Native Setup did not overlap the admitted request.")
+        proof["seconds_to_install_marker"] = round(time.monotonic() - started, 2)
+        send("tools/list", 3)
+        refused = reply(3).get("error", {}).get("data", {})
+        if refused.get("archhub") != "unstarted" or refused.get("safe_to_retry") is not True:
+            raise RuntimeError("A second call was admitted during Setup.")
+        worker.resume()
+        suspended = False
+        held = reply(2)
+        if "tools" not in held.get("result", {}):
+            raise RuntimeError("The pending read from the previous installed connector did not finish.")
+        proof.update(pending_during_setup=pending["pending"], during_setup_call=refused,
+                     previous_call="answered once")
+        if installer.wait(timeout=remaining()) != 0 or installed.read_text().strip() != build:
+            raise RuntimeError("Native Setup did not install the selected build.")
+        replacement = wait_for_native("the replacement connector on the same agent pipe",
+                            lambda: (p := native_worker()) and p.pid != worker.pid and p, 90)
+        send("tools/list", 4)
+        if "tools" not in reply(4, 60).get("result", {}):
+            raise RuntimeError("The same agent pipe did not answer after the upgrade.")
+        if sha(runtime) != sha(app / "nodelang/mcp_supervisor.py"):
+            raise RuntimeError("The registered relay differs from the installed candidate.")
+        proof.update(new_worker_pid=replacement.pid, installed_build=installed.read_text().strip(),
+                     after_setup_call="answered", agent_pid_after=client.pid, result="PASS")
+    finally:
+        if suspended and worker is not None:
+            try:
+                worker.resume()
+            except psutil.NoSuchProcess:
+                proof["held_worker_exited_during_cleanup"] = True
+        if not stub_restored and installer is None and runtime.read_bytes() == previous_source.read_bytes():
+            runtime.write_bytes(STALE_CONNECTOR)
+        if client is not None:
+            client.stdin.close()
+            client.wait(timeout=remaining())
+        if installer is not None and installer.poll() is None:
+            installer.wait(timeout=remaining())
+
+
+def busy_setup_main():
+    app = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
+    evidence = Path(os.environ["VERIFY_EVIDENCE"])
+    hosted_guest(app, evidence)
+    record = {"result": "FAIL"}
+    try:
+        check_busy_setup(app, evidence, sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5:], record)
+    except Exception as exc:
+        record.update(error=f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        with plain_path(evidence / "upgrade-busy-setup.json").open("x", encoding="utf-8") as stream:
+            json.dump(record, stream, indent=2)
+
+
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:2] == ["busy-setup"]:
+        busy_setup_main()
+    else:
+        main()

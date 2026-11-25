@@ -778,10 +778,17 @@ jobs:
                   throw 'The exact previous installed relay is required immediately before Setup.'
                 }
               }
-              $process = Start-Process -FilePath $setup -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/RESTARTEXITCODE=3010', '/TASKS="desktopicon"', ('/LOG="' + $log + '"')) -WindowStyle Hidden -PassThru -Wait
-              $state.install_exit = $process.ExitCode
+              $setupArgs = @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/RESTARTEXITCODE=3010', '/TASKS=desktopicon')
+              if (!$previous -and $env:VERIFY_CONNECTORS -eq 'true' -and !$legacyRelay) {
+                $verifierPython = Join-Path $env:LOCALAPPDATA 'ArchHub/.venv/Scripts/python.exe'
+                & $verifierPython -I -B selected/03.TOOLS/tools/real_app_check/upgrade_persistence.py busy-setup $pin.build $setup $log @setupArgs
+                $state.install_exit = $LASTEXITCODE
+              } else {
+                $process = Start-Process -FilePath $setup -ArgumentList ($setupArgs + ('/LOG="' + $log + '"')) -WindowStyle Hidden -PassThru -Wait
+                $state.install_exit = $process.ExitCode
+              }
               $state | ConvertTo-Json | Set-Content $receipt -Encoding utf8
-              if ($process.ExitCode -ne 0) { throw ('Native Setup failed or requires restart: ' + $process.ExitCode) }
+              if ($state.install_exit -ne 0) { throw ('Native Setup or its connection check failed: ' + $state.install_exit) }
               $app = Join-Path $env:LOCALAPPDATA 'ArchHub'
               $state.installed_root = $app
               $state.installed_build = (Get-Content -Raw (Join-Path $app 'BUILD_ID')).Trim()

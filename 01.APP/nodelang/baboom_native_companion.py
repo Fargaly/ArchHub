@@ -27,7 +27,7 @@ from .baboom_companion_placement import (
     _clear_message,
     BaboomCompanionLayout,
     Rect,
-    place_baboom_beside_composer,
+    place_baboom_work_area,
     screen_at,
 )
 from .baboom_native_host import BaboomNativeHost
@@ -35,6 +35,7 @@ from .baboom_native_visual import (
     BaboomNativeVisualFrame,
     baboom_compact_message_size,
     baboom_sprite_source,
+    bbm_state,
     project_baboom_native_visual_frame,
 )
 from .baboom_speech import compose_baboom_speech, plain_count, plain_title
@@ -257,15 +258,24 @@ def render_baboom_native_sprite(
     image.fill(Qt.GlobalColor.transparent)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    facing_left = bool(getattr(frame, "facing_left", False))
+    if facing_left:
+        painter.save()
+        painter.translate(image.width(), 0)
+        painter.scale(-1, 1)
     painter.drawImage(
         QRect(0, 0, image.width(), image.height()),
         atlas,
         QRect(source.x, source.y, source.width, source.height),
     )
+    if facing_left:
+        painter.restore()
     # The staff orb is the brain light: cyan when the brain answers and
     # holds facts, grey when it answers empty, red when it is down. It
     # follows the orb measured from the art for this exact pose.
     orb = getattr(frame, "orb", None)
+    if orb is not None and facing_left:
+        orb = (max(0, image.width() - 1 - orb[0]), orb[1])
     state = getattr(frame, "brain_state", "unknown")
     # The crystal glows only when it has something to signal: cyan when the
     # brain answers with facts, red when it is down. A brain that answers empty
@@ -406,7 +416,7 @@ _STANDING_SIZE = (80, 87)
 # His one greeting a visit (spec 5, greeting bubble): when after he arrives, for how long, and the words.
 GREETING_NODE = {"id": "baboom.greeting", "params": {
     "after_ms": 1200, "for_ms": 8000,
-    "text": "Hi, I'm BABOOM. Ask me about ArchHub or your office standard."}}
+    "text": "Hi, I'm BABOOM. Ask me about your work or the office standard, or tell me what to do."}}
 
 # How he is drawn while he stands in ArchHub (spec 5: states, live dot, float, badge), as measured on the design
 # prototype: an 80 x 100 box with the figure at its foot, a 46 x 9 ground glow 2 px below it, an 8 px live dot,
@@ -417,7 +427,10 @@ LOOK_NODE = {"id": "baboom.look", "params": {
     "pulse_ms": {"working": 1400, "needs": 900}, "pulse_dim": 0.45, "pulse_squeeze": 0.8,
     "dot_px": 8, "dot_top": 10, "dot_right": 8, "dot_ring_px": 6, "dot_ring_alpha": 0.6, "dot_ring_turn": 0.7,
     "dot_pulse_ms": 2000, "float_px": 3, "float_ms": 3600,
-    "badge_px": 18, "badge_top": 4, "badge_right": 6, "badge_pad": 5, "badge_ring_px": 2, "frame_ms": 200}}
+    "badge_px": 18, "badge_top": 4, "badge_right": 6, "badge_pad": 5, "badge_ring_px": 2, "frame_ms": 200,
+    "wave_ms": 900, "present_ms": 1500, "walk_ms": 900, "settle_ms": 1000,
+    "peek_hat_px": 28, "peek_alpha": 0.92, "dnd_alpha": 0.55,
+    "bar_inset": 14, "bar_height": 3, "dismiss_px": 22, "greeting_width": 250}}
 _WORKING_STATES = ("thinking", "editing", "testing")
 # Autonomous aliveness and gentle roaming / perching near active work (F13-safe: read-only foreground rects).
 ALIVE_NODE = {"id": "baboom.alive", "params": {
@@ -425,9 +438,32 @@ ALIVE_NODE = {"id": "baboom.alive", "params": {
     "stay_put_key": "stay_put", "drag_margin": 8}}
 
 
-def baboom_ground_state(*, needs: int, working: bool, listening: bool) -> str:
-    """The ground he stands on (spec 5, States): what needs you, then work, then listening, then rest."""
+def baboom_ground_state(*, needs: int, working: bool, listening: bool, dnd: bool = False) -> str:
+    """The ground he stands on (spec 5, States): quiet (DND), then needs you, work, listening, rest."""
+    if dnd:
+        return "quiet"
     return "needs" if needs > 0 else "working" if working else "listening" if listening else "rest"
+
+
+def baboom_state_tooltip(
+    state: str,
+    *,
+    needs: int = 0,
+    session_title: str = "",
+    step_title: str = "",
+) -> str:
+    """Live sprite tooltip matching canonical app.js:1141."""
+    if state == "quiet":
+        return "BABOOM: do not disturb"
+    if state == "needs":
+        return f"BABOOM: {needs} waiting for you, in the Workshop"
+    if state == "working":
+        if session_title and step_title:
+            return f"BABOOM: {session_title} is on {step_title}"
+        return "BABOOM"
+    if state == "listening":
+        return "BABOOM is listening: type in the composer"
+    return "BABOOM: click to talk"
 
 
 def baboom_look_phase(now_ms: float, state: str) -> dict:
@@ -901,6 +937,21 @@ def create_baboom_native_companion_window(
             self._greeting = None  # None: not arrived yet; a time: arrived then; False: said or dismissed
             # What the page shows (follow_app): how many rows need him, his panel open; then how he is drawn now.
             self._needs, self._listening, self._look, self._phase = 0, False, None, None
+            self._dnd, self._moments, self._composer_listening = False, True, False
+            self._page_reduced_motion = False
+            self._running_step: dict[str, Any] | None = None
+            self._work_area: Rect | None = None
+            self._surface = ""
+            self._surface_key = ""
+            self._surface_at = 0.0
+            self._seen_tutorial = ""
+            self._oneshot_pose = ""
+            self._oneshot_until = 0.0
+            self._walk_until = 0.0
+            self._facing_left = False
+            self._peek = False
+            self._companion_state = "idle"
+            self._step_progress_pct = "0%"
             self._companion_font = companion_font()
             # Every companion colour comes from the product THEME, resolved once
             # here (lazy, so the renderer never hard-imports the application at
@@ -984,6 +1035,23 @@ def create_baboom_native_companion_window(
             )
             self._skill_run.clicked.connect(self._run_offered_skill)
             self._skill_run.hide()
+            self._greeting_dismiss = QToolButton(self)
+            self._greeting_dismiss.setText("×")
+            self._greeting_dismiss.setAccessibleName("Dismiss")
+            self._greeting_dismiss.setToolTip("Dismiss")
+            self._greeting_dismiss.setStyleSheet(
+                "background:transparent;color:%s;border:0;border-radius:6px;font-size:14px;"
+                % THEME["ink_muted"]
+            )
+            self._greeting_dismiss.clicked.connect(self._dismiss_greeting)
+            self._greeting_dismiss.hide()
+            self._step_bar = QWidget(self)
+            self._step_bar.setAccessibleName("BABOOM step progress")
+            self._step_bar.setStyleSheet("background:%s;border:0;border-radius:1px;" % THEME["line"])
+            self._step_fill = QWidget(self._step_bar)
+            self._step_fill.setStyleSheet("background:%s;border:0;border-radius:1px;" % THEME["accent"])
+            self._step_bar.hide()
+            self.setToolTip(baboom_state_tooltip("idle"))
             self.setAcceptDrops(True)
             self.setWindowFlags(
                 Qt.WindowType.Tool
@@ -1087,15 +1155,18 @@ def create_baboom_native_companion_window(
 
         def _motion_reduced(self) -> bool:
             from .baboom_work_presence import baboom_reduced_motion
-            return baboom_reduced_motion(parameter=self._reduced_motion)
+            explicit = True if (self._reduced_motion is True or self._page_reduced_motion) else self._reduced_motion
+            return baboom_reduced_motion(parameter=explicit)
 
         def _timers_active(self) -> bool:
             presence = self._work_presence
-            working = presence is not None and presence.state != "idle"
+            working = (presence is not None and presence.state != "idle") or self._running_step is not None
             reporting = self._frame is not None and self._frame.report is not None
+            now = time.monotonic()
+            oneshot = now < self._oneshot_until or now < self._walk_until
             return bool(
                 self._details_open or self._interaction_requested or reporting
-                or working or self._transition_left > 0 or self._skill_offer is not None
+                or working or self._transition_left > 0 or self._skill_offer is not None or oneshot
             )
 
         def _sync_resource_timers(self) -> None:
@@ -1154,7 +1225,7 @@ def create_baboom_native_companion_window(
             if presence.state in {"idle", "done"} and (self._busy or (type(active) is int and active > 0)):
                 name = self._submitted_utterance or "Working on your request"
                 presence = BaboomWorkPresence("thinking", name, "think", False, name)
-            if presence.state == "idle" and self._greeting_due():
+            if presence.state == "idle" and self._greeting_due() and not self._dnd and self._moments:
                 presence = BaboomWorkPresence("needs-you", "", "wave", False, GREETING_NODE["params"]["text"])
             if presence.bubble:
                 from dataclasses import replace
@@ -1176,14 +1247,32 @@ def create_baboom_native_companion_window(
             state = presence.state if presence is not None else "idle"
             if reduced:
                 self._transition_left = 0
-            motion = baboom_pose_motion(
-                state,
-                controller._animation_tick,
-                reduced_motion=reduced,
-                transitioning=self._transition_left > 0 and not reduced,
-            )
-            if presence is not None and presence.motion in ('ponder', 'present'):
-                motion = presence.motion
+            now = time.monotonic()
+            with_app = self._beside is not None and self._beside[0] is not None
+            if self._dnd or not self._moments:
+                motion = "idle"
+            elif not reduced and now < self._walk_until:
+                motion = "walk"
+            elif now < self._oneshot_until and self._oneshot_pose in _MOTION_ROWS:
+                motion = self._oneshot_pose
+            elif with_app and self._greeting_due():
+                motion = "wave"
+            elif with_app or self._needs > 0 or self._running_step is not None:
+                motion = bbm_state(
+                    needs=self._needs or int(presence is not None and presence.badge),
+                    running=bool(self._running_step) or (presence is not None and presence.state in _WORKING_STATES),
+                    dnd=self._dnd,
+                    moments=self._moments,
+                )
+            else:
+                motion = baboom_pose_motion(
+                    state,
+                    controller._animation_tick,
+                    reduced_motion=reduced,
+                    transitioning=self._transition_left > 0 and not reduced,
+                )
+                if presence is not None and presence.motion in ("ponder", "present"):
+                    motion = presence.motion
             shown = 0 if reduced else controller._animation_tick
             source = baboom_sprite_source(
                 controller._atlas, motion=motion, animation_tick=shown
@@ -1196,37 +1285,71 @@ def create_baboom_native_companion_window(
                 round(raw[0] * sprite.width / controller._atlas.cell_width),
                 round(raw[1] * sprite.height / controller._atlas.cell_height),
             )
-            return replace(frame, motion=motion, source=source, orb=orb)
+            run = self._running_step if not self._dnd else None
+            return replace(
+                frame,
+                motion=motion,
+                source=source,
+                orb=orb,
+                facing_left=self._facing_left,
+                peek=self._peek,
+                step_progress=run["progress"] if run is not None else None,
+                step_label=f"{run['session']}: {run['step']}" if run is not None else "",
+            )
 
         def _place_idle_chrome(self, spot: Rect, edge: str, screen: Rect | None = None) -> None:
             """Keep the glyph on the edge or free spot. A state bubble sits inward of it."""
+            look = LOOK_NODE["params"]
+            peek_tucked = (
+                self._peek and self._hover_since is None and not self._dragged
+                and not self._listening and self._beside is not None and self._beside[0] is not None
+            )
             x, y, width, height = spot.x, spot.y, spot.width, spot.height
+            if peek_tucked:
+                app_bottom = self._beside[0].bottom
+                floor_y = min(screen.bottom if screen is not None else app_bottom, app_bottom) - look["peek_hat_px"]
+                y = max(y, floor_y)
             presence = self._work_presence
             text = ""
             badge = False
-            if presence is not None and presence.state != "idle":
+            is_greeting = self._greeting_due() and not self._dnd and self._moments
+            if presence is not None and presence.state != "idle" and not self._dnd:
                 text = presence.bubble
                 badge = presence.badge
             self._state_bubble.hide()
+            self._greeting_dismiss.hide()
             self._state_badge.hide()
+            self._step_bar.hide()
             # In ArchHub he is the designed figure; away from it he stays the small desktop glyph.
+            working_now = (
+                self._running_step is not None
+                or (presence is not None and presence.state in _WORKING_STATES)
+            )
+            listening_now = self._listening or self._composer_listening
             self._look = baboom_ground_state(
-                needs=self._needs or int(badge), listening=self._listening,
-                working=presence is not None and presence.state in _WORKING_STATES,
+                needs=self._needs or int(badge),
+                listening=listening_now,
+                working=working_now,
+                dnd=self._dnd,
             ) if self._beside is not None and self._beside[0] is not None else None
-            look = LOOK_NODE["params"]
             head, drop = (look["box_height"] - height, look["ground_drop"]) if self._look is not None else (0, 0)
             bubble_w = bubble_h = 0
             gap = 6
             if text:
                 from html import escape
                 linked = on_open_task is not None and presence is not None and bool(presence.task_id)
+                pad_right = 28 if is_greeting else 4
+                self._state_bubble.setStyleSheet(
+                    "background:%s;color:%s;border:0;padding:4px %dpx 4px 6px;font-size:11px;"
+                    % (THEME["bg_raised"], THEME["ink"], pad_right)
+                )
                 self._state_bubble.setText(('<a href="task" style="color:%s">%s</a>' % (self._theme["ink"], escape(text))) if linked else escape(text))
                 self._state_bubble.setToolTip("Open task and full result" if linked else text)
-                bubble_w = min(200, max(80, self._state_bubble.fontMetrics().horizontalAdvance(text) + 16))
-                bubble_h = max(24, int(self._state_bubble.heightForWidth(bubble_w) or 24))
+                max_bw = look["greeting_width"] if is_greeting else 200
+                bubble_w = min(max_bw, max(80, self._state_bubble.fontMetrics().horizontalAdvance(text) + 16 + pad_right))
+                bubble_h = max(26 if is_greeting else 24, int(self._state_bubble.heightForWidth(bubble_w) or 24))
                 if screen is not None:
-                    edge = _best_bubble_edge(screen, spot, bubble_w, bubble_h, gap=gap)
+                    edge = _best_bubble_edge(screen, Rect(x, y, width, height), bubble_w, bubble_h, gap=gap)
             if text and edge == "right":
                 origin_x, origin_y = x - gap - bubble_w, y
                 sprite_x, sprite_y = gap + bubble_w, 0
@@ -1261,6 +1384,13 @@ def create_baboom_native_companion_window(
                 self._state_bubble.setGeometry(bubble_x, bubble_y + head, bubble_w, bubble_h)
                 self._state_bubble.show()
                 self._state_bubble.raise_()
+                if is_greeting:
+                    dpx = look["dismiss_px"]
+                    self._greeting_dismiss.setGeometry(
+                        bubble_x + bubble_w - dpx - 2, bubble_y + head + 2, dpx, dpx
+                    )
+                    self._greeting_dismiss.show()
+                    self._greeting_dismiss.raise_()
             style = self._badge_styles[self._look is not None]
             if self._state_badge.styleSheet() != style:
                 self._state_badge.setStyleSheet(style)
@@ -1269,15 +1399,60 @@ def create_baboom_native_companion_window(
             if self._state_badge.text() != badge_text:
                 self._state_badge.setText(badge_text)
                 self._state_badge.setAccessibleName(f"BABOOM needs you ({count})" if count else "BABOOM needs you")
-            if self._look is not None:
+            if self._look is not None and not self._dnd:
                 # The number is Home's own count of what needs him; an agent waiting with no row yet keeps the mark.
                 self._float_badge()
                 badge = badge or self._needs > 0
-            elif badge:
+            elif badge and not self._dnd:
                 self._state_badge.setGeometry(self._sprite_rect.right() - 16, self._sprite_rect.top(), 16, 16)
+            else:
+                badge = False
             if badge:
                 self._state_badge.show()
                 self._state_badge.raise_()
+            if self._running_step is not None and not self._dnd:
+                pct = max(0, min(100, round(float(self._running_step["progress"]) * 100)))
+                self._step_progress_pct = f"{pct}%"
+                self._float_step_bar(pct)
+                self._step_bar.setToolTip(f"{self._running_step['session']}: {self._running_step['step']}")
+                self._step_bar.show()
+                self._step_bar.raise_()
+            needs_total = self._needs or (1 if badge else 0)
+            self._companion_state = (
+                "quiet" if self._dnd
+                else "needs" if needs_total > 0
+                else "working" if working_now
+                else "listening" if listening_now
+                else "idle"
+            )
+            run_session = (
+                self._running_step["session"] if self._running_step is not None
+                else ("BABOOM" if working_now and presence is not None and presence.task_name else "")
+            )
+            run_step = (
+                self._running_step["step"] if self._running_step is not None
+                else (presence.task_name if working_now and presence is not None else "")
+            )
+            self.setToolTip(baboom_state_tooltip(
+                self._companion_state,
+                needs=needs_total,
+                session_title=run_session,
+                step_title=run_step,
+            ))
+
+        def _float_step_bar(self, pct: int | None = None) -> None:
+            """Horizontal step progress bar (pp) beneath the companion when a step is running."""
+            look, box = LOOK_NODE["params"], self._sprite_rect
+            inset = look["bar_inset"] if box.width() >= 56 else 6
+            bar_w = max(8, box.width() - 2 * inset)
+            bar_h = look["bar_height"]
+            lift = self._look_phase()["float"] if self._look is not None else 0
+            foot = box.y() + box.height() + lift
+            self._step_bar.setGeometry(box.x() + inset, foot - 1, bar_w, bar_h)
+            if pct is None and self._running_step is not None:
+                pct = max(0, min(100, round(float(self._running_step["progress"]) * 100)))
+            fill_w = round(bar_w * (pct or 0) / 100)
+            self._step_fill.setGeometry(0, 0, fill_w, bar_h)
 
         def _float_badge(self) -> None:
             """The count badge, top right of his box; it floats with him."""
@@ -1299,8 +1474,8 @@ def create_baboom_native_companion_window(
                           foot - look["box_height"] + look["dot_top"] - reach, size + 2 * reach, size + 2 * reach)]
 
         def _dot_shown(self) -> bool:
-            """The live dot: he can answer (the brain is up) and his panel is closed."""
-            return (self._look is not None and not self._listening
+            """The live dot: he can answer (the brain is up), not DND, and his panel is closed."""
+            return (self._look is not None and not self._listening and not self._dnd
                     and self._frame is not None and self._frame.brain_state in ("lit", "dim"))
 
         def _look_phase(self) -> dict:
@@ -1319,6 +1494,8 @@ def create_baboom_native_companion_window(
             lift = LOOK_NODE["params"]["float_px"]
             if shown is None or phase["float"] != shown["float"]:
                 self._float_badge()
+                if self._step_bar.isVisible():
+                    self._float_step_bar()
                 self.update(self._sprite_rect.united(ground).united(dot).adjusted(0, -lift, 0, 0))
             else:
                 if self._dot_shown():
@@ -1334,6 +1511,10 @@ def create_baboom_native_companion_window(
             ground, dot = self._look_rects()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setPen(Qt.PenStyle.NoPen)
+            if self._dnd:
+                painter.setOpacity(look["dnd_alpha"])
+            elif self._peek and self._hover_since is None and not self._dragged and not self._listening:
+                painter.setOpacity(look["peek_alpha"])
             painter.translate(0, phase["float"])
             painter.drawImage(self._sprite_rect, self._sprite)
             if self._dot_shown():
@@ -1381,7 +1562,9 @@ def create_baboom_native_companion_window(
             self._place_idle_chrome(sprite, edge, screen=screen)
             if self._shows_as != "Screen":
                 self._state_bubble.hide()
+                self._greeting_dismiss.hide()
                 self._state_badge.hide()
+                self._step_bar.hide()
                 self._animation_timer.stop()
                 self.hide()
                 self._sync_resource_timers()
@@ -1393,7 +1576,9 @@ def create_baboom_native_companion_window(
             if self._stood is not None and self._greeting is None:
                 # He has just come to stand in ArchHub: the one greeting of this visit is due.
                 self._greeting = time.monotonic()
-                QTimer.singleShot(GREETING_NODE["params"]["after_ms"], self.refresh)
+                timing = GREETING_NODE["params"]
+                QTimer.singleShot(timing["after_ms"], self.refresh)
+                QTimer.singleShot(timing["after_ms"] + timing["for_ms"], self.refresh)
             set_native_click_through(int(self.winId()), False)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             if not self.isVisible():
@@ -1450,19 +1635,92 @@ def create_baboom_native_companion_window(
                 self._stay_put = False
             self.winId()
 
-        def follow_app(self, app, composer=None, busy=(), screens=(), needs=0, listening=False) -> None:
+        def bbm(self, pose: str, duration_ms: int = 0) -> None:
+            """Trigger a one-shot companion pose reaction (app.js:1125)."""
+            if self._dnd or not self._moments:
+                return
+            self._oneshot_pose = str(pose or "")
+            if duration_ms > 0:
+                self._oneshot_until = time.monotonic() + duration_ms / 1000.0
+                QTimer.singleShot(duration_ms, self.refresh)
+            else:
+                self._oneshot_until = 0.0
+            self.refresh()
+
+        def complete_tutorial(self) -> None:
+            """Play the 1500 ms present celebration when a tutorial finishes."""
+            self.bbm("present", LOOK_NODE["params"]["present_ms"])
+
+        def _dismiss_greeting(self) -> None:
+            self._greeting = False
+            self._greeting_dismiss.hide()
+            self._state_bubble.hide()
+            self.refresh()
+
+        def follow_app(
+            self,
+            app,
+            composer=None,
+            busy=(),
+            screens=(),
+            needs=0,
+            listening=False,
+            step=None,
+            **_extra,
+        ) -> None:
             """Where ArchHub is now: its window, its composer, the busy boxes above it, the screens.
 
             ``needs`` is Home's own count of what needs him and ``listening`` is true while BABOOM's
-            panel is open; both are what the page reports, and both are nothing while ArchHub is away.
-
-            ``app`` is None while the window is minimised or hidden to the tray. BABOOM stays on
-            screen then (F277), small, in the bottom right corner of the screen ArchHub was last
-            on, and is home beside the composer when ArchHub is shown again.
+            panel is open; ``step`` carries optional Studio surface, work area, DND/moments and active
+            running step progress. All are reset when ArchHub is away.
             """
-            had, saw = self._beside, (self._needs, self._listening)
+            had, saw = self._beside, (
+                self._needs,
+                self._listening,
+                self._dnd,
+                self._moments,
+                self._composer_listening,
+                self._running_step,
+                self._surface,
+                self._work_area,
+                self._peek,
+            )
             self._beside = (app, composer, tuple(busy), tuple(screens))
             self._needs, self._listening = (max(0, int(needs)), bool(listening)) if app is not None else (0, False)
+            surface_switched = False
+            completed_tutorial = False
+            if app is None:
+                self._work_area = None
+                self._running_step = None
+                self._composer_listening = False
+                self._peek = False
+            elif isinstance(step, Mapping):
+                work_area = step.get("work_area")
+                self._work_area = work_area if type(work_area) is Rect else None
+                self._surface = str(step.get("surface") or "")
+                next_key = f"{self._surface}:{step.get('task', '')}"
+                if next_key != self._surface_key:
+                    surface_switched = bool(self._surface_key)
+                    self._surface_key = next_key
+                    self._surface_at = time.monotonic()
+                    self._walk_until = 0.0
+                self._dnd = bool(step.get("dnd"))
+                self._moments = step.get("moments") is not False
+                self._page_reduced_motion = bool(step.get("reduced_motion"))
+                self._composer_listening = bool(step.get("composer_listening"))
+                run = step.get("running")
+                if isinstance(run, Mapping) and run.get("step"):
+                    self._running_step = {
+                        "session": str(run.get("session") or "ArchHub"),
+                        "step": str(run.get("step") or ""),
+                        "progress": max(0.0, min(1.0, float(run.get("progress") or 0.0))),
+                    }
+                else:
+                    self._running_step = None
+                tut = str(step.get("tutorial_done") or "")
+                if tut and tut != self._seen_tutorial:
+                    self._seen_tutorial = tut
+                    completed_tutorial = True
             if had is not None and had[0] is None and app is not None and self._pinned:
                 self._pin_here(False)
             if had is None or (had[0] is None) != (app is None):
@@ -1473,8 +1731,44 @@ def create_baboom_native_companion_window(
                 # That hid him; shown again for ArchHub's sake he must not take the keyboard, his own box open or not.
                 self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             before, now = self._stood, self._home()
+            intra_move = False
+            if (
+                had is not None
+                and had[0] == app
+                and app is not None
+                and before is not None
+                and now is not None
+            ):
+                rel_dx = now.x - before.x
+                rel_dy = now.y - before.y
+                if abs(rel_dx) >= 2 or abs(rel_dy) >= 2:
+                    intra_move = True
+                    self._facing_left = rel_dx < 0
+                    settled = (
+                        not surface_switched
+                        and (self._surface_at == 0.0
+                             or (time.monotonic() - self._surface_at) * 1000 >= LOOK_NODE["params"]["settle_ms"])
+                    )
+                    if settled and not self._motion_reduced() and not self._dnd and self._moments:
+                        walk_dur = LOOK_NODE["params"]["walk_ms"]
+                        self._walk_until = time.monotonic() + walk_dur / 1000.0
+                        QTimer.singleShot(walk_dur, self.refresh)
+            now_saw = (
+                self._needs,
+                self._listening,
+                self._dnd,
+                self._moments,
+                self._composer_listening,
+                self._running_step,
+                self._surface,
+                self._work_area,
+                self._peek,
+            )
+            if completed_tutorial:
+                self.complete_tutorial()
+                return
             if (had is None or (had[0] is None) != (app is None) or (before is None) != (now is None)
-                    or saw != (self._needs, self._listening)):
+                    or saw != now_saw or intra_move):
                 self.refresh()
             elif now is not None and self.isVisible() and not self._dragged:
                 # ArchHub moved or resized: go along now, without a whole projection for every step of a drag.
@@ -1493,10 +1787,23 @@ def create_baboom_native_companion_window(
         def _home(self) -> Rect | None:
             """Where BABOOM stands in ArchHub; None with no ArchHub window on screen or on a spot of his own."""
             if self._beside is None or self._beside[0] is None or self._free_spot() is not None:
+                self._peek = False
                 return None
             app, composer, busy, _screens = self._beside
-            return place_baboom_beside_composer(
-                app, self._screen_rect(), sprite_size=_STANDING_SIZE, composer=composer, busy=busy)
+            screen = self._screen_rect()
+            if screen is None:
+                self._peek = False
+                return None
+            spot, self._peek = place_baboom_work_area(
+                app,
+                screen,
+                sprite_size=_STANDING_SIZE,
+                composer=composer,
+                work_area=self._work_area,
+                busy=busy,
+                surface=self._surface,
+            )
+            return spot
 
         def _pin_here(self, pinned: bool) -> None:
             """Keep the one companion setting true: on his own spot, or home with ArchHub."""
@@ -1581,7 +1888,10 @@ def create_baboom_native_companion_window(
                 return False
             timing = GREETING_NODE["params"]
             age = (time.monotonic() - self._greeting) * 1000
-            return timing["after_ms"] <= age < timing["after_ms"] + timing["for_ms"]
+            if age >= timing["after_ms"] + timing["for_ms"]:
+                self._greeting = False
+                return False
+            return age >= timing["after_ms"]
 
         def _screen_rect(self) -> Rect | None:
             # The screen the WINDOW happens to sit on is the wrong
@@ -1741,7 +2051,9 @@ def create_baboom_native_companion_window(
                 self._idle_presence(screen, frame)
                 return
             self._state_bubble.hide()
+            self._greeting_dismiss.hide()
             self._state_badge.hide()
+            self._step_bar.hide()
             self._look = None  # with a report open he is drawn plain, beside his words
             if (
                 self._transient_revision is not None
@@ -2201,7 +2513,8 @@ def create_baboom_native_companion_window(
             )
             for widget in (
                 self._report, self._confirm, self._cancel, self._connection_status,
-                self._state_bubble, self._state_badge, self._skill_run,
+                self._state_bubble, self._greeting_dismiss, self._state_badge,
+                self._step_bar, self._skill_run,
             ):
                 if widget.isVisible():
                     region = region.united(QRegion(widget.geometry()))
@@ -2218,19 +2531,24 @@ def create_baboom_native_companion_window(
             self.setMask(region)
 
         def _open_from_click(self) -> None:
-            """A quiet click that was not a double-click asks BABOOM: the one composer points at him."""
+            """A quiet click that was not a double-click asks BABOOM: waves and points the composer at him."""
             if self._dragged or self._dismissed or self._stopped:
                 return
             if self._transient_report is not None:
                 return
+            self.bbm("wave", LOOK_NODE["params"]["wave_ms"])
             self._open_interaction()
 
         def enterEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             self._hover_since = time.monotonic()
+            if self._peek:
+                self.refresh()
             super().enterEvent(event)
 
         def leaveEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             self._hover_since = None
+            if self._peek:
+                self.refresh()
             super().leaveEvent(event)
 
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name

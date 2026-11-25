@@ -13,6 +13,7 @@ from .user_paths import state_directory
 
 import ctypes
 import json
+import logging
 import ntpath
 import os
 import socket
@@ -26,6 +27,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from functools import partial
 from datetime import datetime, timezone
+
+_LOG = logging.getLogger(__name__)
 
 # MaxMCP (bridges/sources/max_mcp/max_mcp_startup.py) binds the first free
 # port from 48886 to 48899 -- the range the AutoCAD and Revit brokers share --
@@ -47,8 +50,24 @@ MAX_PLUGIN_ABSENT = (
     "then restart 3ds Max."
 )
 RHINO_URL = "http://127.0.0.1:9879"
-# Broker discovery node: its typed parameters.
-BROKER_NODE = {'id': 'host.brokers', 'params': {'info_timeout_seconds': 0.4}}
+# Broker discovery and typed host action limits.
+BROKER_NODE = {
+    'id': 'host.brokers',
+    'params': {
+        'info_timeout_seconds': 0.4,
+        'Camera': 'Camera01',
+        'Quality': 'Draft',
+        'Layer': 'ArchHub',
+        'Samples': 64,
+        'draft_width_px': 960,
+        'draft_height_px': 540,
+        'final_width_px': 1920,
+        'final_height_px': 1080,
+        'default_samples': 64,
+        'min_samples': 8,
+        'max_samples': 1024,
+    },
+}
 
 
 def broker_sessions(service: str, *, include_document=True) -> list[dict]:
@@ -713,6 +732,319 @@ def blender_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
         return _honest("Blender: %s" % refused)
 
 
+_RENDER_SEQ = 0
+_RENDER_SEQ_LOCK = threading.Lock()
+
+
+def _render_output_path(prefix: str) -> Path:
+    """Governed local PNG path for a host render node."""
+    global _RENDER_SEQ
+    with _RENDER_SEQ_LOCK:
+        _RENDER_SEQ += 1
+        seq = _RENDER_SEQ
+    if os.environ.get("ARCHHUB_TEST_STATE_DIR"):
+        folder = state_directory() / "renders"
+    else:
+        folder = Path.home() / "Documents" / "ArchHub" / "renders"
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return folder / ("%s-%s-%d.png" % (prefix, stamp, seq))
+
+
+def _parse_bridge_result(answer: Mapping[str, object]) -> dict:
+    """Unpack a dict or JSON-serialized result returned by MaxMCP, Rhino, or Blender."""
+    if not isinstance(answer, Mapping):
+        return {}
+    raw = answer.get("result")
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, Mapping):
+                return dict(parsed)
+        except json.JSONDecodeError:
+            return {"text": raw}
+    return {}
+
+
+def _rhino_effect_allowed() -> bool:
+    """True when local host_effects['rhino'] is explicitly enabled in settings.json."""
+    path = state_directory() / "settings.json"
+    if not path.is_file():
+        return False
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        _LOG.debug("Skipping unreadable Rhino host_effects settings %s: %s", path, exc)
+        return False
+    permissions = settings.get("host_effects") if isinstance(settings, Mapping) else None
+    return isinstance(permissions, Mapping) and permissions.get("rhino") is True
+
+
+def _feed_or_param(feeds: Mapping[str, object], value, *feed_names: str):
+    if isinstance(feeds, Mapping):
+        for name in feed_names:
+            if name in feeds and feeds[name] is not None:
+                return feeds[name]
+    return value
+
+
+def _honest_render(reason: str):
+    out, label = _honest(reason)
+    return {"image": "", **out}, label
+
+
+def _verified_render_file(answer: object, out_path: str, host_label: str) -> tuple[str | None, str]:
+    if not isinstance(answer, Mapping):
+        return None, "%s: bridge returned a malformed response" % host_label
+    if answer.get("status") == "error" or answer.get("ok") is False or answer.get("error"):
+        return None, "%s: %s" % (host_label, answer.get("error") or "render failed")
+    if isinstance(answer.get("text"), str) and answer["text"].strip() and answer.get("ok") is not True:
+        return None, "%s: %s" % (host_label, answer["text"].strip())
+    parsed = _parse_bridge_result(answer)
+    if parsed.get("error") or ("text" in parsed and parsed.get("ok") is not True):
+        detail = str(parsed.get("error") or parsed.get("text") or "render failed").strip()
+        return None, "%s: %s" % (host_label, detail)
+    rendered = str(parsed.get("image") or out_path).strip()
+    try:
+        valid_file = bool(rendered) and Path(rendered).is_file() and Path(rendered).stat().st_size > 0
+    except (OSError, ValueError) as exc:
+        _LOG.debug("Unusable %s render output path %r: %s", host_label, rendered, exc)
+        valid_file = False
+    if not valid_file:
+        return None, "%s: render output file was not written (%s)" % (host_label, rendered or out_path)
+    return rendered, ""
+
+
+def max_render_view(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Render an active or named 3ds Max camera to a PNG file through MaxMCP."""
+    limits = BROKER_NODE["params"]
+    held_cam = params.get("Camera")
+    if held_cam is None:
+        held_cam = params.get("camera")
+    camera_raw = _feed_or_param(feeds, held_cam, "Camera", "camera")
+    camera_name = str(camera_raw if camera_raw is not None else limits["Camera"]).strip()
+    held_qual = params.get("Quality")
+    if held_qual is None:
+        held_qual = params.get("quality")
+    quality_raw = _feed_or_param(feeds, held_qual, "Quality", "quality")
+    quality = str(quality_raw if quality_raw is not None else limits["Quality"]).strip() or str(limits["Quality"])
+    if quality not in ("Draft", "Final"):
+        raise ValueError("Quality must be 'Draft' or 'Final'")
+    base = _max_endpoint()
+    if base is None:
+        return _honest_render("no MaxMCP answers as max-mcp on 48886-48899 (open 3ds Max with MaxMCP loaded)")
+    width_px = int(limits["final_width_px"] if quality == "Final" else limits["draft_width_px"])
+    height_px = int(limits["final_height_px"] if quality == "Final" else limits["draft_height_px"])
+    out_path = str(_render_output_path("max-view"))
+    code = (
+        "import json\n"
+        "from pymxs import runtime as rt\n"
+        "cam_name = %s\n"
+        "out_file = %s\n"
+        "w, h = %d, %d\n"
+        "node = rt.getNodeByName(cam_name) if cam_name else None\n"
+        "if node is not None:\n"
+        "    rt.render(camera=node, outputwidth=w, outputheight=h, outputfile=out_file, vfb=False)\n"
+        "    used = str(node.name)\n"
+        "else:\n"
+        "    rt.render(outputwidth=w, outputheight=h, outputfile=out_file, vfb=False)\n"
+        "    used = cam_name or 'ActiveView'\n"
+        "result = json.dumps({'image': out_file, 'camera': used, 'quality': %s})\n"
+    ) % (json.dumps(camera_name), json.dumps(out_path), width_px, height_px, json.dumps(quality))
+    try:
+        answer = _bridge_call(base + "/exec", {"code": code}, timeout=_exec_wait(params))
+    except (BridgeRefused, OSError, urllib.error.URLError, ValueError) as exc:
+        return _honest_render("3ds Max: %s" % exc)
+    rendered, err = _verified_render_file(answer, out_path, "3ds Max")
+    if rendered is None:
+        return _honest_render(err)
+    return {"image": rendered, "out": rendered}, "rendered %s (%s) to %s" % (
+        camera_name or "active view", quality, rendered)
+
+
+def rhino_bake_geometry(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Bake wired geometry onto a named Rhino layer inside an undoable Rhino doc record."""
+    from .hook_decision import _RELEASING
+    from .nodeslib_v2_engines import _digest_payload, _verified_write_grant
+    limits = BROKER_NODE["params"]
+    held_layer = params.get("Layer")
+    if held_layer is None:
+        held_layer = params.get("layer")
+    layer_raw = _feed_or_param(feeds, held_layer, "Layer", "layer")
+    layer_name = str(layer_raw if layer_raw is not None else limits["Layer"]).strip()
+    if not layer_name:
+        raise ValueError("Layer must be a non-empty Rhino layer name")
+    raw_geom = None
+    if isinstance(feeds, Mapping):
+        if "geometry" in feeds and feeds["geometry"] is not None:
+            raw_geom = feeds["geometry"]
+        elif "in" in feeds and feeds["in"] is not None:
+            raw_geom = feeds["in"]
+    if raw_geom is None:
+        raw_geom = params.get("geometry")
+    if isinstance(raw_geom, (list, tuple)):
+        items = list(raw_geom)
+    elif raw_geom in (None, ""):
+        items = []
+    else:
+        items = [raw_geom]
+    grant = _feed_or_param(
+        feeds,
+        params.get("grant") or params.get("approval") or params.get("permit"),
+        "grant", "approval", "permit",
+    )
+    has_grant = False
+    if grant is not None:
+        try:
+            _verified_write_grant(
+                {"grant": grant},
+                operation="rhino.bake_geometry",
+                scope="rhino.write",
+                input_digest=_digest_payload({"layer": layer_name, "geometry": items}),
+            )
+            has_grant = True
+        except ValueError as exc:
+            _LOG.debug("Ignoring unverified Rhino bake grant: %s", exc)
+    if not (_RELEASING.get(False) or has_grant or _rhino_effect_allowed()):
+        from .agent_work import request_approval
+        card = request_approval(
+            {"id": str(params.get("_node_id") or "rhino-bake"), "type": "rhino.bake_geometry", "title": "Bake geometry"},
+            dict(params),
+            dict(feeds) if isinstance(feeds, Mapping) else {},
+            continuation=None,
+        )
+        return {"approvalId": card["id"], "out": []}, "Waiting for approval"
+    if not items:
+        return {"out": []}, "no geometry wired to bake"
+    if not _port_open(9879):
+        return _honest("Rhino bridge is not listening on :9879 (run the ArchHub bridge script inside Rhino)")
+    code = (
+        "import json\n"
+        "import Rhino\n"
+        "import scriptcontext as sc\n"
+        "import System.Drawing\n"
+        "doc = sc.doc\n"
+        "layer_name = %s\n"
+        "payload = %s\n"
+        "undo_sn = doc.BeginUndoRecord('ArchHub Bake Geometry')\n"
+        "baked = []\n"
+        "try:\n"
+        "    idx = doc.Layers.FindByFullPath(layer_name, -1) if hasattr(doc.Layers, 'FindByFullPath') else -1\n"
+        "    if idx < 0 and hasattr(doc.Layers, 'FindName'):\n"
+        "        found_layer = doc.Layers.FindName(layer_name)\n"
+        "        idx = found_layer.Index if found_layer is not None else -1\n"
+        "    if idx < 0:\n"
+        "        layer_obj = Rhino.DocObjects.Layer()\n"
+        "        layer_obj.Name = layer_name\n"
+        "        layer_obj.Color = System.Drawing.Color.Black\n"
+        "        idx = doc.Layers.Add(layer_obj)\n"
+        "    attr = Rhino.DocObjects.ObjectAttributes()\n"
+        "    attr.LayerIndex = idx\n"
+        "    def _pt(v):\n"
+        "        if isinstance(v, dict):\n"
+        "            return Rhino.Geometry.Point3d(float(v.get('x', 0.0)), float(v.get('y', 0.0)), float(v.get('z', 0.0)))\n"
+        "        if isinstance(v, (list, tuple)) and len(v) >= 2:\n"
+        "            return Rhino.Geometry.Point3d(float(v[0]), float(v[1]), float(v[2]) if len(v) > 2 else 0.0)\n"
+        "        return Rhino.Geometry.Point3d(0.0, 0.0, 0.0)\n"
+        "    for item in payload:\n"
+        "        guid = Rhino.Geometry.Point3d.Unset\n"
+        "        kind = 'point'\n"
+        "        if isinstance(item, dict) and ('start' in item and 'end' in item):\n"
+        "            guid = doc.Objects.AddLine(_pt(item['start']), _pt(item['end']), attr)\n"
+        "            kind = 'line'\n"
+        "        elif isinstance(item, dict) and all(k in item for k in ('x1', 'y1', 'x2', 'y2')):\n"
+        "            p0 = Rhino.Geometry.Point3d(float(item['x1']), float(item['y1']), float(item.get('z1', 0.0)))\n"
+        "            p1 = Rhino.Geometry.Point3d(float(item['x2']), float(item['y2']), float(item.get('z2', 0.0)))\n"
+        "            guid = doc.Objects.AddLine(p0, p1, attr)\n"
+        "            kind = 'line'\n"
+        "        elif isinstance(item, dict) and isinstance(item.get('points') or item.get('vertices'), list):\n"
+        "            pts = [_pt(p) for p in (item.get('points') or item.get('vertices'))]\n"
+        "            guid = doc.Objects.AddPolyline(pts, attr)\n"
+        "            kind = 'polyline'\n"
+        "        elif isinstance(item, dict) and 'radius' in item:\n"
+        "            circle = Rhino.Geometry.Circle(_pt(item.get('center', {})), float(item['radius']))\n"
+        "            guid = doc.Objects.AddCircle(circle, attr)\n"
+        "            kind = 'circle'\n"
+        "        else:\n"
+        "            guid = doc.Objects.AddPoint(_pt(item), attr)\n"
+        "            kind = 'point'\n"
+        "        baked.append({'id': str(guid), 'layer': layer_name, 'kind': kind})\n"
+        "    doc.Views.Redraw()\n"
+        "finally:\n"
+        "    if undo_sn > 0:\n"
+        "        doc.EndUndoRecord(undo_sn)\n"
+        "result = json.dumps({'baked': baked, 'layer': layer_name, 'undoRecord': int(undo_sn)})\n"
+    ) % (json.dumps(layer_name), json.dumps(items, default=str))
+    try:
+        answer = _bridge_call(RHINO_URL + "/execute", {"code": code}, timeout=_exec_wait(params))
+    except (BridgeRefused, OSError, urllib.error.URLError, ValueError) as exc:
+        return _honest("Rhino: %s" % exc)
+    if not isinstance(answer, Mapping):
+        return _honest("Rhino: bridge returned a malformed response")
+    if answer.get("ok") is False or answer.get("status") == "error" or answer.get("error"):
+        return _honest("Rhino: %s" % (answer.get("error") or "bake failed"))
+    if isinstance(answer.get("text"), str) and answer["text"].strip() and answer.get("ok") is not True:
+        return _honest("Rhino: %s" % answer["text"].strip())
+    parsed = _parse_bridge_result(answer)
+    if parsed.get("error") or "text" in parsed:
+        detail = str(parsed.get("error") or parsed.get("text") or "bake failed").strip()
+        return _honest("Rhino: %s" % detail)
+    baked_rows = parsed.get("baked")
+    if not isinstance(baked_rows, list):
+        return _honest("Rhino: bridge response did not confirm baked geometry")
+    return {"out": baked_rows}, "baked %d item(s) onto layer %s" % (len(baked_rows), layer_name)
+
+
+def blender_render_scene(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Set Cycles or EEVEE samples and render the open Blender scene to PNG (:9876/execute)."""
+    limits = BROKER_NODE["params"]
+    held_samples = params.get("Samples")
+    if held_samples is None:
+        held_samples = params.get("samples")
+    picked_samples = _feed_or_param(feeds, held_samples, "Samples", "samples")
+    raw_samples = picked_samples if picked_samples is not None else limits["Samples"]
+    if isinstance(raw_samples, bool) or not isinstance(raw_samples, (int, float, str)):
+        raise ValueError("Samples must be an integer between %d and %d" % (limits["min_samples"], limits["max_samples"]))
+    try:
+        numeric = float(raw_samples)
+    except ValueError:
+        raise ValueError("Samples must be an integer") from None
+    if numeric != int(numeric):
+        raise ValueError("Samples must be a whole number")
+    samples = int(numeric)
+    if not (int(limits["min_samples"]) <= samples <= int(limits["max_samples"])):
+        raise ValueError("Samples must be between %d and %d" % (limits["min_samples"], limits["max_samples"]))
+    if not _port_open(9876):
+        return _honest_render("Blender add-on is not listening on :9876 (enable the ArchHub add-on)")
+    out_path = str(_render_output_path("blender-scene"))
+    code = (
+        "import json\n"
+        "import bpy\n"
+        "scene = bpy.context.scene\n"
+        "samples = %d\n"
+        "out_file = %s\n"
+        "if hasattr(scene, 'cycles') and scene.cycles is not None:\n"
+        "    scene.cycles.samples = samples\n"
+        "if hasattr(scene, 'eevee') and scene.eevee is not None:\n"
+        "    if hasattr(scene.eevee, 'taa_render_samples'):\n"
+        "        scene.eevee.taa_render_samples = samples\n"
+        "scene.render.image_settings.file_format = 'PNG'\n"
+        "scene.render.filepath = out_file\n"
+        "bpy.ops.render.render(write_still=True)\n"
+        "result = json.dumps({'image': out_file, 'samples': samples})\n"
+    ) % (samples, json.dumps(out_path))
+    try:
+        answer = _bridge_call(BLENDER_URL + "/execute", {"code": code}, timeout=_exec_wait(params))
+    except (BridgeRefused, OSError, urllib.error.URLError, ValueError) as exc:
+        return _honest_render("Blender: %s" % exc)
+    rendered, err = _verified_render_file(answer, out_path, "Blender")
+    if rendered is None:
+        return _honest_render(err)
+    return {"image": rendered, "out": rendered}, "rendered scene (%d samples) to %s" % (samples, rendered)
+
+
 def office_read(params: Mapping[str, object], feeds: Mapping[str, object]):
     """What Excel/Word/PowerPoint hold open, through the kernel office adapter."""
     from .clean_office_adapter import OfficeUnreachable, invoke
@@ -964,7 +1296,9 @@ def revit_verb(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 
 ENGINES = {
-    "max.exec": max_exec, "max.info": max_info, "max.python": max_python, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
+    "max.exec": max_exec, "max.info": max_info, "max.python": max_python, "max.render_view": max_render_view,
+    "rhino.exec": rhino_exec, "rhino.bake_geometry": rhino_bake_geometry,
+    "blender.exec": blender_exec, "blender.render_scene": blender_render_scene,
     "office.read": office_read, "excel.write_range": excel_write_range, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
     "notion.connect": notion_connect,
     "dropbox.list": dropbox_list, "connector.rows": connector_rows,
@@ -1002,6 +1336,9 @@ _CATALOGUE_ID = {
     "word.list_paragraphs": "r_doc_paras",
     "powerpoint.list_presentations": "h_ppt",
     "powerpoint.list_slides": "r_ppt_slides",
+    "max.render_view": "max_render_view",
+    "rhino.bake_geometry": "rhino_bake_geometry",
+    "blender.render_scene": "blender_render_scene",
 }
 _LIST_INPUTS = {"element-rows", "sheet-rows", "table-rows"}
 
@@ -1147,6 +1484,30 @@ def broker_actions():
         "notion.connect", "Connect Notion",
         "Start Notion's own browser sign-in. Nothing is pasted.",
         "notion.connect", "read", {}, {},
+    ))
+    add(_broker_spec(
+        "max.render_view", "Render a view",
+        "Render an active or named 3ds Max camera to PNG.",
+        "max.render_view", "write",
+        {"Camera": "Camera01", "Quality": "Draft"},
+        {"Camera": "text", "Quality": "text"},
+        "max",
+    ))
+    add(_broker_spec(
+        "rhino.bake_geometry", "Bake geometry",
+        "Bake wired geometry onto a named Rhino layer inside an undoable Rhino doc record.",
+        "rhino.bake_geometry", "write",
+        {"Layer": "ArchHub", "geometry": []},
+        {"Layer": "text", "geometry": "list"},
+        "rhino",
+    ))
+    add(_broker_spec(
+        "blender.render_scene", "Render scene",
+        "Set Cycles or EEVEE samples and render the open Blender scene to PNG.",
+        "blender.render_scene", "write",
+        {"Samples": int(BROKER_NODE["params"]["default_samples"])},
+        {"Samples": "integer"},
+        "blender",
     ))
     for operation, spec in COORDINATION_NODES.items():
         if operation == "library.draft_email":

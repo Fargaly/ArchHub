@@ -186,11 +186,12 @@
       if(!sessionRows.some(row=>!registration(row)&&owners.get(card).has(row.id)))
         sessionRows.unshift({id:'approval:'+card.id,title:card.title||'A run waits for your approval',kind:'agent-session',approval:card.id,who:card.who||''});
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
+    const isLiveMember=m=>m&&(typeof m==='object'?(m.live===true||(m.live!==false&&!m.left&&!m.stale)):Boolean(m));
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
     // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
     const paused=row=>row.paused===true||[row.status,row.outcome,row.rowState].some(value=>String(value).toLowerCase()==='paused');
     const interruptedWork=row=>!row.workingNow&&!paused(row)&&row.status!=='DONE'&&row.status!=='ARCHIVED'&&
-      (row.outcome==='interrupted'||window.UI.taskRowReason?.(row)==='interrupted'||pieceOfWork(row)&&(row.outcome==='unknown'||!!row.stale));
+      (row.outcome==='interrupted'||window.UI.taskRowReason?.(row)==='interrupted'||pieceOfWork(row)&&(row.outcome==='unknown'||!!row.stale||!(row.members||[]).some(isLiveMember)));
     const sectionOf=row=>{
       if(row.approval||waiting.has(row.id))return 'Needs you';  // a held run needs him, whoever is working
       if(paused(row))return 'Paused';
@@ -236,8 +237,10 @@
       const isLive = m => m && (typeof m === 'object' ? (m.live === true || (m.live !== false && !m.left && !m.stale)) : Boolean(m));
       const memberName = m => typeof m === 'object' && m ? m.name : String(m || '');
       const liveList = members.filter(isLive);
-      const cardLead = liveList[0] || members[0];
-      const cardMembers = (liveList.length > 0 ? liveList.slice(1) : members.slice(1).filter(isLive)).map(memberName).filter(Boolean);
+      const cardLead = liveList[0] || null;
+      const pastNames = !cardLead && history ? members.filter(m => !isLive(m)).map(memberName).map(humanLabel).filter(Boolean) : [];
+      const pastAgent = pastNames.length ? 'Previously: ' + pastNames[0] + (pastNames.length > 1 ? ' +' + (pastNames.length - 1) : '') : '';
+      const cardMembers = liveList.slice(1).map(memberName).filter(Boolean);
       return {steps, done, finished: steps.length > 0 && done === steps.length,
         now: at >= 0 ? 'Step ' + (at + 1) + ' of ' + steps.length + ' · ' + steps[at].title : steps.length ? done + ' of ' + steps.length + ' steps done'
           : row && window.UI.taskRowReason?.(row) ? 'Stopped: ' + window.UI.taskRowReason(row) : 'No steps yet',
@@ -245,6 +248,7 @@
         need: held ? {text: (held.title || 'A run') + ' needs your approval', approval: held.id} : failed ? {text: failed.title + ' failed', failed: true}
           : row && rows.interruptedWork(row) ? {text: 'Interrupted · waiting for an agent', resume: true} : null,
         agent: humanLabel(memberName(cardLead) || ''),
+        pastAgent,
         members: cardMembers,
         state: held ? 'Needs you' : row && rows.working(row) ? 'Working' : failed ? 'Failed' : row && rows.sectionOf(row) === 'Paused' ? 'Paused' :
           row && rows.needs(row) ? 'Needs you' : row?.status === 'PLANNED' ? 'Planned' : 'Idle'};
@@ -356,7 +360,7 @@
     const layout = JSON.stringify(nodes.map(node => [node.id, node.x, node.y, node.w, node.h]));
     return {params: p, nodes, wires, groups, total: every.length, available: available.length, armed: every.reduce((sum, card) => sum + card.armed, 0),
       paused: every.reduce((sum, card) => sum + (card.paused || 0), 0), running: active.filter(card => card.running || card.state === 'Working').length, layout,
-      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.countText, node.state, node.agent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
+      signature: layout + JSON.stringify([nodes.map(node => [node.title, node.countText, node.state, node.agent, node.pastAgent, node.members, node.now, node.steps, node.need, node.subtasks, node.subtasksFolded]), wires, p.card])};
   };
   // Inspector › This task › Session (design sessTabHTML): Done when, who works on it (read only each), inputs from other
   // sessions, run budget. Done when and input links are the session model's (POST /api/session-model); read-only agents and
@@ -625,10 +629,11 @@
       // A Workshop card's Show of a thread: the one composer now has that task as its context; put the cursor in it.
       focusAsk = {task: target.id, from: target.id === task?.id ? '' : task?.id || ''};   // settled by placeComposer below
     };
-    const [layoutName, setLayoutName] = React.useState('Build');
+    const [layoutName, setLayoutName] = React.useState('Build'), [dockCmd, setDockCmd] = React.useState(undefined);
     const syncDock = layout => {  // a report only; the effect above mirrors it
       setLibraryShown(window.UI.dockModel.visible(layout, 'library'));
       setLayoutName(window.UI.dockModel.presetName(layout));  // read from the dock's own layout record, never kept beside it
+      setDockCmd(layout.cmd || null);
     };
     // Agents working on other tasks right now (the live agent owner); the toolbar pill lists them and opens their task.
     const workingElsewhere = (s.agentGraph?.sessions || []).filter(agent => agent.status === 'working' && agent.task !== task?.id);
@@ -732,13 +737,97 @@
                         return <li key={index} data-step={recorded.kind}><Icon name={recorded.kind === 'done' ? 'check' : recorded.kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b><span>{recorded.label}</span><small>{recorded.owner}</small></li>;
                       })}</ol></details>
                 </section>);
+    const composerDockRef = React.useRef(null), cmdDragRef = React.useRef(null);
+    const activeCmd = fileWorkspace && face !== 'split'
+      ? (dockCmd === undefined ? (window.UI.dockModel?.normalize(s.dockLayout?.layout, window.innerWidth)?.cmd || null) : dockCmd)
+      : null;
+    const writeDockCmd = nextCmd => {
+      if (dockRef.current?.setCmd) dockRef.current.setCmd(nextCmd);
+      else if (window.UI.dockModel) saveDock(window.UI.dockModel.setCmd(window.UI.dockModel.normalize(s.dockLayout?.layout, window.innerWidth), nextCmd));
+    };
+    const applyCmdPixels = (dockEl, stageX, stageY) => {
+      const stage = viewsRef.current || shellRef.current, shell = shellRef.current || stage;
+      if (!dockEl || !stage || !shell) return null;
+      const sr = stage.getBoundingClientRect(), hr = shell.getBoundingClientRect();
+      const W = stage.clientWidth || sr.width, H = stage.clientHeight || sr.height;
+      const w = dockEl.offsetWidth || dockEl.getBoundingClientRect().width || 0;
+      const h = dockEl.offsetHeight || dockEl.getBoundingClientRect().height || 0;
+      if (W <= 0 || H <= 0) return null;
+      const nx = Math.max(8, Math.min(Math.max(8, W - w - 8), stageX));
+      const ny = Math.max(8, Math.min(Math.max(8, H - h - 8), stageY));
+      const leftPx = ((sr.left - hr.left) + nx) + 'px', topPx = ((sr.top - hr.top) + ny) + 'px';
+      dockEl.style.setProperty('--cmd-left', leftPx);
+      dockEl.style.setProperty('--cmd-top', topPx);
+      dockEl.style.left = leftPx;
+      dockEl.style.top = topPx;
+      return {nx, ny, W, H};
+    };
+    React.useLayoutEffect(() => {
+      const dockEl = composerDockRef.current;
+      if (!dockEl || cmdDragRef.current) return;
+      if (!activeCmd) {
+        dockEl.style.removeProperty('--cmd-left');
+        dockEl.style.removeProperty('--cmd-top');
+        dockEl.style.left = '';
+        dockEl.style.top = '';
+        return;
+      }
+      const stage = viewsRef.current || shellRef.current;
+      const W = stage ? (stage.clientWidth || stage.getBoundingClientRect().width) : 0;
+      const H = stage ? (stage.clientHeight || stage.getBoundingClientRect().height) : 0;
+      if (W > 0 && H > 0) applyCmdPixels(dockEl, activeCmd.x * W, activeCmd.y * H);
+    }, [fileWorkspace, face, activeCmd?.x, activeCmd?.y, viewsWidth, shellWidth]);
+    const startGripDrag = event => {
+      if (event.button || face === 'split') return;
+      const dockEl = composerDockRef.current, stage = viewsRef.current || shellRef.current;
+      if (!dockEl || !stage) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const sr = stage.getBoundingClientRect(), dr = dockEl.getBoundingClientRect();
+      const ox = dr.left - sr.left, oy = dr.top - sr.top;
+      cmdDragRef.current = {ox, oy, sx: event.clientX, sy: event.clientY, nx: ox, ny: oy, moved: false};
+      dockEl.classList.add('moved', 'dragging');
+      applyCmdPixels(dockEl, ox, oy);
+      if (typeof event.currentTarget.setPointerCapture === 'function') event.currentTarget.setPointerCapture(event.pointerId);
+    };
+    const moveGripDrag = event => {
+      const d = cmdDragRef.current, dockEl = composerDockRef.current;
+      if (!d || !dockEl) return;
+      const placed = applyCmdPixels(dockEl, d.ox + (event.clientX - d.sx), d.oy + (event.clientY - d.sy));
+      if (placed) { d.nx = placed.nx; d.ny = placed.ny; d.W = placed.W; d.H = placed.H; d.moved = true; }
+    };
+    const endGripDrag = event => {
+      const d = cmdDragRef.current, dockEl = composerDockRef.current;
+      if (!d) return;
+      cmdDragRef.current = null;
+      dockEl?.classList.remove('dragging');
+      if (event.type !== 'pointercancel' && d.moved && d.W > 0 && d.H > 0) {
+        writeDockCmd({x: Math.max(0, Math.min(1, d.nx / d.W)), y: Math.max(0, Math.min(1, d.ny / d.H))});
+      } else if (!activeCmd) {
+        dockEl?.classList.remove('moved');
+      }
+    };
+    const resetGripDrag = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      cmdDragRef.current = null;
+      composerDockRef.current?.classList.remove('dragging', 'moved');
+      writeDockCmd(null);
+    };
     const composerForm = <window.UI.TaskComposer docked thread={face === 'split'} choices={choices} to={recipient} setTo={setTo} draft={text} setDraft={setText} onSend={send} busy={sending} />;
     const placeComposer = element => {
+      composerDockRef.current = element;
       if (!element || !focusAsk || (task?.id || '') === focusAsk.from) return;
       if (task?.id === focusAsk.task) element.querySelector('textarea')?.focus();
       focusAsk = null;
     };
-    const composer = <div className="v22g-composer-dock" ref={placeComposer} data-composer-task={task?.id || ''}>{composerForm}</div>;
+    const composer = <div className={'v22g-composer-dock' + (activeCmd ? ' moved' : '')} ref={placeComposer} data-composer-task={task?.id || ''}>
+      <span className="dgrip" hidden={face === 'split'} role="button" tabIndex={0} aria-label="Drag composer" title="Drag composer · Double-click to reset"
+        onPointerDown={startGripDrag} onPointerMove={moveGripDrag} onPointerUp={endGripDrag} onPointerCancel={endGripDrag}
+        onDoubleClick={event => executeAction('ui.select', () => resetGripDrag(event), event)}
+        onKeyDown={event => { if (event.key === 'Backspace' || event.key === 'Delete') executeAction('ui.select', () => resetGripDrag(event), event); }}><i aria-hidden="true" /></span>
+      {composerForm}
+    </div>;
     const tabs = u.canvasTabs?.tabs || [], tabCount = Math.max(1, Math.floor((tabsWidth - 100) / 150));
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));
@@ -901,7 +990,7 @@
     const fieldLabels = {group: 'Group by', order: 'Order', card: 'Card', density: 'Density', done: 'Finished sessions', filter: 'Show'};
     const mapInspector = <aside className="shared-properties" data-properties-pane="" data-home-inspector="" aria-label="Properties">
       {pickedCard ? <>
-        <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || 'No agent yet'].filter(Boolean).join(' · ')}</p></header>
+        <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || pickedCard.pastAgent || 'No agent yet'].filter(Boolean).join(' · ')}</p></header>
         <div className="shared-properties-task">{pickedTask ? resumeView : <Btn sm p onClick={event => executeAction('ui.select', () => openCard(pickedCard), event)}>Open</Btn>}
           {pickedTask && <div className="dx-preview-actions">
             <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
@@ -982,7 +1071,7 @@
                     <div className="dx-stage">
                     <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
                       <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · {statusText(task?.status)}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setThreadPeek(false);setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
-                      {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · outcome unknown{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
+                      {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · did not finish{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
                       {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
                       {task?.blocked_by ? <div className="dx-task-notice" role="status"><p>Blocked by {describe(task.blocked_by)}</p>{tasks.some(t => t.id === task.blocked_by) ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.openTaskFile(task.blocked_by, 'workshop'))}>View dependency</button> : null}</div> : null}
                       {!messages.length && !plan.length && !activity.length && !outputs.length && !scopeValue && !rules.length && !agents.length && !folders && !references && !session && !fileName ? <p className="dx-empty-task" data-dx="empty">Nothing recorded for this task yet.</p> : null}

@@ -200,7 +200,11 @@
     }, []);
     React.useEffect(() => {
       // A click on BABOOM, who stands beside the composer: his panel opens or closes (the composer points at him, ui.jsx).
-      const askBaboom = event => setCompanion(open => !!event.detail?.text || !open);  // words to start from keep it open
+      const askBaboom = event => setCompanion(open => {
+        const next = !!event.detail?.text || !open, snap = api.getSnapshot(), dm = window.UI.dockModel, cur = dm?.normalize(snap.dockLayout?.layout, window.innerWidth);
+        if (next && !event.detail?.text && cur && (snap.approvals || []).some(a => a.status === 'pending' || a.status === 'approval')) { const shown = dm.show(cur, 'workshop'); if (shown !== cur) void api.setDockLayout?.(shown); }
+        return next;
+      });
       window.addEventListener('archhub:ask-baboom', askBaboom);
       return () => window.removeEventListener('archhub:ask-baboom', askBaboom);
     }, []);
@@ -501,6 +505,22 @@
           else if (companion) setCompanion(false);
           else if (!['home','task-file','canvas'].includes(route)) go('home');
         }
+        if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !modal && ['home', 'canvas', 'task-file'].includes(route)
+            && !e.target.isContentEditable && e.target.contentEditable !== 'true'
+            && !e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="dialog"],[role="menu"]')) {
+          e.preventDefault();
+          const snap = api.getSnapshot(), dm = window.UI.dockModel;
+          if ((route === 'home' || route === 'task-file') && dm && snap.dockLayout) {
+            const cur = dm.normalize(snap.dockLayout.layout, window.innerWidth);
+            const nextOpen = !dm.visible(cur, 'library');
+            setLibraryOpen(nextOpen);
+            const nextLayout = nextOpen ? dm.show(cur, 'library') : dm.hide(cur, 'library');
+            if (nextLayout !== cur) void api.setDockLayout?.(nextLayout);
+          } else {
+            setLibraryOpen(open => !open);
+          }
+          return;
+        }
         if (e.key === '/' && !e.target.matches('input,textarea,select')) {
           e.preventDefault();
           show('Search');
@@ -645,6 +665,7 @@
             }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && route !== 'home' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} taskId={route === 'home' ? homeThreadId : task} />
+  {window.UI.TutorialOverlay && <window.UI.TutorialOverlay />}
   {!s.canvasSaveConflict && s.orphanDrafts?.length > 0 && <div role="alert" style={{position: 'fixed', top: 100, left: '50%',
         transform: 'translateX(-50%)', maxWidth: '70vw', border: '1px solid ' + A.line, borderRadius: 10, background: '#24242b',
         padding: '12px 18px', zIndex: 201, boxShadow: '0 8px 30px #0008', display: 'grid', gap: 8}}>
@@ -817,7 +838,7 @@
       }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Paste settings') body = <window.UI.PasteSettings initial={m.text} destination={m.destination} label={m.label} close={close} />;else if (k === 'Keyboard shortcuts') body = <window.UI.KeyboardSettings />;else if (k === 'Raw log') {
       const messages = logTask ? window.UI.homeTaskMessages(logTask) : [];
       body = <div className="rawlog">{messages.length ? messages.map((row, index) => <p key={row.id || index}>{row.at && <time dateTime={row.at}>{row.at} </time>}<b>{row.who}</b> {row.text}</p>) : <p>No messages in this thread.</p>}</div>;
-    } else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Workflows') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Legacy workflows') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {
+    } else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Workflows') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Connection checks') body = <window.UI.ConnectionChecksDialog modal onClose={close} />;else if (k === 'Add a node or plugin') body = <window.UI.AddNodePluginDialog modal onClose={close} />;else if (k === 'Legacy workflows') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {
         api,
         g,
         u

@@ -778,8 +778,16 @@ def dock_layout(function='readDockLayout', args=(), settings=None):
             raise ValueError('Choose one dock layout.')
         layout = args[0]
         if layout is not None:  # None is Reset: back to the default layout
-            if type(layout) is not dict or set(layout) != {'left', 'right'}:
+            if type(layout) is not dict or not ({'left', 'right'} <= set(layout) <= {'left', 'right', 'cmd'}):
                 raise ValueError('Choose a left and a right dock.')
+            if 'cmd' in layout:
+                if layout['cmd'] is None:
+                    layout = {k: v for k, v in layout.items() if k != 'cmd'}
+                else:
+                    cmd = layout['cmd']
+                    if (type(cmd) is not dict or set(cmd) != {'x', 'y'}
+                            or not all(type(cmd[k]) in (int, float) and not isinstance(cmd[k], bool) and 0 <= cmd[k] <= 1 for k in ('x', 'y'))):
+                        raise ValueError('Choose a composer position from 0 to 1.')
             placed = []
             for side, keys in (('left', {'w', 'c', 'st'}), ('right', {'c', 'st'})):
                 dock = layout[side]

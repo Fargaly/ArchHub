@@ -4,6 +4,15 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
 const {chromium}=require('playwright'),{transformSync}=require('esbuild');
 const root=path.resolve(__dirname,'../..');
 const studio=path.join(root,'01.APP/nodelang/studio');
+function panelsScript(){
+ const built=path.join(studio,'compiled/react-resizable-panels.js');
+ if(fs.existsSync(built))return fs.readFileSync(built,'utf8');
+ const shim='window.jsxRuntime=window.jsxRuntime||{Fragment:React.Fragment,jsx:function(t,p,k){return React.createElement(t,k===undefined?p:Object.assign({},p,{key:k}));}};window.jsxRuntime.jsxs=window.jsxRuntime.jsx;\n';
+ const head=shim+'(function(){var module={exports:{}},exports=module.exports,require=function(n){if(n===\'react\')return React;'
+  +'if(n===\'react/jsx-runtime\')return window.jsxRuntime;throw new Error(\'Unbundled module: \'+n);};\n';
+ const pkg=path.dirname(require.resolve('react-resizable-panels/package.json',{paths:[root,process.env.ARCHHUB_NODE_MODULES&&path.dirname(process.env.ARCHHUB_NODE_MODULES)].filter(Boolean)}));
+ return head+fs.readFileSync(path.join(pkg,'dist/react-resizable-panels.cjs'),'utf8')+'\n;window.ReactResizablePanels=module.exports;})();\n';
+}
 function executable(){
  const cache=process.env.PLAYWRIGHT_BROWSERS_PATH||path.join(os.homedir(),'AppData/Local/ms-playwright');
  const full=fs.existsSync(cache)&&fs.readdirSync(cache).filter(name=>/^chromium-\d+$/.test(name)).sort((a,b)=>Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
@@ -333,7 +342,7 @@ test('named project stays in Settings and a named file opens its own Session ins
   await mount(page,{name:'Reviewer'},{activeWorkspace:'office',workspaces:[{id:'office',name:'Office'},{id:'demo',name:'Demo Block',available:true}],pickerSessions:[{path:pathB,title:'Drawing set review'}],settingsScopes:{Workspace:true},graph:{id:'drawing',name:'Drawing set review',nodes:[],wires:[],workspaceIds:[]},catalogue:[],approvals:[],messages:[],workspacePolicies:{}});
   const xy=require('./studio_xyflow.cjs');
   await page.addScriptTag({content:xy.script()});
-  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
+  await page.addScriptTag({content:panelsScript()});
   for(const file of ['ds_home2.jsx','ds_screens.jsx'])await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,file),'utf8'),{loader:'jsx'}).code});
   await page.evaluate(()=>{
    const a=window.ArchHubAPI;
@@ -405,7 +414,7 @@ test('register field previews apply project formats only to declared angles and 
   const xy=require('./studio_xyflow.cjs');
   await page.addScriptTag({content:xy.script()});
   await page.addStyleTag({content:xy.css()});
-  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
+  await page.addScriptTag({content:panelsScript()});
   await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'ds_screens.jsx'),'utf8'),{loader:'jsx'}).code});
   await page.evaluate(()=>{
    const defs=[{id:'turn',name:'Turn',type:'number',unit:'rad'},{id:'issued',name:'Issued',type:'date'},{id:'key',name:'Key',type:'text'}];

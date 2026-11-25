@@ -34,10 +34,11 @@ def test_dock_layout_owner_over_the_settings_route(tmp_path, monkeypatch):
         assert status == 200 and body['ok']
         assert body['result']['dockLayout'] == {'layout': LAYOUT}
         assert json.loads(owner.read_text(encoding='utf8'))['dockLayout'] == {'layout': LAYOUT}
-        other = {**LAYOUT, 'left': {**LAYOUT['left'], 'w': 300}}
+        other = {**LAYOUT, 'left': {**LAYOUT['left'], 'w': 300}, 'cmd': {'x': 0.25, 'y': 0.75}}
         assert setting('setDockLayout', other)[1]['result']['dockLayout'] == {'layout': other}
         # The boot read carries the same record, so a reload restores the layout.
         assert setting('readControls')[1]['result']['dockLayout'] == {'layout': other}
+        assert setting('setDockLayout', {**other, 'cmd': None})[1]['result']['dockLayout'] == {'layout': {k: v for k, v in other.items() if k != 'cmd'}}
         # A layout addressed to a session (the form before the one record) is refused: nothing is kept per session.
         status, body = setting('setDockLayout', 'task-a', 'studio', LAYOUT)
         assert status >= 400 or body.get('ok') is False

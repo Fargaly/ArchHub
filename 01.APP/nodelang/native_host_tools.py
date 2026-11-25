@@ -348,6 +348,9 @@ HOST_TOOLS = HOST_TOOLS + RESTORED_BROKERS
 
 def _run_engine(name, params):
     if name in ENGINES:
+        if name == "rhino.bake_geometry" and "geometry" in params:
+            out, label = ENGINES[name](params, {"geometry": params["geometry"]})
+            return {"ok": out.get("ok", True) is not False, "label": label, **out}
         return _engine(name, **params)
     from .pipeline_engines import PIPELINE_ENGINES
     out, label = PIPELINE_ENGINES[name](params, {})

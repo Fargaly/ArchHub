@@ -252,6 +252,64 @@ def screen_at(screens: Iterable[Rect], x: int, y: int) -> Rect | None:
 
 # Off a control or text BABOOM steps up, then left, by at most 48 px (one-BABOOM spec 5c).
 _ASIDE = ((0, 0), (0, -24), (0, -48), (-48, 0))
+_CANVAS_SURFACES = ("", "task", "canvas", "task-file")
+
+
+def place_baboom_work_area(
+    app: Rect,
+    screen: Rect,
+    *,
+    sprite_size: tuple[int, int],
+    composer: Rect | None = None,
+    work_area: Rect | None = None,
+    busy: Iterable[Rect] = (),
+    surface: str = "",
+    margin: int = 16,
+    gap: int = 4,
+) -> tuple[Rect, bool]:
+    """Choose BABOOM's work-area anchor and whether he tucks into peek mode.
+
+    Tries beside the composer first, then work-area bottom-right and bottom-left
+    fallbacks, stepping each base by (0, 0), (0, -24), (0, -48), (-48, 0). On
+    non-canvas form pages when every candidate overlaps reported controls, keeps
+    the primary anchor and signals ``peek=True`` so he tucks to his hat at the
+    bottom edge and rises on hover.
+    """
+    width, height = sprite_size
+    obstacles = tuple(busy)
+    anchor = work_area if work_area is not None else app
+    bases: list[tuple[int, int]] = []
+    if composer is not None:
+        bases.append((min(anchor.right - margin - width, composer.right - width), composer.y - gap - height))
+    bases.append((anchor.right - margin - width, anchor.bottom - margin - height))
+    if composer is not None:
+        bases.append((anchor.x + margin, composer.y - gap - height))
+    bases.append((anchor.x + margin, anchor.bottom - margin - height))
+
+    spots: list[Rect] = []
+    seen: set[tuple[int, int]] = set()
+    for bx, by in bases:
+        for dx, dy in _ASIDE:
+            cx = bx + dx
+            if anchor.width >= width + margin and anchor.x <= screen.right - width:
+                cx = max(anchor.x, cx)
+            spot = _bounded_rect(screen, width=width, height=height, x=cx, y=by + dy)
+            key = (spot.x, spot.y)
+            if key not in seen:
+                seen.add(key)
+                spots.append(spot)
+
+    guard = obstacles + ((composer,) if composer is not None else ())
+    free = next(
+        (
+            spot
+            for idx, spot in enumerate(spots)
+            if all(spot.intersection_area(item) == 0 for item in (obstacles if idx == 0 else guard))
+        ),
+        None,
+    )
+    peek = bool(obstacles) and free is None and surface not in _CANVAS_SURFACES
+    return (free if free is not None else spots[0], peek)
 
 
 def place_baboom_beside_composer(
@@ -263,23 +321,36 @@ def place_baboom_beside_composer(
     busy: Iterable[Rect] = (),
     margin: int = 16,
     gap: int = 4,
+    work_area: Rect | None = None,
+    surface: str = "",
 ) -> Rect:
     """BABOOM's place in the ArchHub window, whole on the screen that window is on.
 
     He stands above the right end of the composer; on a page with no composer, in
     the window's bottom right corner. The first spot clear of every busy rectangle
-    (the controls and text the page reported) wins. With none clear he keeps the
-    first: he never leaves the window to find room.
+    (the controls and text the page reported) wins, falling back to bottom-left
+    when the right side is covered. With none clear he keeps the first: he never
+    leaves the window to find room.
     """
-    width, height = sprite_size
-    obstacles = tuple(busy)
-    x = app.right - margin - width
-    if composer is None:
-        y = app.bottom - margin - height
-    else:
-        x, y = min(x, composer.right - width), composer.y - gap - height
-    spots = [_bounded_rect(screen, width=width, height=height, x=x + dx, y=y + dy) for dx, dy in _ASIDE]
-    return next((spot for spot in spots if all(spot.intersection_area(item) == 0 for item in obstacles)), spots[0])
+    spot, _peek = place_baboom_work_area(
+        app,
+        screen,
+        sprite_size=sprite_size,
+        composer=composer,
+        work_area=work_area,
+        busy=busy,
+        surface=surface,
+        margin=margin,
+        gap=gap,
+    )
+    return spot
 
 
-__all__ = ["BaboomCompanionLayout", "Rect", "place_baboom_beside_composer", "place_baboom_companion", "screen_at"]
+__all__ = [
+    "BaboomCompanionLayout",
+    "Rect",
+    "place_baboom_beside_composer",
+    "place_baboom_companion",
+    "place_baboom_work_area",
+    "screen_at",
+]

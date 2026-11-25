@@ -28,6 +28,7 @@ import math
 import os
 import re
 import sqlite3
+import sqlite_vec  # requirements.txt pins it; preload at import so Windows DLL init never races HTTP threads
 import struct
 import threading
 import time
@@ -71,7 +72,6 @@ def _db():
     connection = _OPEN.get(key)
     if connection is not None:
         return connection
-    import sqlite_vec  # requirements.txt pins it; the installer ships it in the wheelhouse
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     connection.enable_load_extension(True)

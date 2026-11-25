@@ -316,8 +316,8 @@ class NoGraphServer:
     def start(self):
         # Load read owners before accepting HTTP, rather than on the first click.
         from importlib import import_module
-        for module in ('workshop_api', 'baboom_nograph', 'settings_owner', 'session_files', 'model_catalogue',
-                       'model_router', 'agent_runtime_registry', 'host_exec', 'site_export'):
+        for module in ('workshop_api', 'baboom_nograph', 'brain_files', 'settings_owner', 'session_files',
+                       'model_catalogue', 'model_router', 'agent_runtime_registry', 'host_exec', 'site_export'):
             import_module('.' + module, __package__)
         from .model_router import request_profiles
         request_profiles()

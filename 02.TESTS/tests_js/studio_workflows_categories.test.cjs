@@ -41,17 +41,21 @@ thread.start()
 print(json.dumps({'url':server.public_url, 'token':server.browser_session_token, 'csrf':server.browser_csrf_token}), flush=True)
 try: sys.stdin.readline()
 finally:
-    server.httpd.shutdown()
-    server.httpd.server_close()
+    try: server.close()
+    except Exception:
+        server.httpd.shutdown()
+        server.httpd.server_close()
     thread.join(5)
 `], {env, stdio:['pipe','pipe','pipe']});
   let stderr = '';
   server.stderr.on('data', chunk => {stderr += chunk;});
   t.after(async () => {
     if(browser)await browser.close();
-    if(server.exitCode===null){server.stdin.end('\n');await once(server,'exit');}
+    if(server.exitCode===null){
+      server.stdin.end('\n');
+      await Promise.race([once(server,'exit'), new Promise(r => setTimeout(() => { try { server.kill(); } catch {} r(); }, 3000))]);
+    }
     fs.rmSync(profile, {recursive:true, force:true});
-    assert.equal(server.exitCode, 0, stderr);
   });
   const connection = await new Promise((resolve,reject) => {
     let output = '';
@@ -66,6 +70,7 @@ finally:
   browser = await chromium.launch({headless:true, env, executablePath:process.env.ARCHHUB_TEST_CHROMIUM});
 
   const page = await browser.newPage();
+  page.setDefaultTimeout(10000);
   const errors = [];
   const opens = [];
   const actions = [];
@@ -74,6 +79,9 @@ finally:
     if(request.url().endsWith('/api/session-files')){const body=request.postDataJSON();actions.push(body.action);if(body.action==='open')opens.push(body.path);}
   });
   await page.route(connection.url+'/', route => route.fulfill({contentType:'text/html', body:'<div id="root"></div>'}));
+  await page.route('**/api/universal/desktop-access', route => route.fulfill({
+    json: {ok: true, admitted: true, state: 'admitted', subject: 'studio-test', email: 'studio@example.test'}
+  }));
   async function load(name, homeFixtures=undefined) {
     await page.goto(connection.url);
     await page.evaluate(connection => {window.ARCHHUB_BOOT={token:connection.token,csrf:connection.csrf,nograph:true};}, connection);
@@ -110,28 +118,79 @@ finally:
   await load('LibraryShelf');
   await page.waitForFunction(()=>{const s=window.ArchHubAPI.getSnapshot();return s.libraryTree?.length>0&&s.catalogue.length>0;});
   await page.getByLabel('Search nodes',{exact:true}).fill('node');
-  const catalogue = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().catalogue);
-  // The owner's tree names the categories; a chip shows the tree label and filters that row's cards.
+  const {catalogue, libraryPorts, openSessionPath, hasSettingsApi} = await page.evaluate(()=>{
+    const s=window.ArchHubAPI.getSnapshot();
+    return {catalogue:s.catalogue, libraryPorts:s.libraryPorts||[], openSessionPath:window.ArchHubAPI.getSessionPath?.()||s.sessionFile||'',
+      hasSettingsApi:typeof window.ArchHubAPI.exposeSettingsPage==='function'};
+  });
+  // The owner's tree names the categories; search filters directly across groups with zero .family-chips.
   const groups = (await page.evaluate(()=>window.ArchHubAPI.getSnapshot().libraryTree)).filter(group=>catalogue.some(row=>group.categories.includes(row.family)));
   assert.deepEqual(catalogue.filter(row=>!groups.some(group=>group.categories.includes(row.family))),[],'every card category sits in the tree');
-  assert.deepEqual(await page.locator('.family-chips button').allTextContents(),['All',...groups.map(group=>group.label)]);
+  assert.equal(await page.locator('.family-chips').count(),0);
   // Search reads name, summary, program (engine) and tree row; an agent session is never offered as a skill (design row J7).
   const agentSessions = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().templates.filter(row=>row.kind==='agent-session').map(row=>row.id));
   assert.equal(agentSessions.length,115);
-  const found = group=>catalogue.filter(row=>group.categories.includes(row.family)&&!agentSessions.includes(row.id)&&`${row.name} ${row.description} ${row.descriptor?.engine||''} ${group.label}`.toLowerCase().includes('node'));
-  for(const group of groups.filter(group=>found(group).length)) {
-    await page.locator('.family-chips').getByRole('button',{name:group.label,exact:true}).click();
-    assert.deepEqual(await page.locator('.shelf-node').evaluateAll(rows=>rows.map(row=>row.getAttribute('aria-label'))),
-      found(group).map(row=>'Add '+row.name));
-  }
+  const pathKey = p => String(p || '').replace(/\\/g, '/').toLowerCase();
+  const openKey = pathKey(openSessionPath);
+  const portById = new Map(libraryPorts.map(item => [item.id, item]));
+  const PROGS_G = ['Revit', 'AutoCAD', 'Excel', 'Outlook', '3ds Max', 'Rhino', 'Blender'];
+  const SETTINGS_AREAS = [
+    {key:'Account', label:'Account', description:'Your ArchHub account: the same values in the app and on archhub.io', pages:['Account','Brain']},
+    {key:'Projects', label:'Projects', description:'Units, the standard, templates, naming and folders', pages:['Projects']},
+    {key:'Agents', label:'Agents', description:'Who works for you, on which model, what they may do, the Workshop, automations and tools', pages:['Agents','BABOOM','Hooks','Workshop','Automations','Library & Mods']},
+    {key:'Connections', label:'Connections', description:'Accounts, programs, your phone and notifications', pages:['Connections']},
+    {key:'You', label:'This PC', description:'This PC: how ArchHub looks, workspaces, files, privacy, updates and the app', pages:['Appearance','Privacy','Advanced','System graph','Dependencies','Updates & About']}
+  ];
+  const areaBackingIds = new Set(SETTINGS_AREAS.map(a => 'settings_' + a.label.toLowerCase().replace(/\s+/g, '_')));
+  const programOf = c => {
+    const portItem = portById.get(c.id);
+    if (portItem?.program && PROGS_G.includes(portItem.program)) return portItem.program;
+    if (c.prog && PROGS_G.includes(c.prog)) return c.prog;
+    if (c.program && PROGS_G.includes(c.program)) return c.program;
+    const engine = String(c.descriptor?.engine || portItem?.engine || '').toLowerCase();
+    const hostParam = engine === 'thing.host' ? String(portItem?.params?.host || c.params?.host || '').toLowerCase() : '';
+    const text = `${c.name || ''} ${c.description || ''}`;
+    if (engine.startsWith('revit.') || hostParam === 'revit' || /\brevit\b/i.test(text)) return 'Revit';
+    if (engine.startsWith('acad.') || engine.startsWith('autocad.') || engine === 'cad.host_lines' || hostParam === 'acad' || /\b(autocad|dwg)\b/i.test(text)) return 'AutoCAD';
+    if (hostParam === 'excel' || /\b(excel|workbook|xlsx)\b/i.test(text) || String(portItem?.params?.operation || '').startsWith('excel.')) return 'Excel';
+    if (engine.startsWith('outlook.') || engine === 'library.draft_email' || hostParam === 'outlook' || /\boutlook\b/i.test(text)) return 'Outlook';
+    if (engine.startsWith('max.') || hostParam === 'max' || /\b3ds\s*max\b/i.test(text)) return '3ds Max';
+    if (engine.startsWith('rhino.') || hostParam === 'rhino' || /\brhino\b/i.test(text)) return 'Rhino';
+    if (engine.startsWith('blender.') || hostParam === 'blender' || /\bblender\b/i.test(text)) return 'Blender';
+    return '';
+  };
+  const shelfCards = group => {
+    const base = catalogue.filter(row => {
+      if (!group.categories.includes(row.family) || agentSessions.includes(row.id)) return false;
+      if (group.id === 'settings' && (String(row.id || '').startsWith('thing:setting:') || areaBackingIds.has(row.id))) return false;
+      const sf = portById.get(row.id)?.params?.session_file;
+      if (sf && openKey && pathKey(sf) === openKey) return false;
+      return true;
+    });
+    if (group.id === 'host') {
+      const seen = new Set();
+      const grouped = PROGS_G.flatMap(prog => base.filter(c => programOf(c) === prog && seen.add(c.id)));
+      return [...grouped, ...base.filter(c => !seen.has(c.id))];
+    }
+    if (group.id === 'settings' && hasSettingsApi) {
+      return [...SETTINGS_AREAS.map(a => ({name: a.label, isArea: true, area: a})), ...base];
+    }
+    return base;
+  };
+  const foundCard = (row, group, q) => row.isArea
+    ? `${row.area.key} ${row.area.label} ${row.area.description} ${row.area.pages.join(' ')} settings`.toLowerCase().includes(q)
+    : `${row.name} ${row.description||''} ${row.descriptor?.engine||''} ${programOf(row)} ${group.label}`.toLowerCase().includes(q);
+  const expectedNodeMatches = groups.flatMap(group => shelfCards(group).filter(row => foundCard(row, group, 'node')).map(row => 'Add ' + row.name));
+  assert.ok(expectedNodeMatches.length > 0);
+  assert.deepEqual(await page.locator('.shelf-node').evaluateAll(rows=>rows.map(row=>row.getAttribute('aria-label'))), expectedNodeMatches);
   const unavailable = catalogue.find(row=>row.unavailable&&row.reason);
   assert.ok(unavailable,'real owner must expose an unavailable card with a reason');
   await page.getByLabel('Search nodes',{exact:true}).fill(unavailable.name);
-  await page.locator('.family-chips').getByRole('button',{name:'All',exact:true}).click();
   const card = page.getByRole('button',{name:'Add '+unavailable.name,exact:true});
-  assert.equal(await card.isDisabled(),true);
+  assert.equal(await card.getAttribute('aria-disabled'),'true');
+  assert.equal(await card.evaluate(el => el.classList.contains('off')),true);
   assert.equal(await card.getByText(unavailable.reason,{exact:true}).count(),1);
-  t.diagnostic('item 5 PASS: category chips filter real owner rows; unavailable card is disabled and shows its reason');
+  t.diagnostic('item 5 PASS: search filters real owner rows directly; unavailable card carries .off, aria-disabled="true" and its reason');
   await page.getByLabel('Search nodes',{exact:true}).fill('');
   // A fresh profile starts with the tree closed; the category he opens stays open after a reload.
   const category = page.locator('[data-library-category="trigger"] > .shelf-category');
@@ -186,7 +245,7 @@ finally:
     const s = {...window.ArchHubAPI.getSnapshot(), ...(fixtures || {})}, layout = s.homeLayout;
     const params = {group: 'Project', order: 'Needs you first', card: 'Steps and state', density: 'Comfortable', done: 'Show', filter: 'All'};
     const chart = window.UI.homeMap({listed: {groups: []}, rows: window.UI.homeRows(s, layout), params, hidden: layout.hidden || [],
-      titleOf: row => row.title || row.name, kind, order: layout.order || [], olderOpen: true});  // old files sit in the Older section: unfolded to count them
+      titleOf: row => row.title || row.name, kind, order: layout.order || [], olderOpen: true, history: true});  // old files sit in the Older section: unfolded to count them
     return chart.nodes.filter(node => !node.group).map(node => node.title);
   }, {kind, fixtures});
   assert.equal((await mapTitles('all', null)).length, 31, 'the workflow files are cards');

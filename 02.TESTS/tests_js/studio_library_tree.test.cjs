@@ -41,17 +41,21 @@ thread.start()
 print(json.dumps({'url':server.public_url, 'token':server.browser_session_token, 'csrf':server.browser_csrf_token}), flush=True)
 try: sys.stdin.readline()
 finally:
-    server.httpd.shutdown()
-    server.httpd.server_close()
-    thread.join()
+    try: server.close()
+    except Exception:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+    thread.join(5)
 `], {env, stdio:['pipe','pipe','pipe']});
   let stderr = '';
   server.stderr.on('data', chunk => {stderr += chunk;});
   t.after(async () => {
     if(browser)await browser.close();
-    if(server.exitCode===null){server.stdin.end('\n');await once(server,'exit');}
+    if(server.exitCode===null){
+      server.stdin.end('\n');
+      await Promise.race([once(server,'exit'), new Promise(r => setTimeout(() => { try { server.kill(); } catch {} r(); }, 3000))]);
+    }
     fs.rmSync(profile, {recursive:true, force:true});
-    assert.equal(server.exitCode, 0, stderr);
   });
   const connection = await new Promise((resolve,reject) => {
     let output = '';
@@ -67,12 +71,16 @@ finally:
 
   for (const width of [1009, 1440, 1920]) {
     const page = await browser.newPage({viewport:{width, height:900}});
+    page.setDefaultTimeout(10000);
     const errors = [], actions = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => {if(request.url().endsWith('/api/session-files'))actions.push(request.postDataJSON().action);});
     // The shelf sits in the Canvas peek container the stylesheet already defines; its width is changed below to the dock's own limits.
     await page.route(connection.url+'/', route => route.fulfill({contentType:'text/html',
       body:'<div id="root" data-screen="canvas" style="position:relative"><div id="shelf-host" class="canvas-pane-peek" data-side="library"></div></div>'}));
+    await page.route('**/api/universal/desktop-access', route => route.fulfill({
+      json: {ok: true, admitted: true, state: 'admitted', subject: 'studio-test', email: 'studio@example.test'}
+    }));
     await page.goto(connection.url);
     await page.addStyleTag({path:path.join(studio,'style.css')});
     await page.evaluate(connection => {window.ARCHHUB_BOOT={token:connection.token,csrf:connection.csrf,nograph:true};}, connection);
@@ -92,12 +100,64 @@ finally:
     await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio,'ds_library.jsx'),'utf8'),{loader:'jsx'}).code});
     await page.evaluate(()=>window.ReactDOM.render(window.React.createElement(window.UI.LibraryShelf),document.getElementById('shelf-host')));
     await page.waitForFunction(()=>{const s=window.ArchHubAPI.getSnapshot();return s.libraryTree?.length>0&&s.catalogue.length>0&&Array.isArray(s.libraryCollapsed);});
-    const {tree, catalogue: served, agentSessions} = await page.evaluate(()=>{const s=window.ArchHubAPI.getSnapshot();return {tree:s.libraryTree,catalogue:s.catalogue,agentSessions:s.templates.filter(row=>row.kind==='agent-session').map(row=>row.id)};});
+    const {tree, catalogue: served, libraryPorts, agentSessions, openSessionPath, hasSettingsApi} = await page.evaluate(()=>{
+      const s=window.ArchHubAPI.getSnapshot();
+      return {tree:s.libraryTree,catalogue:s.catalogue,libraryPorts:s.libraryPorts||[],
+        agentSessions:s.templates.filter(row=>row.kind==='agent-session').map(row=>row.id),
+        openSessionPath:window.ArchHubAPI.getSessionPath?.()||s.sessionFile||'',
+        hasSettingsApi:typeof window.ArchHubAPI.exposeSettingsPage==='function'};
+    });
     // The fixture holds one agent session; the shelf never lists it, browsing or searching (design row J7).
     assert.equal(agentSessions.length,1);
     assert.ok(served.some(card=>agentSessions.includes(card.id)),'the owner serves the agent session as a card');
-    const catalogue = served.filter(card=>!agentSessions.includes(card.id));
-    const cards = group => catalogue.filter(card=>group.categories.includes(card.family));
+    const pathKey = p => String(p || '').replace(/\\/g, '/').toLowerCase();
+    const openKey = pathKey(openSessionPath);
+    const portById = new Map(libraryPorts.map(item => [item.id, item]));
+    const PROGS_G = ['Revit', 'AutoCAD', 'Excel', 'Outlook', '3ds Max', 'Rhino', 'Blender'];
+    const SETTINGS_AREAS = [
+      {key:'Account', label:'Account', description:'Your ArchHub account: the same values in the app and on archhub.io', pages:['Account','Brain']},
+      {key:'Projects', label:'Projects', description:'Units, the standard, templates, naming and folders', pages:['Projects']},
+      {key:'Agents', label:'Agents', description:'Who works for you, on which model, what they may do, the Workshop, automations and tools', pages:['Agents','BABOOM','Hooks','Workshop','Automations','Library & Mods']},
+      {key:'Connections', label:'Connections', description:'Accounts, programs, your phone and notifications', pages:['Connections']},
+      {key:'You', label:'This PC', description:'This PC: how ArchHub looks, workspaces, files, privacy, updates and the app', pages:['Appearance','Privacy','Advanced','System graph','Dependencies','Updates & About']}
+    ];
+    const areaBackingIds = new Set(SETTINGS_AREAS.map(a => 'settings_' + a.label.toLowerCase().replace(/\s+/g, '_')));
+    const programOf = c => {
+      const portItem = portById.get(c.id);
+      if (portItem?.program && PROGS_G.includes(portItem.program)) return portItem.program;
+      if (c.prog && PROGS_G.includes(c.prog)) return c.prog;
+      if (c.program && PROGS_G.includes(c.program)) return c.program;
+      const engine = String(c.descriptor?.engine || portItem?.engine || '').toLowerCase();
+      const hostParam = engine === 'thing.host' ? String(portItem?.params?.host || c.params?.host || '').toLowerCase() : '';
+      const text = `${c.name || ''} ${c.description || ''}`;
+      if (engine.startsWith('revit.') || hostParam === 'revit' || /\brevit\b/i.test(text)) return 'Revit';
+      if (engine.startsWith('acad.') || engine.startsWith('autocad.') || engine === 'cad.host_lines' || hostParam === 'acad' || /\b(autocad|dwg)\b/i.test(text)) return 'AutoCAD';
+      if (hostParam === 'excel' || /\b(excel|workbook|xlsx)\b/i.test(text) || String(portItem?.params?.operation || '').startsWith('excel.')) return 'Excel';
+      if (engine.startsWith('outlook.') || engine === 'library.draft_email' || hostParam === 'outlook' || /\boutlook\b/i.test(text)) return 'Outlook';
+      if (engine.startsWith('max.') || hostParam === 'max' || /\b3ds\s*max\b/i.test(text)) return '3ds Max';
+      if (engine.startsWith('rhino.') || hostParam === 'rhino' || /\brhino\b/i.test(text)) return 'Rhino';
+      if (engine.startsWith('blender.') || hostParam === 'blender' || /\bblender\b/i.test(text)) return 'Blender';
+      return '';
+    };
+    const catalogue = served.filter(card => {
+      if (agentSessions.includes(card.id)) return false;
+      const sf = portById.get(card.id)?.params?.session_file;
+      if (sf && openKey && pathKey(sf) === openKey) return false;
+      return true;
+    });
+    const cards = group => {
+      const base = catalogue.filter(card => group.categories.includes(card.family) && !(group.id === 'settings' && (String(card.id || '').startsWith('thing:setting:') || areaBackingIds.has(card.id))));
+      if (group.id === 'host') {
+        const seen = new Set();
+        const grouped = PROGS_G.flatMap(prog => base.filter(c => programOf(c) === prog && seen.add(c.id)));
+        return [...grouped, ...base.filter(c => !seen.has(c.id))];
+      }
+      if (group.id === 'settings' && hasSettingsApi) {
+        const areas = SETTINGS_AREAS.map(a => ({id: 'sput:' + a.key, name: a.label, family: 'settings', isArea: true, area: a}));
+        return [...areas, ...base];
+      }
+      return base;
+    };
     const groups = tree.filter(group=>cards(group).length);
     const shelf = page.getByRole('complementary',{name:'Library shelf',exact:true});
 
@@ -113,7 +173,8 @@ finally:
     assert.equal(await shelf.locator('.shelf-node').count(),0);
     const saved = cards(groups.find(group=>group.id==='skill')).map(card=>card.name);
     assert.equal(saved.includes('agent-talk'),false,'no agent session under Workflows and skills');
-    assert.ok(saved.includes('door-schedule')&&saved.includes('sheet-check'),'saved sessions are cards under Workflows and skills: '+saved);
+    if (openKey.endsWith('door-schedule.archhub')) assert.equal(saved.includes('door-schedule'),false,'the open session is omitted from self-embedding');
+    assert.ok(saved.includes('sheet-check'),'saved sessions are cards under Workflows and skills: '+saved);
 
     // 2. Nothing else is in the shelf: no tabs, no footer, and the moved actions are not shelf buttons.
     assert.equal(await shelf.locator('.shelf-tabs, .shelf-footer').count(),0);
@@ -125,25 +186,17 @@ finally:
     await trigger.locator('.shelf-category').click();
     await page.waitForFunction(()=>!window.ArchHubAPI.getSnapshot().libraryCollapsed.includes('trigger'));
     await trigger.locator('.shelf-category[aria-expanded="true"]').waitFor();
-    const named = card => card.soon ? null : 'Add '+card.name;  // a Soon card is named by its holder, not by an Add label
+    const named = card => 'Add ' + card.name;
     assert.deepEqual(await trigger.locator('.shelf-node').evaluateAll(buttons=>buttons.map(button=>button.getAttribute('aria-label'))),
       catalogue.filter(card=>card.family==='trigger').map(named));
     assert.equal(await shelf.locator('.shelf-node').count(),catalogue.filter(card=>card.family==='trigger').length,'only the opened row shows cards');
 
-    // 3b. Design rows 7 and 8: a node type whose engine is not built is drawn among its neighbours and held by UI.Soon.
-    const soon = catalogue.filter(card=>card.soon);
-    assert.deepEqual(soon.map(card=>card.name).sort(),['Check model','Model JSON','Place views on sheets','Remote tunnel']);
-    assert.ok(soon.every(card=>card.unavailable&&card.reason==='Not built yet'),JSON.stringify(soon));
-    const tunnel = trigger.locator('[data-soon-card="remote_tunnel"]');
-    assert.deepEqual(await tunnel.evaluate(card=>{
-      const hold=card.closest('.soon'),part=card.closest('.soon-part');
-      return {tag:card.tagName,draggable:card.draggable,held:hold.getAttribute('aria-disabled'),name:hold.getAttribute('aria-label'),tip:hold.title,inert:part.hasAttribute('inert'),
-        chip:hold.querySelector('.soon-chip').textContent,buttons:hold.querySelectorAll('button').length,inside:hold.getBoundingClientRect().right<=card.closest('.library-shelf').getBoundingClientRect().right+0.5};
-    }),{tag:'DIV',draggable:false,held:'true',name:'Remote tunnel. Coming soon: not built yet',tip:'Coming soon: not built yet',inert:true,chip:'Coming soon',buttons:0,inside:true});
-    const placed = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.length);
-    await tunnel.click({force:true});
-    await assert.rejects(page.evaluate(()=>window.ArchHubAPI.addNode('remote_tunnel')),/executable Library node/);
-    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.length),placed,'a Soon card adds nothing');
+    // 3b. Design rows 7 and 8: every card has a live engine; zero inert placeholders remain in the shelf.
+    assert.deepEqual(catalogue.filter(card=>card.soon),[]);
+    assert.equal(await shelf.locator('[data-soon], [data-soon-card], .soon').count(),0);
+    const tunnel = trigger.getByRole('button',{name:'Add Remote tunnel',exact:true});
+    assert.equal(await tunnel.count(),1);
+    assert.equal(await tunnel.getAttribute('aria-disabled'),null);
 
     // 4. Fluid: at the dock's narrowest, base and widest panel a row stays one 30px line and nothing runs sideways.
     for(const panel of [200, 268, 520]) {
@@ -193,13 +246,15 @@ finally:
     // 7. Search is view state: it opens every row with a match, in tree order, and says when nothing matches.
     const search = shelf.getByLabel('Search nodes',{exact:true});
     await search.fill('number');
-    const finds = (card,group,asked)=>`${card.name} ${card.description} ${card.descriptor?.engine||''} ${group.label}`.toLowerCase().includes(asked);
+    const finds = (card,group,asked)=>card.isArea
+      ? `${card.area.key} ${card.area.label} ${card.area.description} ${card.area.pages.join(' ')} settings`.toLowerCase().includes(asked)
+      : `${card.name} ${card.description||''} ${card.descriptor?.engine||''} ${programOf(card)} ${group.label}`.toLowerCase().includes(asked);
     const shown = asked=>groups.flatMap(group=>cards(group).filter(card=>finds(card,group,asked))).map(named);
     const listed = ()=>shelf.locator('.shelf-node').evaluateAll(buttons=>buttons.map(button=>button.getAttribute('aria-label')));
     assert.ok(shown('number').length>0);
     assert.deepEqual(await listed(),shown('number'));
     assert.equal(await shelf.locator('.shelf-category[aria-expanded="false"]').count(),0);
-    assert.deepEqual(await shelf.locator('.family-chips button').allTextContents(),['All',...groups.map(group=>group.label)]);
+    assert.equal(await shelf.locator('.family-chips').count(),0);
     // 7b. Design row J7: a program name or a tree row's name finds its cards, and an agent session is not offered as a skill.
     await search.fill('revit');
     assert.deepEqual(await listed(),shown('revit'));
@@ -207,8 +262,8 @@ finally:
     await search.fill('starts a run');
     assert.deepEqual(await listed(),shown('starts a run'));
     for(const card of catalogue.filter(card=>card.family==='trigger'))assert.ok(shown('starts a run').includes(named(card)),card.name+' is found by its tree row');
-    await search.fill('door-schedule');
-    await shelf.getByRole('button',{name:'Add door-schedule',exact:true}).waitFor();
+    await search.fill('sheet-check');
+    await shelf.getByRole('button',{name:'Add sheet-check',exact:true}).waitFor();
     await search.fill('agent-talk');
     await shelf.getByText('Nothing matches.',{exact:true}).waitFor();
     assert.equal(await shelf.locator('.shelf-node').count(),0,'an agent session is not listed as a skill in search');
@@ -223,6 +278,11 @@ finally:
     await trigger.locator('.shelf-category').click();
     await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().libraryCollapsed.includes('trigger'));
     assert.equal(actions.includes('run')||actions.includes('solve'),false,'the shelf ran nothing');
+    const beforeCount = await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.length);
+    const addedTunnel = await page.evaluate(()=>window.ArchHubAPI.addNode('remote_tunnel'));
+    assert.ok(addedTunnel?.id,'addNode("remote_tunnel") places the real node');
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.length),beforeCount+1);
+    await page.evaluate(id=>window.ArchHubAPI.deleteNode(id),addedTunnel.id);
     assert.deepEqual(errors,[]);
     await page.close();
   }

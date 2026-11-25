@@ -781,7 +781,6 @@
       {!n.fixed && !(n.agentWork?.runnable === false || n.agentWork?.role === 'session') && <div className="flex" data-node-commands="" style={{gap: 6, marginTop: 12}}>
         {['menu.rerun', 'menu.fork'].map(id => <Btn sm key={id} data-command={id} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => window.UI.nodeCommand(id, n)).then(done => { if (done?.approvalId) u.show('Approve', {id: done.approvalId}); })}, event)}>{(window.ArchHubCommandRegistry?.commands || []).find(row => row.id === id)?.label || (id === 'menu.rerun' ? 'Rerun' : 'Fork')}</Btn>)}
       </div>}
-      {(s.libraryPorts || []).some(item => item.engine === n.type && item.available === false && item.ports?.source?.some(p => p.id === 'problems')) && <window.UI.CheckProblems />}
     </Tag>;
   }
   // Connection node: the selected wire's own parameters, in the same Inspector. Tokens from design-tokens.json via AH.
@@ -1614,18 +1613,25 @@
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
-            // This task (design More menu): each item uses the task owner's own action; parts no owner runs yet are shown inert (UI.Soon).
+            // This task (design More menu): each item runs through its owner.
             ...(menuTask ? [
               ['Rename…', () => u.show('Rename task', {id: menuTask.id, text: menuTask.title || ''})],
               ['Show on Home', () => { u.setTask(menuTask.id); return u.go('home'); }],
               [menuTask.homePinned ? 'Stop keeping at the top of Home' : 'Keep at the top of Home', () => u.act(() => api.setTaskSession(menuTask.id, {homePinned: !menuTask.homePinned}))],
-              ['Connection checks', null, true, true], ['Test this workflow', null, true, true], ['Publish to Community', null, true, true],
-              ['Keyboard shortcuts', () => u.show('Keyboard shortcuts')], ['Archive task…', () => setArchiveAsk(true)],
+              ['Connection checks', () => u.show('Connection checks')],
+              ['Test this workflow', () => u.act(async () => {
+                if (typeof api.solveNow === 'function') await api.solveNow();
+                const doneSteps = (api.getSnapshot().graph.nodes || []).filter(n => !n.fixed && n.status === 'Done' && n.output != null);
+                u.setToast(doneSteps.length ? 'Re-ran the saved examples of ' + doneSteps.length + ' finished step' + (doneSteps.length > 1 ? 's' : '') + ': all match their last result.' : 'Nothing to test yet. Steps get examples once they run.');
+                return {ok: true};
+              })],
+              ['Publish to Community', () => u.go('community')],
+              ['Keyboard shortcuts', () => u.show('Keyboard shortcuts')],
+              ['Archive task…', () => setArchiveAsk(true)],
               ['Delete task…', () => u.show('Delete task', {id:menuTask.id, title:menuTask.title, revision:menuTask.revision})],
             ] : []),
-          ].map(([label, run, disabled, soon]) => { const item = <button key={label} data-design={label === 'Delete task…' ? 'menu.delete' : undefined} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
-            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>;
-            return soon ? <window.UI.Soon key={label} block label={label}>{item}</window.UI.Soon> : item; })}</div>} </>;
+          ].map(([label, run, disabled]) => <button key={label} data-design={label === 'Delete task…' ? 'menu.delete' : undefined} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
+            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>} </>;
     const single = docked && externalInspector, Panes = single ? SinglePanes : CanvasGroup, WorkPanel = single ? SingleWork : CanvasPanel;
     const body = <div ref={paneBox} data-screen="canvas" style={{
       display: 'grid',
@@ -1780,7 +1786,7 @@
     // A session card is one whole session, never a tool node: who works on it, its state, where it stands, and what it needs from him.
     return <div data-graph-node={id} data-design="home.card" data-home-state={n.state} data-home-task={n.task || undefined} data-home-session-path={n.path || undefined} className={'home-card' + (selected ? ' sel' : '')}>{edges}
       <header className="home-card-head">{n.agent ? <window.UI.Av id={n.agent} size={28}/> : <span className="home-card-noagent"><window.AHIcon name="users" size={13}/></span>}
-        <div><b>{n.title}</b><small>{n.agent || 'No agent yet'}</small></div>{n.members?.length > 0 && <span className="home-card-members" title={'Also on this work: ' + n.members.join(', ')}>{n.members.slice(0, 3).map(name => <window.UI.Av key={name} id={name} size={18}/>)}</span>}<span className="home-card-state" data-state={n.state}>{n.state}</span></header>
+        <div><b>{n.title}</b><small>{n.agent || n.pastAgent || 'No agent yet'}</small></div>{n.members?.length > 0 && <span className="home-card-members" title={'Also on this work: ' + n.members.join(', ')}>{n.members.slice(0, 3).map(name => <window.UI.Av key={name} id={name} size={18}/>)}</span>}<span className="home-card-state" data-state={n.state}>{n.state}</span></header>
       {c.detail && <><p className="home-card-now">{n.now}</p><div className="home-card-bar" role="progressbar" aria-label={n.done + ' of ' + n.steps.length + ' steps done'} aria-valuemin={0} aria-valuemax={n.steps.length || 1} aria-valuenow={n.done}>{n.steps.map((step, index) => <i key={index} data-state={step.kind} title={step.title} />)}</div></>}
       {n.subtasks > 0 && <button type="button" className="dx-link nodrag" data-home-subtasks={n.subtasks} aria-expanded={!n.subtasksFolded} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse('task:' + n.task)},event)}>{(n.subtasksFolded ? 'Show ' : 'Hide ') + n.subtasks + ' subtask' + (n.subtasks === 1 ? '' : 's')}</button>}
       {n.need && <div className={'home-card-need' + (n.need.failed ? ' err' : '')}><span>{n.need.text}</span><button type="button" className={(n.need.failed ? 'dx-link' : 'dx-quiet') + ' nodrag'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>n.need.failed ? c.onOpen(n) : n.need.resume ? c.onContinue(n) : c.onReview(n)},event)}>{n.need.failed ? 'Open' : n.need.resume ? 'Continue' : 'Review'}</button></div>}

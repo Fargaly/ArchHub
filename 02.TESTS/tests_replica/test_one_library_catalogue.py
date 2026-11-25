@@ -120,14 +120,12 @@ def test_the_settings_action_serves_the_tree_and_starts_it_closed_until_he_choos
     assert action("readLibraryCollapsed")["libraryCollapsed"] == [], "his own choice of everything open is kept"
 
 
-def test_a_coming_node_type_says_so_in_its_own_declaration_and_no_path_places_it(tmp_path, monkeypatch):
-    """Design rows 7 and 8: shown in the Library as designed, marked not available by the node type itself, never placed."""
+def test_design_row_7_and_8_nodes_are_live_executable_and_zero_cards_are_not_built(tmp_path, monkeypatch):
+    """Every Library card has a live engine: zero available=False, zero noEngine, zero NOT_BUILT."""
     import asyncio
     import json
 
-    from mcp.server.fastmcp.exceptions import ToolError
-
-    from nodelang.library_engines import COMING_NODE_TYPES, NOT_BUILT
+    from nodelang.library_engines import COMING_NODE_TYPES, LIBRARY_ITEMS_WITHOUT_ENGINE, NOT_BUILT
     from nodelang.native_agent_mcp import build_server
     from nodelang.session_files import read_document
 
@@ -136,13 +134,17 @@ def test_a_coming_node_type_says_so_in_its_own_declaration_and_no_path_places_it
         (tmp_path / name).mkdir()
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path / "LOCALAPPDATA" / "ArchHub"))
 
+    assert LIBRARY_ITEMS_WITHOUT_ENGINE == {}
     assert [row["title"] for row in COMING_NODE_TYPES] == [
         "Remote tunnel", "Model JSON", "Check model", "Place views on sheets"]
-    assert all(row["available"] is False for row in COMING_NODE_TYPES)
-    by_id = {item["id"]: item for group in library_catalogue() for item in group["items"]}
+    rows = [item for group in library_catalogue() for item in group["items"] if not item.get("hidden")]
+    assert not [item["id"] for item in rows if item.get("available") is False]
+    assert not [item["id"] for item in rows if item.get("noEngine")]
+    assert not [item["id"] for item in rows if item.get("reason") == NOT_BUILT]
+    by_id = {item["id"]: item for item in rows}
 
     server = build_server()
-    path = str(tmp_path / "coming.archhub")
+    path = str(tmp_path / "live_nodes.archhub")
 
     def tool(name, **args):
         result = asyncio.run(server.call_tool(name, args))
@@ -150,21 +152,13 @@ def test_a_coming_node_type_says_so_in_its_own_declaration_and_no_path_places_it
         return content.get("result", content) if isinstance(content, dict) else json.loads(result[0].text)
 
     tool("canvas.new", path=path)
-    before = read_document(path)["nodes"]
+    before = [node["id"] for node in read_document(path)["nodes"]]
+    placed_ids = []
     for declared in COMING_NODE_TYPES:
         card = by_id[declared["id"]]
-        # The catalogue row carries the node type's own mark; nothing beside it lists these cards.
-        assert card["available"] is False and card["noEngine"] is True and card["reason"] == NOT_BUILT
+        assert card.get("available") is not False and not card.get("noEngine")
         assert card["cat"] == declared["cat"] and card["title"] == declared["title"] and not card.get("hidden")
         assert {port["id"] for port in declared["ports"]["source"]} <= set(card["sockets"]["source"])
-        for kind in (declared["id"], declared["title"], declared["engine"]):
-            with pytest.raises(ToolError, match="non-executable node type"):
-                tool("canvas.add_node", path=path, type=kind)
-        # Searching its name may find built cards that share a word; it never offers the coming card itself.
-        assert declared["id"] not in {row["type"] for row in tool("library.search", query=declared["title"])["items"]}
-    assert read_document(path)["nodes"] == before, "a refused card leaves the canvas file as it was"
-
-    # A built card carries no mark and is placed as before.
-    assert "available" not in by_id["n_number"] and not by_id["n_number"].get("noEngine")
-    placed = tool("canvas.add_node", path=path, type="n_number")["node"]
-    assert [node["id"] for node in read_document(path)["nodes"]] == [*(node["id"] for node in before), placed]
+        assert declared["id"] in {row["type"] for row in tool("library.search", query=declared["title"])["items"]}
+        placed_ids.append(tool("canvas.add_node", path=path, type=declared["id"])["node"])
+    assert [node["id"] for node in read_document(path)["nodes"]] == [*before, *placed_ids]

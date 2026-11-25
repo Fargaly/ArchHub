@@ -100,11 +100,12 @@ const {chromium} = require('playwright');
     assert.equal(await threads.locator('.wsraw').count(), Math.min(8, withMessages));
     const row = threads.locator('[data-ws-thread]').filter({hasText: 'Drawing set review'});
     assert.match(await row.innerText(), /Drawing coordinator: I checked the sheet list\.[\s\S]*\b1\b/);
-    // Row 23: the More menu carries this task's actions; each acts, or is drawn inert as coming soon.
+    // Row 23: the More menu carries this task's actions; every item is live with zero inert wrappers.
     await page.getByRole('button', {name: 'More canvas actions', exact: true}).click();
     const more = page.getByRole('menu', {name: 'Canvas actions', exact: true});
-    for (const name of ['Rename…', 'Show on Home', 'Keep at the top of Home', 'Delete task…']) assert.equal(await more.getByRole('menuitem', {name, exact: true}).isEnabled(), true, name);
-    for (const name of ['Connection checks', 'Test this workflow', 'Publish to Community', 'Keyboard shortcuts']) assert.equal(await more.locator('[data-soon][aria-label^="' + name + '."]').count(), 1, name + ' is coming soon');
+    for (const name of ['Rename…', 'Show on Home', 'Keep at the top of Home', 'Connection checks', 'Test this workflow', 'Publish to Community', 'Keyboard shortcuts', 'Delete task…'])
+      assert.equal(await more.getByRole('menuitem', {name, exact: true}).isEnabled(), true, name);
+    assert.equal(await more.locator('[data-soon]').count(), 0);
     await more.getByRole('menuitem', {name: 'Keep at the top of Home', exact: true}).click();
     await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().tasks.find(task => task.title === 'Drawing set review').homePinned === true);
     for (const width of [1009, 1440, 1920]) {

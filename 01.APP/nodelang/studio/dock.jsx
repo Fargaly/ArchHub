@@ -12,6 +12,9 @@
   const defaultLayout = width => ({
     left: {w: LEFT.base, c: false, st: [{p: ['workshop'], a: 'workshop', h: 1.15, c: false}, {p: ['library', 'map'], a: 'library', h: 1, c: false}]},
     right: {c: false, st: [slot('insp')]}});
+  const validCmd = cmd => cmd != null && typeof cmd === 'object' && cmd.x != null && cmd.x !== '' && typeof cmd.x !== 'boolean'
+    && cmd.y != null && cmd.y !== '' && typeof cmd.y !== 'boolean' && Number.isFinite(Number(cmd.x)) && Number.isFinite(Number(cmd.y))
+    ? {x: Math.max(0, Math.min(1, Number(cmd.x))), y: Math.max(0, Math.min(1, Number(cmd.y)))} : null;
   // A held record becomes a layout where every known panel sits in exactly one place.
   const normalize = (held, width) => {
     if (!held || !held.left || !held.right) return defaultLayout(width);
@@ -23,7 +26,8 @@
         const p = (Array.isArray(sl.p) ? sl.p : []).filter(id => PANELS[id] && !seen.has(id) && seen.add(id));
         return {p, a: p.includes(sl.a) ? sl.a : p[0], h: sl.h > 0 ? Math.max(.05, Math.min(20, sl.h)) : 1, c: sl.c === true};
       }).filter(sl => sl.p.length)});
-    const next = {left: dock('left'), right: dock('right')};
+    const cmd = validCmd(held.cmd);
+    const next = {left: dock('left'), right: dock('right'), ...(cmd ? {cmd} : {})};
     for (const id of Object.keys(PANELS)) if (!seen.has(id)) {
       const st = next[HOME[id]].st;
       if (st.length) st[st.length - 1].p.push(id); else st.push(slot(id));
@@ -87,11 +91,22 @@
     return next;
   };
   const setLeftWidth = (layout, width) => ({...layout, left: {...layout.left, w: Math.max(LEFT.min, Math.min(LEFT.max, Math.round(width)))}});
+  const setCmd = (layout, cmd) => {
+    const nextCmd = validCmd(cmd);
+    if (!nextCmd) {
+      if (!layout?.cmd) return layout;
+      const next = clone(layout);
+      delete next.cmd;
+      return next;
+    }
+    if (layout?.cmd && layout.cmd.x === nextCmd.x && layout.cmd.y === nextCmd.y) return layout;
+    return {...layout, cmd: nextCmd};
+  };
   window.UI = window.UI || {};
-  // The Build preset is the default layout. A layout is named by where its panels sit; widths and folds do not rename it.
+  // The Build preset is the default layout. A layout is named by where its panels sit and whether cmd moved; widths and folds do not rename it.
   const places = layout => JSON.stringify(SIDES.map(side => layout[side].st.map(sl => sl.p)));
-  const presetName = layout => places(layout) === places(defaultLayout(NARROW)) ? 'Build' : 'Build (changed)';
-  window.UI.dockModel = {PANELS, LEFT, RIGHT, defaultLayout, normalize, where, visible, place, show, hide, toggleSlot, toggleDock, resizeSlots, setLeftWidth, presetName};
+  const presetName = layout => !layout?.cmd && places(layout) === places(defaultLayout(NARROW)) ? 'Build' : 'Build (changed)';
+  window.UI.dockModel = {PANELS, LEFT, RIGHT, defaultLayout, normalize, where, visible, place, show, hide, toggleSlot, toggleDock, resizeSlots, setLeftWidth, setCmd, presetName};
   if (typeof React === 'undefined') return;  // the layout rules above also load alone, without a page
 
   const api = window.ArchHubAPI, {executeAction} = api, Icon = window.AHIcon, portal = window.ReactDOM.createPortal;
@@ -113,11 +128,18 @@
     const record = s.dockLayout?.layout || null;
     // The user's edits show at once and stay while he moves between Home and sessions; the owner holds the same record.
     const [local, setLocal] = React.useState(null);
+    const savedSet = React.useRef(new Set()), seenRecord = React.useRef(JSON.stringify(record));
+    const recordJson = JSON.stringify(record);
+    if (seenRecord.current !== recordJson) {
+      seenRecord.current = recordJson;
+      if (savedSet.current.has(recordJson)) savedSet.current.delete(recordJson);
+      else { savedSet.current.clear(); if (local) setLocal(null); }
+    }
     // Below 1280 px the right dock is SHOWN folded so the canvas keeps its room. That is display only: it is never saved folded,
     // and it is back as he set it when the window is wide again. He can still open it while the window is narrow.
     const narrow = React.useSyncExternalStore(onResize, () => window.innerWidth < NARROW, () => false);
     const opened = React.useSyncExternalStore(narrowOpen.subscribe, narrowOpen.read, () => false);
-    const kept = React.useMemo(() => local ? local.layout || defaultLayout(window.innerWidth) : normalize(record, window.innerWidth), [local, JSON.stringify(record)]);
+    const kept = React.useMemo(() => local ? local.layout || defaultLayout(window.innerWidth) : normalize(record, window.innerWidth), [local, recordJson]);
     // pending: the layout a change asked for, until it renders. A change during a pending fold transition builds on it.
     const current = React.useRef(kept), pending = React.useRef(null);
     if (pending.current === kept) pending.current = null;
@@ -128,9 +150,9 @@
       if (next === current.current || !s.dockLayout) return;
       current.current = pending.current = next;
       setLocal({layout: next});
-      if (keep) onSave(next);
+      if (keep) { savedSet.current.add(JSON.stringify(next)); onSave(next); }
     };
-    const reset = () => { pending.current = null; narrowOpen.set(false); setLocal({layout: null}); onSave(null); };  // no layout of his own: the default
+    const reset = () => { pending.current = null; narrowOpen.set(false); setLocal({layout: null}); savedSet.current.add('null'); onSave(null); };  // no layout of his own: the default
     const reveal = id => {
       if (narrow && where(current.current, id)?.side === 'right') narrowOpen.set(true);
       const held = folded.current || [];
@@ -140,13 +162,14 @@
       const saved = show({...current.current, ...Object.fromEntries(held.map(side => [side, {...current.current[side], c: false}]))}, id);
       folded.current = held.filter(side => side !== where(saved, id)?.side);
       change({...saved, ...Object.fromEntries(folded.current.map(side => [side, {...saved[side], c: true}]))}, false);
-      if (s.dockLayout) onSave(saved);
+      if (s.dockLayout) { savedSet.current.add(JSON.stringify(saved)); onSave(saved); }
     };
     const fold = side => { if (side === 'right' && narrow && !current.current.right.c) narrowOpen.set(!narrowOpen.read()); else change(toggleDock(current.current, side)); };
     React.useImperativeHandle(controls, () => ({
       show: reveal,
       hide: id => change(hide(current.current, id)),
       visible: id => visible(layout, id),
+      setCmd: cmd => change(setCmd(current.current, cmd)),
       reset,
     }));
     // The thread beside the canvas needs the room: open docks fold while it shows and come back after (not saved).

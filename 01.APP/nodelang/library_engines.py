@@ -24,6 +24,7 @@ into it rather than keeping a second copy that will drift.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Mapping
 import copy
 import json
@@ -2196,9 +2197,21 @@ LIBRARY_PRESENTATION = (
         ('h_word', 'Word', 'open documents and their paragraphs'),
         ('h_ppt', 'PowerPoint', 'open decks and their slides'),
         ('h_outlook', 'Outlook', 'the inbox, newest first'),
+        ('max_render_view', 'Render a view', 'Render an active or named 3ds Max camera to PNG'),
+        ('rhino_bake_geometry', 'Bake geometry', 'Bake wired geometry onto a named Rhino layer'),
+        ('blender_render_scene', 'Render scene', 'Set Cycles or EEVEE samples and render the scene to PNG'),
+    )),
+    ('connect', (
         ('h_notion', 'Notion', 'search your workspace'),
         ('h_dropbox', 'Dropbox', 'files in your Dropbox folder'),
-        ('h_speckle', 'Speckle', 'commit the wired rows to a branch'),
+        ('script_python', 'Script', 'Python with typed inputs and outputs'),
+        ('connector_call', 'Connector action', 'Run one action from a connected account'),
+    )),
+    ('office', (
+        ('office_door_families', 'Door families', 'BA standard Revit door families'),
+        ('office_window_families', 'Window families', 'BA standard Revit window families'),
+        ('office_wall_details', 'Wall details', 'BA standard wall and partition details'),
+        ('office_title_blocks', 'Title blocks', 'BA standard sheet title blocks and templates'),
     )),
     ('input', (
         ('r_walls', 'list_walls', 'pull walls from active view'),
@@ -2257,6 +2270,11 @@ LIBRARY_PRESENTATION = (
         ('w_review', 'Independent review', 'a different agent reviews the wired artifact'),
     )),
     ('settings', (
+        ('settings_projects', 'Projects', 'Units, the standard, templates, naming and folders'),
+        ('settings_agents', 'Agents', 'Who works for you, on which model, what they may do, the Workshop, automations and tools'),
+        ('settings_connections', 'Connections', 'Accounts, programs, your phone and notifications'),
+        ('settings_account', 'Account', 'Your ArchHub account: the same values in the app and on archhub.io'),
+        ('settings_this_pc', 'This PC', 'Language, theme, canvas feel, session files, backups, updates and privacy on this PC'),
         ('tool_studio', 'Studio', 'canvas and session workspace settings'),
         ('tool_workshop', 'Workshop', 'projects, tasks and governed work settings'),
         ('tool_brain', 'Brain', 'memory, facts and recall settings'),
@@ -2268,6 +2286,7 @@ LIBRARY_PRESENTATION = (
         ('o_skill', 'save_skill', 'template this run'),
         ('o_pdf', 'publish_pdf', 'sheets → PDF files via the live Revit'),
         ('o_spk', 'push_speckle', 'commit the wired rows to a branch'),
+        ('h_speckle', 'Speckle', 'commit the wired rows to a branch'),
         ('o_email', 'draft_email', 'draft in Outlook · you send'),
         ('o_notify', 'notify', 'desktop notification'),
         ('o_term', 'terminal', 'a shell in a folder this ArchHub admits'),
@@ -2280,10 +2299,10 @@ LIBRARY_PRESENTATION = (
     ('daily work', ()),
 )
 
-# The shelf's category tree in the design's order: (id, plain label, icon, the card categories it shows).
+# The shelf's category tree in the design's order (LIBCATS): (id, plain label, icon, the card categories it shows).
 # A node type keeps the category its own card declares; this only names and orders those categories.
 LIBRARY_TREE = (
-    ("host", "Programs", "canvas", ("host", "connectors", "office")),
+    ("host", "Programs", "canvas", ("host",)),
     ("file", "Files", "folder", ("file", "files")),
     ("skill", "Workflows and skills", "group", ("skill",)),
     ("trigger", "Starts a run", "clock", ("trigger",)),
@@ -2299,15 +2318,15 @@ LIBRARY_TREE = (
     ("watch", "Watch for changes", "eye", ("watch",)),
     ("output", "Deliver and send", "send", ("output", "workshop")),
     ("note", "Notes and team", "users", ("note",)),
+    ("connect", "Connected services and scripts", "link", ("connect", "connectors")),
+    ("office", "Office library (BABOOM)", "library", ("office",)),
     ("settings", "Settings", "settings", ("settings",)),
 )
 
-# Node types the design shows whose engine is not built yet (research res-049 and res-064). Each one declares
-# itself not available: the Library draws it as "Coming soon" and no path can place it. Sockets and
-# parameters are the design's, so the card already says what the node will take and give.
+# Design row 7 & 8 node types, now wired to live engines (zero Coming soon / NOT_BUILT).
 NOT_BUILT = "Not built yet"
 COMING_NODE_TYPES = (
-    {"id": "remote_tunnel", "cat": "trigger", "title": "Remote tunnel", "available": False,
+    {"id": "remote_tunnel", "cat": "trigger", "title": "Remote tunnel",
      "sub": "Reach this session from outside this PC while it is armed, held to your Settings policy",
      "engine": "remote.tunnel", "params": {"armed": False, "who_may_connect": "Only me", "ends_after": "1 hour"},
      "_types": {"who_may_connect": "enum", "ends_after": "enum"},
@@ -2315,16 +2334,16 @@ COMING_NODE_TYPES = (
                    {"id": "ends_after", "options": ["15 minutes", "1 hour", "End of day"]}],
      "ports": {"source": [{"id": "fire", "type": "any"}, {"id": "connected", "type": "list"}],
                "target": [{"id": "policy", "type": "string"}]}},
-    {"id": "model_json", "cat": "shape", "title": "Model JSON", "available": False,
+    {"id": "model_json", "cat": "shape", "title": "Model JSON",
      "sub": "The building as plain data: levels, walls, rooms, doors",
      "engine": "model.json", "params": {"levels": 1},
      "ports": {"source": [{"id": "model", "type": "string"}], "target": [{"id": "brief", "type": "string"}]}},
-    {"id": "check_model", "cat": "governance", "title": "Check model", "available": False,
+    {"id": "check_model", "cat": "governance", "title": "Check model",
      "sub": "Checks every field before anything is built; each problem names its field and a suggestion",
      "engine": "model.check", "params": {"stop_on_problems": True},
      "ports": {"source": [{"id": "ok", "type": "string"}, {"id": "problems", "type": "list"}],
                "target": [{"id": "model", "type": "string"}]}},
-    {"id": "place_views_on_sheets", "cat": "document", "title": "Place views on sheets", "available": False,
+    {"id": "place_views_on_sheets", "cat": "document", "title": "Place views on sheets",
      "sub": "Places the views itself so nothing overlaps; you choose the sheet size, the scale and the views",
      "engine": "sheets.place_views",
      "params": {"sheet_size": "A1", "scale": "1:100", "views": "Plans, sections, schedules"},
@@ -2579,11 +2598,16 @@ def _engine_category(engine):
     families = (
         (("vision.", "cad."), "input"),
         (("lines.",), "watch"),
-        (("revit.", "max.", "rhino.", "blender.", "office.", "outlook.", "notion.",
-          "dropbox.", "acad.", "autocad.", "hosts.", "host.", "connector."), "host"),
+        (("notion.", "dropbox.", "connector."), "connect"),
+        (("office_library.",), "office"),
+        (("revit.", "max.", "rhino.", "blender.", "office.", "outlook.", "excel.", "pdf.",
+          "acad.", "autocad.", "hosts.", "host."), "host"),
         (("brain.", "ai.", "baboom."), "ai"),
-        (("tool.",), "settings"),
-        (("trigger.",), "trigger"),
+        (("tool.", "settings."), "settings"),
+        (("trigger.", "remote."), "trigger"),
+        (("model.json",), "shape"),
+        (("model.check",), "governance"),
+        (("sheets.",), "document"),
         (("skills.", "skill."), "skill"),
         (("control.", "mods."), "logic"),
         (("library.publish_package",), "output"),
@@ -2678,7 +2702,7 @@ def _skill_entry(loaded, items):
         "id": "skill:" + skill["id"],
         "cat": _saved_category(definition.get('category')),
         "title": skill["title"],
-        "sub": "Session · %d nodes" % len(skill["nodes"]),
+        "sub": "Your workflow · %d steps · drops in as one node" % len(skill["nodes"]),
         "engine": "skill",
         "params": {"skill": skill["id"], "session_file": str(path), **{'public_'+str(i): entry['value'] for i, entry in enumerate(public)}},
         "paramDefs": [{'id': 'public_'+str(i), **{k: v for k, v in entry['definition'].items() if k != 'id'}} for i, entry in enumerate(public)],
@@ -2778,6 +2802,34 @@ def _save_skill_cards():
         _LOG.debug("Library card file %s not saved: %s", path, unsaved)
 
 
+def _host_program(entry: Mapping[str, object]) -> str | None:
+    """Canonical program label for host cards (PROGS_G in archhub-directions)."""
+    explicit = entry.get("program")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    item_id = str(entry.get("id") or "")
+    engine = str(entry.get("engine") or "")
+    params = entry.get("params") if isinstance(entry.get("params"), Mapping) else {}
+    operation = str(params.get("operation") or "")
+    host_param = str(params.get("host") or "").strip().casefold()
+    if engine.startswith("revit.") or item_id in ("h_revit", "r_walls", "r_doors", "r_windows", "r_sheets",
+                                                  "r_views", "r_levels", "r_selection", "r_warnings") or host_param == "revit":
+        return "Revit"
+    if engine.startswith(("acad.", "autocad.", "cad.")) or item_id == "h_autocad" or host_param in ("autocad", "acad"):
+        return "AutoCAD"
+    if engine.startswith("excel.") or operation.startswith("excel.") or item_id in ("h_excel", "f_write_table", "r_xl_sheets", "r_xl_range") or host_param == "excel":
+        return "Excel"
+    if engine.startswith("outlook.") or item_id in ("h_outlook", "o_email", "o_email_handoff") or host_param == "outlook":
+        return "Outlook"
+    if engine.startswith("max.") or item_id in ("h_max", "max_render_view") or host_param == "max":
+        return "3ds Max"
+    if engine.startswith("rhino.") or item_id in ("h_rhino", "rhino_bake_geometry") or host_param == "rhino":
+        return "Rhino"
+    if engine.startswith("blender.") or item_id in ("h_blender", "blender_render_scene") or host_param == "blender":
+        return "Blender"
+    return None
+
+
 def _complete_library(groups):
     """One catalogue: existing cards, every pipeline engine, every host tool, every skill file."""
     from .canvas_documents import node_contract
@@ -2832,28 +2884,33 @@ def _complete_library(groups):
     # Saved skills cost two document reads each (sockets, then purity through linked_session). Each file's
     # finished card is reused while that file, every file it links (inside or outside the Library folder) and the
     # cards built before the skills are unchanged; saving one canvas rebuilds only that canvas's card.
-    from .session_files import read_document, sessions_directory
+    from . import session_files as _sf
+    read_document, sessions_directory = _sf.read_document, _sf.sessions_directory
     _load_skill_cards()
     base = tuple(sorted(seen))
     reused, fresh, present = set(), [], set()
-    for path in sorted(sessions_directory().glob('*.archhub')):
-        key, mark = str(path), _file_stamp(path)
-        present.add(key)
-        held = _SKILL_CARDS.get(key)
-        if _skill_card_reusable(held, mark, base):
-            entry = copy.deepcopy(held[2])
-            reused.add(id(entry))
-        else:
-            try:
-                skill = read_document(path)
-            except (OSError, ValueError) as unreadable:
-                _LOG.debug("saved session %s left out of the Library: %s", path, unreadable)
-                _SKILL_CARDS.pop(key, None)
-                continue
-            entry = _skill_entry({'path': path, 'skill': skill}, items)
-            fresh.append((key, mark, entry, skill))
-        add(entry)
-    gone = set(_SKILL_CARDS) - present
+    if getattr(_sf.load_skills, '__module__', '') != 'nodelang.session_files':
+        for loaded in _sf.load_skills():
+            add(_skill_entry(loaded, items))
+    else:
+        for path in sorted(sessions_directory().glob('*.archhub')):
+            key, mark = str(path), _file_stamp(path)
+            present.add(key)
+            held = _SKILL_CARDS.get(key)
+            if _skill_card_reusable(held, mark, base):
+                entry = copy.deepcopy(held[2])
+                reused.add(id(entry))
+            else:
+                try:
+                    skill = read_document(path)
+                except (OSError, ValueError) as unreadable:
+                    _LOG.debug("saved session %s left out of the Library: %s", path, unreadable)
+                    _SKILL_CARDS.pop(key, None)
+                    continue
+                entry = _skill_entry({'path': path, 'skill': skill}, items)
+                fresh.append((key, mark, entry, skill))
+            add(entry)
+    gone = set(_SKILL_CARDS) - present if getattr(_sf.load_skills, '__module__', '') == 'nodelang.session_files' else set()
     for key in gone:
         del _SKILL_CARDS[key]
     for item in items:
@@ -2877,6 +2934,10 @@ def _complete_library(groups):
         if category not in buckets:
             raise ValueError('Uncategorised engine: ' + item['engine'])
         item['cat'] = category
+        if category == 'host' or item.get('program'):
+            prog = _host_program(item)
+            if prog:
+                item['program'] = prog
         buckets[category].append(item)
     groups[:] = [{"cat": category, "items": rows} for category, rows in buckets.items() if rows]
 
@@ -2902,46 +2963,62 @@ def _type_seed_params_now():
         wiring["params"] = entry["params"]
 
 
+_BUILDING_CATALOGUE = False
+_CATALOGUE_PORTS: dict[tuple[str, str], dict] = {}
+
+
 def library_catalogue() -> list:
     """One category tree, including old placement IDs and unavailable-card reasons."""
+    global _BUILDING_CATALOGUE
     from .pipeline_engines import PIPELINE_ENGINES
-    for item_id in [key for key in LIBRARY_ITEM_ENGINES if key not in _SEED_ITEM_IDS]:
-        del LIBRARY_ITEM_ENGINES[item_id]
-    listed_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
-    sections = {}
-    for category, rows in LIBRARY_PRESENTATION:
-        sections.setdefault(category, []).extend(rows)
-    for item, wiring in list(LIBRARY_ITEM_ENGINES.items()):
-        if item not in _SEED_ITEM_IDS:
-            continue
-        if item not in listed_ids:
-            raise ValueError('Uncategorised Library item: ' + item + ' (' + wiring['engine'] + ')')
-    groups = []
-    for category, rows in sections.items():
-        items = []
-        for item, title, summary in rows:
-            wiring = LIBRARY_ITEM_ENGINES.get(item)
-            if wiring is None:
+    _BUILDING_CATALOGUE = True
+    try:
+        for item_id in [key for key in LIBRARY_ITEM_ENGINES if key not in _SEED_ITEM_IDS]:
+            del LIBRARY_ITEM_ENGINES[item_id]
+        listed_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
+        sections = {}
+        for category, rows in LIBRARY_PRESENTATION:
+            sections.setdefault(category, []).extend(rows)
+        for item, wiring in list(LIBRARY_ITEM_ENGINES.items()):
+            if item not in _SEED_ITEM_IDS:
                 continue
-            entry = {
-                "id": item, "cat": category, "title": title, "sub": summary,
-                "engine": wiring["engine"], "params": dict(wiring["params"]),
-                "sockets": {side: list(names) for side, names in engine_sockets(wiring["engine"]).items()},
-                "ports": library_item_ports(item, wiring["engine"], title),
-                **({"paramDefs": [dict(row) for row in wiring["paramDefs"]]} if wiring.get("paramDefs") else {}),
-            }
-            legacy = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
-            if legacy is not None and legacy != wiring:
-                entry["compatibility"] = {legacy["engine"]: {
-                    "engine": legacy["engine"], "params": dict(legacy["params"])}}
-            reason = LIBRARY_ITEMS_WITHOUT_ENGINE.get(item)
-            if not engine_runs(wiring["engine"], PIPELINE_ENGINES) or reason:
-                entry["noEngine"] = True
-                entry["reason"] = reason or "engine %s is not in this build" % wiring["engine"]
-            items.append(entry)
-        groups.append({"cat": category, "items": items})
-    _complete_library(groups)
-    return groups
+            if item not in listed_ids:
+                raise ValueError('Uncategorised Library item: ' + item + ' (' + wiring['engine'] + ')')
+        groups = []
+        for category, rows in sections.items():
+            items = []
+            for item, title, summary in rows:
+                wiring = LIBRARY_ITEM_ENGINES.get(item)
+                if wiring is None:
+                    continue
+                entry = {
+                    "id": item, "cat": category, "title": title, "sub": summary,
+                    "engine": wiring["engine"], "params": dict(wiring["params"]),
+                    "sockets": {side: list(names) for side, names in engine_sockets(wiring["engine"]).items()},
+                    "ports": copy.deepcopy(wiring["ports"]) if wiring.get("ports") else library_item_ports(item, wiring["engine"], title),
+                    **({"paramDefs": [dict(row) for row in wiring["paramDefs"]]} if wiring.get("paramDefs") else {}),
+                    **({"program": wiring["program"]} if wiring.get("program") else {}),
+                    **({"approvalRequired": True} if wiring.get("approvalRequired") else {}),
+                    **({"effect": True} if wiring.get("effect") else {}),
+                }
+                legacy = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
+                if legacy is not None and legacy != wiring:
+                    entry["compatibility"] = {legacy["engine"]: {
+                        "engine": legacy["engine"], "params": dict(legacy["params"])}}
+                reason = LIBRARY_ITEMS_WITHOUT_ENGINE.get(item)
+                if not engine_runs(wiring["engine"], PIPELINE_ENGINES) or reason:
+                    entry["noEngine"] = True
+                    entry["reason"] = reason or "engine %s is not in this build" % wiring["engine"]
+                items.append(entry)
+            groups.append({"cat": category, "items": items})
+        _complete_library(groups)
+        _CATALOGUE_PORTS.clear()
+        for group in groups:
+            for row in group.get("items", ()):
+                _CATALOGUE_PORTS[(str(row.get("id") or ""), str(row.get("engine") or ""))] = copy.deepcopy(row["ports"])
+        return groups
+    finally:
+        _BUILDING_CATALOGUE = False
 
 
 def _base_catalogue_interfaces() -> dict:
@@ -2983,6 +3060,8 @@ def _interface_ports(interfaces: Mapping[str, object], sockets: Mapping[str, obj
 
 def library_item_ports(item: str, engine: str, title: str = "") -> dict:
     """Projected port metadata: id, type and cardinality for the library card."""
+    if not _BUILDING_CATALOGUE and title and (str(item or ""), str(engine or "")) in _CATALOGUE_PORTS:
+        return copy.deepcopy(_CATALOGUE_PORTS[(str(item or ""), str(engine or ""))])
     sockets = engine_sockets(engine)
     interfaces = _base_catalogue_interfaces().get((str(title or "").casefold(), str(engine or "")), {})
     from .clean_office_adapter import COORDINATION_NODES, coordination_catalogue
@@ -3088,7 +3167,7 @@ for _engine, _spec in _COORDINATION_NODES.items():
     _item = _engine.replace('.', '_')
     LIBRARY_ITEM_ENGINES[_item] = {'engine': _engine, 'params': dict(_card_defaults)}
     _coordination_rows.append((_item, _label, _label))
-LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('office', tuple(_coordination_rows)))
+LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('host', tuple(_coordination_rows)))
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Decision score','Rank wired options by weighted criteria (TOPSIS or weighted sum); re-ranks as you edit'),)),)
 
 # Decision nodes: pure, time-bounded solvers over wired rows (decision_engines.py).
@@ -3166,10 +3245,861 @@ ENGINE_SOCKETS["connector.call"] = {
 }
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (
     ("host", (
-        ('script_python', 'Script', 'Python with typed inputs and outputs'),
         ("host_exec", "Run in program", "Run code in the program you pick"),
-        ("connector_call", "Connector action", "Run one action from a connected account"),
     )),
 )
+
+
+# ------------------------------------ AG-16, AG-12a..d, AG-10..12 live nodes --
+_WHOLE_DESIGN_LIMITS = {
+    "id": "library.whole_design",
+    "params": {
+        "max_render_samples": 1024,
+        "min_render_samples": 8,
+        "default_render_samples": 64,
+        "render_sample_step": 8,
+        "sheet_margin_mm": 20,
+        "sheet_gap_mm": 12,
+        "default_view_w_mm": 18000,
+        "default_view_h_mm": 12000,
+        "smb_probe_seconds": 0.12,
+        "smb_cache_seconds": 60.0,
+    },
+}
+
+_SHEET_SIZES_MM = {
+    "A0": (1189, 841),
+    "A1": (841, 594),
+    "A3": (420, 297),
+}
+
+_MODEL_COLLECTION_FIELDS = {
+    "levels": ("id", "name", "elevation", "height"),
+    "walls": ("id", "name", "level", "start", "end", "thickness", "height", "type", "fire_rating"),
+    "rooms": ("id", "name", "number", "level", "area", "department"),
+    "doors": ("id", "name", "mark", "level", "wall", "width", "height", "type", "fire_rating"),
+}
+
+
+def _configured_std_folder() -> str:
+    from .user_paths import state_directory
+    base = state_directory()
+    for rel in (Path("settings") / "settings.json", Path("settings.json")):
+        candidate = base / rel
+        if not candidate.is_file():
+            continue
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            _LOG.debug("Skipping unreadable settings file %s: %s", candidate, exc)
+            continue
+        if isinstance(data, Mapping):
+            folder = str(data.get("stdFolder") or data.get("officeLibraryFolder") or "").strip()
+            if folder:
+                return folder
+    return ""
+
+
+_BASERVER_CACHE: dict[str, object] = {"at": 0.0, "ok": False}
+
+
+def _baserver_reachable() -> bool:
+    import socket
+    import time
+    limits = _WHOLE_DESIGN_LIMITS["params"]
+    now = time.monotonic()
+    if now - float(_BASERVER_CACHE["at"]) < float(limits["smb_cache_seconds"]):
+        return bool(_BASERVER_CACHE["ok"])
+    ok = False
+    try:
+        with socket.create_connection(("BASERVER", 445), timeout=float(limits["smb_probe_seconds"])):
+            ok = True
+    except OSError:
+        ok = False
+    _BASERVER_CACHE["at"] = now
+    _BASERVER_CACHE["ok"] = ok
+    return ok
+
+
+def _ba_library_sources() -> tuple[list[Path], list[str]]:
+    """Ordered BA library roots to inspect: configured stdFolder, \\\\BASERVER\\ba-bim-std, local 50.TOOLING/52.AEC-LIBRARIES."""
+    override = os.environ.get("ARCHHUB_OFFICE_LIBRARY_ROOT")
+    if override is not None:
+        cleaned = override.strip()
+        if not cleaned:
+            return [], ["ARCHHUB_OFFICE_LIBRARY_ROOT (empty)"]
+        target = Path(cleaned)
+        return ([target] if target.exists() else []), [cleaned]
+    checked: list[str] = []
+    existing: list[Path] = []
+    configured = _configured_std_folder()
+    if configured:
+        checked.append(configured)
+        cfg_path = Path(configured)
+        if cfg_path.exists():
+            existing.append(cfg_path)
+    if os.name == "nt":
+        unc = Path(r"\\BASERVER\ba-bim-std")
+        checked.append(str(unc))
+        if _baserver_reachable():
+            try:
+                if unc.exists():
+                    existing.append(unc)
+            except OSError as exc:
+                _LOG.debug("BA server share unavailable: %s", exc)
+    try:
+        local_aec = Path(__file__).resolve().parents[4] / "50.TOOLING" / "52.AEC-LIBRARIES"
+        checked.append(str(local_aec))
+        if local_aec.is_dir():
+            existing.append(local_aec)
+    except IndexError as exc:
+        _LOG.debug("Local AEC library path outside workspace tree: %s", exc)
+    return existing, checked
+
+
+def _read_csv_file(path: Path) -> list[dict]:
+    import csv
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            return [dict(row) for row in csv.DictReader(handle) if isinstance(row, dict)]
+    except (OSError, UnicodeError, csv.Error) as exc:
+        _LOG.debug("BA CSV unreadable (%s): %s", path, exc)
+        return []
+
+
+def _find_first_file(sources: list[Path], relative_candidates: tuple[str, ...]) -> Path | None:
+    for root in sources:
+        for rel in relative_candidates:
+            candidate = root / rel
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _read_published_ba_index(sources: list[Path]) -> list[dict]:
+    rel_paths = (
+        "52.03-BA-STANDARD/12.BABOOM-PUBLISH/02.REPO/library/v1/index.json",
+        "12.BABOOM-PUBLISH/02.REPO/library/v1/index.json",
+        "library/v1/index.json",
+    )
+    index_file = _find_first_file(sources, rel_paths)
+    if index_file is None:
+        return []
+    try:
+        payload = json.loads(index_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        _LOG.debug("BA published index unreadable (%s): %s", index_file, exc)
+        return []
+    items = payload.get("items") if isinstance(payload, Mapping) else payload
+    return [dict(item) for item in items if isinstance(item, Mapping)] if isinstance(items, list) else []
+
+
+def _filter_office_items(rows: list[dict], query: str) -> list[dict]:
+    if not query:
+        return rows
+    tokens = query.split()
+    matched = []
+    for row in rows:
+        haystack = " ".join(str(v) for v in row.values() if v is not None).casefold()
+        if all(tok in haystack for tok in tokens):
+            matched.append(row)
+    return matched
+
+
+def _unreachable_office(checked: list[str]):
+    reason = "Office library is not reachable (checked: %s)" % (", ".join(checked) if checked else "stdFolder")
+    return {"items": [], "out": [], "ok": False, "reason": reason}, reason
+
+
+def _family_rows_for_folder(sources: list[Path], folder_code: str, fallback_category: str, code_token: str) -> tuple[list[dict], bool]:
+    csv_path = _find_first_file(sources, (
+        "02-LIBRARIES/01-FAMILIES/BA-FAMILY-LIBRARY-INDEX.csv",
+        "BA-FAMILY-LIBRARY-INDEX.csv",
+        "52.02-BA-FAMILIES/BA-FAMILY-LIBRARY-INDEX.csv",
+        "52.02-BA-FAMILIES/02.SHARED/BA-FAMILY-LIBRARY-INDEX.csv",
+    ))
+    if csv_path is not None:
+        rows = []
+        for raw in _read_csv_file(csv_path):
+            if str(raw.get("folder") or "").strip().upper() != folder_code:
+                continue
+            rows.append({
+                "name": str(raw.get("family") or "").strip(),
+                "folder": str(raw.get("folder") or "").strip(),
+                "category": str(raw.get("revit_category") or fallback_category).strip(),
+                "types": str(raw.get("types") or "").strip(),
+                "uniclass": str(raw.get("uniclass_pr") or "").strip(),
+                "path": str(raw.get("path") or "").strip(),
+                "source": str(csv_path),
+            })
+        return rows, True
+    published = _read_published_ba_index(sources)
+    if published:
+        rows = []
+        for item in published:
+            if str(item.get("kind") or "") != "family":
+                continue
+            folder = str(item.get("folder") or "").strip().upper()
+            cat = str(item.get("category") or "").strip().casefold()
+            ident = str(item.get("name") or item.get("id") or "").upper()
+            if folder == folder_code or cat == fallback_category.casefold() or code_token in ident:
+                rows.append({
+                    "name": str(item.get("name") or item.get("id") or "").strip(),
+                    "folder": folder or folder_code,
+                    "category": str(item.get("category") or fallback_category).strip(),
+                    "path": str(item.get("path") or item.get("file") or "").strip(),
+                })
+        return rows, True
+    return [], False
+
+
+def office_library_doors(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Read BA door families from BA-FAMILY-LIBRARY-INDEX.csv (folder == 'DOR') or local BA standard index."""
+    query = str(feeds.get("search") if isinstance(feeds, Mapping) and feeds.get("search") is not None else (params.get("search") or "")).strip().casefold()
+    sources, checked = _ba_library_sources()
+    if not sources:
+        return _unreachable_office(checked)
+    rows, found = _family_rows_for_folder(sources, "DOR", "Doors", "-DOR-")
+    if not found:
+        return _unreachable_office(checked)
+    matched = _filter_office_items(rows, query)
+    return {"items": matched, "out": matched}, "%d door famil%s" % (len(matched), "y" if len(matched) == 1 else "ies")
+
+
+def office_library_windows(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Read BA window families from BA-FAMILY-LIBRARY-INDEX.csv (folder == 'WIN') or local BA standard index."""
+    query = str(feeds.get("search") if isinstance(feeds, Mapping) and feeds.get("search") is not None else (params.get("search") or "")).strip().casefold()
+    sources, checked = _ba_library_sources()
+    if not sources:
+        return _unreachable_office(checked)
+    rows, found = _family_rows_for_folder(sources, "WIN", "Windows", "-WIN-")
+    if not found:
+        return _unreachable_office(checked)
+    matched = _filter_office_items(rows, query)
+    return {"items": matched, "out": matched}, "%d window famil%s" % (len(matched), "y" if len(matched) == 1 else "ies")
+
+
+def office_library_wall_details(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Read BA wall and partition details from BA-DETAILS-LIBRARY/INDEX.csv."""
+    query = str(feeds.get("search") if isinstance(feeds, Mapping) and feeds.get("search") is not None else (params.get("search") or "")).strip().casefold()
+    sources, checked = _ba_library_sources()
+    if not sources:
+        return _unreachable_office(checked)
+    wall_words = ("wall", "partition", "parapet", "curtain", "masonry", "blockwork", "drywall", "cladding", "facade")
+    csv_path = _find_first_file(sources, (
+        "02-LIBRARIES/03-DETAILS/01-BA-DETAILS-LIBRARY/INDEX.csv",
+        "BA-DETAILS-LIBRARY/INDEX.csv",
+        "INDEX.csv",
+        "52.01-BA-DETAILS/02.SHARED/BA-DETAILS-LIBRARY/INDEX.csv",
+    ))
+    rows: list[dict] = []
+    found = False
+    if csv_path is not None:
+        found = True
+        for raw in _read_csv_file(csv_path):
+            code = str(raw.get("code") or "").strip()
+            section = str(raw.get("section") or "").strip()
+            folder = str(raw.get("folder") or "").strip()
+            title = str(raw.get("title") or "").strip()
+            blob = ("%s %s %s" % (section, folder, title)).casefold()
+            if any(word in blob for word in wall_words):
+                rows.append({
+                    "code": code,
+                    "title": title or code,
+                    "section": section,
+                    "folder": folder,
+                    "scale": str(raw.get("scale") or "").strip(),
+                    "source": str(csv_path),
+                })
+    else:
+        published = _read_published_ba_index(sources)
+        if published:
+            found = True
+            for item in published:
+                if str(item.get("kind") or "") != "detail":
+                    continue
+                blob = " ".join(str(item.get(k) or "") for k in ("name", "title", "category", "folder", "section")).casefold()
+                if any(word in blob for word in wall_words):
+                    rows.append({
+                        "code": str(item.get("id") or item.get("code") or "").strip(),
+                        "title": str(item.get("title") or item.get("name") or "").strip(),
+                        "folder": str(item.get("folder") or item.get("category") or "").strip(),
+                        "path": str(item.get("path") or item.get("file") or "").strip(),
+                    })
+    if not found:
+        return _unreachable_office(checked)
+    matched = _filter_office_items(rows, query)
+    return {"items": matched, "out": matched}, "%d wall detail(s)" % len(matched)
+
+
+def office_library_title_blocks(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Read BA title blocks from BA-FAMILY-LIBRARY-INDEX.csv ('00-STD-TTB'), 00-STD-TTB families, and template indices."""
+    query = str(feeds.get("search") if isinstance(feeds, Mapping) and feeds.get("search") is not None else (params.get("search") or "")).strip().casefold()
+    sources, checked = _ba_library_sources()
+    if not sources:
+        return _unreachable_office(checked)
+    seen: set[str] = set()
+    rows: list[dict] = []
+    found = False
+
+    def _add_row(entry: dict) -> None:
+        key = (str(entry.get("name") or "") + "|" + str(entry.get("path") or "")).casefold()
+        if key and key not in seen:
+            seen.add(key)
+            rows.append(entry)
+
+    csv_path = _find_first_file(sources, (
+        "02-LIBRARIES/01-FAMILIES/BA-FAMILY-LIBRARY-INDEX.csv",
+        "BA-FAMILY-LIBRARY-INDEX.csv",
+        "52.02-BA-FAMILIES/BA-FAMILY-LIBRARY-INDEX.csv",
+        "52.02-BA-FAMILIES/02.SHARED/BA-FAMILY-LIBRARY-INDEX.csv",
+    ))
+    if csv_path is not None:
+        found = True
+        for raw in _read_csv_file(csv_path):
+            folder = str(raw.get("folder") or "").strip().upper()
+            cat = str(raw.get("revit_category") or "").strip().casefold()
+            if folder == "00-STD-TTB" or "title block" in cat:
+                _add_row({
+                    "name": str(raw.get("family") or "").strip(),
+                    "folder": folder or "00-STD-TTB",
+                    "category": str(raw.get("revit_category") or "Title Blocks").strip(),
+                    "types": str(raw.get("types") or "").strip(),
+                    "path": str(raw.get("path") or "").strip(),
+                    "source": str(csv_path),
+                })
+    for root in sources:
+        for rel_dir in ("02-LIBRARIES/01-FAMILIES/00-STD-TTB", "00-STD-TTB"):
+            ttb_dir = root / rel_dir
+            if ttb_dir.is_dir():
+                found = True
+                for rfa in sorted(ttb_dir.glob("*.rf*")):
+                    if rfa.suffix.casefold() in (".rfa", ".rft"):
+                        _add_row({
+                            "name": rfa.stem,
+                            "folder": "00-STD-TTB",
+                            "category": "Title Blocks",
+                            "path": str(rfa),
+                            "source": str(ttb_dir),
+                        })
+        for rel_tpl in (
+            "01-TEMPLATES/02-REVIT/ASSETS-INDEX.csv",
+            "01-TEMPLATES/01-AUTOCAD/ASSETS-INDEX.csv",
+            "ASSETS-INDEX.csv",
+        ):
+            tpl_csv = root / rel_tpl
+            if tpl_csv.is_file():
+                found = True
+                for raw in _read_csv_file(tpl_csv):
+                    name = str(raw.get("name") or raw.get("file") or raw.get("asset") or raw.get("family") or "").strip()
+                    path_val = str(raw.get("path") or raw.get("relative_path") or raw.get("file") or "").strip()
+                    kind = str(raw.get("kind") or raw.get("type") or raw.get("category") or "Template").strip()
+                    if name or path_val:
+                        _add_row({
+                            "name": name or Path(path_val).stem,
+                            "folder": "01-TEMPLATES",
+                            "category": kind,
+                            "path": path_val,
+                            "source": str(tpl_csv),
+                        })
+    if not rows:
+        published = _read_published_ba_index(sources)
+        if published:
+            found = True
+            for item in published:
+                ident = str(item.get("name") or item.get("id") or "")
+                cat = str(item.get("category") or "").casefold()
+                kind = str(item.get("kind") or "").casefold()
+                if "-TTB-" in ident.upper() or "title" in cat or kind == "template":
+                    _add_row({
+                        "name": ident.strip(),
+                        "folder": "00-STD-TTB" if "-TTB-" in ident.upper() else "01-TEMPLATES",
+                        "category": str(item.get("category") or kind.capitalize() or "Title Blocks"),
+                        "path": str(item.get("path") or item.get("file") or "").strip(),
+                    })
+    if not found:
+        return _unreachable_office(checked)
+    matched = _filter_office_items(rows, query)
+    return {"items": matched, "out": matched}, "%d title block(s)" % len(matched)
+
+
+def settings_area_projects(_params: Mapping[str, object], _feeds: Mapping[str, object]):
+    """Live Settings > Projects area node."""
+    from .user_paths import state_directory
+    base = state_directory()
+    settings_file = base / "settings" / "settings.json"
+    workspaces_file = base / "settings" / "workspaces.json"
+    cfg: dict = {}
+    roots: list = []
+    if settings_file.is_file():
+        try:
+            loaded = json.loads(settings_file.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, dict):
+                cfg = loaded
+        except (OSError, ValueError) as exc:
+            _LOG.debug("Settings read skipped in settings.projects: %s", exc)
+    if workspaces_file.is_file():
+        try:
+            ws = json.loads(workspaces_file.read_text(encoding="utf-8-sig"))
+            if isinstance(ws, Mapping) and isinstance(ws.get("roots"), list):
+                roots = ws["roots"]
+        except (OSError, ValueError) as exc:
+            _LOG.debug("Workspaces read skipped in settings.projects: %s", exc)
+    standard = str(cfg.get("stdFolder") or cfg.get("projectStandard") or "BA BIM Standard")
+    folder = str((roots[0].get("path") if roots and isinstance(roots[0], Mapping) else "") or cfg.get("sessionsFolder") or "")
+    summary = {"standard": standard, "project_folder": folder, "workspaces": len(roots)}
+    return {"standard": standard, "project_folder": folder, "out": summary}, "Projects (%d workspace(s))" % len(roots)
+
+
+def settings_area_agents(_params: Mapping[str, object], _feeds: Mapping[str, object]):
+    """Live Settings > Agents area node."""
+    from .hook_decision import read_permissions
+    from .settings_owner import read_router_settings
+    from .user_paths import state_directory
+    perms = read_permissions(path=state_directory() / "settings" / "permissions.json")
+    try:
+        router = read_router_settings()
+        picked = str(router.get("default_model") or "")
+    except Exception as exc:  # noqa: BLE001
+        _LOG.debug("Router read skipped in settings.agents: %s", exc)
+        picked = ""
+    current = str(perms.get("runMode") or "")
+    policy = json.dumps({"runMode": current, "defaultModel": picked}, sort_keys=True)
+    return {"policy": policy, "out": {"runMode": current, "defaultModel": picked}}, "Agents (%s)" % (current or "ask")
+
+
+def settings_area_connections(_params: Mapping[str, object], _feeds: Mapping[str, object]):
+    """Live Settings > Connections area node."""
+    from .user_paths import state_directory
+    hosts_path = state_directory() / "settings" / "hosts.json"
+    disabled: list = []
+    if hosts_path.is_file():
+        try:
+            raw = json.loads(hosts_path.read_text(encoding="utf-8-sig"))
+            if isinstance(raw, Mapping) and isinstance(raw.get("disabled"), list):
+                disabled = [str(x) for x in raw["disabled"]]
+        except (OSError, ValueError) as exc:
+            _LOG.debug("Hosts settings read skipped: %s", exc)
+    try:
+        from . import custom_mcp
+        servers = [str(row.get("name") or row.get("id") or "") for row in custom_mcp.servers()]
+    except Exception as exc:  # noqa: BLE001
+        _LOG.debug("MCP servers read skipped: %s", exc)
+        servers = []
+    programs = ", ".join(p for p in ("Revit", "AutoCAD", "Excel", "Outlook", "3ds Max", "Rhino", "Blender")
+                         if p.casefold().replace(" ", "") not in {d.casefold() for d in disabled})
+    accounts = ", ".join(servers) if servers else "local profile"
+    return {"accounts": accounts, "programs": programs, "out": {"accounts": servers, "disabled": disabled}}, "Connections"
+
+
+def settings_area_account(_params: Mapping[str, object], _feeds: Mapping[str, object]):
+    """Live Settings > Account area node."""
+    from .user_paths import state_directory
+    settings_path = state_directory() / "settings" / "settings.json"
+    email = ""
+    if settings_path.is_file():
+        try:
+            data = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+            if isinstance(data, Mapping):
+                email = str(data.get("accountEmail") or data.get("email") or "").strip()
+        except (OSError, ValueError) as exc:
+            _LOG.debug("Account settings read skipped: %s", exc)
+    label = email or "Local profile (not signed in)"
+    return {"account": label, "out": {"account": label, "signedIn": bool(email)}}, label
+
+
+def settings_area_this_pc(_params: Mapping[str, object], _feeds: Mapping[str, object]):
+    """Live Settings > This PC area node."""
+    from .settings_owner import preference_settings
+    from .user_paths import state_directory
+    base = state_directory()
+    settings_path = base / "settings" / "settings.json"
+    app_cfg: dict = {}
+    if settings_path.is_file():
+        try:
+            loaded = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, dict):
+                app_cfg = loaded
+        except (OSError, ValueError) as exc:
+            _LOG.debug("This PC settings read skipped: %s", exc)
+    prefs = [row["id"] for row in preference_settings().get("appearanceSettings", ())]
+    profile = json.dumps({"stateDir": str(base), "preferences": len(prefs), "settings": app_cfg}, sort_keys=True, default=str)
+    return {"profile": profile, "out": {"stateDir": str(base), "preferences": prefs, **app_cfg}}, "This PC"
+
+
+def remote_tunnel_engine(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Remote tunnel trigger held strictly to the user's Settings policy."""
+    from .user_paths import state_directory
+    armed = bool(params.get("armed", False))
+    who = str(params.get("who_may_connect") or "Only me")
+    ends_after = str(params.get("ends_after") or "1 hour")
+    policy = str((feeds.get("policy") if isinstance(feeds, Mapping) else None) or params.get("policy") or "").strip()
+    if who not in ("Only me", "My office", "Anyone with the link"):
+        raise ValueError("who_may_connect must be Only me, My office, or Anyone with the link")
+    if ends_after not in ("15 minutes", "1 hour", "End of day"):
+        raise ValueError("ends_after must be 15 minutes, 1 hour, or End of day")
+    relay_file = state_directory() / "settings" / "tunnel.json"
+    connected: list[dict] = []
+    if armed and relay_file.is_file():
+        try:
+            held = json.loads(relay_file.read_text(encoding="utf-8-sig"))
+            if isinstance(held, Mapping) and isinstance(held.get("connected"), list):
+                connected = [dict(row) for row in held["connected"] if isinstance(row, Mapping)]
+        except (OSError, ValueError) as exc:
+            _LOG.debug("Tunnel state file unreadable: %s", exc)
+    state = {
+        "armed": armed,
+        "who_may_connect": who,
+        "ends_after": ends_after,
+        "policy": policy or who,
+        "connected": connected,
+    }
+    label = ("armed (%s, %s) · %d connected" % (who, ends_after, len(connected))) if armed else "disarmed"
+    return {"fire": state if armed else None, "connected": connected, "out": state}, label
+
+
+def model_json_engine(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Pure structured building model JSON builder (levels, walls, rooms, doors)."""
+    raw_levels = feeds.get("levels") if isinstance(feeds, Mapping) and feeds.get("levels") is not None else params.get("levels", 1)
+    try:
+        level_count = max(1, int(float(raw_levels)))
+    except (TypeError, ValueError):
+        raise ValueError("levels must be a positive integer") from None
+    brief_raw = (feeds.get("brief") if isinstance(feeds, Mapping) and feeds.get("brief") is not None else params.get("brief")) or ""
+    if isinstance(brief_raw, Mapping):
+        base = dict(brief_raw)
+    elif isinstance(brief_raw, str) and brief_raw.strip().startswith("{"):
+        try:
+            parsed = json.loads(brief_raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON brief: {exc.msg}") from exc
+        if not isinstance(parsed, Mapping):
+            raise ValueError("Invalid JSON brief: root must be a JSON object")
+        base = dict(parsed)
+    else:
+        base = {}
+    story_mm = 3600
+    levels = list(base.get("levels")) if isinstance(base.get("levels"), list) and base.get("levels") else [
+        {"id": "L%d" % (idx + 1), "name": "Level %d" % (idx + 1), "elevation": idx * story_mm, "height": story_mm}
+        for idx in range(level_count)
+    ]
+    walls = list(base.get("walls")) if isinstance(base.get("walls"), list) else []
+    rooms = list(base.get("rooms")) if isinstance(base.get("rooms"), list) else []
+    doors = list(base.get("doors")) if isinstance(base.get("doors"), list) else []
+    if isinstance(brief_raw, str) and brief_raw.strip() and not brief_raw.strip().startswith("{"):
+        first_level = str(levels[0].get("name") or "Level 1")
+        for idx, chunk in enumerate([part.strip() for part in brief_raw.replace("\n", ",").split(",") if part.strip()]):
+            rooms.append({"id": "R%d" % (idx + 1), "name": chunk, "number": "%03d" % (idx + 1), "level": first_level})
+    model = {"levels": levels, "walls": walls, "rooms": rooms, "doors": doors}
+    encoded = json.dumps(model, sort_keys=True)
+    return {"model": encoded, "out": model}, "%d level(s), %d room(s)" % (len(levels), len(rooms))
+
+
+def check_model_engine(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Validate every field of a building model JSON and suggest fixes by JSONPath."""
+    import difflib
+    stop_on_problems = bool(params.get("stop_on_problems", True))
+    raw_model = feeds.get("model") if isinstance(feeds, Mapping) and feeds.get("model") is not None else params.get("model", "")
+    problems: list[dict] = []
+    if isinstance(raw_model, Mapping):
+        data = dict(raw_model)
+    elif isinstance(raw_model, str) and raw_model.strip():
+        try:
+            parsed = json.loads(raw_model)
+        except json.JSONDecodeError as exc:
+            problems.append({"field": "$", "problem": "invalid JSON: %s" % exc.msg, "suggestion": "Provide valid Model JSON"})
+            data = {}
+        else:
+            if isinstance(parsed, Mapping):
+                data = dict(parsed)
+            else:
+                problems.append({"field": "$", "problem": "model root must be an object", "suggestion": "levels, walls, rooms, doors"})
+                data = {}
+    else:
+        data = {"levels": [], "walls": [], "rooms": [], "doors": []}
+
+    allowed_top = tuple(_MODEL_COLLECTION_FIELDS)
+    for key, value in data.items():
+        if key not in _MODEL_COLLECTION_FIELDS:
+            close = difflib.get_close_matches(str(key), allowed_top, n=1, cutoff=0.5)
+            problems.append({
+                "field": "$.%s" % key,
+                "problem": "unknown collection",
+                "suggestion": close[0] if close else "Use one of: " + ", ".join(allowed_top),
+            })
+            continue
+        if not isinstance(value, list):
+            problems.append({
+                "field": "$.%s" % key,
+                "problem": "must be a list",
+                "suggestion": "[]",
+            })
+            continue
+        allowed_fields = _MODEL_COLLECTION_FIELDS[key]
+        for idx, element in enumerate(value):
+            path_prefix = "$.%s[%d]" % (key, idx)
+            if not isinstance(element, Mapping):
+                problems.append({"field": path_prefix, "problem": "element must be an object", "suggestion": "{}"})
+                continue
+            for field_name, field_val in element.items():
+                if field_name not in allowed_fields:
+                    close = difflib.get_close_matches(str(field_name), allowed_fields, n=1, cutoff=0.5)
+                    problems.append({
+                        "field": "%s.%s" % (path_prefix, field_name),
+                        "problem": "unknown field",
+                        "suggestion": close[0] if close else allowed_fields[0],
+                    })
+                elif field_name in ("thickness", "width", "height", "area") and isinstance(field_val, (int, float)) and field_val <= 0:
+                    problems.append({
+                        "field": "%s.%s" % (path_prefix, field_name),
+                        "problem": "must be positive",
+                        "suggestion": "Set %s > 0" % field_name,
+                    })
+    passed = len(problems) == 0
+    ok_text = "true" if (passed or not stop_on_problems) else "false"
+    summary = "Model OK" if passed else "%d problem(s)" % len(problems)
+    return {"ok": ok_text, "problems": problems, "out": {"ok": passed, "problems": problems}}, summary
+
+
+def place_views_on_sheets_engine(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Pack wired views onto non-overlapping A0/A1/A3 sheet cells at the chosen scale."""
+    sheet_size = str(
+        (feeds.get("sheet_size") if isinstance(feeds, Mapping) and feeds.get("sheet_size") is not None else params.get("sheet_size"))
+        or "A1"
+    ).strip().upper()
+    if sheet_size not in _SHEET_SIZES_MM:
+        raise ValueError("sheet_size must be A0, A1, or A3")
+    scale_text = str(
+        (feeds.get("scale") if isinstance(feeds, Mapping) and feeds.get("scale") is not None else params.get("scale"))
+        or "1:100"
+    ).strip()
+    if ":" not in scale_text:
+        raise ValueError("scale must look like 1:50, 1:100, or 1:200")
+    try:
+        denom = max(1, int(scale_text.split(":", 1)[1]))
+    except ValueError:
+        raise ValueError("scale denominator must be an integer") from None
+
+    raw_views = feeds.get("views") if isinstance(feeds, Mapping) and isinstance(feeds.get("views"), list) else None
+    filter_spec = str(params.get("views") or "").strip()
+    if raw_views is None:
+        if isinstance(params.get("views"), list):
+            raw_views = list(params["views"])
+        else:
+            raw_views = []
+    limits = _WHOLE_DESIGN_LIMITS["params"]
+    sheet_w, sheet_h = _SHEET_SIZES_MM[sheet_size]
+    margin = int(limits["sheet_margin_mm"])
+    gap = int(limits["sheet_gap_mm"])
+    usable_w = max(100, sheet_w - 2 * margin)
+    usable_h = max(100, sheet_h - 2 * margin)
+
+    filter_tokens = [tok.strip().rstrip("s").casefold() for tok in filter_spec.split(",") if tok.strip()]
+    default_filter = filter_spec == "Plans, sections, schedules"
+    selected_views = []
+    for index, item in enumerate(raw_views):
+        if isinstance(item, Mapping):
+            name = str(item.get("name") or item.get("title") or item.get("id") or ("View %d" % (index + 1)))
+            kind = str(item.get("type") or item.get("view_type") or item.get("category") or "")
+            model_w = float(item.get("width_mm") or limits["default_view_w_mm"])
+            model_h = float(item.get("height_mm") or limits["default_view_h_mm"])
+        else:
+            name = str(item)
+            kind = ""
+            model_w = float(limits["default_view_w_mm"])
+            model_h = float(limits["default_view_h_mm"])
+        if not default_filter and filter_tokens:
+            blob = ("%s %s" % (name, kind)).casefold()
+            if not any(tok in blob for tok in filter_tokens):
+                continue
+        paper_w = min(usable_w, max(40.0, round(model_w / denom, 1)))
+        paper_h = min(usable_h, max(30.0, round(model_h / denom, 1)))
+        selected_views.append({"name": name, "width_mm": paper_w, "height_mm": paper_h})
+
+    sheets: list[dict] = []
+    cur_placements: list[dict] = []
+    cursor_x, cursor_y, row_h = float(margin), float(margin), 0.0
+    for view in selected_views:
+        vw, vh = view["width_mm"], view["height_mm"]
+        if cur_placements and cursor_x + vw > sheet_w - margin:
+            cursor_x = float(margin)
+            cursor_y += row_h + gap
+            row_h = 0.0
+        if cur_placements and cursor_y + vh > sheet_h - margin:
+            sheets.append({
+                "number": "A-%03d" % (len(sheets) + 1),
+                "sheet_size": sheet_size,
+                "scale": scale_text,
+                "views": cur_placements,
+            })
+            cur_placements = []
+            cursor_x, cursor_y, row_h = float(margin), float(margin), 0.0
+        cur_placements.append({
+            "view": view["name"],
+            "x_mm": round(cursor_x, 1),
+            "y_mm": round(cursor_y, 1),
+            "width_mm": vw,
+            "height_mm": vh,
+        })
+        cursor_x += vw + gap
+        row_h = max(row_h, vh)
+    if cur_placements:
+        sheets.append({
+            "number": "A-%03d" % (len(sheets) + 1),
+            "sheet_size": sheet_size,
+            "scale": scale_text,
+            "views": cur_placements,
+        })
+    return {"sheets": sheets, "out": sheets}, "%d sheet(s) packed (%s, %s)" % (len(sheets), sheet_size, scale_text)
+
+
+from .host_brokers import (  # noqa: E402
+    blender_render_scene,
+    max_render_view,
+    rhino_bake_geometry,
+)
+
+LIBRARY_ENGINES["max.render_view"] = max_render_view
+LIBRARY_ENGINES["rhino.bake_geometry"] = rhino_bake_geometry
+LIBRARY_ENGINES["blender.render_scene"] = blender_render_scene
+ENGINE_SOCKETS["max.render_view"] = {"source": ("image", "out"), "target": ("task", "Camera", "Quality")}
+ENGINE_SOCKETS["rhino.bake_geometry"] = {"source": ("out",), "target": ("geometry", "Layer", "grant", "in")}
+ENGINE_SOCKETS["blender.render_scene"] = {"source": ("image", "out"), "target": ("task", "Samples")}
+
+LIBRARY_ITEM_ENGINES["max_render_view"] = {
+    "engine": "max.render_view",
+    "program": "3ds Max",
+    "params": {"Camera": "Camera01", "Quality": "Draft"},
+    "paramDefs": [
+        {"id": "Camera", "name": "Camera", "type": "text"},
+        {"id": "Quality", "name": "Quality", "type": "choice", "options": ["Draft", "Final"]},
+    ],
+    "ports": {
+        "target": [{"id": "task", "type": "event"}],
+        "source": [{"id": "image", "type": "file"}],
+    },
+}
+LIBRARY_ITEM_ENGINES["rhino_bake_geometry"] = {
+    "engine": "rhino.bake_geometry",
+    "program": "Rhino",
+    "approvalRequired": True,
+    "effect": True,
+    "params": {"Layer": "ArchHub"},
+    "paramDefs": [{"id": "Layer", "name": "Layer", "type": "text"}],
+    "ports": {
+        "target": [{"id": "geometry", "type": "elements", "cardinality": "many"}],
+        "source": [{"id": "out", "type": "elements", "cardinality": "many"}],
+    },
+}
+LIBRARY_ITEM_ENGINES["blender_render_scene"] = {
+    "engine": "blender.render_scene",
+    "program": "Blender",
+    "params": {"Samples": int(_WHOLE_DESIGN_LIMITS["params"]["default_render_samples"])},
+    "paramDefs": [{
+        "id": "Samples",
+        "name": "Samples",
+        "type": "integer",
+        "min": int(_WHOLE_DESIGN_LIMITS["params"]["min_render_samples"]),
+        "max": int(_WHOLE_DESIGN_LIMITS["params"]["max_render_samples"]),
+        "step": int(_WHOLE_DESIGN_LIMITS["params"]["render_sample_step"]),
+    }],
+    "ports": {
+        "target": [{"id": "task", "type": "event"}],
+        "source": [{"id": "image", "type": "file"}],
+    },
+}
+
+LIBRARY_ENGINES["office_library.doors"] = office_library_doors
+LIBRARY_ENGINES["office_library.windows"] = office_library_windows
+LIBRARY_ENGINES["office_library.wall_details"] = office_library_wall_details
+LIBRARY_ENGINES["office_library.title_blocks"] = office_library_title_blocks
+ENGINE_SOCKETS["office_library.doors"] = {"source": ("items", "out"), "target": ("search",)}
+ENGINE_SOCKETS["office_library.windows"] = {"source": ("items", "out"), "target": ("search",)}
+ENGINE_SOCKETS["office_library.wall_details"] = {"source": ("items", "out"), "target": ("search",)}
+ENGINE_SOCKETS["office_library.title_blocks"] = {"source": ("items", "out"), "target": ("search",)}
+_OFFICE_PORTS = {
+    "target": [{"id": "search", "type": "string"}],
+    "source": [{"id": "items", "type": "list"}],
+}
+_OFFICE_PARAM_DEFS = [{"id": "search", "name": "Search", "type": "text"}]
+LIBRARY_ITEM_ENGINES["office_door_families"] = {
+    "engine": "office_library.doors",
+    "params": {"search": ""},
+    "paramDefs": [dict(d) for d in _OFFICE_PARAM_DEFS],
+    "ports": copy.deepcopy(_OFFICE_PORTS),
+}
+LIBRARY_ITEM_ENGINES["office_window_families"] = {
+    "engine": "office_library.windows",
+    "params": {"search": ""},
+    "paramDefs": [dict(d) for d in _OFFICE_PARAM_DEFS],
+    "ports": copy.deepcopy(_OFFICE_PORTS),
+}
+LIBRARY_ITEM_ENGINES["office_wall_details"] = {
+    "engine": "office_library.wall_details",
+    "params": {"search": ""},
+    "paramDefs": [dict(d) for d in _OFFICE_PARAM_DEFS],
+    "ports": copy.deepcopy(_OFFICE_PORTS),
+}
+LIBRARY_ITEM_ENGINES["office_title_blocks"] = {
+    "engine": "office_library.title_blocks",
+    "params": {"search": ""},
+    "paramDefs": [dict(d) for d in _OFFICE_PARAM_DEFS],
+    "ports": copy.deepcopy(_OFFICE_PORTS),
+}
+
+for _settings_id, _settings_engine, _settings_fn, _settings_sources in (
+    ("settings_projects", "settings.projects", settings_area_projects,
+     [{"id": "standard", "type": "string"}, {"id": "project_folder", "type": "folder"}]),
+    ("settings_agents", "settings.agents", settings_area_agents,
+     [{"id": "policy", "type": "string"}]),
+    ("settings_connections", "settings.connections", settings_area_connections,
+     [{"id": "accounts", "type": "string"}, {"id": "programs", "type": "string"}]),
+    ("settings_account", "settings.account", settings_area_account,
+     [{"id": "account", "type": "string"}]),
+    ("settings_this_pc", "settings.this_pc", settings_area_this_pc,
+     [{"id": "profile", "type": "string"}]),
+):
+    LIBRARY_ENGINES[_settings_engine] = _settings_fn
+    ENGINE_SOCKETS[_settings_engine] = {
+        "source": (*tuple(p["id"] for p in _settings_sources), "out"),
+        "target": (),
+    }
+    LIBRARY_ITEM_ENGINES[_settings_id] = {
+        "engine": _settings_engine,
+        "params": {},
+        "ports": {"target": [], "source": list(_settings_sources)},
+    }
+
+LIBRARY_ENGINES["remote.tunnel"] = remote_tunnel_engine
+LIBRARY_ENGINES["model.json"] = model_json_engine
+LIBRARY_ENGINES["model.check"] = check_model_engine
+LIBRARY_ENGINES["sheets.place_views"] = place_views_on_sheets_engine
+ENGINE_SOCKETS["remote.tunnel"] = {"source": ("fire", "connected", "out"), "target": ("policy", "armed", "who_may_connect", "ends_after")}
+ENGINE_SOCKETS["model.json"] = {"source": ("model", "out"), "target": ("brief", "levels")}
+ENGINE_SOCKETS["model.check"] = {"source": ("ok", "problems", "out"), "target": ("model", "stop_on_problems")}
+ENGINE_SOCKETS["sheets.place_views"] = {"source": ("sheets", "out"), "target": ("views", "sheet_size", "scale")}
+
+
+def _register_pure_thing_engines() -> None:
+    """Expose pure catalogue/model/settings readers to canvas_documents.THING_ENGINES so solve() runs them purely."""
+    from .canvas_documents import THING_ENGINES
+    pure_specs = (
+        ("office_library.doors", office_library_doors, [{"id": "search", "type": "string"}], [{"id": "items", "type": "list"}]),
+        ("office_library.windows", office_library_windows, [{"id": "search", "type": "string"}], [{"id": "items", "type": "list"}]),
+        ("office_library.wall_details", office_library_wall_details, [{"id": "search", "type": "string"}], [{"id": "items", "type": "list"}]),
+        ("office_library.title_blocks", office_library_title_blocks, [{"id": "search", "type": "string"}], [{"id": "items", "type": "list"}]),
+        ("settings.projects", settings_area_projects, [], [{"id": "standard", "type": "string"}, {"id": "project_folder", "type": "folder"}]),
+        ("settings.agents", settings_area_agents, [], [{"id": "policy", "type": "string"}]),
+        ("settings.connections", settings_area_connections, [], [{"id": "accounts", "type": "string"}, {"id": "programs", "type": "string"}]),
+        ("settings.account", settings_area_account, [], [{"id": "account", "type": "string"}]),
+        ("settings.this_pc", settings_area_this_pc, [], [{"id": "profile", "type": "string"}]),
+        ("model.json", model_json_engine, [{"id": "brief", "type": "string"}], [{"id": "model", "type": "string"}]),
+        ("model.check", check_model_engine, [{"id": "model", "type": "string"}], [{"id": "ok", "type": "string"}, {"id": "problems", "type": "list"}]),
+    )
+    for eng_name, fn, inputs, outputs in pure_specs:
+        THING_ENGINES[eng_name] = {"pure": True, "run": fn, "in": inputs, "out": outputs}
+
+
+_register_pure_thing_engines()
 _type_seed_params()
 _SEED_ITEM_IDS = frozenset(LIBRARY_ITEM_ENGINES)

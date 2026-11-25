@@ -106,6 +106,23 @@ def baboom_sprite_source(
     )
 
 
+def bbm_state(
+    *,
+    needs: int = 0,
+    running: bool = False,
+    dnd: bool = False,
+    moments: bool = True,
+) -> str:
+    """Canonical companion pose selector matching app.js:1124."""
+    if dnd or not moments:
+        return "idle"
+    if needs > 0:
+        return "ponder"
+    if running:
+        return "cast"
+    return "idle"
+
+
 @dataclass(frozen=True, slots=True)
 class BaboomNativeVisualFrame:
     """One render-only frame derived from one immutable graph snapshot."""
@@ -123,6 +140,10 @@ class BaboomNativeVisualFrame:
     # The staff orb inside the sprite (already scaled), and what lights it.
     orb: tuple[int, int] | None = None
     brain_state: str = "unknown"
+    facing_left: bool = False
+    peek: bool = False
+    step_progress: float | None = None
+    step_label: str = ""
 
 
 def project_baboom_native_visual_frame(
@@ -228,5 +249,6 @@ __all__ = [
     "BaboomNativeVisualFrame",
     "baboom_compact_message_size",
     "baboom_sprite_source",
+    "bbm_state",
     "project_baboom_native_visual_frame",
 ]

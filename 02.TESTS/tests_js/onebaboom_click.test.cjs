@@ -24,15 +24,15 @@ test('the click that opens BABOOM points the composer at him; the click that clo
     'server=NoGraphServer(os.environ["ARCHHUB_TEST_STATE_DIR"], port=0).start()',
     'print(json.dumps({"url":server.public_url,"bootstrap":server.browser_bootstrap_token,"companionBridge":COMPANION_BRIDGE}),flush=True)',
     'try: sys.stdin.read()',
-    'finally: server.close()',
+    'finally: server.close(); os._exit(0)',
   ].join('\n');
   const owner=spawn(python,['-B','-c',code],{cwd:app,env,windowsHide:true});
-  const exited=new Promise(resolve=>owner.once('close',resolve));
+  const exited=new Promise(resolve=>owner.once('exit',resolve));
   let browser;
   t.after(async()=>{
     await browser?.close();
     owner.stdin.end();
-    await exited;
+    await Promise.race([exited, new Promise(resolve => setTimeout(() => { owner.kill(); resolve(); }, 2000))]);
   });
   const server=await new Promise((resolve,reject)=>{
     let output='',errors='';
@@ -54,6 +54,9 @@ test('the click that opens BABOOM points the composer at him; the click that clo
   page.on('pageerror',error=>problems.push(error.message));
   await page.route('**/*',route=>new URL(route.request().url()).origin===server.url?
     route.continue():route.abort());
+  await page.route('**/api/universal/desktop-access', route => route.fulfill({
+    json: {ok: true, admitted: true, state: 'admitted', subject: 'studio-test', email: 'studio@example.test'}
+  }));
   // Supply a recipient without contacting a live external agent.
   await page.addInitScript(()=>{
     let api;
@@ -140,6 +143,7 @@ test('the click that opens BABOOM points the composer at him; the click that clo
   await starts('tell codex: ');
   assert.equal(await panel.count(),1,'words to start from never close his panel');
   await panel.getByRole('button',{name:'Close BABOOM'}).click();
+
   // Seed replies in the two actual session files, without calling a model.
   let selectedId;
   for(const title of ['Door review','Level review']){
@@ -166,6 +170,7 @@ test('the click that opens BABOOM points the composer at him; the click that clo
   await scope.click();
   await panel.getByText('Level review reply',{exact:true}).waitFor();
   await panel.getByRole('button',{name:'Close BABOOM'}).click();
+
   // The badge follows task changes even while Home is unmounted and its list cannot trigger a repaint.
   await page.locator('.app-rail button[aria-label="Settings"]').click();
   await page.locator('.settings-sheet').waitFor();

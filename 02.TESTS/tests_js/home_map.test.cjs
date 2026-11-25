@@ -338,7 +338,7 @@ print(json.dumps(SessionFiles().dispatch(json.load(sys.stdin))))
       show:(kind,props)=>root.render(React.createElement(window.UI.ContextMenu,{...props,kind,close:u.close}))};
     window.AHIcon=()=>null;
     window.UI={api:{...window.ArchHubAPI,duplicateHomeTask:window.duplicateFixture},
-      useData:()=>s,useApp:()=>u,useAction:()=>null,ActionStatus:()=>null,
+      useData:()=>s,useApp:()=>u,useAction:()=>null,ActionStatus:()=>null,productLabel:label=>label,
       bindActions:(names,handlers)=>(id,...args)=>handlers[names[id]](...args)};
     window.ArchHubCommandRegistry={commands:[{id:'menu.home.duplicate',contexts:['session'],label:'Duplicate'}]};
     document.addEventListener('contextmenu',event=>window.UI.openSurfaceMenu(event,s,u));
@@ -524,4 +524,480 @@ test('Home card with historical session members renders strictly live member ava
   for (const inner of avatarSubstrings) {
     assert.equal(inner.includes('<small>'), false, 'agent-avatar contains no <small> index tag');
   }
+});
+
+test('interrupted task with zero live members and one departed member shows zero avatars and Previously only in History', () => {
+  const React = require('react');
+  const {renderToStaticMarkup} = require('react-dom/server');
+  const uiContext = vm.createContext({
+    React,
+    window: {
+      executeAction() {},
+      registerActions() {},
+      ArchHubAPI: {subscribe: () => () => {}, getSnapshot: () => ({agents: [], providers: [], agentGraph: {sessions: []}, tasks: []})},
+      AH: {userAv: '#888', accent: '#3b82f6', blue: '#2563eb', purple: '#8b5cf6', ok: '#10b981', warn: '#f59e0b', cyan: '#06b6d4'},
+      AH_DS: {Avatar: ({agent, size}) => React.createElement('span', {className: 'ds-avatar', 'data-size': size}, agent.ini)},
+      AHIcon: ({name, size}) => React.createElement('svg', {'data-icon': name, width: size, height: size}),
+      UI: {}
+    },
+    console
+  });
+  vm.runInContext(transformSync(fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/ui.jsx'), 'utf8'), {loader: 'jsx'}).code, uiContext);
+  const Av = uiContext.window.UI.Av;
+
+  const departedTask = task('dep-work', {
+    status: 'WIP',
+    outcome: 'interrupted',
+    stale: false,
+    members: [{id: 'dep-1', name: 'Claude Code / Tower / session-deadbeef', live: false, left: 1700000000}]
+  });
+  const departedSession = session('dep-work', 'Interrupted Tower Work', 'Tower', {task: departedTask.id});
+  const rows = homeRows({workspaces: [{id: 'Tower', name: 'Tower'}], tasks: [departedTask], graphs: [], approvals: [], agentGraph: {sessions: []}}, {});
+
+  const renderCardHeader = node => renderToStaticMarkup(
+    React.createElement('header', {className: 'home-card-head'},
+      node.agent ? React.createElement(Av, {id: node.agent, size: 28})
+        : React.createElement('span', {className: 'home-card-noagent'}, React.createElement(uiContext.window.AHIcon, {name: 'users', size: 13})),
+      React.createElement('div', null,
+        React.createElement('b', null, node.title),
+        React.createElement('small', null, node.agent || node.pastAgent || 'No agent yet')
+      ),
+      node.members?.length > 0 ? React.createElement('span', {className: 'home-card-members'},
+        node.members.slice(0, 3).map(name => React.createElement(Av, {key: name, id: name, size: 18}))
+      ) : null,
+      React.createElement('span', {className: 'home-card-state', 'data-state': node.state}, node.state)
+    )
+  );
+
+  // Default Home (history: false)
+  const activeChart = homeMap({
+    listed: {groups: [{sessions: [departedSession]}]},
+    rows,
+    params: DEFAULT,
+    hidden: [],
+    titleOf: r => r.title,
+    history: false
+  });
+  const activeNode = at(activeChart, 'dep-work');
+  assert.ok(activeNode, 'interrupted task appears on default Home');
+  assert.equal(activeNode.need?.text, 'Interrupted · waiting for an agent');
+  assert.equal(activeNode.agent, '');
+  assert.equal(activeNode.pastAgent, '');
+  assert.deepEqual(activeNode.members, []);
+  const activeHtml = renderCardHeader(activeNode);
+  assert.equal((activeHtml.match(/class="agent-avatar"/g) || []).length, 0, 'zero agent avatars on default Home');
+  assert.ok(activeHtml.includes('class="home-card-noagent"'), 'renders home-card-noagent fallback icon');
+  assert.ok(activeHtml.includes('<small>No agent yet</small>'));
+
+  // History view (history: true)
+  const historyChart = homeMap({
+    listed: {groups: [{sessions: [departedSession]}]},
+    rows,
+    params: DEFAULT,
+    hidden: [],
+    titleOf: r => r.title,
+    history: true
+  });
+  const historyNode = at(historyChart, 'dep-work');
+  assert.ok(historyNode, 'interrupted task appears in History');
+  assert.equal(historyNode.agent, '');
+  assert.equal(historyNode.pastAgent, 'Previously: Claude Code · Tower');
+  assert.deepEqual(historyNode.members, []);
+  const historyHtml = renderCardHeader(historyNode);
+  assert.equal((historyHtml.match(/class="agent-avatar"/g) || []).length, 0, 'still zero agent avatars in History');
+  assert.ok(historyHtml.includes('class="home-card-noagent"'));
+  assert.ok(historyHtml.includes('<small>Previously: Claude Code · Tower</small>'));
+});
+
+test('dockModel.setCmd and settings_owner.dock_layout persist, clamp and reset composer cmd coordinates', () => {
+  const {execFileSync} = require('node:child_process');
+  const root = path.resolve(__dirname, '../..');
+  const dockContext = vm.createContext({window: {UI: {}}});
+  vm.runInContext(transformSync(fs.readFileSync(path.join(root, '01.APP/nodelang/studio/dock.jsx'), 'utf8'), {loader: 'jsx'}).code, dockContext);
+  const dm = dockContext.window.UI.dockModel;
+
+  const base = dm.defaultLayout(1440);
+  assert.equal(dm.presetName(base), 'Build');
+  assert.equal(base.cmd, undefined);
+
+  const moved = dm.setCmd(base, {x: 1.4, y: -0.25});
+  assert.deepEqual(plain(moved.cmd), {x: 1, y: 0}, 'setCmd clamps out-of-range coordinates to [0, 1]');
+  assert.equal(dm.presetName(moved), 'Build (changed)');
+
+  const normalized = dm.normalize({...base, cmd: {x: 0.35, y: 0.72}}, 1440);
+  assert.deepEqual(plain(normalized.cmd), {x: 0.35, y: 0.72});
+  assert.equal(dm.presetName(normalized), 'Build (changed)');
+
+  const reset = dm.setCmd(normalized, null);
+  assert.equal('cmd' in reset, false);
+  assert.equal(dm.presetName(reset), 'Build');
+
+  const py = process.env.ARCHHUB_TEST_PYTHON || process.env.ARCHHUB_COURT_PYTHON || 'python';
+  const pyCheck = JSON.parse(execFileSync(py, ['-c', `
+import json, threading
+from nodelang.settings_owner import dock_layout
+
+class MemSettings:
+    lock = threading.RLock()
+    def __init__(self): self.data = {}
+    def read(self): return json.loads(json.dumps(self.data))
+    def update(self, patch): self.data.update(patch)
+
+mem = MemSettings()
+layout = json.loads(${JSON.stringify(JSON.stringify(normalized))})
+saved = dock_layout('setDockLayout', [layout], settings=mem)['dockLayout']['layout']
+cleared = dock_layout('setDockLayout', [{**layout, 'cmd': None}], settings=mem)['dockLayout']['layout']
+rejected = []
+for bad_cmd in ({'x': -0.1, 'y': 0.5}, {'x': 0.5, 'y': 1.1}, {'x': True, 'y': 0.5}, {'x': 0.5}, 'bad'):
+    try:
+        dock_layout('setDockLayout', [{**layout, 'cmd': bad_cmd}], settings=mem)
+    except ValueError:
+        rejected.append(True)
+print(json.dumps({'savedCmd': saved.get('cmd'), 'clearedHasCmd': 'cmd' in cleared, 'rejected': len(rejected)}))
+`], {cwd: root, env: {...process.env, PYTHONPATH: path.join(root, '01.APP'), PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8'}));
+  assert.deepEqual(pyCheck, {savedCmd: {x: 0.35, y: 0.72}, clearedHasCmd: false, rejected: 5});
+});
+
+test('AG-18: dragging .dgrip moves .v22g-composer-dock clamped to stage, persists cmd, and double-click resets to fixed Build', async t => {
+  const {chromium} = require('playwright');
+  const root = path.resolve(__dirname, '../..');
+  const studio = path.join(root, '01.APP/nodelang/studio');
+  const browser = await chromium.launch({headless: true, channel: process.platform === 'win32' ? 'chrome' : undefined, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || process.env.ARCHHUB_TEST_CHROMIUM});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+  const pageErrors = [];
+  page.on('pageerror', e => pageErrors.push(e.message));
+  await page.route('https://dgrip.test/**', route => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><html><body style="margin:0;height:100vh"><div id="root" style="height:100vh;display:grid"></div></body></html>'
+  }));
+  await page.goto('https://dgrip.test/');
+  await page.addStyleTag({path: path.join(studio, 'style.css')});
+  for (const rel of ['vendor/react.js', 'vendor/react-dom.js']) {
+    await page.addScriptTag({path: path.join(studio, rel)});
+  }
+  await page.evaluate(() => {
+    const listeners = new Set();
+    let snap = {
+      tasks: [{id: 't1', title: 'Permit Set', status: 'WIP', sessionPath: 'C:/s/permit.archhub', sessionOpen: true, workflow: [], plan: [], activity: []}],
+      graphs: [],
+      approvals: [],
+      workspaces: [],
+      hosts: [],
+      providers: [],
+      agents: [],
+      liveAgents: [],
+      agentGraph: {sessions: []},
+      schedules: [],
+      composerAttachments: [],
+      settings: [{id: 'Appearance.Inspector width', value: 320, overridden: true}],
+      homeLayout: {width: 300, collapsed: false, resume: 't1', order: [], hidden: []},
+      dockLayout: {layout: null},
+      graph: {id: 'g1', name: 'Permit Set', nodes: [], wires: []},
+      profile: {name: 'You'}
+    };
+    window.__savedDockLayouts = [];
+    const publish = patch => { snap = {...snap, ...patch}; listeners.forEach(fn => fn()); };
+    window.executeAction = (id, a, b) => id === 'ui.select' ? a() : (a?.handler ? a.handler(b) : undefined);
+    window.registerActions = () => {};
+    window.ArchHubAPI = {
+      executeAction: window.executeAction,
+      subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); },
+      getSnapshot: () => snap,
+      sameSessionPath: (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase(),
+      sessionPathKey: p => String(p || '').toLowerCase(),
+      getSessionPath: () => 'C:/s/permit.archhub',
+      readSessionModel: async () => null,
+      sessionInputLinks: async () => [],
+      setInspectorWidth: async () => ({ok: true}),
+      setDockLayout: async layout => {
+        window.__savedDockLayouts.push(layout);
+        publish({dockLayout: {layout}});
+        return {ok: true, dockLayout: {layout}};
+      }
+    };
+    const appState = {
+      route: 'task-file',
+      task: 't1',
+      taskFace: 'canvas',
+      libraryOpen: true,
+      setLibraryOpen: v => { appState.libraryOpen = v; },
+      canvasTabs: {tabs: [{id: 't1', kept: true}], active: 't1', split: ''},
+      composerDraft: {},
+      setComposerDraft: () => {},
+      homeInspector: null,
+      setHomeInspector: () => {},
+      setSelectedNodeId: () => {},
+      setToast: () => {},
+      act: fn => fn(),
+      show: () => {},
+      go: () => {},
+      openTaskFile: async () => ({ok: true})
+    };
+    window.AHIcon = ({name, size}) => window.React.createElement('svg', {'data-icon': name, width: size, height: size});
+    window.UI = {
+      api: window.ArchHubAPI,
+      useData: () => window.React.useSyncExternalStore(window.ArchHubAPI.subscribe, window.ArchHubAPI.getSnapshot),
+      useApp: () => appState,
+      Btn: ({children, p, sm, ghost, ...rest}) => window.React.createElement('button', {type: 'button', ...rest}, children),
+      Av: () => null,
+      LibraryShelf: () => window.React.createElement('div', null, 'Library'),
+      Canvas: () => window.React.createElement('div', {style: {width: '100%', height: '100%'}}, 'Canvas stage'),
+      GraphProperties: () => null,
+      NodeInspector: () => null,
+      WireInspector: () => null,
+      ResultPreview: () => null,
+      ApprovalCard: () => null,
+      ValueWidget: () => null,
+      TaskComposer: ({docked}) => window.React.createElement('form', {className: 'dx-composer v22g-composer v48-composer', 'data-design': 'composer.surface'},
+        window.React.createElement('textarea', {'aria-label': 'Message', defaultValue: docked ? '' : ''})),
+      threadChoices: () => [],
+      sessionAll: () => ({key: 'session', handle: 'session', name: 'All agents', handles: []}),
+      threadDefault: () => 'session',
+      taskRowReason: () => ''
+    };
+  });
+  for (const rel of ['dock.jsx', 'ds_home2.jsx']) {
+    await page.addScriptTag({content: transformSync(fs.readFileSync(path.join(studio, rel), 'utf8'), {loader: 'jsx'}).code});
+  }
+  await page.evaluate(() => {
+    window.ReactDOM.createRoot(document.getElementById('root')).render(window.React.createElement(window.UI.Home, {fileWorkspace: true}));
+  });
+
+  const dock = page.locator('.v22g-composer-dock');
+  const grip = dock.locator('.dgrip');
+  await grip.waitFor({state: 'visible'});
+  assert.equal(await dock.evaluate(el => window.getComputedStyle(el).position), 'fixed');
+  assert.equal(await page.locator('[data-design="toolbar.layout"]').getAttribute('aria-label'), 'Layout: Build');
+
+  // Drag .dgrip toward top-left extreme (-2000, -2000) to verify both movement and [8, W-w-8] x [8, H-h-8] clamping
+  await grip.dragTo(page.locator('.v22g-views-frame'), {targetPosition: {x: 2, y: 2}, force: true});
+
+  await page.waitForFunction(() => window.__savedDockLayouts.length >= 1);
+  const afterDrag = await page.evaluate(() => {
+    const el = document.querySelector('.v22g-composer-dock');
+    const stage = document.querySelector('.v22g-views-frame');
+    const er = el.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    return {
+      movedClass: el.classList.contains('moved'),
+      pos: window.getComputedStyle(el).position,
+      relLeft: Math.round(er.left - sr.left),
+      relTop: Math.round(er.top - sr.top),
+      saved: window.__savedDockLayouts.at(-1)?.cmd,
+      layoutLabel: document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label')
+    };
+  });
+  assert.equal(afterDrag.movedClass, true);
+  assert.equal(afterDrag.pos, 'absolute');
+  assert.equal(afterDrag.relLeft, 8, 'clamped to 8px left margin of .v22g-views-frame');
+  assert.equal(afterDrag.relTop, 8, 'clamped to 8px top margin of .v22g-views-frame');
+  assert.ok(afterDrag.saved && afterDrag.saved.x >= 0 && afterDrag.saved.x <= 1 && afterDrag.saved.y >= 0 && afterDrag.saved.y <= 1);
+  assert.equal(afterDrag.layoutLabel, 'Layout: Build (changed)');
+
+  // Double-click .dgrip resets cmd back to default docked fixed position and Layout: Build
+  await grip.dblclick();
+  await page.waitForFunction(() => window.__savedDockLayouts.length >= 2 && !window.__savedDockLayouts.at(-1)?.cmd);
+  const afterReset = await page.evaluate(() => {
+    const el = document.querySelector('.v22g-composer-dock');
+    return {
+      movedClass: el.classList.contains('moved'),
+      pos: window.getComputedStyle(el).position,
+      layoutLabel: document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label')
+    };
+  });
+  assert.equal(afterReset.movedClass, false);
+  assert.equal(afterReset.pos, 'fixed');
+  assert.equal(afterReset.layoutLabel, 'Layout: Build');
+  assert.deepEqual(pageErrors, []);
+});
+
+test('PLANNED canvas task with three non-live historical members shows zero avatars, offers Continue on Home, and shows Previously +2 in History', async t => {
+  const {chromium} = require('playwright');
+  const root = path.resolve(__dirname, '../..');
+  const studio = path.join(root, '01.APP/nodelang/studio');
+
+  const plannedRow = task('installed-gaps', {
+    title: 'Installed gaps: grouping, Rerun/Fork, History, fast boot',
+    owner: null,
+    lease_until: null,
+    status: 'PLANNED',
+    outcome: '',
+    rowState: '',
+    stale: false,
+    sessionPath: 'C:/workspace/sessions/installed-gaps.archhub',
+    workspace: 'Studio',
+    members: [
+      {id: 'm-ag', name: 'Antigravity / Studio / session-111111', live: false, lease_until: null},
+      {id: 'm-cx', name: 'Codex / Studio / session-222222', live: false, lease_until: null},
+      {id: 'm-cc', name: 'Claude Code / Studio / session-333333', live: false, left: true}
+    ]
+  });
+  const canvasSession = session('installed-gaps', plannedRow.title, 'Studio', {
+    path: plannedRow.sessionPath,
+    task: plannedRow.id,
+    members: plannedRow.members
+  });
+  const rows = homeRows({
+    workspaces: [{id: 'Studio', name: 'Studio'}],
+    tasks: [plannedRow],
+    graphs: [],
+    approvals: [],
+    agentGraph: {sessions: []}
+  }, {});
+
+  // 1. Default Home (history: false)
+  const homeChart = homeMap({
+    listed: {groups: [{sessions: [canvasSession]}]},
+    rows,
+    params: DEFAULT,
+    hidden: [],
+    titleOf: r => r.title,
+    history: false
+  });
+  const homeCard = at(homeChart, 'installed-gaps');
+  assert.ok(homeCard, 'task card is shown on default Home');
+  assert.equal(homeCard.agent, '');
+  assert.equal(homeCard.members.length, 0);
+  assert.equal(homeCard.pastAgent, '');
+  assert.equal(homeCard.state, 'Needs you');
+  assert.deepEqual(plain(homeCard.need), {text: 'Interrupted · waiting for an agent', resume: true});
+
+  // 2. History view (history: true)
+  const historyChart = homeMap({
+    listed: {groups: [{sessions: [canvasSession]}]},
+    rows,
+    params: DEFAULT,
+    hidden: [],
+    titleOf: r => r.title,
+    history: true
+  });
+  const historyCard = at(historyChart, 'installed-gaps');
+  assert.ok(historyCard, 'task card is shown in History');
+  assert.equal(historyCard.agent, '');
+  assert.equal(historyCard.members.length, 0);
+  assert.equal(historyCard.pastAgent, 'Previously: Antigravity · Studio +2');
+
+  // Render real HomeMap cards in Chromium for both Home and History and click Continue on Home
+  const browser = await chromium.launch({
+    headless: true,
+    channel: process.platform === 'win32' ? 'chrome' : undefined,
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || process.env.ARCHHUB_TEST_CHROMIUM
+  });
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 1280, height: 800}});
+  page.setDefaultTimeout(10000);
+  const pageErrors = [];
+  page.on('pageerror', e => pageErrors.push(e.message));
+  await page.route('https://seq33103.test/**', route => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><html><body style="margin:0;height:100vh"><div id="root" style="width:1200px;height:700px;position:relative"></div></body></html>'
+  }));
+  await page.goto('https://seq33103.test/');
+  await page.addStyleTag({path: path.join(studio, 'style.css')});
+  for (const rel of ['vendor/react.js', 'vendor/react-dom.js']) {
+    await page.addScriptTag({path: path.join(studio, rel)});
+  }
+  await page.evaluate(({plannedRow}) => {
+    window.__dispatched = {opened: [], sent: [], toasts: [], refreshed: 0};
+    window.ReactResizablePanels = {Group: () => null, Panel: () => null, Separator: () => null};
+    window.ReactFlow = {
+      Position: {Left: 'left', Right: 'right'},
+      Handle: () => null,
+      applyNodeChanges: (_changes, nodes) => nodes,
+      ReactFlow: ({nodes, nodeTypes}) => window.React.createElement('div', {className: 'react-flow'},
+        (nodes || []).map(node => window.React.createElement(nodeTypes[node.type], {key: node.id, id: node.id, data: node.data, selected: node.selected}))
+      )
+    };
+    const snap = {
+      tasks: [plannedRow],
+      graphs: [],
+      approvals: [],
+      workspaces: [{id: 'Studio', name: 'Studio'}],
+      agents: [],
+      providers: [],
+      agentGraph: {sessions: []},
+      settings: [],
+      canvasPolicy: {zoom_min: 0.1, zoom_max: 4},
+      graph: {id: 'g1', name: plannedRow.title, nodes: [], wires: []}
+    };
+    window.executeAction = (id, a, b) => id === 'ui.select' ? a() : (a?.handler ? a.handler(b) : undefined);
+    window.registerActions = () => {};
+    window.AH = {
+      ink: '#ece8e0', inkSoft: '#9b938a', inkMuted: '#8b837a', line: '#26262e',
+      bg: '#0e0e11', bgPanel: '#15151a', bgRaised: '#1d1d22', bgSoft: '#1c1c23',
+      userAv: '#888', accent: '#d97757', blue: '#7898d6', purple: '#a98cd6', ok: '#7ec18e', warn: '#e5b25a', cyan: '#5fb3b3', err: '#e6705f',
+      rad: {sm: 5, md: 6, lg: 8, xl: 10}, sp: {xs: 4, sm: 8, md: 12, lg: 16}
+    };
+    window.AH_DS = {
+      Avatar: ({agent, size}) => window.React.createElement('span', {className: 'ds-avatar', 'data-size': size}, agent.ini),
+      Btn: ({children, primary, sm, kind, ...rest}) => window.React.createElement('button', {type: 'button', ...rest}, children),
+      Card: ({children, ...rest}) => window.React.createElement('div', rest, children),
+      Composer: ({children, ...rest}) => window.React.createElement('form', rest, children),
+      Node: ({children, ...rest}) => window.React.createElement('div', rest, children),
+      Socket: () => window.React.createElement('span', {className: 'socket'})
+    };
+    window.AHIcon = ({name, size}) => window.React.createElement('svg', {'data-icon': name, width: size, height: size});
+    window.ArchHubAPI = {
+      executeAction: window.executeAction,
+      subscribe: () => () => {},
+      getSnapshot: () => snap,
+      sameSessionPath: (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase(),
+      sessionPathKey: p => String(p || '').toLowerCase(),
+      nodeIcons: [],
+      wireMenus: []
+    };
+    window.UI = {
+      api: window.ArchHubAPI,
+      useData: () => snap,
+      useApp: () => ({act: fn => fn(), setToast: msg => window.__dispatched.toasts.push(msg)}),
+      CanvasMap: () => null
+    };
+  }, {plannedRow});
+  for (const rel of ['ui.jsx', 'ds_home2.jsx', 'ds_screens.jsx']) {
+    await page.addScriptTag({content: transformSync(fs.readFileSync(path.join(studio, rel), 'utf8'), {loader: 'jsx'}).code});
+  }
+
+  // Mount HomeMap with default Home chart (history: false)
+  await page.evaluate(({chart, plannedRow}) => {
+    window.__root = window.ReactDOM.createRoot(document.getElementById('root'));
+    const onContinue = card => window.UI.continueHomeWork(
+      card,
+      [plannedRow],
+      async (id, face) => { window.__dispatched.opened.push([id, face]); return true; },
+      row => ({agent: 'BABOOM', prompt: 'Continue task ' + row.id + ' in its existing canvas. Report your next change or why you cannot run.', taskPeer: true}),
+      async (turn, _unused, id) => { window.__dispatched.sent.push({id, agent: turn.agent, prompt: turn.prompt}); return {provider: 'BABOOM', answer: 'Resuming canvas steps'}; },
+      msg => window.__dispatched.toasts.push(msg),
+      async () => { window.__dispatched.refreshed += 1; }
+    );
+    window.__root.render(window.React.createElement(window.UI.HomeMap, {
+      chart, picked: '', onPick: () => {}, onOpen: () => {}, onContinue, onReview: () => {}, onCollapse: () => {}
+    }));
+  }, {chart: plain(homeChart), plannedRow});
+
+  const renderedCard = page.locator('[data-design="home.card"]');
+  await renderedCard.waitFor({state: 'visible'});
+  assert.equal(await renderedCard.locator('.agent-avatar').count(), 0, 'zero .agent-avatar elements on default Home');
+  assert.equal(await renderedCard.locator('.home-card-head small').textContent(), 'No agent yet');
+  const continueBtn = renderedCard.getByRole('button', {name: 'Continue', exact: true});
+  await continueBtn.waitFor({state: 'visible'});
+  await continueBtn.click();
+
+  await page.waitForFunction(() => window.__dispatched.toasts.length === 1);
+  const dispatched = await page.evaluate(() => window.__dispatched);
+  assert.deepEqual(dispatched.opened, [[plannedRow.id, 'split']]);
+  assert.equal(dispatched.sent.length, 1);
+  assert.equal(dispatched.sent[0].id, plannedRow.id);
+  assert.equal(dispatched.sent[0].agent, 'BABOOM');
+  assert.deepEqual(dispatched.toasts, ['BABOOM · Resuming canvas steps']);
+  assert.equal(dispatched.refreshed, 1);
+
+  // Switch HomeMap to History chart (history: true)
+  await page.evaluate(({chart}) => {
+    window.__root.render(window.React.createElement(window.UI.HomeMap, {
+      chart, picked: '', onPick: () => {}, onOpen: () => {}, onContinue: () => {}, onReview: () => {}, onCollapse: () => {}
+    }));
+  }, {chart: plain(historyChart)});
+  await page.waitForFunction(() => document.querySelector('[data-design="home.card"] .home-card-head small')?.textContent === 'Previously: Antigravity · Studio +2');
+  assert.equal(await renderedCard.locator('.agent-avatar').count(), 0, 'still zero .agent-avatar elements in History');
+  assert.deepEqual(pageErrors, []);
 });

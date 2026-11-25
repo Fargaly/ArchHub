@@ -501,7 +501,7 @@ test('Library uses the catalogue identity and stays open until explicitly closed
   assert.equal(rejected,0);
   const accepted=await s.evaluate(`(async()=>{refused=false;await click(document.querySelector('[aria-label="Add Readable label"]'));return readClosed();})()`);
   assert.equal(accepted,0,'CANVASLOOK keeps the shelf beside the canvas after a confirmed add');
-  const closed=await s.evaluate(`(async()=>{await click(document.querySelector('[aria-label="Close Library"]'));return readClosed();})()`);
+  const closed=await s.evaluate(`(async()=>{await click(document.querySelector('[aria-label="Collapse library"]'));return readClosed();})()`);
   assert.equal(closed,1);
  }finally{await s.close();}
 });

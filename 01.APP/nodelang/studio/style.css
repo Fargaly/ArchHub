@@ -1367,9 +1367,19 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 /* The thread peek sits left of the right dock and never reaches over the 64 px rail (a narrow window kept Home unclickable). */
 .dockws .v22g-thread[data-thread-peek]{right:calc(var(--rw,0px) + var(--rs,0px));width:min(380px,calc(100vw - var(--rw,0px) - var(--rs,0px) - 72px))}
 /* The composer floats above both docks: centred on the area right of the rail, 620px wide or the window less 444px (design: 1009 -> 254-819, 1280 -> 362-982, 1440 -> 442-1062, 1920 -> 682-1302); 900px is the shell floor. The zoom control rises off it (ds_screens.jsx). */
+.dx-home-root[data-screen="task-file"]{position:relative}
 .dx-home-root[data-screen="task-file"]>.v22g-composer-dock{left:calc((max(100vw,900px) + var(--layout-rail-width)) / 2)!important;width:min(620px,calc(max(100vw,900px) - 444px))!important;min-width:0!important}
+.dx-home-root[data-screen="task-file"]>.v22g-composer-dock.moved{position:absolute!important;left:var(--cmd-left,8px)!important;top:var(--cmd-top,8px)!important;bottom:auto!important;right:auto!important;transform:none!important}
+.v22g-composer-dock.dragging{transition:none!important;opacity:.92}
+.v22g-composer-dock .dgrip{pointer-events:auto;position:absolute;left:4px;top:50%;transform:translateY(-50%);z-index:2;width:14px;height:30px;border-radius:5px;cursor:grab;display:grid;place-items:center;touch-action:none}
+.v22g-composer-dock .dgrip:hover,.v22g-composer-dock .dgrip:focus-visible{background:var(--color-bg-hover)}
+.v22g-composer-dock.dragging .dgrip{cursor:grabbing}
+.v22g-composer-dock .dgrip[hidden]{display:none}
+.v22g-composer-dock .dgrip>i{width:4px;height:14px;background:radial-gradient(circle,var(--color-ink-muted) 1px,transparent 1.4px) 0 0/4px 4px}
+.v22g-composer-dock:has(>.dgrip:not([hidden]))>form{padding-left:20px!important}
 /* On Home the To button sits at the composer's right end, so its list grows leftwards and stays inside the window. Home only: elsewhere the button is near the left end. */
 .screen-with-composer:has([data-home-page]) .composer-tools .ws-to-list{left:auto;right:0}
+.global-composer:has(.ws-to-list),.v22g-composer-dock:has(.ws-to-list){z-index:130}
 /* Dock panels: the Library and the Inspector keep their content; the dock header replaces their own title bars. */
 .dockws .pnl .library-shelf{height:100%;min-height:0;padding:12px;background:transparent;border:0}
 .dockws .pnl .library-shelf>header{display:none}

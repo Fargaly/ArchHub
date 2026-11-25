@@ -28,6 +28,7 @@ class WindowCommands(QObject):
         self.require_access = require_access
         self.companion_home = (None, [])  # the composer box and the busy boxes above it, as the page last reported
         self.companion_sees = (0, False)  # Home's count of what needs the user, and BABOOM's panel open, likewise
+        self.companion_step = None        # active running step progress, surface, DND/moments and work area, when reported
         from .baboom_native_voice import BaboomVoiceInput
         self._voice_input = BaboomVoiceInput()
         self._voice_cancel = threading.Event()
@@ -128,6 +129,34 @@ class WindowCommands(QObject):
             self.companion_sees = (needs, listening)
             self.companionHomeChanged.emit()
 
+    @pyqtSlot("QVariantMap")
+    def companionStep(self, detail):
+        """Active step progress, surface/task identity, work area and DND/moments from Studio."""
+        if not self._in_studio() or not isinstance(detail, dict):
+            return
+        running = detail.get("running")
+        active_run = None
+        if isinstance(running, dict) and running.get("step"):
+            raw_prog = running.get("progress")
+            prog = float(raw_prog) if isinstance(raw_prog, (int, float)) and math.isfinite(raw_prog) else 0.0
+            active_run = {
+                "session": str(running.get("session") or "ArchHub")[:120],
+                "step": str(running.get("step") or "")[:120],
+                "progress": max(0.0, min(1.0, prog)),
+            }
+        self.companion_step = {
+            "work_area": _page_box(detail.get("workArea")),
+            "surface": str(detail.get("surface") or "")[:64],
+            "task": str(detail.get("task") or "")[:128],
+            "dnd": detail.get("dnd") is True,
+            "moments": detail.get("moments") is not False,
+            "reduced_motion": detail.get("reduceMotion") is True,
+            "composer_listening": detail.get("composerListening") is True,
+            "tutorial_done": str(detail.get("tutorialDone") or "")[:128],
+            "running": active_run,
+        }
+        self.companionHomeChanged.emit()
+
 
 def _page_box(values):
     """One page rectangle (left, top, width, height) the page reported, or None when it is not one."""
@@ -165,8 +194,15 @@ class CompanionFollows(QObject):
         placed = lambda box: Rect(origin.x() + round(box[0] * zoom), origin.y() + round(box[1] * zoom),
                                   max(1, round(box[2] * zoom)), max(1, round(box[3] * zoom)))
         composer, busy = self.commands.companion_home
+        if self.commands.companion_step is None:
+            self.companion.follow_app(desk(window.geometry()), placed(composer) if composer else None,
+                                      [placed(box) for box in busy], screens, *self.commands.companion_sees)
+            return
+        step = dict(self.commands.companion_step)
+        if step.get("work_area"):
+            step["work_area"] = placed(step["work_area"])
         self.companion.follow_app(desk(window.geometry()), placed(composer) if composer else None,
-                                  [placed(box) for box in busy], screens, *self.commands.companion_sees)
+                                  [placed(box) for box in busy], screens, *self.commands.companion_sees, step)
 
     def eventFilter(self, watched, event):
         # WindowActivate: a click into ArchHub brings BABOOM, which no ArchHub window owns, back above it too.
@@ -289,11 +325,28 @@ window.ARCHHUB_ONE_TITLE_BAR = true;
 COMPANION_BRIDGE = """
 (() => {
  // BABOOM stands above the right end of the composer, or bottom right on a page with none. Report that box and
- // every control and line of text in the patch he may stand in (his 80 x 87 figure and the 48 px he steps aside);
+ // every control and line of text in the candidate patches (bottom-right + offsets and bottom-left fallback);
  // place_baboom_beside_composer picks the spot.
- const controls = "button,a[href],input,select,textarea,label,[role=button],[role=switch],[tabindex]:not([tabindex='-1'])";
+ const controls = "button,a[href],input,select,textarea,label,.node,.srow,.prow,.hsnode,.sw,[role=button],[role=switch],.scard,.scb,.insp-card,.card,[tabindex]:not([tabindex='-1'])";
  const box = r => [r.left, r.top, r.width, r.height];
- let sent = "", queued = false, seen = [], needs = 0, told = "", subscribed = false;
+ let sent = "", queued = false, seen = [], needs = 0, told = "", stepSent = "", subscribed = false;
+ const workAreaEl = () => {
+  const screen = document.querySelector("[data-screen]")?.getAttribute("data-screen") || "";
+  if (screen === "canvas" || screen === "task-file") {
+   return document.querySelector(".v22g-canvas:not([hidden]), .dock.left:not(.empty):not(.col), .dcenter") || document.querySelector(".screen-with-composer");
+  }
+  if (screen === "home") return document.querySelector(".home-map-stage, .dx-home") || document.querySelector(".screen-with-composer");
+  return document.querySelector(".screen-with-composer") || document.documentElement;
+ };
+ const scanPatch = (busy, composer, x0, x1, y0, y1) => {
+  for (let x = Math.max(0, x0); x < Math.min(innerWidth, x1); x += 20)
+   for (let y = Math.max(0, y0); y < Math.min(innerHeight, y1); y += 24)
+    for (const e of document.elementsFromPoint(x, y)) {
+     if (e.closest && e.closest(".pet-bubble,.bbm-panel,.bbm-bubble")) continue;
+     const hit = e.closest(controls) || (e.childElementCount === 0 && e.textContent.trim() ? e : null);
+     if (hit && !(composer && composer.contains(hit))) busy.add(hit);
+    }
+ };
  const report = () => {
   queued = false;
   if (!subscribed && window.ArchHubAPI?.subscribe) {
@@ -302,16 +355,48 @@ COMPANION_BRIDGE = """
   }
   see();
   const composer = [...document.querySelectorAll("[data-design='composer.surface']")].filter(e => e.offsetParent).pop();
+  const area = workAreaEl(), ar = area ? area.getBoundingClientRect() : null;
   const c = composer ? composer.getBoundingClientRect() : null, busy = new Set();
-  const right = Math.min(c ? c.right : innerWidth, innerWidth - 16), floor = c ? c.top - 4 : innerHeight - 16;
-  for (let x = right - 120; x < right; x += 16) for (let y = floor - 128; y < floor; y += 16)
-   for (const e of document.elementsFromPoint(x, y)) {
-    const hit = e.closest(controls) || (e.childElementCount === 0 && e.textContent.trim() ? e : null);
-    if (hit && !(composer && composer.contains(hit))) busy.add(hit);
-   }
+  const right = Math.min(c ? c.right : (ar ? ar.right : innerWidth), innerWidth - 16);
+  const floor = c ? c.top - 4 : (ar ? ar.bottom - 16 : innerHeight - 16);
+  const left = ar ? ar.left + 16 : 16;
+  scanPatch(busy, composer, right - 136, right, floor - 140, floor);
+  scanPatch(busy, composer, left, left + 104, floor - 140, floor);
+  if (c && ar && ar.bottom - 16 > floor + 16) {
+   scanPatch(busy, composer, right - 136, right, ar.bottom - 156, ar.bottom - 16);
+   scanPatch(busy, composer, left, left + 104, ar.bottom - 156, ar.bottom - 16);
+  }
   const layout = [c ? box(c) : [], [...busy].slice(0, 64).map(e => box(e.getBoundingClientRect()))];
   const text = JSON.stringify(layout);
   if (text !== sent) { sent = text; channel.objects.desktopWindow.companionHome(layout[0], layout[1]); }
+ };
+ const activeRunOf = data => {
+  if (!data) return null;
+  const nodes = (data.graph?.nodes || []).filter(n => !n.fixed);
+  const runNode = nodes.find(n => /^running$/i.test(n.status || ""));
+  if (runNode) {
+   const done = nodes.filter(n => /^done$/i.test(n.status || "")).length;
+   const prog = typeof runNode.progress === "number" ? runNode.progress : (nodes.length ? Math.max(0.08, (done + 0.5) / nodes.length) : 0.5);
+   const taskRow = (data.tasks || []).find(t => t.sessionOpen || t.id === data.desktopView?.task);
+   return {session: taskRow?.title || data.graph?.name || "Workflow", step: runNode.title || runNode.id, progress: prog};
+  }
+  const streamStep = (data.composerAnswer?.steps || []).find(s => /^running$/i.test(s.status || ""));
+  if (streamStep) {
+   const all = data.composerAnswer.steps || [], done = all.filter(s => /^(ok|completed|succeeded|success)$/i.test(s.status || "")).length;
+   const prog = typeof streamStep.progress === "number" ? streamStep.progress : (all.length ? Math.max(0.1, (done + 0.5) / all.length) : 0.5);
+   return {session: data.composerAnswer.provider || "BABOOM", step: streamStep.title || streamStep.tool || "Working", progress: prog};
+  }
+  for (const t of data.tasks || []) {
+   const act = (t.activity || []).find(r => /^running$/i.test(r.status || ""));
+   if (act) {
+    const wf = t.workflow || [], stepTitle = wf.find(w => w.id === act.id)?.title || act.title || act.id || "Step";
+    const done = (t.activity || []).filter(r => /^done$/i.test(r.status || "")).length;
+    const total = Math.max(wf.length, (t.activity || []).length, 1);
+    const prog = typeof act.progress === "number" ? act.progress : Math.max(0.08, (done + 0.5) / total);
+    return {session: t.title || "Task", step: stepTitle, progress: prog};
+   }
+  }
+  return null;
  };
  // His badge is Home's own count of what needs the user (counted again only when the data changes), and his
  // ground glows cyan while his panel is open.
@@ -326,10 +411,34 @@ COMPANION_BRIDGE = """
   }
   const open = !!document.querySelector("[aria-label='BABOOM companion']"), now = needs + "/" + open;
   if (now !== told) { told = now; channel.objects.desktopWindow.companionSees(needs, open); }
+  if (channel.objects.desktopWindow.companionStep) {
+   const area = workAreaEl(), ar = area ? area.getBoundingClientRect() : null;
+   const surface = document.querySelector(".settings-sheet") ? "settings" : (document.querySelector("[data-screen]")?.getAttribute("data-screen") || data?.desktopView?.route || "");
+   const settings = data?.settings || [];
+   const dnd = data?.companion?.dnd === true || settings.find(r => /do not disturb/i.test(r.id || r.label || ""))?.value === true;
+   const momentsRow = settings.find(r => /moments/i.test(r.id || r.label || ""));
+   const moments = momentsRow ? momentsRow.value !== false : data?.companion?.moments !== false;
+   const active = document.activeElement;
+   const rec = active?.closest?.("[data-design='composer.surface']")?.querySelector?.(".recipient-name")?.textContent?.trim();
+   const composerListening = !!active?.matches?.("[data-design='composer.msg']") && (!rec || rec === "@BABOOM");
+   const detail = {
+    workArea: ar && ar.width > 0 && ar.height > 0 ? box(ar) : [],
+    surface,
+    task: String(data?.desktopView?.task || ""),
+    dnd,
+    moments,
+    reduceMotion: document.documentElement.dataset.reducedMotion === "true",
+    composerListening,
+    tutorialDone: String(document.documentElement.dataset.baboomTutorialDone || ""),
+    running: activeRunOf(data),
+   };
+   const stepText = JSON.stringify(detail);
+   if (stepText !== stepSent) { stepSent = stepText; channel.objects.desktopWindow.companionStep(detail); }
+  }
  };
  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(report); } };
  new MutationObserver(schedule).observe(document.documentElement, {subtree: true, childList: true, characterData: true});
- for (const kind of ["resize", "scroll", "pointerup", "wheel"]) window.addEventListener(kind, schedule, true);
+ for (const kind of ["resize", "scroll", "pointerup", "wheel", "focusin", "focusout"]) window.addEventListener(kind, schedule, true);
  schedule();
 })();
 """

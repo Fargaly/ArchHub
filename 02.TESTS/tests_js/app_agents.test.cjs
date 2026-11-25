@@ -29,7 +29,7 @@ function context(data={}){
  // so take its real export and put this fixture's UI back.
  Object.assign(window,{AH:{},AH_DS:{},registerActions:()=>{}});React.createContext=()=>({});
  vm.runInContext(Babel.transform(fs.readFileSync(path.join(root,'01.APP/nodelang/studio/ui.jsx'),'utf8'),{presets:['react']}).code,c);
- UI.taskRowReason=window.UI.taskRowReason;window.UI=UI;
+ UI.taskRowReason=window.UI.taskRowReason;UI.productLabel=window.UI.productLabel;window.UI=UI;
  return {UI,c,calls};
 }
 function load(ctx,name){vm.runInContext(Babel.transform(fs.readFileSync(path.join(root,'01.APP/nodelang/studio',name),'utf8'),{presets:['react']}).code,ctx.c);}

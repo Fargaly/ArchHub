@@ -53,7 +53,8 @@ test('the people list carries a declared model and stays blank otherwise', () =>
 
 test('a completed task row shows its recorded result and a blank result stays blank', () => {
   const done = renderToStaticMarkup(React.createElement(window.UI.Task, {
-    task: {id: 't', title: 'Ship', status: 'DONE', result: 'artifact: report.md', messages: []},
+    task: {id: 't', title: 'Ship', status: 'DONE', result: 'artifact: report.md', messages: [],
+      activity: [{id: 'write-report', status: 'Done', output: 'report.md'}]},
     on: false, select() {},
   }));
   assert.match(done, /artifact: report.md/);

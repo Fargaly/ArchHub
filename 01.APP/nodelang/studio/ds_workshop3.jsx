@@ -64,7 +64,7 @@
       }
     }} draggable onDragStart={e => {e.dataTransfer.setData('task', task.id);if(task.sessionPath)e.dataTransfer.setData('session',task.sessionPath);}}>
       <span className="ws-task-icon" aria-hidden="true">{String(task.title || '?').trim().charAt(0).toUpperCase()}</span><div className="ws-task-line"><span className="ws-task-title">{task.title}</span>{(ownerName || task.owner) && <span className="ws-small ws-task-owner">{ownerName || task.owner}</span>}<span className="ws-task-state" style={{color: color(task.status)}}>{statusText(task.status)}</span>{rowNote(task) && <span className="ws-small" data-task-row-state={rowNote(task)}>{rowNote(task)}</span>}</div>
-      {a && <div data-agent-activity role="status" className="ws-activity">
+      {Array.isArray(a?.sessions) && <div data-agent-activity role="status" className="ws-activity">
         {a.sessions.map(row => <div key={row.provider + ':' + row.session} title={row.session}>
           {row.provider} · {row.tool} · {row.associated === false ? 'Current file unknown' + (row.file ? ' (last observed: ' + row.file + ')' : '') : row.file} · {sessionState(row)}
           {row.association_conflict && <span> · File and session association disagree</span>}
@@ -266,13 +266,15 @@
     const s = useData(), u = useApp();
     const [history, setHistory] = React.useState(false), [query, setQuery] = React.useState(''), [to, setTo] = React.useState(null),
       [notesOpen, setNotesOpen] = React.useState(false), [notes, setNotes] = React.useState(''), sendRef = React.useRef(null), [replyTo, setReplyTo] = React.useState(null),
-      [project, setProject] = React.useState('ArchHub');
+      [chosenProject, setProject] = React.useState('');
     const roomScope = JSON.stringify([s.graph.id, s.profile.email, s.profile.signedIn, s.workshopMessagesScope]);
     const currentScope = React.useRef(roomScope), bodyRef = React.useRef(null), stuck = React.useRef(null);
     currentScope.current = roomScope;
     const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
     const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
     const known = [...new Set((s.tasks || []).map(t => t.project).filter(Boolean))];
+    const focusedProject = (s.tasks || []).find(t => t.id === (u.task || s.focusedTask))?.project;
+    const project = known.includes(chosenProject) ? chosenProject : focusedProject || known[0] || 'ArchHub';
     const tasks = (s.tasks || []).filter(t => !t.project || t.project === project), focus = u.task || s.focusedTask || tasks.find(t => t.sessionOpen)?.id, task = tasks.find(t => t.id === focus) || tasks[0];
     const roomMessages = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
       .filter(message => (!message.project || message.project === project) && !(task?.agentLog || []).some(item => item.id === message.id) && !(task?.messages || []).some(item => item.id === message.id));
@@ -311,7 +313,7 @@
   <Column id="work" panelRef={workRef} collapsible collapsedSize={RAIL} minSize={200} defaultSize={folded('work') ? RAIL : 248} groupResizeBehavior="preserve-pixel-size" onResize={rail('work')}>
   <aside id="ws-work" data-workshop-column="work" className="ws-col ws-work">
     <div className="spread ws-head"><h2>Work</h2><button className="ws-link" title="New task" onClick={() => executeAction("ui.show", u, 'New task')}>+<span className="pane-text"> New task</span></button></div>
-    {known.length > 0 && <select aria-label="Project room" value={known.includes(project) ? project : known[0]} onChange={e => setProject(e.target.value)}>{known.map(name => <option key={name} value={name}>{name}</option>)}</select>}
+    {known.length > 0 && <select aria-label="Project room" value={project} onChange={e => setProject(e.target.value)}>{known.map(name => <option key={name} value={name}>{name}</option>)}</select>}
     <input aria-label="Search work" className="ws-search" placeholder="Search work…" value={query} onChange={e => setQuery(e.target.value)} />
     <div className="scroll ws-list">{groupsFor(history, waiting, query).map(([name, member, stage]) => {
       const rows = list.filter(member);

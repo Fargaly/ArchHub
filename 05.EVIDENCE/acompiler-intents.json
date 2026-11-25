@@ -12841,6 +12841,21 @@
         "02.TESTS/tests_replica/test_the_router_sends_it_where_it_says.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "RELEASESURFACES": {
+      "source": "Founder 2026-11-25: \"أنا عاوز كل حاجة ماشية مع بعضها … أي حاجة بتحصل لازم يتعمل لها بروباجيشن على كل الابليكيشن\" = the app, in-app docs, archhub.io, the Notion ArchHub page and the Cockpit stay linked; every release propagates to all of them. Coordinator: one step in the existing release sync regenerates the surfaces from the release notes, design and DECISIONS.md, writes the 10.PRODUCT area READMEs and Research Library rows, and a check fails when any surface disagrees with the released BUILD_ID.",
+      "scope": [
+        "03.TOOLS/packaging/website/release_surfaces.py",
+        "03.TOOLS/packaging/website/sync_changelog.py",
+        "02.TESTS/tests_replica/test_release_surfaces.py",
+        ".github/workflows/site-release-sync.yml",
+        "01.APP/nodelang/site_export.py",
+        "06.CLOUD/cloud_backend/main.py",
+        "06.CLOUD/cloud_backend/deploy.ps1",
+        "06.CLOUD/cloud_backend/fly.toml",
+        "CHANGELOG.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

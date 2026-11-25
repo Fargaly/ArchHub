@@ -12796,6 +12796,9 @@
         "01.APP/nodelang/native_agent_mcp.py",
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/social.jsx",
+        "01.APP/nodelang/studio/agent-states.jsx",
+        "01.APP/nodelang/studio/app.jsx",
+        "02.TESTS/tests_js/app_agents.test.cjs",
         "02.TESTS/tests_replica/test_social3_oauth.py",
         "02.TESTS/tests_replica/test_social_tools_are_offered.py",
         "05.EVIDENCE/acompiler-intents.json"

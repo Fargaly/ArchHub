@@ -68,6 +68,10 @@ const {chromium} = require('playwright');
       return [box.x + box.width / 2, head.y + head.height + (box.y + box.height / 2 - head.y - head.height) / 2];
     };
 
+    // The disposable account exercises layout persistence across signed-in sessions.
+    await page.route('**/api/universal/desktop-access', route => route.fulfill({
+      json: {ok: true, admitted: true, state: 'admitted', subject: 'layout-test', email: 'layout@example.test'}
+    }));
     await page.goto(input.url);
     await openCanvas('Drawing set review');
     // He sets his layout once: Map above the Inspector, Map folded to its header, the left dock folded to icons.

@@ -102,3 +102,132 @@ def test_fake_cloud_meta_grant_finishes_page_into_executable_dpapi_custody(tmp_p
         account_id="112233445566778",
         vault_entry="social-meta-page-112233445566778",
     ) == "EAAB-page-token"
+
+
+# ------------------------------------------------ account sync: connections (D-051) --
+
+class _FakeAccount:
+    """The cloud account-sync owner, in memory: heads per logical path, nothing else."""
+
+    def __init__(self):
+        self.heads = {}  # path -> bytes (absent = removed)
+        self.calls = []
+
+    def put_record(self, path, record):
+        from nodelang import account_sync
+        self.heads[path] = account_sync.canonical(record)
+
+    def token(self, path):
+        return json.loads(self.heads[path])["token"]
+
+    def __call__(self, method, url, *, bearer, body=None, headers=None, timeout=10.0):
+        import base64
+        import gzip
+        import hashlib
+        assert bearer == "account-bearer"
+        route = url.split("/v1/account-sync/", 1)[1]
+        self.calls.append((method, route.split("?")[0]))
+        if route.startswith("manifest"):
+            return 200, {"items": [{"logical_path": p, "sha256": hashlib.sha256(c).hexdigest(), "deleted": False}
+                                   for p, c in sorted(self.heads.items())]}
+        if route == "item":
+            if body.get("deleted"):
+                self.heads.pop(body["logical_path"], None)
+                return 200, {"sha256": ""}
+            content = gzip.decompress(base64.b64decode(body["content_b64"]))
+            self.heads[body["logical_path"]] = content
+            return 200, {"sha256": hashlib.sha256(content).hexdigest()}
+        if route.startswith("blob/"):
+            path = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["logical_path"][0]
+            return 200, {"content_b64": base64.b64encode(gzip.compress(self.heads[path])).decode()}
+        path = "connections/" + route.split("/", 1)[1] + ".json"
+        return (200, {"record": json.loads(self.heads[path])}) if path in self.heads else (404, {})
+
+
+def _signed_in_account(monkeypatch, entries, user="user-a"):
+    """A fake signed-in ArchHub account over a fake DPAPI cache."""
+    from nodelang import account_sync
+
+    class Admitted:
+        def check(self):
+            return {"admitted": True}
+
+    account = _FakeAccount()
+    monkeypatch.setattr(model_router, "_mutate_protected_entries", lambda put, before_replace=None, **errors: put(entries))
+    monkeypatch.setattr(model_router, "protected_credential_entry", lambda name: entries[name])
+    monkeypatch.setattr(model_router, "list_social_credentials", lambda: {"items": [
+        {"vault_entry": name, **{k: json.loads(v)[k] for k in ("provider", "account_id")}}
+        for name, v in sorted(entries.items())]})
+    monkeypatch.setattr(cloud_social_oauth, "_session", lambda path: ("account-bearer", "https://cloud.example"))
+    monkeypatch.setattr(account_sync, "_http", account)
+    monkeypatch.setattr(account_sync, "_access", Admitted())
+    monkeypatch.setattr(account_sync, "_account", lambda: user)
+    return account
+
+
+def _x_local(token):
+    from nodelang import account_sync
+    return account_sync.canonical({"format": "archhub-social-credential-2", "provider": "x", "account_id": "101",
+                                   "token": token, "account_binding": "provider-verified",
+                                   "display_name": "Studio X"}).decode()
+
+
+X_PATH = "connections/social-x-101.json"
+
+
+def test_local_connections_join_the_account_once_then_resolve_from_it(monkeypatch):
+    from nodelang import account_sync
+    entries = {"social-x-101": _x_local("x-local-1")}
+    account = _signed_in_account(monkeypatch, entries)
+    assert account_sync.pull_and_restore("connections/") == {"connections/": {"uploaded": 1, "pulled": 0, "dropped": 0}}
+    assert account.token(X_PATH) == "x-local-1"
+    assert account_sync.pull_and_restore("connections/")["connections/"]["uploaded"] == 0  # migration ran once
+    # The account rotated the token (server refresh, another PC): the call uses it and the cache follows.
+    account.put_record(X_PATH, json.loads(_x_local("x-account-2")))
+    sent = len(account.calls)
+    assert social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101") == "x-account-2"
+    assert json.loads(entries["social-x-101"])["token"] == "x-account-2"
+    assert ("PUT", "item") not in account.calls[sent:]  # filling the cache never writes back
+
+
+def test_a_new_pc_receives_the_account_connections_and_removal_follows_the_account(monkeypatch):
+    from nodelang import account_sync
+    entries = {}
+    account = _signed_in_account(monkeypatch, entries)
+    account.put_record(X_PATH, json.loads(_x_local("x-account-1")))
+    assert account_sync.pull_and_restore("connections/")["connections/"]["pulled"] == 1
+    assert json.loads(entries["social-x-101"])["token"] == "x-account-1"
+    # Removed from the account on another PC: refused here, then dropped from this PC's cache.
+    account.heads.clear()
+    try:
+        social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101")
+        raise AssertionError("a connection removed from the account still resolved")
+    except ValueError as refused:
+        assert "removed from your ArchHub account" in str(refused)
+    assert account_sync.pull_and_restore("connections/")["connections/"]["dropped"] == 1
+    assert entries == {}
+    # Connecting on this PC puts it on the account; removing it here removes it from the account.
+    model_router.save_social_credential({"vault_entry": "social-x-101", "provider": "x", "account_id": "101",
+                                         "token": "x-local-3", "display_name": "Studio X"}, verified=True)
+    assert account.token(X_PATH) == "x-local-3"
+    model_router.revoke_social_credential({"vault_entry": "social-x-101", "provider": "x", "account_id": "101"})
+    assert account.heads == {} and entries == {}
+
+
+def test_signed_out_or_offline_uses_this_pcs_cache(monkeypatch):
+    from nodelang import account_sync
+    entries = {"social-x-101": _x_local("x-local-1")}
+    _signed_in_account(monkeypatch, entries)
+    monkeypatch.setattr(cloud_social_oauth, "_session", lambda path: ("", "https://cloud.example"))
+    assert account_sync.pull_and_restore() == {}
+    assert social_custody.social_credential(provider="x", account_id="101", vault_entry="social-x-101") == "x-local-1"
+
+
+def test_each_account_keeps_its_own_sync_record(monkeypatch):
+    from nodelang import account_sync
+    entries = {"social-x-101": _x_local("x-local-1")}
+    _signed_in_account(monkeypatch, entries, user="user-a")
+    account_sync.pull_and_restore("connections/")
+    assert X_PATH in account_sync._state()["base"]
+    monkeypatch.setattr(account_sync, "_account", lambda: "user-b")
+    assert account_sync._state()["base"] == {}  # another account on this PC starts its own migration

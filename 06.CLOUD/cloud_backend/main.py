@@ -136,6 +136,8 @@ import oauth_mcp  # noqa: E402  (the public MCP door's OAuth; module-local impor
 app.include_router(oauth_mcp.router)
 import social_oauth  # noqa: E402  (cloud-owned LinkedIn/Meta publisher app broker)
 app.include_router(social_oauth.router)
+import account_sync  # noqa: E402  (D-051 one per-account sync owner; connections first)
+app.include_router(account_sync.router)
 
 
 # Feed the cockpit's in-process error ring from unhandled server errors.

@@ -925,3 +925,104 @@ def test_messenger_and_instagram_messages_are_isolated_per_account(client, monke
                                                          headers={"Authorization": "Bearer " + token}).json()["messages"]]
     assert read(owner) == ["for owner"]
     assert read(other) == ["for other"]
+
+
+# ------------------------------------------------ account sync: connections (D-051) --
+
+def _sync_headers(token: str) -> dict:
+    return {"Authorization": "Bearer " + token}
+
+
+def _x_record(token: str = "x-access-1") -> dict:
+    return {"format": "archhub-social-credential-2", "provider": "x", "account_id": "101",
+            "token": token, "account_binding": "provider-verified", "display_name": "Studio X"}
+
+
+def _sync_put(client, token: str, path: str, content: bytes | None, base: str = ""):
+    import base64
+    import gzip
+    body = {"logical_path": path, "base_sha256": base, "device_id": "pc-a"}
+    body.update({"deleted": True} if content is None else
+                {"content_b64": base64.b64encode(gzip.compress(content)).decode()})
+    return client.put("/v1/account-sync/item", json=body, headers=_sync_headers(token))
+
+
+def _sync_user(token: str) -> str:
+    import db
+    return db.user_for_token(token)["id"]
+
+
+def test_account_connections_are_per_account_encrypted_and_listed_without_tokens(client, monkeypatch):
+    import account_sync
+    import brain_replica
+    import config
+    monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "fake-state-secret")
+    owner, other = _token_for("sync-owner@sync.test"), _token_for("sync-other@sync.test")
+    stored = _sync_put(client, owner, "connections/social-x-101.json", account_sync.canonical(_x_record()))
+    assert stored.status_code == 200, stored.text
+    listed = client.get("/v1/account-sync/manifest", headers=_sync_headers(owner)).json()
+    assert [row["logical_path"] for row in listed["items"]] == ["connections/social-x-101.json"]
+    assert "x-access-1" not in json.dumps(listed)
+    # At rest under the account's replica folder: ciphertext only.
+    root = brain_replica.DEFAULT_REPLICAS_ROOT / _sync_user(owner) / "account_sync"
+    assert not any(b"x-access-1" in path.read_bytes() for path in root.rglob("*") if path.is_file())
+    # Another account sees nothing and cannot read it.
+    assert client.get("/v1/account-sync/manifest", headers=_sync_headers(other)).json()["items"] == []
+    assert client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(other)).status_code == 404
+    sha = stored.json()["sha256"]
+    assert client.get("/v1/account-sync/blob/" + sha, params={"logical_path": "connections/social-x-101.json"},
+                      headers=_sync_headers(other)).status_code == 404
+    opened = client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(owner)).json()
+    assert opened["record"]["token"] == "x-access-1"
+    # Removing it from the account (a tombstone) stops every PC from resolving it.
+    assert _sync_put(client, owner, "connections/social-x-101.json", None, sha).status_code == 200
+    assert client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(owner)).status_code == 404
+    assert client.get("/v1/account-sync/manifest").status_code == 401
+
+
+def test_account_sync_refuses_credentials_outside_connections_and_fails_closed_without_a_key(client, monkeypatch):
+    import account_sync
+    import config
+    token = _token_for("sync-nokey@sync.test")
+    refused = _sync_put(client, token, "settings/router.json", b'{"key": "sk-live-looking"}')
+    assert refused.status_code == 400 and "refuses_credentials" in refused.text
+    monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "")
+    monkeypatch.setattr(config, "GOOGLE_OAUTH_CLIENT_SECRET", "")
+    closed = _sync_put(client, token, "connections/social-x-101.json", account_sync.canonical(_x_record()))
+    assert closed.status_code == 503 and "SOCIAL_OAUTH_STATE_SECRET" in closed.text and "x-access-1" not in closed.text
+
+
+def test_consume_keeps_the_grant_on_the_account_and_refreshes_it_server_side(client, monkeypatch):
+    import account_sync
+    import config
+    import social_oauth
+    _social3_config(monkeypatch)
+    monkeypatch.setattr(config, "SOCIAL_OAUTH_STATE_SECRET", "fake-state-secret")
+    token = _token_for("sync-consume@sync.test")
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(_social3_start(client, "x", token).json()["auth_url"]).query)["state"][0]
+    monkeypatch.setattr(social_oauth, "_exchange", lambda *args: {
+        "access_token": "x-access-1", "refresh_token": "x-refresh-1", "expires_in": 7200})
+    monkeypatch.setattr(social_oauth, "_profile", lambda *args: {"data": {"id": "101", "username": "studio"}})
+    location = client.get("/oauth/x/callback", params={"code": "c", "state": state}, follow_redirects=False).headers["location"]
+    grant = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)["grant"][0]
+    consumed = client.post("/oauth/x/consume", json={"grant": grant},
+                           headers={"Authorization": "Bearer " + token, "X-ArchHub-Device-Session": "social3-device"})
+    assert consumed.status_code == 200 and "x-refresh-1" not in consumed.text
+    listed = client.get("/v1/account-sync/manifest", headers=_sync_headers(token)).json()["items"]
+    assert [row["logical_path"] for row in listed] == ["connections/social-x-101.json"]
+    user_id = _sync_user(token)
+    assert account_sync._held_refresh(user_id, "social-x-101")["refresh_token"] == "x-refresh-1"
+    # The desktop re-uploading the same record keeps the cloud-held refresh token.
+    record = json.loads(account_sync.read_item(user_id, "connections/social-x-101.json")[1])
+    assert _sync_put(client, token, "connections/social-x-101.json", account_sync.canonical(record)).status_code == 200
+    assert account_sync._held_refresh(user_id, "social-x-101")["refresh_token"] == "x-refresh-1"
+    # Due for refresh: the cloud refreshes and serves the new token, never the refresh token.
+    account_sync._keep_refresh(user_id, "social-x-101", {**account_sync._held_refresh(user_id, "social-x-101"), "expires_at": 1})
+    calls = []
+    monkeypatch.setattr(account_sync, "_refresher", lambda provider, refresh: calls.append((provider, refresh)) or {
+        "access_token": "x-access-2", "refresh_token": "x-refresh-2", "expires_in": 7200})
+    opened = client.post("/v1/account-sync/connection/social-x-101", headers=_sync_headers(token))
+    assert opened.status_code == 200 and calls == [("x", "x-refresh-1")]
+    assert opened.json()["record"]["token"] == "x-access-2" and "refresh" not in opened.text
+    assert account_sync._held_refresh(user_id, "social-x-101")["refresh_token"] == "x-refresh-2"
+    assert json.loads(account_sync.read_item(user_id, "connections/social-x-101.json")[1])["token"] == "x-access-2"

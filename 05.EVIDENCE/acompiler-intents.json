@@ -12811,6 +12811,22 @@
         "02.TESTS/tests_replica/test_social_tools_are_offered.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ACCOUNTCONNECTIONS": {
+      "source": "Founder 2026-11-25: every social/connector key is bound to his ArchHub account, so nothing is re-entered or reconnected after a reinstall, a new profile or a new PC. Connections section of D-051 (everything moves to another PC with nothing lost): connections ride the one account-sync owner (namespace connections/, encrypted at rest).",
+      "scope": [
+        "06.CLOUD/cloud_backend/account_sync.py",
+        "06.CLOUD/cloud_backend/main.py",
+        "06.CLOUD/cloud_backend/social_oauth.py",
+        "06.CLOUD/cloud_backend/tests/test_social_oauth_broker.py",
+        "01.APP/nodelang/account_sync.py",
+        "01.APP/nodelang/social_custody.py",
+        "01.APP/nodelang/social_connections.py",
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/cloud_signin.py",
+        "02.TESTS/tests_replica/test_cloud_social_oauth_finish.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

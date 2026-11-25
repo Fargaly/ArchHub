@@ -12520,6 +12520,22 @@
         "01.APP/nodelang/nograph_server.py",
         "02.TESTS/tests_replica/test_workshop_auto_chase.py"
       ]
+    },
+    "WHATSAPPRECEIVE": {
+      "source": "Founder 2026-11-25: connect ArchHub itself to his WhatsApp Business (official Meta Cloud API, coexistence) and read incoming messages, filterable by sender, so agents can read them; no workaround.",
+      "scope": [
+        "06.CLOUD/cloud_backend/db.py",
+        "06.CLOUD/cloud_backend/social_oauth.py",
+        "06.CLOUD/cloud_backend/tests/test_social_oauth_broker.py",
+        "01.APP/nodelang/cloud_social_oauth.py",
+        "01.APP/nodelang/social_surface.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/social.jsx",
+        "02.TESTS/tests_replica/test_social3_oauth.py",
+        "02.TESTS/tests_replica/test_social_tools_are_offered.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

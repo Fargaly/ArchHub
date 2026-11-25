@@ -48,6 +48,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
  try{
   const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.setDefaultTimeout(3000);page.on('pageerror',error=>errors.push(error.message));
   await mount(page,{name:'Scope reviewer',email:'scope@example.test',signedIn:false,checking:false},{settingsScopes:{Workspace:true,Session:true},keyboardCommands:[],settings:[{id:'Projects.Working subfolder',page:'Projects',group:'Working folder',label:'Working subfolder (relative)',type:'text',value:'',default:''}]});
+  await page.locator('.sheet-tools-menu > summary').click();
   const selector=page.getByLabel('Settings scope',{exact:true});
   await selector.waitFor();
   assert.equal(await selector.isDisabled(),true);
@@ -159,6 +160,7 @@ test('pending scope disables its editors and keeps one read-only recovery beside
   await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'This PC',exact:true}).click();
   await page.evaluate(()=>window.update({settingsScopePending:true}));
   await page.getByRole('status').filter({hasText:'Changing settings scope'}).waitFor();
+  await page.locator('.sheet-tools-menu > summary').click();
   assert.equal(await page.getByLabel('Settings scope',{exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Light',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Import into Everywhere',exact:true}).isDisabled(),true);
@@ -191,6 +193,7 @@ test('project registers are picked inside the project, a cancelled pick keeps th
   await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Projects',exact:true}).click();
   await page.waitForFunction(()=>typeof window.finishInitialSettingsRead==='function');
   await page.evaluate(()=>window.finishInitialSettingsRead());
+  await page.locator('[data-design-section="Project register"] summary').click();
   const naming=page.getByLabel('Naming register',{exact:true}),field=page.locator('[data-register-field="namingRegister"]');
   await naming.waitFor();
   assert.equal(await naming.inputValue(),'Registers\\naming.xlsx');

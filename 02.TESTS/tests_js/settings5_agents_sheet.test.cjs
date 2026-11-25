@@ -35,6 +35,7 @@ test('SETTINGS5 sheet lists Agents beside Models and Hooks', () => {
       RegisteredActionStatus: () => null,
       Btn: ({children, ...props}) => React.createElement('button', props, children),
       SettingControl: () => null,
+      Soon: ({children}) => React.createElement('span',null,children),
       Providers: () => null,
       Av: () => null,
       Chip: ({children}) => React.createElement('span', null, children),

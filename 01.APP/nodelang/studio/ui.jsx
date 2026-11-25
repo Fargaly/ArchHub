@@ -455,6 +455,7 @@
   }
   function SettingControl({
     row,
+    presentation, unit,
     raw = false
   }) {
     const u = useApp(), data = useData(), destination = data.settingsDestination;
@@ -475,7 +476,18 @@
         }, event)} onKeyDown={e => {
           if (e.key === 'Enter') u.openSystem(row.page);
         }} />}
-  {row.control === 'range' ? <><input id={'setting-' + row.id} aria-label={row.label} disabled={disabled} type="range" min={row.min} max={row.max} step="1" value={row.value} onChange={event => {
+  {presentation==='seg' && row.options ? <div className="sheet-segments" role="group" aria-label={row.label}>{row.options.map(option=><button type="button" key={option} aria-pressed={option===row.value} disabled={disabled||Boolean(row.disabledOptions?.[option])} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,option,destination))},event)}>{option}</button>)}</div> :
+   presentation==='step' && row.type==='number' ? <span className="sheet-stepper">
+     <button type="button" disabled={disabled||row.value<=row.min} aria-label={'Decrease '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,Number(row.value)-1,destination))},event)}>−</button>
+     <input id={'setting-'+row.id} aria-label={row.label} type="number" disabled={disabled} min={row.min} max={row.max} step="1" value={row.value} onChange={event=>{
+       if(event.target.value!==''&&event.target.validity.valid){
+         const value=event.target.valueAsNumber;
+         u.act(()=>api.setSetting(row.id,value,destination));
+       }
+     }}/>
+     <button type="button" disabled={disabled||row.value>=row.max} aria-label={'Increase '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,Number(row.value)+1,destination))},event)}>+</button>{unit&&<small>{unit}</small>}
+   </span> :
+   row.control === 'range' ? <><input id={'setting-' + row.id} aria-label={row.label} disabled={disabled} type="range" min={row.min} max={row.max} step="1" value={row.value} onChange={event => {
     const value = Number(event.target.value);
     return u.act(() => api.setSetting(row.id, value, destination));
   }}/><output htmlFor={'setting-' + row.id}>{row.value}</output></> : row.type === 'boolean' ? <D.Toggle disabled={disabled} variant="settings" label={row.label} checked={row.value} onCheckedChange={v => u.act(() => api.setSetting(row.id, v, destination))} /> : row.id === 'Appearance.Theme' && row.options ? (

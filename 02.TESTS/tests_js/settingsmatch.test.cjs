@@ -1,4 +1,4 @@
-// SETTINGSMATCH: the built Settings sheet against the approved board (penpot-settings-1680-r1963-native).
+// SETTINGSMATCH: the built Settings sheet against the saved ArchHub Directions Settings design.
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -95,7 +95,7 @@ test('SETTINGSMATCH: Account sheet matches the board at 900-1920 and the compose
   const browser = await chromium.launch({headless: true, executablePath: executable()});
   try {
     for (const [profile, account] of [[{name: 'Account', email: EMAIL, signedIn: false, checking: false}, 'Local session'],
-                                       [{name: 'Fixture Person', email: EMAIL, signedIn: true, checking: false}, 'Signed in · ' + EMAIL]]) {
+                                       [{name: 'Fixture Person', email: EMAIL, signedIn: true, checking: false}, 'Signed in as ' + EMAIL]]) {
       for (const [width, height] of [[900, 900], [1009, 940], [1366, 900], [1440, 900], [1920, 1032]]) {
         const page = await browser.newPage({viewport: {width, height}});
         const errors = [];
@@ -107,38 +107,33 @@ test('SETTINGSMATCH: Account sheet matches the board at 900-1920 and the compose
         assert.equal(await page.locator('.global-composer').count(), 0, 'composer on Settings at ' + width);
         // 2. The route reaches the API so the desktop companion can step aside.
         assert.ok((await page.evaluate(() => window.surfaces)).includes('settings/Account'));
-        const fields = await page.locator('.sheet-field').evaluateAll(rows => rows.map(row => {
-          const value = row.querySelector(':scope > div'), label = row.querySelector(':scope > span');
-          const text = value.innerText.trim(), box = (value.querySelector('[title]') || value).getBoundingClientRect();
-          return {label: label.firstChild?.textContent || '', description: label.querySelector('small')?.innerText || '', text,
-            title: value.querySelector('[title]')?.getAttribute('title') || '', height: box.height,
-            clipped: window.getComputedStyle(value.querySelector('[title]') || value).textOverflow};
-        }));
-        const field = name => fields.find(row => row.label === name);
-        // 5. The account row shows the real state, never a permanent "Checking…".
-        assert.equal(field('Account')?.text, account, JSON.stringify(fields));
-        // 6. No dead control: rows without a settings-owner row are gone.
-        assert.equal(await page.getByText('Not available').count(), 0);
-        // 3. One-line value boxes; full value in the tooltip; a path is shown short.
-        for (const name of ['Account', 'Email', 'Sessions folder']) {
-          assert.ok(field(name).height <= 24, name + ' wraps at ' + width + ': ' + JSON.stringify(field(name)));
-          assert.equal(field(name).clipped, 'ellipsis', name);
+        const accountCard = page.locator('[data-design-section="Account"]');
+        const state = accountCard.locator('.sheet-account-state');
+        assert.equal(await state.textContent(), account);
+        if (profile.signedIn) assert.equal(await state.getAttribute('title'), EMAIL);
+        assert.equal(await state.evaluate(el => window.getComputedStyle(el).textOverflow), 'ellipsis');
+        assert.equal(await accountCard.getByRole('textbox', {name:'Email',exact:true}).inputValue(), EMAIL);
+        assert.equal(await accountCard.getByRole('textbox', {name:'Name',exact:true}).inputValue(), profile.name);
+        for (const id of ['account','name','email']) {
+          assert.ok((await accountCard.locator('[data-row="'+id+'"] .sheet-property-copy small').innerText()).trim());
         }
-        assert.equal(field('Email').title, EMAIL);
-        assert.equal(field('Sessions folder').title, SESSIONS);
-        assert.equal(field('Sessions folder').text, '…\\ArchHub\\Sessions');
-        // 4. Label plus a one-line grey description for every Account row.
-        for (const name of ['Account', 'Name', 'Email', 'Sessions folder', 'Workspace folder']) assert.ok(field(name)?.description, name + ' has no description');
+        const planned = accountCard.locator('[data-row=photo] [data-soon]');
+        assert.equal(await planned.getAttribute('aria-disabled'), 'true');
+        assert.equal(await planned.locator('[inert]').count(), 1);
         // 7. A subtitle under the heading.
         assert.ok((await page.locator('.sheet-page-heading p').innerText()).trim().length > 0);
         // 8. The header shows at most one short phrase on Settings.
         const status = (await page.locator('.header-status').innerText()).replace(/\s+/g, ' ').trim();
         assert.ok(!status.includes('·') && status.length <= 24, 'header status: ' + status);
-        // Board heading size; no empty Privacy section, the secrets note stays.
-        assert.equal(await page.locator('.sheet-page-heading h2').evaluate(el => window.getComputedStyle(el).fontSize), '22px');
-        assert.equal(await page.getByRole('heading', {name: 'Privacy', exact: true}).count(), 0);
-        await page.getByText('Secrets stay in protected connections, never in .archhub files.').waitFor();
-        await page.getByRole('button', {name: 'Manage protected connections', exact: true}).waitFor();
+        assert.equal(await page.locator('.sheet-page-heading h2').evaluate(el=>window.getComputedStyle(el).fontSize),'20px');
+        assert.equal(await accountCard.getByRole('heading',{name:'Privacy',exact:true}).count(),0);
+        await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'This PC',exact:true}).click();
+        const files = page.locator('[data-design-section="Workspaces and files"]');
+        const folder = files.locator('[data-row=sessions] button').first();
+        assert.equal(await folder.innerText(),'…\\ArchHub\\Sessions');
+        assert.equal(await folder.getAttribute('title'),SESSIONS);
+        for (const id of ['ws','sessions']) assert.ok((await files.locator('[data-row="'+id+'"] .sheet-property-copy small').innerText()).trim());
+        await page.locator('[data-design-section="Privacy and keys"]').getByRole('button',{name:'Manage protected connections'}).waitFor();
         // Fluid: nothing scrolls sideways.
         assert.equal(await page.evaluate(() => window.document.documentElement.scrollWidth <= window.innerWidth), true, 'horizontal scroll at ' + width);
         // 9. The composer scope chip off Settings is one line with the full name in its tooltip.
@@ -194,23 +189,22 @@ test('SETTINGSMATCH review: header keeps what waits for you, the account check e
     // 1. Something waiting for him is never hidden on Settings.
     assert.equal((await page.locator('.header-status').innerText()).trim(), '2 wait for you');
     // 6. The account check shows, then ends in a real state, and the row acts.
-    const account = page.locator('.sheet-field').filter({has: page.locator(':scope > span', {hasText: /^Account/})}).first().locator(':scope > div');
-    assert.equal((await account.innerText()).trim(), 'Checking…');
-    await page.waitForFunction(() => [...window.document.querySelectorAll('.sheet-field')].some(row => row.innerText.includes('Local session')), null, {timeout: 12000});
-    await account.locator('button').click();
+    const account = page.locator('[data-row=account]');
+    assert.equal(await account.locator('.sheet-account-state').innerText(),'Checking…');
+    await account.getByText('Local session',{exact:true}).waitFor({timeout:12000});
+    await account.getByRole('button',{name:'Sign in with Google'}).click();
     await page.getByRole('heading', {name: 'Sign in'}).first().waitFor();
     await page.getByRole('button', {name: 'Close dialog', exact: true}).click();
     // 3 + 4. Models: no empty section heading, no constant value, one label per switch.
     await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Agents', exact: true}).click();
-    await page.getByRole('navigation', {name: 'Agents pages'}).getByRole('button', {name: 'Models & BABOOM', exact: true}).click();
     await page.locator('select[aria-label="Default model"]').waitFor();
     assert.equal(await page.getByRole('heading', {name: 'Follow through', exact: true}).count(), 0);
     assert.equal(await page.getByRole('heading', {name: 'Knowledge', exact: true}).count(), 0);
     assert.equal(await page.getByText('Not reported', {exact: true}).count(), 0);
-    const free = page.locator('.sheet-field').filter({hasText: 'Prefer free models'});
-    assert.equal(await free.locator(':scope > div span').count(), 0, 'a second On/Off label beside the switch');
+    const free = page.locator('[data-row=preferFree]');
+    assert.equal(await free.getByText(/^(On|Off)$/).count(), 0, 'no duplicate On/Off label beside the switch');
     assert.equal(await free.getByRole('switch').getAttribute('aria-checked'), 'true');
-    assert.equal(await page.locator('select[aria-label="Default model"]').getAttribute('title'), 'free');
+    assert.equal(await page.locator('select[aria-label="Default model"]').inputValue(), 'free');
     for (const section of await page.locator('.sheet-columns > section').all()) {
       assert.ok((await section.locator('.sheet-field, button, p, select').count()) > 0, 'empty section: ' + await section.innerText());
     }
@@ -269,8 +263,8 @@ test('SETTINGSMATCH name: the Name row shows the real profile name or asks for o
       assert.equal((await nav.getByRole('button', {name: 'Your account', exact: true}).innerText()).trim(), initial);
       await nav.getByRole('button', {name: 'Settings', exact: true}).click();
       await page.locator('[data-screen="settings/Account"] .sheet-columns:not([hidden])').waitFor();
-      const row = page.locator('.sheet-field').filter({has: page.locator(':scope > span', {hasText: /^Name/})}).first();
-      assert.equal((await row.locator(':scope > div').innerText()).trim(), shown);
+      const input=page.getByRole('textbox',{name:'Name',exact:true});
+      assert.equal((await input.inputValue()) || (await input.getAttribute('placeholder')),shown);
       await page.close();
     }
   } finally { await browser.close(); }
@@ -279,16 +273,24 @@ test('SETTINGSMATCH name: the Name row shows the real profile name or asks for o
 test('SETTINGSMATCH second review: value boxes open, Retry stays visible, no empty sections, empty fallback reads None', async () => {
   const browser = await chromium.launch({headless: true, executablePath: executable()});
   try {
-    // 1. The Account value box opens My profile when signed in, sign-in when signed out; it never signs out.
-    for (const [signedIn, dialog] of [[true, 'My profile'], [false, 'Sign in']]) {
+    // Viewing account identity never signs anyone out. Only its explicit action may do so.
+    for (const signedIn of [true,false]) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       await mount(page, {name: 'Fixture Person', email: EMAIL, signedIn, checking: false});
       await page.evaluate(() => { window.ArchHubAPI.signIn = async () => { window.signedOut = true; }; });
       await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Settings', exact: true}).click();
       await page.locator('[data-screen="settings/Account"] .sheet-columns:not([hidden])').waitFor();
-      await page.locator('.sheet-field').filter({has: page.locator(':scope > span', {hasText: /^Account/})}).first().locator('button').click();
-      await page.getByRole('heading', {name: dialog}).first().waitFor();
-      assert.equal(await page.evaluate(() => window.signedOut === true), false);
+      const account=page.locator('[data-row=account]');
+      await account.locator('.sheet-account-state').click();
+      assert.equal(await page.evaluate(()=>window.signedOut===true),false);
+      if(signedIn){
+        await account.getByRole('button',{name:'Sign out',exact:true}).click();
+        await page.waitForFunction(()=>window.signedOut===true);
+      } else {
+        await account.getByRole('button',{name:'Sign in with Google',exact:true}).click();
+        await page.getByRole('heading',{name:'Sign in',exact:true}).first().waitFor();
+        assert.equal(await page.evaluate(()=>window.signedOut===true),false);
+      }
       await page.close();
     }
     // 2. A 200-character Workshop error keeps Retry in view.
@@ -303,13 +305,12 @@ test('SETTINGSMATCH second review: value boxes open, Retry stays visible, no emp
     assert.equal(await page.locator('.header-error-text').getAttribute('title'), error);
     // 3 + 4. Changed only on Appearance with nothing changed: no bare headings, one line instead.
     await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'This PC', exact: true}).click();
-    await page.getByRole('button', {name: /^Changed \d+$/}).click();
+    await page.getByRole('button', {name: /^Changed(?: \d+)?$/}).click();
     await page.getByText('No settings differ from their defaults.', {exact: true}).waitFor();
     assert.equal(await page.getByRole('heading', {name: 'Interface', exact: true}).count(), 0);
     assert.equal(await page.getByRole('heading', {name: 'Canvas', exact: true}).count(), 0);
     await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Agents', exact: true}).click();
-    await page.getByRole('navigation', {name: 'Agents pages'}).getByRole('button', {name: 'Models & BABOOM', exact: true}).click();
-    const fallback = page.locator('.sheet-field').filter({hasText: 'Fallback order'}).locator(':scope > div');
+    const fallback = page.locator('[data-row=fallback] .sheet-property-control');
     await fallback.waitFor();
     assert.equal((await fallback.innerText()).trim(), 'None');
     await page.close();

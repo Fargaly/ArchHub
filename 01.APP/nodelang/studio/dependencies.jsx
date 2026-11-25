@@ -34,7 +34,7 @@
       [id, setId] = React.useState(s.dependencies[0]?.id),
       selected = s.dependencies.find(t => t.id === id);
     const rows = s.dependencies.filter(t => !q || (t.name + ' ' + t.group).toLowerCase().includes(q.toLowerCase())).filter(t => filter === 'All' || filter === 'Installed' && t.state !== 'Not installed' || filter === 'Updates' && t.state === 'Update ready' || filter === 'Needs attention' && t.state === 'Needs repair');
-    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DEPENDENCIES_JSX_ACTIONS, {DependenciesAction0: (event) => (() => u.go('settings/Dependencies'))(event),
+    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DEPENDENCIES_JSX_ACTIONS, {DependenciesAction0: (event) => (() => u.go('settings/System'))(event),
 DependenciesAction1: (event) => (() => u.act(api.checkDependencies))(event),
 DependenciesAction2: (t, event) => (() => setFilter(t))(event),
 DependenciesAction3: (t, event) => (() => setId(t.id))(event),

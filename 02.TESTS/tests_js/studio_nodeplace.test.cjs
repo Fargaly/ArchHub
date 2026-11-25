@@ -15,6 +15,9 @@ async function adapter(account, responses={}){
    if(url==='/api/universal/canvas')data={root:'canvas',nodes:[],wires:[],
     authorization:{principal:'local-process',display_name:'Local transport'}};
    if(url==='/api/universal/cloud-session')data={...account};
+   // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+   if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'nodeplace-fixture'};
+   if(url==='/api/commands')data={commands:[]};  // The command owner serves the menu catalogue at startup (f8b5feea).
    if(Object.hasOwn(responses,url))data=await (typeof responses[url]==='function'?responses[url](options.body&&JSON.parse(options.body)):responses[url]);
    if(url==='/api/universal/cloud-signin'&&options.body)Object.assign(account,
     {signed_in:true,email:'user@example.test',user_id:'account-1',display_name:'Account user'});
@@ -55,7 +58,8 @@ async function mount(t, graph = fixture()) {
   const page = await browser.newPage({viewport:{width:1496,height:960}}), errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',r=>r.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));
-  await page.goto('http://canvaslook.test/');
+  // api.js reads crypto.randomUUID at load (d2535174); the app always runs in a secure context, so the fixture page does too.
+  await page.goto('https://canvaslook.test/');
   await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
   for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])
     await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():readCanvas(name)});
@@ -141,7 +145,8 @@ test('NODEPLACE explicit drops bypass placement and failed creation releases the
 async function mountReal(t) {
  const browser=await chromium.launch({channel:'chrome',headless:true});t.after(()=>browser.close());
  const page=await browser.newPage({viewport:{width:1800,height:1200}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.setContent('<div id="root" style="display:grid;height:100vh"></div>');await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
+ // api.js reads crypto.randomUUID at load (d2535174); the app always runs in a secure context, so the fixture page does too.
+ await page.route('https://nodeplace.test/**',r=>r.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));await page.goto('https://nodeplace.test/');await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():readCanvas(name)});
  await page.evaluate(()=>{
   window.ARCHHUB_AUTHORITY={};window.ARCHHUB_BOOT={token:'fixture',csrf:'fixture'};
@@ -149,6 +154,9 @@ async function mountReal(t) {
   window.realRequests=[];window.fetch=async(url,options={})=>{
    const body=options.body&&JSON.parse(options.body);window.realRequests.push({url,body});let data={ok:true};
    if(url.startsWith('/api/universal/canvas'))data=window.realCanvas;
+   // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+   if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'nodeplace-fixture'};
+   if(url==='/api/commands')data={commands:[]};  // The command owner serves the menu catalogue at startup (f8b5feea).
    if(url==='/api/universal/canvas-op')data={ok:true,result:body.op==='project_state'?{versions:[],modelReview:{}}:[]};
    if(url==='/api/universal/node-create'){
     const id='added-'+window.realCanvas.nodes.length;

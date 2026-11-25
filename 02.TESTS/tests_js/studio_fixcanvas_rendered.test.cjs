@@ -21,23 +21,28 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
   for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])await page.addScriptTag({content:name==='xyflow'?xyflow.script():script(name)});
   await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
+  // D-014 NOGRAPH: the Canvas is the open session file (owner session_files); a parameter edit is the owner's param-op.
   await page.evaluate(commands=>{
     window.calls=[];
-    const prop={label:'value',value:'initial',editable:true,editor:'text',relation:'value'};
-    let raw={ok:true,application_root:'app',canvas_root:'top',revision:4,scope:{current:'nested',current_label:'Fixture'},
-      viewport:{zoom:1},authorization:{subject:'owner',session:'view'},nodes:Array.from({length:50},(_,i)=>({id:'n'+i,label:'Node '+i,kind:'Input',category:'Input',x:80+i%10*300,y:80+Math.floor(i/10)*220,properties:[{...prop,relation:'value'+i}],ports:[]})),wires:[],catalog:[]};
+    const file=(id,title,count)=>({format:'archhub',version:1,id,title,viewport:{x:0,y:0,zoom:1},groups:[],notes:[],wires:[],properties:{revision:4},
+      nodes:Array.from({length:count},(_,i)=>({id:'n'+i,type:'param.text',title:'Node '+i,params:{value:'initial'},paramDefs:[{id:'value',name:'value',type:'text'}],ports:{source:[],target:[]},position:{x:80+i%10*300,y:80+Math.floor(i/10)*220}}))});
+    let revision=4;
     window.fetch=async(url,init={})=>{
       const call={url,time:window.performance.now(),body:init.body?JSON.parse(init.body):null};window.calls.push(call);
-      if(url==='/api/universal/set-property')return new Promise(resolve=>{window.releaseDraft=()=>{raw={...raw,revision:raw.revision+1,nodes:raw.nodes.map(n=>({...n,properties:n.properties.map(p=>p.relation===call.body.relation?{...p,value:call.body.value}:p)}))};resolve({ok:true,status:200,json:async()=>raw});};});
+      const action=url==='/api/session-files'?call.body.action:null;
+      if(action==='param-op')return new Promise(resolve=>{window.releaseDraft=()=>{const [id,key,value]=call.body.args,document=window.structuredClone(call.body.document);document.nodes.find(n=>n.id===id).params[key]=value;resolve({ok:true,status:200,json:async()=>({ok:true,document,changed:[id]})});};});
       let data={ok:true,result:[],providers:[],agents:[],items:[],workspaces:[],templates:[]};
       if(url==='/api/commands')data=commands;
       // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
       else if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'fixcanvas-fixture'};
       else if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
-      else if(url==='/api/universal/canvas'||url.startsWith('/api/universal/canvas?'))data=url.includes('screen=home')?{...raw,nodes:[],canvas_deferred:true}:url.includes('since_revision')?{ok:true,unchanged:true,revision:raw.revision,scope:'nested',graph_id:'app'}:raw;
-      else if(url==='/api/universal/gesture'){raw={...raw,revision:raw.revision+1,viewport:{...raw.viewport,...call.body.viewport}};data=raw;}
-      else if(url.startsWith('/api/universal/graphs'))data={ok:true,graphs:[{id:'nested',title:'Fixture'}],current_graph:'nested'};
-      else if(url==='/api/universal/graph-open'){if(window.holdGraph){window.graphOpenWaiting=true;await new Promise(resolve=>{window.releaseGraph=resolve;});}raw={...raw,revision:raw.revision+1,scope:{...raw.scope,current:call.body.root}};data={ok:true,canvas:raw};}
+      else if(action==='initial')data={ok:true,document:file('nested','Fixture',50),path:'C:/isolated/fixture.archhub'};
+      else if(action==='catalogue')data={ok:true,items:[],sessions:[],directory:'mem'};
+      else if(action==='validate')data={ok:true,document:call.body.document};
+      else if(action==='solve')data={ok:true,results:{},solved:[],stale:[],ms:0};
+      else if(action==='head')data={ok:true,revision};
+      else if(action==='autosave'){revision++;data={ok:true,path:call.body.path,revision,document:{...call.body.document,properties:{...call.body.document.properties,revision}}};}
+      else if(action==='open'){if(window.holdGraph){window.graphOpenWaiting=true;await new Promise(resolve=>{window.releaseGraph=resolve;});}data={ok:true,document:file('other','Other',1),path:call.body.path};}
       call.bytes=JSON.stringify(data).length;call.finished=window.performance.now();return {ok:true,status:200,json:async()=>data};
     };
   },commandRegistry);
@@ -45,6 +50,8 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   await page.evaluate(async()=>{await window.ArchHubAPI.ready;});
   await page.addScriptTag({content:script('ui.jsx')});
   await page.addScriptTag({content:script('answer-widgets.jsx')});
+  // The shell header reads Home's row counts (UI.homeRows); the Home screen itself stays a stub below.
+  await page.addScriptTag({content:script('ds_home2.jsx')});
   await page.evaluate(()=>{Object.assign(window.UI,{Home:()=>null,Workshop:()=>null,Settings:()=>null,Composer:()=>null,AccountIdentity:()=>null,BaboomSprite:()=>null,GraphProperties:()=>null,NodeRunPolicy:()=>null,MixedProperties:()=>null,CapabilityRows:()=>null});});
   for(const name of ['ds_library.jsx','ds_screens.jsx','context-menus.jsx','app.jsx'])await page.addScriptTag({content:script(name)});
   await page.getByRole('button',{name:'Canvas',exact:true}).click();
@@ -63,12 +70,13 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   await page.evaluate(()=>{window.calls=[];});
   await page.getByRole('button',{name:'Canvas',exact:true}).click();
   for(let i=0;i<29;i++){
-    await page.getByRole('button',{name:i%2?'Home':'Workshop',exact:true}).click();
+    // The shell rail is Home and Canvas; the Workshop is a dock panel (founder design), so the other screen left for is Settings.
+    await page.getByRole('button',{name:i%2?'Home':'Settings',exact:true}).click();
     await page.evaluate(async()=>{const started=window.performance.now();[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='Canvas').click();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));window.returnTimes.push(window.performance.now()-started);});
   }
   const result=await page.evaluate(()=>({same:window.heldCanvas===document.querySelector('.node-canvas'),loadingFrames:window.loadingFrames,
-    graphCalls:window.calls.filter(c=>(/\/canvas(?:\?|$)|\/graph-open/.test(c.url))&&!c.url.includes('since_revision')),
-    freshnessCalls:window.calls.filter(c=>c.url.includes('since_revision')),calls:window.calls,returns:window.returnTimes,
+    graphCalls:window.calls.filter(c=>c.url==='/api/session-files'&&['initial','open','read'].includes(c.body.action)),
+    freshnessCalls:window.calls.filter(c=>c.url==='/api/session-files'&&c.body.action==='head'),calls:window.calls,returns:window.returnTimes,
     selected:document.querySelector('[data-graph-node="n0"] [data-ds-node]')?.style.outline,
     draft:document.querySelector('[data-graph-node="n0"] input')?.value,nodes:document.querySelectorAll('[data-graph-node]').length}));
   const after=await page.locator('.node-canvas .react-flow__viewport').getAttribute('style');
@@ -79,7 +87,7 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   assert.ok(result.freshnessCalls.every(c=>c.bytes<=1024));
   await page.evaluate(()=>window.releaseDraft());
   await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes[0].params.value==='unconfirmed draft');
-  await page.evaluate(()=>{window.holdGraph=true;window.switching=window.ArchHubAPI.selectGraph('other');});
+  await page.evaluate(()=>{window.holdGraph=true;window.switching=window.ArchHubAPI.selectGraph('C:/isolated/other.archhub');});
   await page.waitForFunction(()=>window.graphOpenWaiting);
   assert.equal(await page.locator('.node-canvas').evaluate(el=>!!el.closest('[inert]')),true,'old document is inert while another graph opens');
   await page.evaluate(async()=>{window.releaseGraph();await window.switching;});

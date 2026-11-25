@@ -22,6 +22,23 @@ function fixture(){return {root:'root',graph_id:'root',revision:1,scope:{current
  catalog:[{id:'number-def',name:'Number',category:'Input',parameters:{value:{type:'number',unit:'m'}},interface_contract:{value:{type:'number',direction:'output'}},descriptor:{engine:'Input'}},
  {id:'text-def',name:'Text',category:'Input',parameters:{value:{type:'text'}},interface_contract:{value:{type:'text',direction:'output'}},descriptor:{engine:'Input'}},
  {id:'filter-def',name:'Filter',category:'Shape',parameters:{threshold:{type:'number',unit:'m'}},interface_contract:{count:{type:'number',direction:'input'},items:{type:'elements',multiple:true,direction:'input'},result:{type:'elements',multiple:true,direction:'output'},done:{type:'event',direction:'output'}},descriptor:{engine:'Filter'}}]};}
+// D-014 NOGRAPH: the Canvas shows the open session file (owner session_files). The same fixture nodes, sockets,
+// parameters and wires are that file; the System graph (application nodes) still reads the universal canvas.
+function sessionDocument(raw){
+ if(raw.scope.current!=='user')return null;  // no user graph: the startup draft is empty
+ const unit=n=>Object.fromEntries(n.properties.filter(p=>p.unit).map(p=>[p.label,p.unit]));
+ const socket=(n,p)=>({id:p.id,label:p.name,type:p.logical_type,...(p.cardinality?{cardinality:p.cardinality}:{}),...(unit(n)[p.name]?{unit:unit(n)[p.name]}:{})});
+ const nodes=raw.nodes.filter(n=>!n.application).map(n=>({id:n.id,type:n.engine||'data.constant',...(n.item?{item:n.item}:{}),title:n.label,
+  params:Object.fromEntries(n.properties.filter(p=>p.label!=='engine').map(p=>[p.label,p.value])),
+  ...(n.item?{}:{ports:{source:n.ports.filter(p=>p.side==='source').map(p=>socket(n,p)),target:n.ports.filter(p=>p.side==='target').map(p=>socket(n,p))}}),
+  // A graph property the user could not edit is the file's not-exposed parameter: kept in params, off the card face.
+  ...(n.properties.some(p=>p.label!=='engine'&&p.editable===false)?{parameterPresentation:Object.fromEntries(n.properties.filter(p=>p.label!=='engine'&&p.editable===false).map(p=>[p.label,{hidden:true}]))}:{}),
+  position:{x:n.x,y:n.y}}));
+ const ids=new Set(nodes.map(n=>n.id));
+ return {format:'archhub',version:1,id:'user',title:'My work',nodes,
+  wires:raw.wires.filter(w=>ids.has(w.source)&&ids.has(w.target)).map(w=>({id:w.id,from:{node:w.source,socket:w.source_interface},to:{node:w.target,socket:w.target_interface}})),
+  groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}};
+}
 async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  t.after(()=>browser.close());
@@ -34,11 +51,23 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])
   await page.addScriptTag({content:name==='xyflow'?xyflow.script():name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
- await page.evaluate(({raw,commands})=>{
-  window.fixtureRaw=raw; window.fixtureCalls=[];
+ await page.evaluate(({raw,commands,file})=>{
+  window.fixtureRaw=raw; window.fixtureCalls=[]; window.fixtureFile=file;
   window.fetch=async (url,options={})=>{
    let data={ok:true,result:[],tasks:[],providers:[],agents:[],items:[],workspaces:[]};
    if(url==='/api/commands')data=commands;
+   else if(url==='/api/session-files'){
+    const body=JSON.parse(options.body);
+    if(body.action==='initial')data=window.fixtureFile?{ok:true,document:window.fixtureFile,path:'C:/isolated/canvasold.archhub'}:{ok:true};
+    else if(body.action==='catalogue')data={ok:true,items:window.fixtureRaw.fixtureLibraryPorts||[],sessions:[],directory:'mem'};
+    else if(body.action==='validate')data={ok:true,document:body.document};
+    else if(body.action==='solve')data={ok:true,results:{},solved:[],stale:[],ms:0};
+    else if(body.action==='autosave'){
+     window.fixtureCalls.push({action:'save',document:body.document});
+     if(window.holdMove)await new Promise(resolve=>{window.releaseMove=resolve;});
+     data={ok:true,path:body.path,revision:(body.document.properties.revision||0)+1,document:body.document};
+    }
+   }
    // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
    else if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'canvasold-fixture'};
    else if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
@@ -56,7 +85,7 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
    }
    return {ok:true,status:200,json:async()=>data};
   };
- },{raw,commands:commandRegistry});
+ },{raw,commands:commandRegistry,file:sessionDocument(raw)});
  for(const name of ['studio-authority.js','api.js'])await page.addScriptTag({content:read(name)});
  await page.evaluate(async()=>{await window.ArchHubAPI.ready;});
  await page.addScriptTag({content:transformSync(read('ui.jsx'),{loader:'jsx'}).code});
@@ -68,8 +97,11 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
   const api={...real,refreshProjects:async()=>{},getSnapshot:()=>state,subscribe:f=>{listeners.add(f);return()=>listeners.delete(f);},
    refreshSystemGraph:async()=>{},refreshAgentSurface:async()=>null,getNodeParameters:id=>state.graph.nodes.find(n=>n.id===id)?.parameterSchema||[],
    connectSockets:async wire=>{window.fixtureCalls.push({action:'connect',wire});return {ok:true};},setSetting:async()=>{},
-   selectGraph:async id=>{window.fixtureCalls.push({action:'selectGraph',id});if(window.fixtureRaw.fixtureSystemFailures>0){window.fixtureRaw.fixtureSystemFailures--;throw Error('System graph read refused');}return {ok:true};}};
-  api.moveNodes=async positions=>{const result=await real.moveNodes(positions);publish({graph:real.getSnapshot().graph});return result;};
+   selectGraph:async id=>{window.fixtureCalls.push({action:'selectGraph',id});return {ok:true};},
+   // The System graph is a read-only picture read beside the open file (D-014): its refused read is injected here.
+   readSystemGraph:async()=>{window.fixtureCalls.push({action:'readSystemGraph'});if(window.fixtureRaw.fixtureSystemFailures>0){window.fixtureRaw.fixtureSystemFailures--;throw Error('System graph read refused');}return real.readSystemGraph();}};
+  // A drop redraws after paint (api.moveNodes afterPaint): publish the real projection once it is shown.
+  api.moveNodes=async(...args)=>{const result=await real.moveNodes(...args);await result?.shown;publish({graph:real.getSnapshot().graph});return result;};
   api.setNodeParam=async(id,key,value)=>{window.fixtureCalls.push({action:'parameter',id,key,value});publish({graph:{...state.graph,nodes:state.graph.nodes.map(n=>n.id===id?{...n,params:{...n.params,[key]:value}}:n)}});};
   window.UI={...window.UI,A:window.AH,D:window.AH_DS,api,
    useData:()=>R.useSyncExternalStore(api.subscribe,api.getSnapshot),
@@ -83,6 +115,8 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
   };
  });
  for(const name of ['ds_library.jsx','ds_screens.jsx','ds_settings3.jsx'])await page.addScriptTag({content:transformSync(read(name),{loader:'jsx'}).code});
+ // The shell header reads Home's row counts (UI.homeRows); the Home screen itself stays a stub.
+ if(shell){await page.addScriptTag({content:transformSync(read('ds_home2.jsx'),{loader:'jsx'}).code});await page.evaluate(()=>{window.UI.Home=()=>null;});}
  if(shell)await page.addScriptTag({content:transformSync(read('app.jsx'),{loader:'jsx'}).code});
  else await page.evaluate(system=>window.mountFixture(system),system);
  if(shell){await page.getByRole('button',{name:'Canvas',exact:true}).click();}
@@ -157,7 +191,8 @@ test('real shell gives canvas all height below top bar, floats composer and fill
  assert.ok(cards.every(b=>b.x>=boxes.canvas.x&&b.right<=boxes.canvas.right&&b.y>=boxes.canvas.y&&b.bottom<=boxes.canvas.bottom),'all nodes fit after Library opens');
  assert.equal(boxes.canvas.y,boxes.top.bottom);assert.equal(boxes.canvas.bottom,boxes.window);
  assert.equal(boxes.library.y,boxes.top.bottom);assert.equal(boxes.library.bottom,boxes.window);
- assert.equal(boxes.position,'absolute');assert.ok(boxes.composer.y>boxes.canvas.y&&boxes.composer.bottom<boxes.canvas.bottom);
+ assert.equal(boxes.position,'fixed');  // founder design: the composer floats over the work (style.css .global-composer)
+ assert.ok(boxes.composer.y>boxes.canvas.y&&boxes.composer.bottom<boxes.canvas.bottom);
  assert.ok(!boxes.footer||boxes.footer.height===0,'no bottom footer band');
  if(process.env.CANVASOLD_EVIDENCE)await page.screenshot({path:path.join(process.env.CANVASOLD_EVIDENCE,'AFTER.png')});
 });
@@ -174,8 +209,9 @@ test('system nodes are absent from Canvas; Settings System graph groups actual s
 });
 
 async function navigation({delayCanvas=async()=>{}}={}) {
- const vm=require('node:vm'),calls=[],stored={},root='root';let current='user';
+ const vm=require('node:vm'),calls=[],stored={},root='root';let current='root';
  const snapshot=()=>({root,revision:1,scope:{current},nodes:[],wires:[],catalog:[]});
+ const file=id=>({format:'archhub',version:1,id,title:id,nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1},properties:{revision:1}});
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
   ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(){},
   ArchHubStudioAuthority:{create:({get})=>{let canvas;return {getSnapshot:()=>({canvas}),clear:()=>{canvas=null;},adopt:async result=>canvas=result,transact:async action=>canvas=await action(),load:async()=>canvas=await get('/api/universal/canvas')};}}};
@@ -187,6 +223,9 @@ async function navigation({delayCanvas=async()=>{}}={}) {
   if(url==='/api/universal/canvas'){data=snapshot();await delayCanvas(current);}
   if(url==='/api/universal/graphs?screen=home')data={ok:true,graphs:[{id:'root'},{id:'user'},{id:'other'}],current_graph:current};
   if(url==='/api/universal/graph-open'){current=body.root;data={ok:true};}
+  if(url==='/api/session-files')data=body.action==='open'?{ok:true,document:file(body.path),path:body.path}
+   :body.action==='initial'?{ok:true,document:file('start'),path:'start'}:body.action==='validate'?{ok:true,document:body.document}
+   :body.action==='autosave'?{ok:true,path:body.path,revision:2,document:body.document}:{ok:true};
   return {ok:true,status:200,json:async()=>data};
  };
  vm.runInNewContext(read('api.js'),{window,document:window.document,fetch,
@@ -195,16 +234,19 @@ async function navigation({delayCanvas=async()=>{}}={}) {
  return {api:window.ArchHubAPI,calls,stored};
 }
 test('explicit Settings system navigation preserves and restores the last admitted user graph',async()=>{
- const s=await navigation();await s.api.selectGraph('user');await s.api.selectGraph('root');
- assert.equal(s.api.getSnapshot().graph.id,'root');assert.equal(JSON.parse(s.stored['archhub.studio.session']).lastGraphId,'user');
+ // The System graph is read beside the open file (Settings > System graph); the user's file stays open.
+ const s=await navigation();await s.api.selectGraph('user');await s.api.readSystemGraph();
+ assert.equal(s.api.getSnapshot().graph.id,'user');
  await s.api.refreshProjects();assert.equal(s.api.getSnapshot().graph.id,'user');
- assert.deepEqual(s.calls.filter(c=>c.url==='/api/universal/graph-open').map(c=>c.body.root),['user','root','user']);
+ assert.deepEqual(s.calls.filter(c=>c.url==='/api/session-files'&&c.body.action==='open').map(c=>c.body.path),['user']);
+ assert.equal(s.calls.filter(c=>c.url==='/api/universal/canvas').length,1);
 });
 test('a slow System canvas response cannot overwrite newer explicit user navigation',async()=>{
  let release,entered;const started=new Promise(r=>{entered=r;});let hold=false;
  const s=await navigation({delayCanvas:async id=>{if(hold&&id==='root'){entered();await new Promise(r=>{release=r;});}}});
- hold=true;const system=s.api.selectGraph('root');await started;
- await s.api.selectGraph('other');release();await system;
+ hold=true;const system=s.api.readSystemGraph();await started;
+ await s.api.selectGraph('other');release();
+ await assert.rejects(system,/changed while this request was in flight/,'the stale System read is refused, not adopted');
  assert.equal(s.api.getSnapshot().graph.id,'other');
 });
 
@@ -217,25 +259,26 @@ function desktopFixture(){
  raw.nodes=raw.nodes.map(n=>{
   if(n.application)return n;
   const engine=n.id==='filter'?'data.filter':'data.constant';
-  return {...n,label:n.assembly.name,kind:undefined,engine,category:undefined,properties:[...n.properties,{label:'engine',value:engine,editor:'text'}],
+  // A node placed from the Library carries no socket copy: its sockets are its item's declared ports.
+  return {...n,label:n.assembly.name,kind:undefined,engine,item:{level:'number',text:'text',filter:'filter'}[n.id],category:undefined,properties:[...n.properties,{label:'engine',value:engine,editor:'text'}],
    ports:n.ports.map(({logical_type,cardinality,...p})=>({...p,contract:'Universal assembly',contract_root:'universal-contract',mode:'connection'}))};
  });
  return raw;
 }
 test('desktop assembly objects and library_ports metadata render real typed interfaces without a clean-only schema',async t=>{
  const page=await mount(t,{raw:desktopFixture()}),s=await page.evaluate(()=>window.fixtureState());
- assert.equal(s.graph.nodes.find(n=>n.id==='level').kind,'data.constant');
+ assert.equal(s.graph.nodes.find(n=>n.id==='level').type,'data.constant');
  assert.equal(s.graph.nodes.find(n=>n.id==='level').outputs[0].type,'number');
  assert.equal(s.graph.nodes.find(n=>n.id==='text').outputs[0].type,'text');
- assert.equal(s.graph.nodes.find(n=>n.id==='filter').inputs.find(p=>p.id==='filter-items').list,true);
- assert.equal(await page.locator('[data-port-key="filter:out:filter-event"] svg path').count(),1);
+ assert.equal(s.graph.nodes.find(n=>n.id==='filter').inputs.find(p=>p.id==='items').list,true);
+ assert.equal(await page.locator('[data-port-key="filter:out:done"] svg path').count(),1);
  assert.equal(await page.locator('[data-graph-node="level"]').count(),1);
 });
 test('fast Settings-to-Canvas refresh cancels the old System read and restores the admitted user graph',async()=>{
  let release,entered;const started=new Promise(r=>{entered=r;});let hold=false;
  const s=await navigation({delayCanvas:async id=>{if(hold&&id==='root'){hold=false;entered();await new Promise(r=>{release=r;});}}});
  await s.api.selectGraph('user');hold=true;
- const system=s.api.selectGraph('root');await started;
+ const system=s.api.readSystemGraph();await started;
  const canvas=s.api.refreshProjects({userCanvas:true});release();await Promise.all([system,canvas]);
  assert.equal(s.api.getSnapshot().graph.id,'user');
 });
@@ -280,9 +323,10 @@ test('node body drag and selected group drag persist through the real move adapt
  const start=await Promise.all(['level','text'].map(id=>card(page,id).boundingBox()));await drag('level',-20,45);await page.waitForTimeout(80);
  const end=await Promise.all(['level','text'].map(id=>card(page,id).boundingBox()));
  for(let i=0;i<2;i++)assert.ok(Math.abs(end[i].x-start[i].x+20)<2&&Math.abs(end[i].y-start[i].y-45)<2,'all selected nodes move together '+JSON.stringify({start,end,ids:await selectedIds(page),calls:await page.evaluate(()=>window.fixtureCalls)}));
- const saved=await page.evaluate(()=>({raw:window.fixtureRaw,calls:window.fixtureCalls.filter(c=>c.action==='move')}));
- assert.equal(saved.calls.length,2);assert.deepEqual(Object.keys(saved.calls[1].body.positions).sort(),['level','text']);
- for(const id of ['level','text'])assert.deepEqual(saved.calls[1].body.positions[id],{x:saved.raw.nodes.find(n=>n.id===id).x,y:saved.raw.nodes.find(n=>n.id===id).y});
+ await page.waitForTimeout(300);  // past the autosave debounce
+ const saved=await page.evaluate(()=>({shown:window.ArchHubAPI.getSnapshot().graph.nodes,calls:window.fixtureCalls.filter(c=>c.action==='save')}));
+ assert.equal(saved.calls.length,2,'one save per drag');
+ for(const id of ['level','text'])assert.deepEqual(saved.calls[1].document.nodes.find(n=>n.id===id).position,{x:saved.shown.find(n=>n.id===id).x,y:saved.shown.find(n=>n.id===id).y});
  await page.evaluate(()=>window.fixturePublish({graph:{...window.fixtureState().graph}}));
  assert.ok(Math.abs((await card(page,'level').boundingBox()).y-end[0].y)<2,'refresh retains saved positions');
 });
@@ -300,12 +344,13 @@ test('non-interface parameters remain editable widgets without fabricated socket
 });
 test('Settings hosts the grouped system graph in the actual shell',async t=>{
  const page=await mount(t,{shell:true});await page.getByRole('button',{name:'Settings',exact:true}).click();
- await page.getByRole('button',{name:'System graph',exact:true}).click({timeout:1500});
+ // Settings > This PC carries the System graph card (ds_settings3 pcCards 'sysgraph'): that page is its door (spec 6).
+ await page.getByRole('button',{name:'This PC',exact:true}).click({timeout:1500});
  assert.equal(await page.locator('[data-system-group]').count(),3);
- assert.equal(await page.locator('.node-canvas:visible').count(),0);
- assert.equal(await page.locator('.node-canvas').count(),1,'the previously opened Canvas remains mounted and hidden');
- await page.getByRole('button',{name:'Open graph',exact:true}).click();
- assert.equal(await page.locator('[data-screen="settings/System graph"]').count(),1,'legacy system door still belongs to Settings');
+ // The Settings sheet shows its own read-only preview of the open file (ds_settings3 Look); the work Canvas is the one outside it.
+ assert.equal(await page.locator('.node-canvas:visible').evaluateAll(els=>els.filter(el=>!el.closest('[data-screen^="settings/"]')).length),0);
+ assert.equal(await page.locator('.node-canvas').evaluateAll(els=>els.filter(el=>!el.closest('[data-screen^="settings/"]')).length),1,'the previously opened Canvas remains mounted and hidden');
+ assert.equal(await page.locator('[data-screen^="settings/"] [data-system-group]').count(),3,'legacy system door still belongs to Settings');
  if(process.env.CANVASOLD_EVIDENCE)await page.screenshot({path:path.join(process.env.CANVASOLD_EVIDENCE,'SETTINGS.png')});
 });
 test('System graph exposes a refused read and retries the same owner',async t=>{
@@ -313,7 +358,7 @@ test('System graph exposes a refused read and retries the same owner',async t=>{
  assert.match(await page.getByRole('alert').textContent(),/System graph read refused/);
  await page.getByRole('button',{name:'Retry loading system graph'}).click();
  assert.equal(await page.locator('[data-system-group]').count(),3);
- assert.equal((await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='selectGraph'&&c.id==='root').length,2);
+ assert.equal((await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='readSystemGraph').length,2);
 });
 
 
@@ -330,9 +375,12 @@ test('CARDPOLISH bounds human rows while retaining internal parameters and every
  assert.equal(await card.locator('[data-parameter="engine"]').count(),0);
  assert.equal(await card.locator('[data-parameter="responsibility"]').count(),0,'serialized JSON stays in Properties');
  assert.equal(await card.locator('[data-parameter="last_result"]').count(),0);
- assert.equal(await card.locator('[data-parameter]').count(),4,'spec section 0b: the default card shows every human row');
+ // Design v48 (FlowCard): the card opens on its first three human rows; "+N more" shows every human row, "Compact" folds them.
+ assert.equal(await card.locator('[data-parameter]').count(),3);
+ await card.getByRole('button',{name:'+1 more',exact:true}).click();
+ assert.equal(await card.locator('[data-parameter]').count(),4,'spec section 0b: the card reaches every human row');
  assert.match(await card.innerText(),/Room width/);
- assert.equal(await card.getByRole('button',{name:'Compact',exact:true}).count(),1,'compact is an opt-in toggle');
+ assert.equal(await card.getByRole('button',{name:'Compact',exact:true}).count(),1,'compact is a toggle');
  assert.doesNotMatch(await card.innerText(),/[a-f0-9]{64}|assembly-instance:|\{"/);
  const description=card.locator('[data-parameter="description"]');
  assert.equal(await description.locator('[title]').last().getAttribute('title'),n.properties.find(p=>p.label==='description').value);
@@ -357,6 +405,7 @@ test('CARDPOLISH declared editable text remains reachable regardless of key or v
   prop('root_id','workspace-root','text'),prop('level_ref','Level 3','text'),
   prop('source_hash','a'.repeat(64),'text'),prop('metadata','{"draft":true}','text')];
  const page=await mount(t,{raw}),card=page.locator('[data-graph-node="level"]');
+ await card.getByRole('button',{name:'+4 more',exact:true}).click();  // design v48: the first three rows, then every row on request
  assert.equal(await card.getByRole('textbox',{name:'Level caption',exact:true}).inputValue(),'[TBD]');
  assert.equal(await card.getByRole('textbox',{name:'Level note',exact:true}).inputValue(),'{draft}');
  for(const key of ['caption','note','root_id','level_ref','source_hash','metadata']){

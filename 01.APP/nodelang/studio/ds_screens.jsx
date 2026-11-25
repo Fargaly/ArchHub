@@ -287,7 +287,8 @@
       state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle',
       stateColor = /error|fail|refus/i.test(state) ? A.err : /await/i.test(state) ? A.inkSoft : /saved/i.test(state) ? A.ok : /working|wip/i.test(state) ? A.accent : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
     // Plate 4.3: only the first three human values; Properties keeps every parameter.
-    const parameters = Object.entries(n.params).filter(([key,value])=>!compact || n.parameterSchema?.some(p=>p.key===key && p.editable) ||
+    // A parameter the user turned off (Exposed parameters, parameterPresentation hidden) stays in Properties, never on the face.
+    const parameters = Object.entries(n.params).filter(([key])=>!n.parameterPresentation?.[key]?.hidden).filter(([key,value])=>!compact || n.parameterSchema?.some(p=>p.key===key && p.editable) ||
       (!/(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i.test(key) &&
        (value === null || typeof value !== 'object') &&
        !/(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i.test(String(value)))),
@@ -820,7 +821,7 @@
       sourceOf = port => { const w = wiresIn.find(x => x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + '.' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); },
       slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
-      shown = (n.parameterSchema || []).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
+      shown = (n.parameterSchema || []).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => !n.parameterPresentation?.[p.key]?.hidden).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
         .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))).sort((a,b)=>Number(!!b.userParam)-Number(!!a.userParam)),
       pending = false,
       hasOutput = n.output != null && n.output !== '' && (typeof n.output!=='object' || Object.keys(n.output).length>0 && !('approvalId' in n.output)),
@@ -862,7 +863,7 @@
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
         {params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => (x.id === p.key || x.id === 'param:' + p.key) && wiresIn.some(wire=>wire.toPort===x.id)) || n.inputs.find(x => x.id === 'param:' + p.key) || n.inputs.find(x => x.id === p.key)})).map(({key, port, param}) => {
           const ports = param ? n.inputs.filter(x => x.id === param.key || x.id === 'param:' + param.key) : port ? [port] : [];
-          const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
+          const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())) : port.name,
             type = param ? ((['min', 'max', 'step'].includes(param.key) || param.type === 'number' || ['number', 'integer'].includes(param.dataType)) ? 'number' : (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : 'string'))) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
             style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(64px,.8fr) minmax(0,1.3fr) 16px', minHeight:30, gap: 6, padding: '2px 0', alignItems: 'center'}}>
@@ -1017,7 +1018,9 @@
   function LiveMap({source, ...props}) { return <window.UI.CanvasMap {...props} view={useLiveView(source)} />; }
   // A node drag in flight moves only here, so each pointer frame renders the engine, not the whole Canvas.
   // Every other change, and the drag's last position, goes to the Canvas owner (onNodesChange).
-  function FlowStage({nodes, onNodesChange, children, ...props}) {
+  // The engine's store, for the few edits that must show in the frame they are made (Escape clears the selection).
+  function FlowStore({target}) { target.current = RF.useStoreApi(); return null; }
+  function FlowStage({nodes, onNodesChange, onGrab, storeRef, children, ...props}) {
     const [held, setHeld] = React.useState({base: nodes, list: nodes});
     const list = held.base === nodes ? held.list : nodes;
     const change = changes => {
@@ -1030,6 +1033,7 @@
     };
     // A plain press on a card selects it in the frame of the press (the engine selects only on the click that follows).
     const press = event => {
+      onGrab?.(event);
       if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey) return;
       const card = event.target.closest?.('.react-flow__node');
       if (!card || event.target.closest('input, textarea, select, [contenteditable="true"], .react-flow__handle')) return;
@@ -1039,7 +1043,7 @@
       const wires = (props.edges || []).filter(e => e.selected).map(e => ({id: e.id, type: 'select', selected: false}));
       if (wires.length) props.onEdgesChange?.(wires);
     };
-    return <RF.ReactFlow nodes={list} onNodesChange={change} onPointerDownCapture={press} {...props}>{children}</RF.ReactFlow>;
+    return <RF.ReactFlow nodes={list} onNodesChange={change} onPointerDownCapture={press} {...props}>{storeRef && <FlowStore target={storeRef} />}{children}</RF.ReactFlow>;
   }
   function Canvas({
     active = true,
@@ -1077,7 +1081,7 @@
       [more, setMore] = React.useState(false);
     const area = React.useRef(), [areaNode, setAreaNode] = React.useState(null),
       view = React.useRef(viewport),
-      held = React.useRef(null),
+      held = React.useRef(null), grab = React.useRef(null), flowStore = React.useRef(null),
       zoomTimer = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
       zoomGeneration = React.useRef(0),
@@ -1454,6 +1458,9 @@
         }
         if (!u.modal&&(key==='escape'||plainKey&&key==='u'&&canLeave)) {
           clearTimeout(groupMenuTimer.current);
+          // The engine takes the cleared selection now, not one effect later: the selection drops in the same frame (spec 7, court 11).
+          const engine = flowStore.current?.getState();
+          if (engine?.nodes.some(f => f.selected)) engine.setNodes(engine.nodes.map(f => f.selected ? {...f, selected: false} : f));
           setRejected(null);
           setSelected([]);
           setSelectedWires([]);
@@ -1521,7 +1528,12 @@
           return;
         }
       }
-      const positions = Object.fromEntries((all?.length ? all : [dragged]).map(f => [f.id, {x: f.position.x, y: f.position.y}]));
+      // xyflow starts a drag only once the pointer passes its threshold and measures from there, so the card trails the
+      // pointer by that first step: the drop lands where the pointer put it (the grab point plus the pointer's travel).
+      const from = held.current?.[dragged.id] || (node && {x: node.x, y: node.y}), at = grab.current && toFlow(event);
+      const shift = from && at ? {x: from.x + at.x - grab.current.x - dragged.position.x, y: from.y + at.y - grab.current.y - dragged.position.y} : {x: 0, y: 0};
+      grab.current = null;
+      const positions = Object.fromEntries((all?.length ? all : [dragged]).map(f => [f.id, {x: f.position.x + shift.x, y: f.position.y + shift.y}]));
       held.current = positions;
       // The file edit is made now (a reload or close right after the drop keeps it); the engine already shows the drop
       // (held keeps it) and the redraw of every view runs after that frame is painted, not inside the pointer event.
@@ -1638,7 +1650,11 @@
           e.preventDefault();
           e.stopPropagation();
           u.show('Port menu', {...ownerSocket(n.id,p.id), anchor: {x: e.clientX, y: e.clientY}});
-        }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => (w.memberTo?.node ?? w.to) === n.id && (w.memberTo?.port ?? w.toPort) === p.id || w.to === n.id && w.toPort === p.id) || undefined} /></RF.Handle>;
+        }}>{(() => {
+          const wired = side === 'out' || s.graph.wires.some(w => (w.memberTo?.node ?? w.to) === n.id && (w.memberTo?.port ?? w.toPort) === p.id || w.to === n.id && w.toPort === p.id);
+          // Shape is structure (spec 2): a single value keeps the design's dot; an event is a triangle, a list a diamond.
+          return p.type === 'event' || p.list ? <D.Socket t={p.type} list={p.list} size={8} filled={wired} aria-hidden="true" /> : <span data-socket-dot="" data-wired={wired || undefined} />;
+        })()}</RF.Handle>;
     };
     const renderNode = (n, isSelected) => {
       const placed = new Set(s.graph.nodes.map(row => row.id));
@@ -2135,11 +2151,11 @@
       </div>
     </div>}
     <CanvasContext.Provider value={canvasContext}>
-     <FlowStage nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview&&!runView} nodesConnectable={!preview&&!flowView&&!runView} elevateNodesOnSelect={false}
+     <FlowStage storeRef={flowStore} nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview&&!runView} nodesConnectable={!preview&&!flowView&&!runView} elevateNodesOnSelect={false}
        defaultViewport={{x: pan.x, y: pan.y, zoom}} onInit={inst => { flow.current = inst; inst.setViewport({x: view.current.pan.x, y: view.current.pan.y, zoom: view.current.zoom}); }}
        onMove={(event,v) => { if (event instanceof window.Event) { view.current = {zoom: v.zoom, pan: {x: v.x, y: v.y}}; viewSource.emit(); } }}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) { if (v.zoom !== zoom) saveZoomPreference(v.zoom); setViewport(view.current); persistView(v); } }} minZoom={zoomMin} maxZoom={zoomMax}
-       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}if(f.data.n.type==='note'){if(!runView)setEditingNote({id:f.id,text:f.data.n.params?.text||''});return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
+       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : React.startTransition(() => onInspect?.({nodeId:node.id,wireId:null}))} onNodeDragStop={onNodeDragStop} onGrab={event => { grab.current = event.button === 0 ? toFlow(event) : null; }} onNodeDoubleClick={(e, f) => {if(preview){onActivate?.();return;}if(f.data.n.type==='note'){if(!runView)setEditingNote({id:f.id,text:f.data.n.params?.text||''});return;}clearTimeout(groupMenuTimer.current);if(u.modal?.kind==='Group menu'&&u.modal.id===f.id)u.close();openNode(f.data.n);}}
        onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':node.data.n?.params?.session_file?'Embed menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}

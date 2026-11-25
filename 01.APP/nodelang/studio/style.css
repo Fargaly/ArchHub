@@ -1727,3 +1727,5 @@ html[dir="rtl"] .react-flow { direction: ltr; }
 .ast.s-ok{color:var(--color-ok)}
 .ast.s-err{color:var(--color-err)}
 .ast.s-warn{color:var(--color-warn)}
+/* Focusing a card past the canvas edge must not scroll the engine box: the view moves only by pan (direct manipulation stays stable). */
+.node-canvas .react-flow{overflow:clip}

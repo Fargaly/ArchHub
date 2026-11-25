@@ -1861,7 +1861,8 @@ function fileNode(node, document=sessionDocument){
  const column=node.type==='data.field'?{dataset:feed?document.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
  return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='script.python'?node.params.kind!=='effect':node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.frameMembers&&node.title==='Frame'?'Group':node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
-  inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
+  // A Library port declares a list as cardinality 'many' (library_engines port metadata); the canvas reads list.
+  inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type,list:p.list===true||p.cardinality==='many'})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type,list:p.list===true||p.cardinality==='many'})),
   children:node.children||[],frameMembers:node.frameMembers,collapsed:node.collapsed!==false,members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,bypassed:!!node.bypassed,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
   output:node.result?.output??[],status:node.result?.status==='Declined'?'Rejected':node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
 }
@@ -2308,7 +2309,13 @@ api.openSession=async(path,linked=false,linkedParams=null)=>{
   picker.onchange=()=>{const file=picker.files[0];picker.remove();if(file)api.importSession(file).then(resolve,reject);else resolve({cancelled:true});};
   picker.oncancel=()=>{picker.remove();resolve({cancelled:true});};document.body.append(picker);picker.click();
  });
- const navigation=++fileNavigation,opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};const result=await adoptFile(opened.document,opened.path,navigation);if(opened.migrationDocument)fileHistory.push(copy(opened.migrationDocument));if(!linked){sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});}return result;};
+ const navigation=++fileNavigation;
+ // The shown document is inert while another file opens; the opened file (or a refusal or cancel) ends it.
+ publish({graphOpening:true});
+ try{
+  const opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};const result=await adoptFile(opened.document,opened.path,navigation);if(opened.migrationDocument)fileHistory.push(copy(opened.migrationDocument));if(!linked){sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});}return result;
+ }finally{if(navigation===fileNavigation&&state.graphOpening)publish({graphOpening:false});}
+};
 // Built-in starters (Book ch.12): open one as a new session file; Start also runs it to its Approve gate.
 api.openStarter=async id=>{const navigation=++fileNavigation,opened=await sessionRequest('starter',{id});return adoptFile(opened.document,opened.path,navigation);};
 api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(opened?.cancelled)return opened;await api.runNode();return {ok:true};};

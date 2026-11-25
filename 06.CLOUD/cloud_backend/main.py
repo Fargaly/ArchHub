@@ -30,6 +30,7 @@ Deploy:
 """
 from __future__ import annotations
 
+import os
 import time
 import urllib.parse
 
@@ -374,7 +375,9 @@ def root_door():
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"ok": True, "ts": int(time.time())}
+    # The released desktop BUILD_ID (fly.toml, written by release_surfaces.py) and the deployed commit are public.
+    return {"ok": True, "ts": int(time.time()), "version": os.environ.get("ARCHHUB_VERSION", ""),
+            "commit": os.environ.get("ARCHHUB_COMMIT", "")}
 
 
 @app.get("/readyz")

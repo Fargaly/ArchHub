@@ -242,7 +242,8 @@ $beforeVersion = 0
 if ($beforeNewest) { $beforeVersion = $beforeNewest.Version }
 $dockerfile = Join-Path $PSScriptRoot "Dockerfile"
 $ignorefile = Join-Path $PSScriptRoot "dockerignore.txt"
-$deployed = Get-FlyResult -FlyArgs @("deploy", $context, "--config", $flyToml, "--dockerfile", $dockerfile, "--ignorefile", $ignorefile, "-a", $AppName)
+$commit = (git -C $context rev-parse HEAD 2>$null) -join ""
+$deployed = Get-FlyResult -FlyArgs @("deploy", $context, "--config", $flyToml, "--dockerfile", $dockerfile, "--ignorefile", $ignorefile, "-a", $AppName, "--env", "ARCHHUB_COMMIT=$commit")
 Stop-IfFlyFailed "deploy" $deployed
 $after = Get-FlyResult -FlyArgs @("releases", "-a", $AppName, "--json")
 Stop-IfFlyFailed "releases" $after

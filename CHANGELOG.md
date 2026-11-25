@@ -4,9 +4,11 @@
 
 ## 20261125-1227-0d3464c
 
-- Published build 20261125-1227-0d3464c (source 0d3464c).
-- Installer SHA-256: `b587c1832233940d7797732c742bc9b36c946c67b7806dc68e2b21fa45908ced`.
-- Built at 2026-11-25T09:01:38Z.
+- Home lets you permanently delete a saved task. You can cancel before the file is removed.
+- Settings groups controls under Account, Projects, Agents, Connections and This PC, including workspace rules.
+- The desktop keeps a verified sign-in through a brief connection failure. An explicit account refusal still locks the workspace.
+- The Windows updater gives active connector calls a short window to finish and reports interrupted calls explicitly.
+- WhatsApp Business supports inbox reads for linked numbers. Linking a number requires the Meta Embedded Signup configuration.
 
 Source: 0d3464c7.
 

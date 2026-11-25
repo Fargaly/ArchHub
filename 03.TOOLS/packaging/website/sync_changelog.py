@@ -69,10 +69,20 @@ def section_bullets(body: str, heading: str) -> list[str]:
     return [line[2:].strip() for line in section_lines(body, heading) if line.startswith("- ")]
 
 
+def leading_bullets(body: str) -> list[str]:
+    """Bullets written above the first heading (release notes without a What changed heading)."""
+    head = re.split(r"(?m)^## ", body, maxsplit=1)[0]
+    return [line[2:].strip() for line in head.splitlines() if line.startswith("- ")]
+
+
+def release_bullets(body: str) -> list[str]:
+    return section_bullets(body, "What changed") or section_bullets(body, "Changes") or leading_bullets(body)
+
+
 def entry_from_release(release: dict) -> str:
     identity = build_id(release["tag_name"])
     body = release.get("body") or ""
-    changed = section_bullets(body, "What changed") or section_bullets(body, "Changes")
+    changed = release_bullets(body)
     gaps = section_bullets(body, "Known gaps")
     lines = [f"## {identity}", ""]
     if changed:

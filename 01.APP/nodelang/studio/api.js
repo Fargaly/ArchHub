@@ -2402,6 +2402,8 @@ api.moveNodes=async(positions,afterPaint=false)=>fileEdit(d=>{
 api.setNodeParam=async(id,key,value)=>{
  if(!sessionDocument.nodes.some(n=>n.id===id)&&systemProjection?.nodes.some(n=>n.id===id)){try{await commands.adopt(systemProjection);const result=await nodeProperty(id,key,value);systemProjection=commands.getSnapshot().canvas;publish({systemRevision:(state.systemRevision||0)+1});return result;}finally{projectFile();}}
  const held=sessionDocument.nodes.find(n=>n.id===id);
+ // The inspector shows this parameter read-only (fileNode editable:false): every caller gets the same refusal.
+ if(held&&state.graph.nodes.find(n=>n.id===id)?.parameterSchema?.some(p=>p.key===key&&p.editable===false))throw Error('This parameter is read-only.');
  if(held?.type==='thing.setting'&&held.params.setting&&key==='value'){await api.setSetting(held.params.setting,value);return state.graph.nodes.find(n=>n.id===id);}
  // The Workshop node's update parameters are the Settings owner's values: an explicit edit writes that owner first.
  if(held&&held.params?.tool==='workshop'&&UPDATE_POLICY_KEYS.includes(key))await api.setApplicationSetting(key,value);
@@ -2416,8 +2418,11 @@ async function paramOp(op,args){
  const document=portableDocument();
  const result=await sessionRequest('param-op',{document,op,args});
  if(navigation!==fileNavigation)throw Error('The open document changed before the parameter edit finished.');
- if(JSON.stringify(document.nodes)!==JSON.stringify(sessionDocument.nodes)||JSON.stringify(document.wires)!==JSON.stringify(sessionDocument.wires))throw Error('The canvas changed during the parameter edit. Retry the edit.');
- fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;},result.changed);
+ // A move during the round trip is layout only: the parameter edit still lands and the move is kept.
+ const shape=nodes=>JSON.stringify(nodes.map(({position,...node})=>node));
+ if(shape(document.nodes)!==shape(sessionDocument.nodes)||JSON.stringify(document.wires)!==JSON.stringify(sessionDocument.wires))throw Error('The canvas changed during the parameter edit. Retry the edit.');
+ const moved=new Map(sessionDocument.nodes.map(node=>[node.id,node.position]));
+ fileEdit(d=>{d.nodes=result.document.nodes.map(node=>moved.has(node.id)?{...node,position:moved.get(node.id)}:node);d.wires=result.document.wires;},result.changed);
  return result;
 }
 api.addNodeParameter=async(id,input={})=>{

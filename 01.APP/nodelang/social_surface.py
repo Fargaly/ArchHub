@@ -36,6 +36,9 @@ _LOG = logging.getLogger(__name__)
 SOCIAL_NODE = {"id": "social.media", "params": {"state_limit_bytes": 65536, "closed_posts_limit": 50,
                                                 "whatsapp_page_size": 200, "whatsapp_pages": 10,
                                                 "whatsapp_inbox_rows": 40}}
+# Cloud inbox network -> (inbox row id prefix, inbox platform).
+RECEIVED_NETWORKS = {"whatsapp": ("wa:", "WhatsApp Business"), "messenger": ("fb:", "Facebook"),
+                     "instagram": ("ig:", "Instagram")}
 # Draft account -> (social_connections network, Work operation, text argument).
 POST_ROUTES = {"LinkedIn": ("linkedin", "linkedin.post", "text"),
                "Facebook": ("facebook", "facebook.page_post", "message"),
@@ -196,7 +199,7 @@ class SocialSurface:
         return self._save(state, {"conversations": len(rows), "order": "Unread first"})
 
     def read_whatsapp_inbox(self):
-        """Pull new WhatsApp Business messages the cloud webhook received into the inbox."""
+        """Pull new WhatsApp Business, Page Messenger and Instagram DMs the cloud webhooks received into the inbox."""
         from . import cloud_social_oauth
         reader = cloud_social_oauth.whatsapp_messages
         state = self.get_state()
@@ -204,24 +207,28 @@ class SocialSurface:
         params = SOCIAL_NODE["params"]
         cursor, added = int(social.get("whatsappCursor") or 0), 0
         for _page in range(params["whatsapp_pages"]):  # bounded pages per read
-            answer = reader(since=cursor, limit=params["whatsapp_page_size"])
+            answer = reader(since=cursor, limit=params["whatsapp_page_size"], network="all")
             if not answer.get("ok"):
-                raise ValueError("Sign in to ArchHub to read WhatsApp." if answer.get("state") == "signin_required"
-                                 else answer.get("reason") or "WhatsApp messages could not be read; retry.")
+                raise ValueError("Sign in to ArchHub to read messages." if answer.get("state") == "signin_required"
+                                 else answer.get("reason") or "Messages could not be read; retry.")
             for m in answer["messages"]:
+                prefix, platform = RECEIVED_NETWORKS.get(m.get("network") or "whatsapp", RECEIVED_NETWORKS["whatsapp"])
                 if m.get("direction") == "in":
-                    social["inbox"].append({"id": "wa:" + str(m["wamid"]), "platform": "WhatsApp Business",
-                                            "from": m.get("contact_name") or "+" + str(m.get("contact", "")),
-                                            "contact": str(m.get("contact", "")), "priority": "",
+                    contact = str(m.get("contact", ""))
+                    social["inbox"].append({"id": prefix + str(m["wamid"]), "platform": platform,
+                                            "from": m.get("contact_name") or ("+" + contact if prefix == "wa:" else platform + " " + contact),
+                                            "contact": contact, "priority": "",
                                             "text": str(m.get("text", ""))[:1000], "sentAt": m.get("sent_at", 0),
                                             "unread": True})
                     added += 1
             if not answer["messages"] or answer["next"] == cursor:
                 break
             cursor = int(answer["next"])
-        # The file holds 64 KiB: keep only the newest WhatsApp messages in the inbox.
-        whatsapp = [row for row in social["inbox"] if row.get("platform") == "WhatsApp Business"]
-        drop = {id(row) for row in whatsapp[:-params["whatsapp_inbox_rows"]]}
+        # The file holds 64 KiB: keep only the newest received messages per network in the inbox.
+        drop = set()
+        for _prefix, platform in RECEIVED_NETWORKS.values():
+            received = [row for row in social["inbox"] if row.get("platform") == platform and row.get("id", "").startswith(_prefix)]
+            drop |= {id(row) for row in received[:-params["whatsapp_inbox_rows"]]}
         social["inbox"] = [row for row in social["inbox"] if id(row) not in drop]
         social["whatsappCursor"] = cursor
         return self._save(state, {"added": added, "cursor": cursor})

@@ -476,6 +476,11 @@ def test_meta_callback_lists_pages_with_fake_graph_and_never_returns_page_tokens
     location = answer.headers["location"]
     assert "EAAB-user-token" not in location and "EAAB-page-token" not in location
     grant = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)["grant"][0]
+    import db
+    monkeypatch.setattr(social_oauth, "_MESSAGING_STATE", {"ok": False, "error": ""})
+    graph = []
+    monkeypatch.setattr(social_oauth, "_post_form", lambda url, form: graph.append((url, form)) or {"success": True})
+    assert db.whatsapp_number_owner("112233445566778") is None  # not before the desktop takes the grant
     consumed = client.post("/oauth/meta/consume", json={"grant": grant},
                            headers={"Authorization": "Bearer " + token,
                                     "X-ArchHub-Device-Session": "desktop-session-1"})
@@ -485,6 +490,18 @@ def test_meta_callback_lists_pages_with_fake_graph_and_never_returns_page_tokens
                                  "instagram": {"id": "17841412345678901", "username": "archhub"}}]
     assert "EAAB-page-token" not in json.dumps(payload["pages"])
     assert payload["page_secrets"]["112233445566778"]["page_token"] == "EAAB-page-token"
+    # Messenger and Instagram DMs of the granted Page now route to this account.
+    owner = db.user_for_token(token)["id"]
+    assert db.whatsapp_number_owner("112233445566778") == owner
+    assert db.whatsapp_number_owner("17841412345678901") == owner
+    assert "receive_blocker" not in payload
+    page_url, page_form = graph[0]
+    assert page_url == "https://graph.facebook.com/v25.0/112233445566778/subscribed_apps"  # token in the body only
+    assert page_form == {"subscribed_fields": "messages,message_echoes", "access_token": "EAAB-page-token"}
+    hooks = {form["object"]: form for _url, form in graph[1:]}
+    assert set(hooks) == {"page", "instagram"}
+    assert all(form["callback_url"].endswith("/webhooks/meta") for form in hooks.values())
+    assert hooks["instagram"]["fields"] == "messages"
 
 
 def test_desktop_meta_broker_holds_page_token_until_selected_page_finish(tmp_path):
@@ -834,3 +851,77 @@ def test_whatsapp_consume_requests_coexistence_history_and_survives_refusal(clie
         raise urllib.error.URLError("offline")
     monkeypatch.setattr(social_oauth, "_post_bearer", refused)
     assert connect().status_code == 200  # the connection stands when Meta refuses history sync
+
+
+# ------------------------------------- Messenger + Instagram inbound webhook --
+
+def _dm_body(obj: str, account: str, sender: str, mid: str, text: str, echo: bool = False) -> dict:
+    message = {"mid": mid, "text": text, **({"is_echo": True} if echo else {})}
+    party = {"sender": {"id": account if echo else sender}, "recipient": {"id": sender if echo else account}}
+    return {"object": obj, "entry": [{"id": account, "time": 1764000000000, "messaging": [
+        {**party, "timestamp": 1764000000123, "message": message},
+        {**party, "timestamp": 1764000000456, "read": {"mid": mid}}]}]}  # a read receipt is not a message
+
+
+def _meta_post(client, body: dict, secret: str = "fake-cloud-secret"):
+    import hashlib
+    import hmac
+    raw = json.dumps(body).encode()
+    signature = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    return client.post("/webhooks/meta", content=raw,
+                       headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature})
+
+
+def test_meta_webhook_verifies_and_refuses_bad_signature_for_messenger(client, monkeypatch):
+    import db
+    import social_oauth
+    _social3_config(monkeypatch)
+    token = social_oauth.whatsapp_verify_token()
+    ok = client.get("/webhooks/meta", params={"hub.mode": "subscribe", "hub.verify_token": token, "hub.challenge": "42"})
+    assert ok.status_code == 200 and ok.text == "42"
+    user = db.get_or_create_user("dm-sig@social3.test")
+    db.link_whatsapp_number(phone_number_id="5550001", user_id=user["id"], network="messenger")
+    body = _dm_body("page", "5550001", "7770001", "m_sig", "hello")
+    assert _meta_post(client, body, secret="wrong-secret").status_code == 403
+    assert client.post("/webhooks/meta", json=body).status_code == 403
+    assert db.list_whatsapp_messages(user_id=user["id"]) == []
+
+
+def test_messenger_and_instagram_ingest_and_network_filter_keep_whatsapp_default(client, monkeypatch):
+    import db
+    _social3_config(monkeypatch)
+    token = _token_for("dm-read@social3.test")
+    user = db.user_for_token(token)
+    db.link_whatsapp_number(phone_number_id="456", user_id=user["id"])
+    db.link_whatsapp_number(phone_number_id="5550001", user_id=user["id"], network="messenger")
+    db.link_whatsapp_number(phone_number_id="17840001", user_id=user["id"], network="instagram")
+    assert _wa_post(client, _wa_body("456", "201111111111", "Sample Contact", "wamid.1", "on whatsapp")).json()["stored"] == 1
+    assert _meta_post(client, _dm_body("page", "5550001", "7770001", "m_1", "on messenger")).json() == {"ok": True, "stored": 1}
+    assert _meta_post(client, _dm_body("page", "5550001", "7770001", "m_2", "page reply", echo=True)).json()["stored"] == 1
+    assert _meta_post(client, _dm_body("instagram", "17840001", "8880001", "ig_1", "on instagram")).json()["stored"] == 1
+    assert _meta_post(client, _dm_body("instagram", "17840001", "8880001", "ig_1", "on instagram")).json()["stored"] == 0  # redelivery
+    headers = {"Authorization": "Bearer " + token}
+    read = lambda **f: client.post("/oauth/whatsapp/messages", json=f, headers=headers).json()["messages"]
+    # No network = the WhatsApp-only answer it gave before.
+    assert [(m["text"], m["network"]) for m in read()] == [("on whatsapp", "whatsapp")]
+    assert [(m["text"], m["direction"], m["contact"], m["sent_at"]) for m in read(network="messenger")] == [
+        ("on messenger", "in", "7770001", 1764000000), ("page reply", "out", "7770001", 1764000000)]
+    assert [m["text"] for m in read(network="instagram")] == ["on instagram"]
+    assert [m["network"] for m in read(network="all")] == ["whatsapp", "messenger", "messenger", "instagram"]
+    assert [m["text"] for m in read(network="all", contact="8880001")] == ["on instagram"]
+    assert client.post("/oauth/whatsapp/messages", json={"network": "telegram"}, headers=headers).status_code == 400
+
+
+def test_messenger_and_instagram_messages_are_isolated_per_account(client, monkeypatch):
+    import db
+    _social3_config(monkeypatch)
+    owner, other = _token_for("dm-owner@social3.test"), _token_for("dm-other@social3.test")
+    db.link_whatsapp_number(phone_number_id="5550002", user_id=db.user_for_token(owner)["id"], network="messenger")
+    db.link_whatsapp_number(phone_number_id="17840002", user_id=db.user_for_token(other)["id"], network="instagram")
+    assert _meta_post(client, _dm_body("page", "5550002", "7770002", "m_a", "for owner")).json()["stored"] == 1
+    assert _meta_post(client, _dm_body("instagram", "17840002", "8880002", "ig_b", "for other")).json()["stored"] == 1
+    assert _meta_post(client, _dm_body("page", "5559999", "7770002", "m_c", "nobody")).json()["stored"] == 0
+    read = lambda token: [m["text"] for m in client.post("/oauth/whatsapp/messages", json={"network": "all"},
+                                                         headers={"Authorization": "Bearer " + token}).json()["messages"]]
+    assert read(owner) == ["for owner"]
+    assert read(other) == ["for other"]

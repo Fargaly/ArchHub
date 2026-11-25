@@ -587,10 +587,10 @@ def _register_work_tools(server):
                 'reason': 'Open item: graph-held social Work inputs and approval have no NOGRAPH owner yet. Nothing was posted.'}
 
     @server.tool(name="social.whatsapp_messages", annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=True))
-    def social_whatsapp_messages(contact: str = "", since: int = 0) -> dict[str, object]:
-        """Read the user's WhatsApp Business messages (newest received by ArchHub). contact = phone or name to filter; since = the `next` of an earlier read. Sends nothing."""
+    def social_whatsapp_messages(contact: str = "", since: int = 0, network: str = "all") -> dict[str, object]:
+        """Read the user's WhatsApp Business, Facebook Page Messenger and Instagram DM messages received by ArchHub. contact = phone, sender id or name to filter; network = whatsapp, messenger, instagram or all; since = the `next` of an earlier read. Sends nothing."""
         from .cloud_social_oauth import whatsapp_messages
-        return whatsapp_messages(contact, since)
+        return whatsapp_messages(contact, since, network=network)
 
     @server.tool(name="social.work_execute")
     def social_work_execute(work_root: str) -> dict[str, object]:

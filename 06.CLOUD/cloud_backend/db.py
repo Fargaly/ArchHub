@@ -250,13 +250,16 @@ CREATE TABLE IF NOT EXISTS social_oauth_grants (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- WhatsApp Business coexistence inbox: which ArchHub account connected a phone
--- number (written when its Embedded Signup grant is consumed), and the bounded
--- message copy the Meta webhook delivers for that number.
+-- Meta inbox (WhatsApp Business coexistence, Page Messenger, Instagram DMs):
+-- which ArchHub account connected a Meta account id (a WhatsApp phone number id,
+-- a Page id or an Instagram account id; Meta graph ids never collide), written
+-- when its grant is consumed, and the bounded message copy Meta's webhooks
+-- deliver for it. phone_number_id holds that receiving account id.
 CREATE TABLE IF NOT EXISTS whatsapp_numbers (
     phone_number_id TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL,
     linked_at       INTEGER NOT NULL,
+    network         TEXT NOT NULL DEFAULT 'whatsapp',
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -272,6 +275,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_messages (
     text            TEXT NOT NULL,
     sent_at         INTEGER NOT NULL,
     received_at     INTEGER NOT NULL,
+    network         TEXT NOT NULL DEFAULT 'whatsapp',
     UNIQUE (phone_number_id, wamid)
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user ON whatsapp_messages(user_id, id);
@@ -938,6 +942,9 @@ def init_schema() -> None:
             "ALTER TABLE founder_action_keys ADD COLUMN hold TEXT",
             "ALTER TABLE founder_action_keys ADD COLUMN correlation TEXT",
             "ALTER TABLE founder_action_keys ADD COLUMN context TEXT",
+            # One Meta inbox: Messenger and Instagram rows beside WhatsApp's.
+            "ALTER TABLE whatsapp_numbers ADD COLUMN network TEXT NOT NULL DEFAULT 'whatsapp'",
+            "ALTER TABLE whatsapp_messages ADD COLUMN network TEXT NOT NULL DEFAULT 'whatsapp'",
         ):
             try:
                 con.execute(ddl)
@@ -1671,14 +1678,19 @@ WHATSAPP_RETENTION_SECONDS = 30 * 86400
 WHATSAPP_MAX_PER_NUMBER = 5000
 
 
-def link_whatsapp_number(*, phone_number_id: str, user_id: str) -> None:
-    """The account that finished Embedded Signup for this number owns its inbox."""
+META_NETWORKS = ("whatsapp", "messenger", "instagram")
+
+
+def link_whatsapp_number(*, phone_number_id: str, user_id: str, network: str = "whatsapp") -> None:
+    """The account that connected this Meta account id (number, Page, Instagram) owns its inbox."""
+    if network not in META_NETWORKS:
+        raise ValueError("unknown network")
     with connect() as con:
         con.execute(
-            "INSERT INTO whatsapp_numbers (phone_number_id, user_id, linked_at) VALUES (?, ?, ?)"
+            "INSERT INTO whatsapp_numbers (phone_number_id, user_id, linked_at, network) VALUES (?, ?, ?, ?)"
             " ON CONFLICT(phone_number_id) DO UPDATE SET user_id = excluded.user_id,"
-            " linked_at = excluded.linked_at",
-            (phone_number_id, user_id, int(time.time())),
+            " linked_at = excluded.linked_at, network = excluded.network",
+            (phone_number_id, user_id, int(time.time()), network),
         )
 
 
@@ -1697,11 +1709,11 @@ def store_whatsapp_messages(rows: Iterable[dict]) -> int:
         for row in rows:
             changed = con.execute(
                 "INSERT OR IGNORE INTO whatsapp_messages (user_id, phone_number_id, wamid,"
-                " direction, contact, contact_name, kind, text, sent_at, received_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " direction, contact, contact_name, kind, text, sent_at, received_at, network)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (row["user_id"], row["phone_number_id"], row["wamid"], row["direction"],
                  row["contact"], row["contact_name"], row["kind"], row["text"],
-                 int(row["sent_at"]), now),
+                 int(row["sent_at"]), now, row.get("network", "whatsapp")),
             )
             stored += changed.rowcount
             numbers.add(row["phone_number_id"])
@@ -1718,11 +1730,15 @@ def store_whatsapp_messages(rows: Iterable[dict]) -> int:
 
 
 def list_whatsapp_messages(*, user_id: str, contact: str = "", since: int = 0,
-                           limit: int = 50) -> list[dict]:
-    """One account's messages after `since`, optionally for one contact (phone digits or name)."""
+                           limit: int = 50, network: str = "") -> list[dict]:
+    """One account's messages after `since`, optionally for one contact (phone digits,
+    Meta sender id or name) and one network ('' = every network)."""
     sql = ("SELECT id, phone_number_id, wamid, direction, contact, contact_name, kind, text,"
-           " sent_at FROM whatsapp_messages WHERE user_id = ? AND id > ?")
+           " sent_at, network FROM whatsapp_messages WHERE user_id = ? AND id > ?")
     args: list = [user_id, int(since)]
+    if network:
+        sql += " AND network = ?"
+        args.append(network)
     digits = "".join(ch for ch in contact if ch.isdigit())
     if contact.strip():
         sql += " AND (" + ("contact = ? OR " if digits else "") + "lower(contact_name) LIKE ?)"

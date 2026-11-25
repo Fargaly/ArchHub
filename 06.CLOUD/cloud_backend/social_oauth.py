@@ -37,7 +37,8 @@ _STATES: dict[str, dict] = {}
 _GRANTS: dict[str, dict] = {}
 _SCOPES = {
     "linkedin": "openid profile w_member_social",
-    "meta": "pages_show_list pages_read_engagement pages_manage_posts pages_manage_engagement instagram_basic instagram_content_publish instagram_manage_comments",
+    "meta": "pages_show_list pages_read_engagement pages_manage_posts pages_manage_engagement instagram_basic instagram_content_publish instagram_manage_comments"
+            " pages_manage_metadata pages_messaging instagram_manage_messages",
 }
 _AUTHORIZE = {
     "linkedin": "https://www.linkedin.com/oauth/v2/authorization",
@@ -54,8 +55,9 @@ _PROFILE = {
 _META_NETWORKS = frozenset({"meta", "instagram", "facebook"})
 _PROVIDERS = frozenset({"linkedin", "meta", "instagram", "facebook", "whatsapp", "x", "tiktok"})
 _SCOPES.update({
-    "instagram": "pages_show_list pages_read_engagement instagram_basic instagram_content_publish instagram_manage_comments",
-    "facebook": "pages_show_list pages_read_engagement pages_manage_posts pages_manage_engagement",
+    "instagram": "pages_show_list pages_read_engagement instagram_basic instagram_content_publish instagram_manage_comments"
+                 " pages_manage_metadata instagram_manage_messages",
+    "facebook": "pages_show_list pages_read_engagement pages_manage_posts pages_manage_engagement pages_manage_metadata pages_messaging",
     "whatsapp": "business_management whatsapp_business_management whatsapp_business_messaging",
     "x": "tweet.read tweet.write users.read offline.access",
     "tiktok": "user.info.basic,video.publish",
@@ -587,7 +589,38 @@ def consume(provider: str, body: dict, authorization: str | None = Header(None),
     if provider in _META_NETWORKS:
         answer["pages"] = grant_payload.get("pages", [])
         answer["page_secrets"] = grant_payload.get("page_secrets", {})
+        blocker = _link_meta_inbox(provider, record["user_id"], answer["page_secrets"])
+        if blocker:
+            answer["receive_blocker"] = blocker
     return answer
+
+
+def _link_meta_inbox(provider: str, user_id: str, page_secrets: object) -> str:
+    """Route this grant's Page Messenger and Instagram DMs to the account that consumed it.
+
+    Links each granted Page id (messenger) and Instagram account id (instagram),
+    subscribes each Page to the app so Meta sends its message webhooks, and makes
+    sure the app-level page/instagram webhooks point here. Best effort: the
+    connection stands when Meta refuses; the reason comes back as one line.
+    """
+    errors = []
+    for page_id, secret in (page_secrets.items() if isinstance(page_secrets, dict) else []):
+        if not _GRAPH_ID.fullmatch(str(page_id)) or not isinstance(secret, dict):
+            continue
+        if provider in ("meta", "facebook"):
+            db.link_whatsapp_number(phone_number_id=page_id, user_id=user_id, network="messenger")
+        instagram = secret.get("instagram") if isinstance(secret.get("instagram"), dict) else {}
+        ig_id = instagram.get("id")
+        if provider in ("meta", "instagram") and isinstance(ig_id, str) and _GRAPH_ID.fullmatch(ig_id):
+            db.link_whatsapp_number(phone_number_id=ig_id, user_id=user_id, network="instagram")
+        try:
+            # The page token rides in the POST body, never in the URL.
+            _post_form("https://graph.facebook.com/v25.0/" + page_id + "/subscribed_apps",
+                       {"subscribed_fields": "messages,message_echoes", "access_token": str(secret.get("page_token") or "")})
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            _LOG.warning("meta page subscription failed: %s", _graph_error(exc))
+            errors.append("Page not subscribed to ArchHub: " + _graph_error(exc))
+    return ensure_messaging_webhook() or (errors[0] if errors else "")
 
 
 # ------------------------------------------------ WhatsApp inbound (webhook) --
@@ -617,35 +650,57 @@ def _graph_error(exc: Exception) -> str:
     return "Meta could not be reached (" + type(exc).__name__ + ")"
 
 
-def ensure_whatsapp_webhook() -> str:
-    """Register this cloud as the app's WhatsApp webhook; '' when registered, else the reason.
+# Meta object -> (callback path, fields). Page Messenger and Instagram DMs share /webhooks/meta.
+_WEBHOOK_OBJECTS = {
+    "whatsapp_business_account": ("/webhooks/whatsapp", ",".join(sorted(_WEBHOOK_FIELDS))),
+    "page": ("/webhooks/meta", "message_echoes,messages"),
+    "instagram": ("/webhooks/meta", "messages"),
+}
+_MESSAGING_STATE = {"ok": False, "error": ""}
+
+
+def _ensure_webhook(state: dict, objects: tuple, label: str) -> str:
+    """Register this cloud as the app's webhook for `objects`; '' when registered, else the reason.
 
     Idempotent (Meta overwrites the same object subscription); a success is
-    remembered for the process, a failure is retried on the next status read.
+    remembered for the process, a failure is retried on the next call.
     """
     app_id, secret, _redirect = _client_values("whatsapp")
     if not app_id or not secret:
         return "Meta app id or app secret missing on the cloud"
     with _LOCK:
-        if _WEBHOOK_STATE["ok"]:
+        if state["ok"]:
             return ""
-    try:
-        # The app access token rides in the POST body, never in the URL.
-        answer = _post_form("https://graph.facebook.com/v25.0/" + urllib.parse.quote(app_id, safe="") + "/subscriptions", {
-            "object": "whatsapp_business_account",
-            "callback_url": config.PUBLIC_URL.rstrip("/") + "/webhooks/whatsapp",
-            "verify_token": whatsapp_verify_token(),
-            "fields": ",".join(sorted(_WEBHOOK_FIELDS)),
-            "include_values": "true",
-            "access_token": app_id + "|" + secret})
-        error = "" if answer.get("success") is True else "Meta did not confirm the webhook subscription"
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        error = _graph_error(exc)
+    error = ""
+    for name in objects:
+        path, fields = _WEBHOOK_OBJECTS[name]
+        try:
+            # The app access token rides in the POST body, never in the URL.
+            answer = _post_form("https://graph.facebook.com/v25.0/" + urllib.parse.quote(app_id, safe="") + "/subscriptions", {
+                "object": name,
+                "callback_url": config.PUBLIC_URL.rstrip("/") + path,
+                "verify_token": whatsapp_verify_token(),
+                "fields": fields,
+                "include_values": "true",
+                "access_token": app_id + "|" + secret})
+            error = "" if answer.get("success") is True else "Meta did not confirm the webhook subscription"
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            error = _graph_error(exc)
+        if error:
+            break
     with _LOCK:
-        _WEBHOOK_STATE.update(ok=not error, error=("WhatsApp webhook not registered: " + error) if error else "")
+        state.update(ok=not error, error=(label + " webhook not registered: " + error) if error else "")
     if error:
-        _LOG.warning("whatsapp webhook registration failed: %s", error)
-    return _WEBHOOK_STATE["error"]
+        _LOG.warning("%s webhook registration failed: %s", label, error)
+    return state["error"]
+
+
+def ensure_whatsapp_webhook() -> str:
+    return _ensure_webhook(_WEBHOOK_STATE, ("whatsapp_business_account",), "WhatsApp")
+
+
+def ensure_messaging_webhook() -> str:
+    return _ensure_webhook(_MESSAGING_STATE, ("page", "instagram"), "Messenger and Instagram")
 
 
 def _whatsapp_receive_status() -> dict:
@@ -717,6 +772,43 @@ def whatsapp_rows(payload: object) -> list[dict]:
     return rows
 
 
+def messaging_rows(payload: object) -> list[dict]:
+    """Flatten one Page Messenger (object=page) or Instagram (object=instagram) webhook body.
+
+    Each row's phone_number_id is the receiving Page or Instagram account id; the
+    contact is the other party's Meta-scoped id (Meta sends no name here).
+    """
+    rows: list[dict] = []
+    network = {"page": "messenger", "instagram": "instagram"}.get(
+        payload.get("object") if isinstance(payload, dict) else None)
+    if not network:
+        return rows
+    for entry in payload.get("entry") or []:
+        account = str(entry.get("id") or "") if isinstance(entry, dict) else ""
+        if not _GRAPH_ID.fullmatch(account):
+            continue
+        for event in entry.get("messaging") or []:
+            message = event.get("message") if isinstance(event, dict) else None
+            if not isinstance(message, dict) or not message.get("mid"):
+                continue  # reads, deliveries, reactions: not messages
+            echo = bool(message.get("is_echo"))
+            party = event.get("recipient" if echo else "sender")
+            contact = str(party.get("id") or "")[:64] if isinstance(party, dict) else ""
+            attachments = [a for a in message.get("attachments") or [] if isinstance(a, dict)]
+            kind = "text" if message.get("text") else str(attachments[0].get("type") or "unknown")[:32] if attachments else "unknown"
+            text = message.get("text")
+            try:
+                sent_at = int(event.get("timestamp") or 0) // 1000  # Meta sends milliseconds here
+            except (TypeError, ValueError):
+                sent_at = 0
+            rows.append({"phone_number_id": account, "wamid": str(message["mid"])[:256],
+                         "direction": "out" if echo else "in", "contact": contact, "contact_name": "",
+                         "kind": kind, "text": (str(text) if text else "[" + kind + "]")[:4096],
+                         "sent_at": sent_at, "network": network})
+    return rows
+
+
+@router.get("/webhooks/meta", response_class=PlainTextResponse)
 @router.get("/webhooks/whatsapp", response_class=PlainTextResponse)
 def whatsapp_webhook_verify(mode: str = Query("", alias="hub.mode"),
                             token: str = Query("", alias="hub.verify_token"),
@@ -728,6 +820,7 @@ def whatsapp_webhook_verify(mode: str = Query("", alias="hub.mode"),
     return PlainTextResponse(challenge[:256])
 
 
+@router.post("/webhooks/meta")
 @router.post("/webhooks/whatsapp")
 async def whatsapp_webhook(request: Request) -> dict:
     secret = _app_secret()
@@ -745,7 +838,7 @@ async def whatsapp_webhook(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="whatsapp_webhook_invalid_json")
     owners: dict[str, str | None] = {}
     rows = []
-    for row in whatsapp_rows(payload):
+    for row in whatsapp_rows(payload) + messaging_rows(payload):
         number = row["phone_number_id"]
         if number not in owners:
             owners[number] = db.whatsapp_number_owner(number)
@@ -760,8 +853,12 @@ def whatsapp_messages(body: dict, authorization: str | None = Header(None)) -> d
     """The signed-in account's messages. The filter rides in the body: the access log records URLs."""
     user = _bearer(authorization)
     contact, since, limit = body.get("contact", ""), body.get("since", 0), body.get("limit", 50)
+    # No network keeps the WhatsApp-only answer older desktops expect; "all" reads every network.
+    network = body.get("network", "whatsapp")
     if (not isinstance(contact, str) or len(contact) > 120 or type(since) is not int or since < 0
-            or type(limit) is not int or not 1 <= limit <= 200):
+            or type(limit) is not int or not 1 <= limit <= 200
+            or network not in db.META_NETWORKS + ("all",)):
         raise HTTPException(status_code=400, detail="whatsapp_messages_invalid_filter")
-    rows = db.list_whatsapp_messages(user_id=user["id"], contact=contact, since=since, limit=limit)
+    rows = db.list_whatsapp_messages(user_id=user["id"], contact=contact, since=since, limit=limit,
+                                     network="" if network == "all" else network)
     return {"ok": True, "messages": rows, "next": rows[-1]["id"] if rows else since}

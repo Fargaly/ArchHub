@@ -2249,7 +2249,7 @@
     const fit = () => {
       if (!area.current || !chart.nodes.length) return;
       const host = area.current.getBoundingClientRect(), barEl = window.document.querySelector('.home-map-bar')?.getBoundingClientRect(), formEl = window.document.querySelector('.home-map-stage .global-composer form')?.getBoundingClientRect();
-      const topClear = barEl ? Math.max(0, barEl.bottom - host.top + 8) : 52, botClear = Math.max(formEl?.height ? host.bottom - formEl.top + 8 : 160, 160);
+      const topClear = barEl ? Math.max(0, barEl.bottom - host.top + 8) : 0, botClear = formEl?.height ? Math.max(0, host.bottom - formEl.top + 8) : (window.document.querySelector('.home-map-stage .global-composer') ? 110 : 0);
       const usableH = Math.max(80, area.current.clientHeight - topClear - botClear);
       const fitted = fitCanvasViewport(chart.nodes.map(n => ({x: n.x, y: n.y, w: n.w, h: n.h})), area.current.clientWidth, usableH, zoomMin, zoomMax, 1);
       if (fitted) { fitted.pan.y += topClear; touched.current = false; setView(fitted); }

@@ -65,7 +65,18 @@ def test_research_ids_read_text_only_notion_search_answers():
                                    {"id": "x", "title": "Unrelated page"}]})
     assert rs.research_ids({"content": [{"type": "text", "text": text}]}) == {"res-075"}
     assert rs.research_ids({"structuredContent": {"results": [{"Name": "R&D: 2026-11-24 (res-077)"}]}}) == {"res-077"}
-    assert rs.research_ids({"content": [{"type": "text", "text": "not json"}]}) == set()
+    assert rs.research_ids({"content": [{"type": "text", "text": json.dumps({"results": []})}]}) == set()
+
+
+def test_unrecognised_notion_answer_is_unavailable_so_publish_refuses(tmp_path):
+    for answer in ({"content": [{"type": "text", "text": "not json"}]}, {"content": [{"type": "text", "text": "{}"}]}, {}):
+        assert rs.research_ids(answer) is None
+    assert rs.posted_research(lambda tool, args: {"content": [{"type": "text", "text": "not json"}]}) is None
+    folder = tmp_path / "rd"
+    folder.mkdir()
+    (folder / "archhub-claude-doc-res-075-2026-11-23.md").write_text("## R&D: 2026-11-23\n**Today.** x\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="cannot de-duplicate"):
+        rs.publish_research(rs.research_rows(["075"], folder, None), None)
 
 
 def test_check_passes_when_every_surface_agrees_and_fails_each_that_does_not(tmp_path, monkeypatch):

@@ -344,16 +344,38 @@ def posted_research(query=None) -> set[str] | None:
         return unreadable("Research Library", exc)
 
 
-def research_ids(answer: dict) -> set[str]:
+def research_ids(answer: dict) -> set[str] | None:
     """res ids in any Notion tool answer: structuredContent rows, or the JSON text in content[].text
-    (notion-search answers carry only text, with results[].title like "R&D: 2026-11-23 (res-075)")."""
-    rows = list((answer.get("structuredContent") or {}).get("results", []))
+    (notion-search answers carry only text, with results[].title like "R&D: 2026-11-23 (res-075)").
+    None when no part is a recognisable results list, so de-duplication is unverified, never zero."""
+    rows, recognised = [], False
+    structured = (answer.get("structuredContent") or {}).get("results")
+    if isinstance(structured, list):
+        rows, recognised = list(structured), True
     for part in answer.get("content", []):
         try:
-            rows += json.loads(part.get("text", "")).get("results", [])
+            found = json.loads(part.get("text", "")).get("results")
         except (ValueError, AttributeError) as exc:
             unreadable("Notion text part", exc)
-    return {m for row in rows for key in ("Name", "title") for m in re.findall(r"\((res-\d+)\)", str(row.get(key, "")))}
+            continue
+        if isinstance(found, list):
+            rows, recognised = rows + found, True
+    if not recognised:
+        return None
+    return {m for row in rows if isinstance(row, dict) for key in ("Name", "title")
+            for m in re.findall(r"\((res-\d+)\)", str(row.get(key, "")))}
+
+
+def publish_research(rows: list[dict], posted: set[str] | None) -> None:
+    """Create the rows; refused unless the posted set was read from a recognised Notion answer."""
+    if posted is None:
+        raise SystemExit("refused: cannot de-duplicate while Notion is unreadable")
+    from nodelang import notion_mcp
+    if rows:
+        notion_mcp.call_tool("notion-create-pages", {
+            "parent": {"type": "data_source_id", "data_source_id": RESEARCH_DB.split("//")[1]},
+            "pages": [{"properties": r["properties"], "content": r["content"]} for r in rows]})
+    print(f"published {len(rows)} row(s)")
 
 
 def research_rows(ids: list[str], folder: Path, posted: set[str] | None) -> list[dict]:
@@ -386,14 +408,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{len(rows)} to write")
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         if args.publish:
-            if posted is None:
-                raise SystemExit("refused: cannot de-duplicate while Notion is unreadable")
-            from nodelang import notion_mcp
-            if rows:
-                notion_mcp.call_tool("notion-create-pages", {
-                    "parent": {"type": "data_source_id", "data_source_id": RESEARCH_DB.split("//")[1]},
-                    "pages": [{"properties": r["properties"], "content": r["content"]} for r in rows]})
-            print(f"published {len(rows)} row(s)")
+            publish_research(rows, posted)
         return 0
     rel = released()
     areas = args.areas or default_areas()

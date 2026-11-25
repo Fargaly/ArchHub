@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261126-0047-d8a8281
+
+- Published build 20261126-0047-d8a8281 (source d8a8281).
+- Installer SHA-256: `ff88687d738fd642d88bde8b8a7abb1897e4679b7d481e3912ba62fc0c5d8a52`.
+- Built at 2026-11-25T20:47:32Z.
+
+Source: d8a82810.
+
 ## 20261125-1700-ec8471c
 
 - Home removes the number badges over agent avatars. Checking for active agents now remembers which processes have ended.

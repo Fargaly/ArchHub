@@ -1274,8 +1274,8 @@ def _bound_messages(history, task):
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
         return []
     # Display only, as the room does (nograph_server._list_messages): the stored "To <name>:" routing line stays in the file.
-    return [{"id": row[0], "who": row[1], "text": _without_header(row[2])} for row in history._db.execute(
-        "SELECT id, author, content FROM messages WHERE conversation_id=? AND author!=? AND category!=? "
+    return [{"id": row[0], "who": row[1], "text": _without_header(row[2]), "at": row[3]} for row in history._db.execute(
+        "SELECT id, author, content, created_at FROM messages WHERE conversation_id=? AND author!=? AND category!=? "
         "AND EXISTS (SELECT 1 FROM json_each(refs) WHERE value=?) ORDER BY sequence",
         (ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, task))]
 
@@ -1287,13 +1287,13 @@ def _task_threads(history):
     bound, last = {}, {}
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
         return bound, last
-    for message, author, content, category, task in history._db.execute(
-            "SELECT m.id, m.author, m.content, m.category, r.value FROM messages m, json_each(m.refs) r "
+    for message, author, content, category, task, created in history._db.execute(
+            "SELECT m.id, m.author, m.content, m.category, r.value, m.created_at FROM messages m, json_each(m.refs) r "
             "WHERE m.conversation_id=? AND json_valid(m.refs) ORDER BY m.sequence", (ROOM,)):
         last[task] = content
         thread = bound.setdefault(task, [])
         if author != DELIVERY_AUTHOR and category != DELIVERY_CATEGORY and not (thread and thread[-1]["id"] == message):
-            thread.append({"id": message, "who": author, "text": _without_header(content)})
+            thread.append({"id": message, "who": author, "text": _without_header(content), "at": created})
     return bound, last
 
 
@@ -1668,7 +1668,8 @@ def _held_context(document, *, roots=None, task_row=None):
         "progress": held["progress"] if isinstance(held.get("progress"), dict) else {},
         "workflow": [{"id": node["id"], "type": node.get("type", ""), "title": node.get("title", "")} for node in nodes],
         "parameters": [{"id": node["id"], "params": node.get("params") or {}} for node in nodes],
-        "activity": [{"id": node["id"], "status": node["result"].get("status", ""), "output": node["result"].get("output")}
+        "activity": [{"id": node["id"], "status": node["result"].get("status", ""), "output": node["result"].get("output"),
+                      **({"error": node["result"]["error"]} if node["result"].get("error") else {})}
                      for node in nodes if isinstance(node.get("result"), dict)],
         "folders": list(held["folders"]) if isinstance(held.get("folders"), list) else [],
         "references": list(held["references"]) if isinstance(held.get("references"), list) else [],

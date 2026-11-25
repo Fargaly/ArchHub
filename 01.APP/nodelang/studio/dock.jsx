@@ -352,24 +352,25 @@
             <Btn sm disabled={busy === card.id} onClick={event => executeAction('ui.select', () => decide(card, 'decline'), event)}>Reject</Btn>
             <Btn sm ghost aria-expanded={draft ? shown === card.id : undefined} onClick={event => executeAction('ui.select', () => draft ? setShown(shown === card.id ? '' : card.id) : onShow({task, path: card.path, nodeId: card.nodeId, approvalId: card.id}), event)}>{draft && shown === card.id ? 'Hide' : 'Show'}</Btn></div></div>; })}
         {!waiting.length && <p className="hint">Nothing waits for you.</p>}</section>
-      <section className="wssec" aria-label="Failed"><span className="eyebrow"><Icon name="close" size={12} />Failed · {failed.length}</span>
+      {failed.length > 0 && <section className="wssec" aria-label="Failed"><span className="eyebrow"><Icon name="close" size={12} />Failed · {failed.length}</span>
         {failed.map(({task, row}) => <div className="wsc bad" key={task.id + ':' + row.id} data-ws-failed={row.id}>
           <div className="wsch"><Av id={task.owner || (task.agents || [])[0] || 'Agent'} size={22} /><b>{task.title}</b><em>{task.owner || (task.agents || [])[0]}</em></div>
-          <p>{stepTitle(task, row.id)} · <span className="bad">failed</span></p>
+          <p>{stepTitle(task, row.id)} · <span className="bad">{row.error || (typeof row.output === "string" && row.output) || "failed"}</span></p>
           <div className="wsca"><Btn p sm disabled={busy === task.id + ':' + row.id} onClick={event => executeAction('ui.select', () => retry({task, row}), event)}>Retry</Btn>
             <Btn sm ghost onClick={event => executeAction('ui.select', () => onShow({task, nodeId: row.id}), event)}>Show</Btn></div></div>)}
-        {!failed.length && <p className="hint">Nothing failed.</p>}</section>
-      <section className="wssec" aria-label="Working now"><span className="eyebrow"><Icon name="users" size={12} />Working now · {working.length}</span>
+        </section>}
+      <section className="wssec" aria-label="Working now"><span className="eyebrow"><Icon name="users" size={12} />Working now</span>
         {working.map(({key, name, task}) => { const step = (task?.activity || []).find(row => row.status === 'Running'); return <button type="button" className="wsl" key={key} data-ws-working={key}
-          onClick={event => executeAction('ui.select', () => task ? onShow({task}) : u.go('settings/Agents'), event)} title={name}><Av id={shortName(name)} size={22} /><span><b>{shortName(name)}</b>{task ? ' · ' + task.title : ''}<em>{step ? 'On: ' + stepTitle(task, step.id) : 'Working'}</em></span><i className="wsd" /></button>; })}
-        {!working.length && <p className="hint">No one is working right now.</p>}</section>
+          onClick={event => executeAction('ui.select', () => task ? onShow({task}) : u.go('settings/Agents'), event)} title={name}><Av id={shortName(name)} size={22} /><span><b>{shortName(name)}</b>{task ? ' · ' + task.title : ''}{step && <em>On: {stepTitle(task, step.id)}</em>}</span><i className="wsd" /></button>; })}
+        </section>
       {/* Threads (design): every task with messages, the other side's last line and the count; a row opens its thread, Raw log its full record. */}
       {(threads => <section className="wssec" aria-label="Threads"><span className="eyebrow"><Icon name="workshop" size={12} />Threads · {threads.length}</span>
         {threads.slice(0, 8).map(({task, messages}) => { const last = [...messages].reverse().find(row => row.who !== 'You') || messages.at(-1);
           return <div className="wst" key={task.id} data-ws-thread={task.id}><button type="button" className="wsl" onClick={event => executeAction('ui.select', () => onShow({task}), event)}>
             <span><b>{task.title}</b><em>{(last.who === 'You' ? 'You' : last.who) + ': ' + last.text}</em></span><span className="note">{messages.length}</span></button>
-            <button type="button" className="dx-link wsraw" onClick={event => executeAction('ui.select', () => u.show('Task details', {id: task.id}), event)}>Raw log</button></div>; })}
+            <button type="button" className="dx-link wsraw" onClick={event => executeAction('ui.select', () => u.show('Raw log', {id: task.id}), event)}>Raw log</button></div>; })}
         {!threads.length && <p className="hint">No thread has messages yet.</p>}</section>)(tasks.map(task => ({task, messages: window.UI.homeTaskMessages?.(task) || []})).filter(row => row.messages.length))}
+      <p className="hint">Talk to an agent in the composer on its canvas. What it does shows up here and as nodes.</p>
     </div>;
   }
 

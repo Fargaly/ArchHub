@@ -743,6 +743,8 @@
     };
     const saveForm=async fn=>{const result=await formAction.run(fn);if(result)close();};
     const k = m.kind;
+    const logTask = k === 'Raw log' && s.tasks.find(task => task.id === m.id);
+    const title = logTask ? 'Raw log · ' + logTask.title : k;
     if (k === 'Delete task') {
       const remove = async () => {
         const generation = voiceGeneration.current;
@@ -812,7 +814,10 @@
         m,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Workflows') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Legacy workflows') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {
+      }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Raw log') {
+      const messages = logTask ? window.UI.homeTaskMessages(logTask) : [];
+      body = <div className="rawlog">{messages.length ? messages.map((row, index) => <p key={row.id || index}>{row.at && <time dateTime={row.at}>{row.at} </time>}<b>{row.who}</b> {row.text}</p>) : <p>No messages in this thread.</p>}</div>;
+    } else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Workflows') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Legacy workflows') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {
         api,
         g,
         u
@@ -1113,9 +1118,9 @@
     if (['Node menu', 'Group menu', 'Wire menu', 'Selection menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments', 'Surface menu'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} wireId={m.wireId} canvas={m.canvas} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} surface={m.surface} close={close} />;
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
-    }}><section ref={ref} className={'dialog'+(k==='Search'?' v22g-palette':'')} role="dialog" aria-modal="true" aria-label={k} style={{
+    }}><section ref={ref} className={'dialog'+(k==='Search'?' v22g-palette':'')} role="dialog" aria-modal="true" aria-label={title} style={{
         width: k === 'Workshop board' ? 'min(1250px,95vw)' : k === 'Approve' ? 'min(850px,95vw)' : undefined
-      }}><header className="spread"><h2>{k}</h2><Btn sm ghost aria-label="Close dialog" onClick={event => executeAction("appShell.CloseDialog.98", {
+      }}><header className="spread"><h2>{title}</h2><Btn sm ghost aria-label="Close dialog" onClick={event => executeAction("appShell.CloseDialog.98", {
             close
           }, event)}>×</Btn></header>{body}</section></div>;
   }

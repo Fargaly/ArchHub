@@ -56,6 +56,9 @@ const {chromium} = require('playwright');
       return [box.x + box.width / 2, place === 'header' ? head.y + head.height / 2 : place === 'upper' ? head.y + head.height + (box.y + box.height / 2 - head.y - head.height) / 2 : box.y + box.height * .75];
     };
 
+    await page.route('**/api/universal/desktop-access', route => route.fulfill({
+      json: {ok: true, admitted: true, state: 'admitted', subject: 'dock-test', email: 'dock@example.test'}
+    }));
     await page.goto(input.url);
     await openCanvas();
     for (const width of [1009, 1440]) {
@@ -68,6 +71,12 @@ const {chromium} = require('playwright');
       assert.equal(await ws.locator('[data-ws-approval]').count(), 1, 'one waiting approval from the approval owner');
       assert.equal(await ws.locator('[data-ws-failed]').count(), 1, 'one failed step from the task owner');
       assert.equal(await ws.locator('[data-ws-working]').count(), 1, 'one working task from the task owner');
+      assert.match(await ws.locator('[data-ws-failed]').innerText(), /The sheet index file was not found/);
+      const thread = ws.locator('[data-ws-thread]').filter({hasText: 'Sheet index check'});
+      await thread.getByRole('button', {name: 'Raw log'}).click();
+      const log = page.getByRole('dialog', {name: 'Raw log · Sheet index check'});
+      assert.match(await log.innerText(), /Checker.*Checked the sheet list/s);
+      await log.getByRole('button', {name: 'Close dialog'}).click();
       const fits = await page.evaluate(() => ({page: document.documentElement.scrollWidth <= window.innerWidth, canvas: document.querySelector('[aria-label="Workflow canvas"]').getBoundingClientRect().width}));
       assert.ok(fits.page && fits.canvas >= 240, width + ': no sideways scroll and a usable canvas: ' + JSON.stringify(fits));
       await shot('dock-default-' + width);

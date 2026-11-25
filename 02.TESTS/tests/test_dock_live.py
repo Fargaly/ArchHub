@@ -165,6 +165,7 @@ def test_dock_live_rendered(tmp_path, monkeypatch):
         # Failed: a step of a third session whose stored run result is an error.
         view = client.workshop('openTaskGraph', failed_task)
         document = client.files('read', path=view['path'])['document']
+        document.setdefault('notes', []).append({'id': 'index-log', 'role': 'task', 'who': 'Checker', 'text': 'Checked the sheet list.'})
         document['nodes'].append({'id': 'index', 'type': 'param.value', 'title': 'Read sheet index', 'params': {'type': 'number', 'value': 1},
                                   'position': {'x': 0, 'y': 300}, 'result': {'status': 'Error', 'error': 'The sheet index file was not found.'}})
         write_document(view['path'], document)

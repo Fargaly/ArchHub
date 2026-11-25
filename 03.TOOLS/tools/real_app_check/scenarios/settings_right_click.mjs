@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -123,7 +123,7 @@ export async function rightClicks(ctx, verifyHome = false) {
       const w=api.readWatchGrants?await api.readWatchGrants().catch(()=>null):null;
       return {capability:w?.capability===true,reason:w?.reason||'',grants:(w?.grants||[]).map(g=>g.id)};})()`);
     const sessionActions = ['Open session','Open the thread','Run','Add to another task','Make this an automation',
-      'Settings for this session','Rename','Duplicate','Keep at the top','Archive'];
+      'Settings for this session','Rename','Duplicate','Keep at the top','Archive','Delete'];
     const {menu, actions} = await inspectMenu(target, 'Home session menu',
       watchState.capability ? [...sessionActions,'Invite to watch…'] : sessionActions,
       watchState.capability ? ['Fork','Rerun'] : ['Fork','Rerun','Invite to watch…']);
@@ -216,10 +216,30 @@ export async function rightClicks(ctx, verifyHome = false) {
     assert.equal(reopened.properties.taskContext.task,id);
     assert.deepEqual(reopened.nodes,beforeArchive.nodes);
     assert.deepEqual(reopened.wires,beforeArchive.wires);
+    await js(`window.ArchHubAPI.openTaskGraph(${JSON.stringify(fixture.selected)})`);
+    await selectA();
+    const deleteDialog='[role="alertdialog"]';
+    const openDelete = async () => {
+      await chooseB('delete');
+      assert.ok(await until(()=>visible(deleteDialog),Boolean));
+      const message=await js(`document.querySelector('#delete-task-warning')?.textContent`);
+      assert.equal(message,'Delete '+title+'? Its file and history are removed. This cannot be undone.');
+    };
+    const beforeDelete=readFileSync(fixture.path);
+    await openDelete();
+    assert.ok(await clickText('Cancel',deleteDialog+' button'));
+    assert.deepEqual(await statusOfB(),prior);
+    assert.deepEqual(readFileSync(fixture.path),beforeDelete);
+    await openDelete();
+    assert.ok(await clickText('Delete',deleteDialog+' button'));
+    assert.equal(await until(()=>visible(target),shown=>!shown),false,'Deleted card remained visible');
+    await js('window.ArchHubAPI.listTasks(false)');
+    assert.ok(!(await statusOfB()),'Deleted Workshop row returned after refresh');
+    assert.equal(existsSync(fixture.path),false,'Deleted task file remained on disk');
     assert.deepEqual(readFileSync(fixture.selectedPath),selectedBytes,'B actions changed A');
     assert.deepEqual(readFileSync(copied.path),forkBytes,'B actions changed the unrelated fork');
     return {actions,watch,escapeDismissed:true,renameDialogShowedFixture:true,distinctFork:true,originalBytesPreserved:true,
-      taskInspector:true,automateInspector:true,pausedSchedule:true,archiveUndo:true,unrelatedFilesPreserved:true};
+      taskInspector:true,automateInspector:true,pausedSchedule:true,archiveUndo:true,deleteCancel:true,permanentDelete:true,unrelatedFilesPreserved:true};
   });
   await check(canvas, async () => {
     assert.ok(await clickText('Canvas'), 'Canvas navigation missing');

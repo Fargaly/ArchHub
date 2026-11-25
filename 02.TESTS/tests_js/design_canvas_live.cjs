@@ -22,7 +22,33 @@ const {chromium} = require('playwright');
     const snapshot = read => page.evaluate(read);
     const steps = ['list', 'slice', 'count'];
 
+    // The disposable server has no cloud account. Exercise the signed-in UI with a test-only account response.
+    await page.route('**/api/universal/desktop-access', route => route.fulfill({
+      json:{ok:true, admitted:true, state:'admitted', subject:'canvas-test', email:'canvas@example.test'}
+    }));
     await page.goto(input.url);
+    const homeCard = page.locator('[data-design="home.card"]').filter({hasText: 'Drawing set review'});
+    await homeCard.click({button:'right'});
+    const homeMenu = page.getByRole('menu', {name:'Home session menu'});
+    await homeMenu.getByRole('menuitem', {name:'Archive', exact:true}).waitFor();
+    await homeMenu.getByRole('menuitem', {name:'Delete', exact:true}).click();
+    const homeDelete = page.getByRole('alertdialog', {name:'Delete task', exact:true});
+    assert.match(await homeDelete.innerText(), /Delete Drawing set review\? Its file and history are removed\. This cannot be undone\./);
+    const target = await snapshot(() => window.ArchHubAPI.getSnapshot().tasks.find(t => t.title === 'Drawing set review'));
+    const calls = [];
+    const refuseDelete = async route => {
+      const payload = route.request().postDataJSON();
+      if (payload?.function !== 'deleteTask') return route.continue();
+      calls.push(payload.args);
+      return route.fulfill({json:{result:{ok:false, error:'Task is busy.'}}});
+    };
+    await page.route('**/api/universal/workshop', refuseDelete);
+    await homeDelete.getByRole('button', {name:'Delete', exact:true}).click();
+    assert.equal(await homeDelete.getByRole('alert').innerText(), 'Task is busy.');
+    assert.deepEqual(calls, [[target.id, target.revision ?? null]]);
+    await homeDelete.getByRole('button', {name:'Cancel', exact:true}).click();
+    await page.unroute('**/api/universal/workshop', refuseDelete);
+    assert.equal(await homeCard.isVisible(), true);
     // Home is the map of the work: a double-click on the session's card opens its canvas.
     await page.locator('[data-design="home.card"]').filter({hasText: 'Drawing set review'}).dblclick();
     await ws.waitFor();
@@ -249,7 +275,7 @@ const {chromium} = require('playwright');
       for (const dock of document.querySelectorAll('.dockws > .dock')) { const b = dock.getBoundingClientRect(); if (!b.width || b.bottom < y0 || b.top > y1) continue; if (b.left <= x0 + 4 && b.right > x0) x0 = Math.max(x0, b.right); else if (b.right >= x1 - 4 && b.left < x1) x1 = Math.min(x1, b.left); }
       return Math.abs(card.left + card.width / 2 - (x0 + x1) / 2) < 4 && Math.abs(card.top + card.height / 2 - (y0 + y1) / 2) < 60 && card.left >= x0 && card.right <= x1 && card.top >= y0 && card.bottom <= y1;
     });
-    // Row 23: Delete task archives it after a confirm; the tab closes, the task leaves the list, its file stays (checked by the driver).
+    // Row 23: Archive task archives it after a confirm; the tab closes, the task leaves the list, its file stays (checked by the driver).
     const archived = await snapshot(() => window.ArchHubAPI.getSnapshot().tasks.find(task => task.title === 'Model view audit')?.id);
     if (!await page.locator('.app-header .header-here').filter({hasText: 'Model view audit'}).count()) {
       await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
@@ -258,7 +284,12 @@ const {chromium} = require('playwright');
     }
     await page.getByRole('button', {name: 'More canvas actions', exact: true}).click();
     await page.getByRole('menu', {name: 'Canvas actions', exact: true}).getByRole('menuitem', {name: 'Delete task…', exact: true}).click();
-    const ask = page.getByRole('alertdialog', {name: 'Delete task', exact: true});
+    const deletion = page.getByRole('alertdialog', {name: 'Delete task', exact: true});
+    assert.match(await deletion.innerText(), /Delete Model view audit\? Its file and history are removed\. This cannot be undone\./);
+    await deletion.getByRole('button', {name: 'Cancel', exact: true}).click();
+    await page.getByRole('button', {name: 'More canvas actions', exact: true}).click();
+    await page.getByRole('menuitem', {name: 'Archive task…', exact: true}).click();
+    const ask = page.getByRole('alertdialog', {name: 'Archive task', exact: true});
     assert.match(await ask.innerText(), /archived[\s\S]*leaves the active list and Home[\s\S]*file stays on disk[\s\S]*Nothing is deleted/);
     // The task is claimed by a live agent (seeded with a lease), so the confirm warns and names it.
     assert.match(await ask.getByRole('alert').innerText(), /An agent is still working on this task: Drawing coordinator/i);
@@ -266,6 +297,35 @@ const {chromium} = require('playwright');
     // The Studio reads archived tasks too (listTasks with archived): the task is now marked ARCHIVED, off the active list and Home.
     await page.waitForFunction(id => window.ArchHubAPI.getSnapshot().tasks.find(task => task.id === id)?.status === 'ARCHIVED', archived);
     console.log('ARCHIVED=' + archived);
+    // Delete only the disposable task created by this test.
+    const disposable = await page.evaluate(() => window.ArchHubAPI.createTask('Discarded draft'));
+    assert.ok(disposable.taskId);
+    const draftPath = disposable.path;
+    assert.ok(draftPath && fs.existsSync(draftPath), 'the new task owns a file');
+    await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
+    const draftCard = page.locator('[data-design="home.card"]').filter({hasText:'Discarded draft'});
+    await draftCard.dblclick();
+    await page.locator('.app-header .header-here').filter({hasText:'Discarded draft'}).waitFor();
+    await page.evaluate(async () => {
+      await window.ArchHubAPI.addNode('n_list', {x:400,y:200});
+      await window.ArchHubAPI.saveSession();
+    });
+    await page.getByRole('button', {name:'More canvas actions', exact:true}).click();
+    await page.getByRole('menuitem', {name:'Delete task…', exact:true}).click();
+    await homeDelete.getByRole('button', {name:'Delete', exact:true}).click();
+    await Promise.race([
+      homeDelete.waitFor({state:'hidden'}),
+      homeDelete.getByRole('alert').waitFor().then(async () => { throw Error(await homeDelete.getByRole('alert').innerText()); })
+    ]);
+    await page.waitForFunction(id => window.ArchHubAPI.getSessionDocument()?.properties?.taskContext?.task !== id, disposable.taskId);
+    await page.evaluate(() => window.ArchHubAPI.undo());  // flushes any pending autosave before reading history
+    assert.notEqual(await page.evaluate(() => window.ArchHubAPI.getSessionDocument()?.properties?.taskContext?.task), disposable.taskId);
+    await page.locator('.app-header .header-page').filter({hasText: 'Home'}).first().click();
+    await draftCard.waitFor({state:'detached'});
+    await page.waitForFunction(id => !window.ArchHubAPI.getSnapshot().tasks.some(task => task.id === id), disposable.taskId);
+    assert.equal(fs.existsSync(draftPath), false, 'the owner removed the disposable task file');
+    assert.equal(await page.getByRole('alert').getByRole('button', {name:'Undo', exact:true}).count(), 0);
+
     assert.deepEqual(errors, []);
     console.log('PASS design_canvas_live at 1009, 1440 and 1920');
   } finally {

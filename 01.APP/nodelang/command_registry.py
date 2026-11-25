@@ -447,6 +447,7 @@ STUDIO_COMMANDS += tuple(
         ('menu.home.settings', 'Settings for this session', 'settings', ['session'], False),
         ('menu.home.duplicate', 'Duplicate', 'group', ['session'], True),
         ('menu.home.keep', 'Keep at the top', 'pin', ['session'], True),
+        ('menu.home.delete', 'Delete', 'trash', ['session'], True),
         ('menu.home.archive', 'Archive', 'tray', ['session'], True),
         ('menu.home.new.task', 'New task', 'plus', ['home'], False),
         ('menu.project.toggle', 'Expand project', 'group', ['project'], True),

@@ -1582,8 +1582,6 @@
       return () => window.cancelAnimationFrame(frame);
     }, [paneWidth < 480, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire),sessionSettings]);
     const menuTask = embedded && !preview ? (s.tasks || []).find(row => row.id === u.canvasTabs?.active) : null;
-    // Delete task archives it (the task owner's archive): it leaves the active list and Home; its session file stays on disk and
-    // The owner has no unarchive, so the confirm says where it goes instead of offering an Undo.
     const [archiveAsk, setArchiveAsk] = React.useState(false);
     const archiveTask = () => u.act(async () => {
       const result = await api.archiveTask(menuTask.id);
@@ -1596,8 +1594,8 @@
     // Agents still on this task (a live lease, or a live agent declared on it): the confirm names them before archiving.
     const working = menuTask ? [...new Set([...(menuTask.members || []).filter(m => m.live).map(m => m.name),
       ...(s.liveAgents || []).filter(agent => agent.task === menuTask.id).map(agent => agent.name || agent.agent)].filter(Boolean))] : [];
-    const archiveConfirm = archiveAsk && menuTask && <div role="alertdialog" aria-label="Delete task" data-design="task.archive" className="v48-archive-ask">
-      <p><b>Delete {menuTask.title}?</b> It is archived: it leaves the active list and Home. Its file stays on disk and Open… opens it again. Nothing is deleted.</p>
+    const archiveConfirm = archiveAsk && menuTask && <div role="alertdialog" aria-label="Archive task" data-design="task.archive" className="v48-archive-ask">
+      <p><b>Archive {menuTask.title}?</b> It is archived: it leaves the active list and Home. Its file stays on disk and Open… opens it again. Nothing is deleted.</p>
       {working.length > 0 && <p role="alert" data-archive-working="">An agent is still working on this task: {working.join(', ')}. Archive it only if that work can stop.</p>}
       <div className="flex"><Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => setArchiveAsk(false)}, event)}>Cancel</Btn><Btn p sm onClick={event => executeAction('projects.controls.activate', {handler: archiveTask}, event)}>Archive</Btn></div></div>;
     const actionsMenu = <> {archiveConfirm}{more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
@@ -1622,9 +1620,10 @@
               ['Show on Home', () => { u.setTask(menuTask.id); return u.go('home'); }],
               [menuTask.homePinned ? 'Stop keeping at the top of Home' : 'Keep at the top of Home', () => u.act(() => api.setTaskSession(menuTask.id, {homePinned: !menuTask.homePinned}))],
               ['Connection checks', null, true, true], ['Test this workflow', null, true, true], ['Publish to Community', null, true, true],
-              ['Keyboard shortcuts', null, true, true], ['Delete task…', () => setArchiveAsk(true)],
+              ['Keyboard shortcuts', null, true, true], ['Archive task…', () => setArchiveAsk(true)],
+              ['Delete task…', () => u.show('Delete task', {id:menuTask.id, title:menuTask.title, revision:menuTask.revision})],
             ] : []),
-          ].map(([label, run, disabled, soon]) => { const item = <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
+          ].map(([label, run, disabled, soon]) => { const item = <button key={label} data-design={label === 'Delete task…' ? 'menu.delete' : undefined} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>;
             return soon ? <window.UI.Soon key={label} block label={label}>{item}</window.UI.Soon> : item; })}</div>} </>;
     const single = docked && externalInspector, Panes = single ? SinglePanes : CanvasGroup, WorkPanel = single ? SingleWork : CanvasPanel;

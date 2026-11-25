@@ -331,7 +331,8 @@
             if (result?.revision) u.setToast({text:task.title + ' archived.', label:'Undo',
               open:() => u.act(() => api.restoreArchivedTask(id, result.revision))});
             return result;
-          })))];
+          }))),
+          task && choice('menu.home.delete', () => u.show('Delete task', {id, title:task.title, revision:task.revision}))];
       } else if (project && surface.contains(project)) {
         owner = project;
         context = 'project';

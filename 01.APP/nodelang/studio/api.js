@@ -719,6 +719,24 @@ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approva
 for(const fn of ['setTaskStatus','archiveTask','restoreArchivedTask','reassignTask','setTaskDelegate','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {
  api[fn]=async(...args)=>{const result=await workshop(fn,args);if(result?.ok===false)return result;await refreshTasks();return result;};
 }
+api.deleteTask=async(id,revision=null)=>{
+ const isOpen=()=>sessionDocument?.properties?.taskContext?.task===id;
+ if(isOpen()){
+  if(currentEditState().unsaved)throw Error('Save or discard the unsaved canvas changes before deleting.');
+  clearTimeout(autosaveTimer);
+  await fileWrites;
+ }
+ const receipt=await workshop('deleteTask',[id,revision]);
+ if(receipt?.ok!==true||receipt.deleted!==true||receipt.id!==id)return receipt;
+ if(isOpen()){
+  clearTimeout(autosaveTimer);autosaveTimer=null;
+  clearTimeout(solveTimer);solveIds.clear();solveParams=[];
+  fileNavigation++;runEpoch++;sessionDocument=null;sessionPath='';fileHistory=[];fileFuture=[];
+  await api.newSession();
+ }
+ await refreshTasks(false);
+ return receipt;
+};
 for(const name of approvalActions) {
  api[name]=async(...args)=>{
   const result=await workshop(name,args);

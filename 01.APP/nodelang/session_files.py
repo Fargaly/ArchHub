@@ -1906,6 +1906,25 @@ class SessionFiles:
             rows = [row] + [r for r in self._recent() if r['path'] != str(path)]
             self._write_pointer_metadata(self.metadata/'recent.json', rows[:20])
 
+    def forget_path(self, path):
+        """Remove the deleted file from startup recovery and Home recents."""
+        path = Path(path)
+        recent = self.metadata/'recent.json'
+        current = self.metadata/'current.json'
+        with _METADATA_LOCK, canvas_documents.locked(recent):
+            rows = self._recent()
+            kept = [row for row in rows if Path(row['path']) != path]
+            if len(kept) != len(rows):
+                self._write_pointer_metadata(recent, kept)
+        with _METADATA_LOCK, canvas_documents.locked(current):
+            pointer = self._load_resume_pointer(current)
+            if isinstance(pointer, dict):
+                selected = pointer.get('path')
+                if not selected and isinstance(pointer.get('id'), str):
+                    selected = self.directory/(pointer['id']+'.archhub')
+                if selected and Path(selected) == path:
+                    _metadata_io(current.unlink)
+
     def _write_pointer_metadata(self, target, value):
         with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
             temporary = stream.name

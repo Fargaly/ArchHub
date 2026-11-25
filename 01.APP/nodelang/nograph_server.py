@@ -1688,8 +1688,20 @@ def _set_task_status(task, status):
     return next(row for row in _list_tasks() if row['id'] == task)
 
 
+def _delete_task(s, req, task, revision=None):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import delete_home_task, TaskConflict
+    try:
+        files = _request_session_files(s, req)
+        with s.__dict__.setdefault('_edit_lock', threading.Lock()), application_history() as history:
+            unsaved = {Path(path) for _, path in getattr(s, '_unsaved_views', ()) if path}
+            return delete_home_task(history, task, revision=revision, files=files, unsaved_paths=unsaved)
+    except (ValueError, TaskConflict) as refused:
+        return {'ok': False, 'error': str(refused)}
+
+
 def _archive_task(task):
-    """Delete task in the Canvas menu: the task owner's archive. It leaves the active list; its session file stays readable."""
+    """Archive the task. It leaves the active list; its session file stays readable."""
     from .workshop_mailbox import application_history
     from .workshop_tasks import archive, TaskNotFound
     try:
@@ -2018,6 +2030,11 @@ def r_workshop(s, req):
                 return {'ok': True, 'result': {'ok': False, 'error': str(refused)}}
         if function == 'createTask':
             return {'ok': True, 'result': _create_task(s, *(body.get('args') or []))}
+        if function == 'deleteTask':
+            args = body.get('args')
+            if not isinstance(args, list) or not 1 <= len(args) <= 2 or not isinstance(args[0], str):
+                return {'ok': True, 'result': {'ok': False, 'error': 'Choose a task to delete.'}}
+            return {'ok': True, 'result': _delete_task(s, req, *args)}
         if function == 'restoreArchivedTask' and (not isinstance(body.get('args'), list) or len(body['args']) != 2):
             return {'ok':True, 'result':{'ok':False, 'error':'Archive Undo takes only a task and its archive revision.'}}
         handler = WORKSHOP_READS.get(function)

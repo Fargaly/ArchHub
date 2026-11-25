@@ -623,6 +623,139 @@ def archive(history, task, revision=None):
     return won
 
 
+def _private_task_path(history, row, files):
+    from pathlib import Path
+    from .session_files import local_path
+    task = row['id']
+    if row['legacy_session_path'] or history._db.execute(
+            'SELECT 1 FROM workshop_tasks WHERE parent_id=? OR legacy_parent_id=? LIMIT 1',
+            (task, task)).fetchone():
+        raise ValueError('Move the other tasks off this canvas before deleting it.')
+    if not row['session_path']:
+        return None
+    path = local_path(row['session_path'])
+    if path.parent != Path(files.directory).resolve() or path != Path(row['session_path']).absolute():
+        raise ValueError('Only a private Workshop session file can be deleted.')
+    other_paths = history._db.execute(
+        'SELECT session_path,legacy_session_path FROM workshop_tasks WHERE id<>?', (task,))
+    if any(other and Path(other).resolve() == path for pair in other_paths for other in pair):
+        raise ValueError('Another task uses this session file.')
+    return path
+
+
+def _verify_task_file(path, task):
+    from .session_files import read_document
+    if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
+        raise ValueError('The private session file is missing or shared.')
+    document = read_document(path)
+    root = (document['properties'].get('taskContext') or {}).get('task')
+    if root != task or any(_node_task(item, root) != task or
+                           (item.get('taskContext') or {}).get('task', task) != task
+                           for item in (*document['nodes'], *document.get('notes', []))):
+        raise ValueError('This session contains work owned by another task.')
+    return document['id']
+
+
+def _recover_staged_file(path, staged):
+    if staged.is_symlink():
+        raise ValueError('The interrupted deletion path is a link.')
+    if staged.exists():
+        if path.exists() or not staged.is_file() or staged.stat().st_nlink != 1:
+            raise ValueError('Another file occupies the interrupted deletion path.')
+        staged.rename(path)
+
+
+def _verify_run_history(path, identity, target):
+    from .session_files import _run_rows, read_document
+    if target.is_symlink() or not target.is_file() or target.stat().st_nlink != 1:
+        raise ValueError('The run history is shared or unreadable.')
+    for other in path.parent.glob('*.archhub'):
+        if other != path and read_document(other)['id'] == identity:
+            raise ValueError('Another canvas shares this run history.')
+    if any(run.get('state') in ('running', 'asking', 'queued') for run in _run_rows(target)):
+        raise ValueError('Finish or cancel outstanding canvas runs before deleting.')
+
+
+def delete_home_task(history, task, *, revision=None, files=None, unsaved_paths=()):
+    """Remove an inactive task and its private canvas. A retry completes interrupted cleanup."""
+    from contextlib import ExitStack
+    from pathlib import Path
+    from . import canvas_documents
+    from .session_files import SessionFiles, _PORTABLE_ID, runs_path
+    from .workshop_mailbox import read_declarations
+
+    if task == COORDINATOR_SEAT_ID:
+        raise ValueError('The Workshop coordinator seat is reserved.')
+    files = files if files is not None else SessionFiles()
+    staged = None
+    moved = []
+    with history._lock, ExitStack() as locks:
+        if history._db.in_transaction:
+            raise ValueError('Delete must own its Workshop transaction.')
+        try:
+            with history._transaction(write=True):
+                _ensure(history)
+                # The receipt holds the path until both file and profile cleanup have succeeded.
+                history._db.execute('CREATE TABLE IF NOT EXISTS workshop_delete_cleanup '
+                                    '(task TEXT PRIMARY KEY, path TEXT NOT NULL) STRICT')
+                pending = history._db.execute(
+                    'SELECT path FROM workshop_delete_cleanup WHERE task=?', (task,)).fetchone()
+                row = next(iter(rows(history, task, settle=False)), None)
+                if not row and not pending:
+                    raise TaskNotFound(task)
+                if row:
+                    if revision is not None and int(revision) != row['revision']:
+                        raise TaskConflict(task, revision)
+                    if row['write_open'] or any(not m.get('left') for m in row['members']) or _lease_active(row['lease_until'], time.time()):
+                        raise ValueError('Stop active work and release task members before deleting.')
+                    if _declaration_for(row, read_declarations(history._db)):
+                        raise ValueError('An active Workshop agent still uses this task.')
+                    path = _private_task_path(history, row, files)
+                    if path and any(Path(dirty).resolve() == path for dirty in unsaved_paths if dirty):
+                        raise ValueError('Save or discard the unsaved canvas changes before deleting.')
+                else:
+                    path = Path(pending[0])
+                if path:
+                    locks.enter_context(canvas_documents.locked(path))
+                    database = history._db.execute('PRAGMA database_list').fetchone()[2]
+                    marker = sha256((os.path.normcase(database) + chr(0) + task).encode()).hexdigest()
+                    staged = path.with_name('.workshop-delete-' + marker + '.pending')
+                    staged_runs = staged.with_suffix('.runs-pending')
+                    if row:
+                        _recover_staged_file(path, staged)
+                        identity = _verify_task_file(path, task)
+                        if not _PORTABLE_ID.fullmatch(identity):
+                            raise ValueError('The session has a foreign run-history identifier.')
+                        run_file = runs_path(path, identity)
+                        if run_file.parent != path.parent or run_file != run_file.resolve():
+                            raise ValueError('The session has a foreign run-history path.')
+                        locks.enter_context(canvas_documents.locked(run_file))
+                        _recover_staged_file(run_file, staged_runs)
+                        if run_file.exists():
+                            _verify_run_history(path, identity, run_file)
+                            run_file.rename(staged_runs)
+                            moved.append((run_file, staged_runs))
+                        history._db.execute('INSERT INTO workshop_delete_cleanup VALUES (?,?)', (task, str(path)))
+                        path.rename(staged)
+                        moved.append((path, staged))
+                if row:
+                    history._db.execute('DELETE FROM workshop_tasks WHERE id=?', (task,))
+        except BaseException:
+            for original, temporary in reversed(moved):
+                temporary.rename(original)
+            raise
+        if staged is not None:
+            staged_runs.unlink(missing_ok=True)
+            staged.unlink(missing_ok=True)
+            if not path.exists():
+                files.forget_path(str(path))
+    if staged is not None:
+        # Release the canvas lock before taking another database writer lease.
+        with history._transaction(write=True):
+            history._db.execute('DELETE FROM workshop_delete_cleanup WHERE task=? AND path=?', (task, str(path)))
+    return {'ok': True, 'deleted': True, 'id': task}
+
+
 @lru_cache(maxsize=4096)  # pure: every Work column read matched each task against every declaration
 def _declared_id(owner):
     """The id older builds gave one agent's declared row. Kept to read those rows; new work never uses it."""

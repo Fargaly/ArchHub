@@ -3,7 +3,9 @@
 Real Workshop SQLite file, two real connections racing on two threads, no mocks.
 Then release, complete, lease expiry, and the Work column the Studio reads.
 """
+import sqlite3
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -433,3 +435,247 @@ def test_column_reads_committed_state_with_writer_active(tmp_path, monkeypatch):
         assert rows[task]["title"] == "Committed title"
         writer.rollback()
     writer.close()
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_permanent_delete_removes_the_task_and_its_own_file_after_reopen(tmp_path, archived):
+    from nodelang.session_files import SessionFiles
+
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Remove this draft", "tester")
+        other = workshop_tasks.create(history, "Keep this draft", "tester")
+        target, keep = Path(task["session_path"]), Path(other["session_path"])
+        assert target.is_relative_to(tmp_path) and keep.is_relative_to(tmp_path)
+        assert target.is_file()
+        untouched = keep.read_bytes()
+        workshop_tasks.open_session(history, other["id"], select=False)
+        workshop_tasks.open_session(history, task["id"], select=True)
+        files = SessionFiles()
+        assert files.current_path() == str(target)
+        if archived:
+            assert workshop_tasks.archive(history, task["id"], revision=task["revision"])
+            workshop_tasks.open_session(history, other["id"], select=True)
+        revision = workshop_tasks.get(history, task["id"])["revision"]
+        receipt = workshop_tasks.delete_home_task(history, task["id"], revision=revision, files=files)
+        assert receipt == {"ok": True, "deleted": True, "id": task["id"]}
+
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) is None
+        assert task["id"] not in {row["id"] for row in workshop_tasks.rows(reopened, include_archived=True)}
+        assert not target.exists()
+        assert workshop_tasks.get(reopened, other["id"])["session_path"] == str(keep)
+        assert keep.read_bytes() == untouched
+        restored_files = SessionFiles()
+        if archived:
+            assert restored_files.current_path() == str(keep)
+        pointers = {row["path"] for row in restored_files.open_files()}
+        assert str(target) not in pointers
+        assert str(keep) in pointers
+
+
+def test_permanent_delete_refuses_a_stale_revision(tmp_path):
+    with application_history() as history:
+        task = workshop_tasks.create(history, "First title", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        workshop_tasks.rename(history, task["id"], "Updated title", revision=task["revision"])
+        expected = workshop_tasks.get(history, task["id"])
+        saved = path.read_bytes()
+        with pytest.raises(workshop_tasks.TaskConflict):
+            workshop_tasks.delete_home_task(history, task["id"], revision=task["revision"])
+
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) == expected
+        assert path.read_bytes() == saved
+
+
+@pytest.mark.parametrize("writing", [False, True])
+def test_permanent_delete_preserves_a_live_members_work(tmp_path, writing):
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Live drawing check", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        assert workshop_tasks.claim(history, task["id"], "member", "Member")
+        if writing:
+            assert workshop_tasks.mark_writing(history, task["id"], "member")
+        expected = workshop_tasks.get(history, task["id"])
+        saved = path.read_bytes()
+        with pytest.raises(ValueError):
+            workshop_tasks.delete_home_task(history, task["id"], revision=expected["revision"])
+
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) == expected
+        assert path.read_bytes() == saved
+
+
+def test_permanent_delete_restores_the_file_if_the_database_rejects_delete(tmp_path):
+    from nodelang.session_files import SessionFiles
+
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Recover this draft", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        saved = path.read_bytes()
+        workshop_tasks.open_session(history, task["id"], select=True)
+        history._db.execute("CREATE TEMP TRIGGER reject_task_delete BEFORE DELETE ON workshop_tasks "
+                            "BEGIN SELECT RAISE(ABORT, 'test delete failure'); END")
+        with pytest.raises(sqlite3.IntegrityError, match="test delete failure"):
+            workshop_tasks.delete_home_task(history, task["id"], revision=task["revision"], files=SessionFiles())
+
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) == task
+        assert path.read_bytes() == saved
+        assert SessionFiles().current_path() == str(path)
+
+
+def test_permanent_delete_refuses_a_canvas_shared_by_two_tasks(tmp_path):
+    with application_history() as history:
+        root = workshop_tasks.create(history, "Coordination canvas", "tester")
+        child = workshop_tasks.create(history, "Check the drawing", "tester", parent=root["id"])
+        path = Path(root["session_path"])
+        assert path.is_relative_to(tmp_path) and str(path) == child["session_path"]
+        saved = path.read_bytes()
+        for task in (root, child):
+            with pytest.raises(ValueError):
+                workshop_tasks.delete_home_task(history, task["id"])
+
+    with application_history() as reopened:
+        for task in (root, child):
+            assert workshop_tasks.get(reopened, task["id"])["session_path"] == str(path)
+        assert path.read_bytes() == saved
+
+
+def test_permanent_delete_refuses_a_file_that_belongs_to_another_task(tmp_path):
+    with application_history() as history:
+        target = workshop_tasks.create(history, "Remove this draft", "tester")
+        other = workshop_tasks.create(history, "Different canvas", "tester")
+        other_path = Path(other["session_path"])
+        assert other_path.is_relative_to(tmp_path)
+        foreign = other_path.with_name("Unbound copy.archhub")
+        saved = other_path.read_bytes()
+        foreign.write_bytes(saved)
+        history._db.execute("UPDATE workshop_tasks SET session_path=? WHERE id=?", (str(foreign), target["id"]))
+        with pytest.raises(ValueError):
+            workshop_tasks.delete_home_task(history, target["id"])
+
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, target["id"])["session_path"] == str(foreign)
+        assert foreign.read_bytes() == other_path.read_bytes() == saved
+
+
+def test_permanent_delete_retry_finishes_interrupted_profile_cleanup(tmp_path, monkeypatch):
+    from nodelang.session_files import SessionFiles
+
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Finish delete on retry", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        workshop_tasks.open_session(history, task["id"], select=True)
+        files = SessionFiles()
+
+        def blocked_metadata_write(target, value):
+            raise PermissionError("Profile metadata is locked")
+
+        monkeypatch.setattr(files, "_write_pointer_metadata", blocked_metadata_write)
+        with pytest.raises(PermissionError, match="Profile metadata is locked"):
+            workshop_tasks.delete_home_task(history, task["id"], revision=task["revision"], files=files)
+
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) is None
+        assert not path.exists()
+        assert SessionFiles().current_path() == str(path)
+        receipt = workshop_tasks.delete_home_task(reopened, task["id"], revision=task["revision"], files=SessionFiles())
+        assert receipt == {"ok": True, "deleted": True, "id": task["id"]}
+
+    assert not path.exists()
+    assert all(row["path"] != str(path) for row in SessionFiles().open_files())
+
+
+def test_permanent_delete_dispatch_respects_unsaved_views(tmp_path):
+    from types import SimpleNamespace
+    from nodelang import nograph_server
+
+    server = SimpleNamespace()
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Dirty view", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        saved = path.read_bytes()
+    request = SimpleNamespace(method="POST", body={"action": "data-api", "function": "deleteTask",
+                                                  "args": [task["id"], task["revision"]]})
+    for name in ("left", "right"):
+        nograph_server.record_edit_state(server, {"view": name, "file": str(path), "seq": 1, "unsaved": True})
+    nograph_server.record_edit_state(server, {"view": "left", "file": str(path), "seq": 2, "unsaved": False})
+    refused = nograph_server.r_workshop(server, request)["result"]
+    assert refused["ok"] is False and "unsaved" in refused["error"].lower()
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) == task and path.read_bytes() == saved
+    nograph_server.record_edit_state(server, {"view": "right", "file": str(path), "seq": 2, "unsaved": False})
+    assert nograph_server.r_workshop(server, request)["result"] == {"ok": True, "deleted": True, "id": task["id"]}
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) is None and not path.exists()
+
+
+def test_permanent_delete_refuses_unreleased_members_after_lease_expires(tmp_path):
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Open membership", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        saved = path.read_bytes()
+        assert workshop_tasks.claim(history, task["id"], "member", "Member")
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0, members=json_set(members, "
+                            "'$[0].lease_until', 0) WHERE id=?", (task["id"],))
+        expected = workshop_tasks.rows(history, task["id"], settle=False)
+        assert expected[0]["members"] and not expected[0]["members"][0].get("left")
+        with pytest.raises(ValueError, match="member"):
+            workshop_tasks.delete_home_task(history, task["id"])
+    with application_history() as reopened:
+        assert workshop_tasks.rows(reopened, task["id"], settle=False) == expected and path.read_bytes() == saved
+
+
+def test_permanent_delete_refuses_active_workshop_declaration(tmp_path):
+    from nodelang.workshop_mailbox import call, read_declarations
+
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Declared work", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+    call("declare", {"task": "Review drawings", "paths": [str(tmp_path)], "status": "working",
+                     "request_id": task["id"]}, {"claude/sessionID": "delete-declaration"})
+    with application_history() as history:
+        active = workshop_tasks.get(history, task["id"])
+        assert workshop_tasks.release(history, task["id"], active["owner"], reason="manual")
+        saved = path.read_bytes()
+        assert workshop_tasks._declaration_for(task, read_declarations(history._db))
+        with pytest.raises(ValueError, match="active Workshop agent"):
+            workshop_tasks.delete_home_task(history, task["id"])
+    with application_history() as reopened:
+        assert workshop_tasks.get(reopened, task["id"]) is not None and path.read_bytes() == saved
+
+
+@pytest.mark.parametrize("copy_document", [False, True])
+def test_permanent_delete_cleans_private_run_history_and_preserves_shared_history(tmp_path, copy_document):
+    from nodelang.session_files import append_run, runs_path
+
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Task with run history", "tester")
+        path = Path(task["session_path"])
+        assert path.is_relative_to(tmp_path)
+        saved = path.read_bytes()
+        append_run(path, {"id": "test-run", "state": "succeeded"})
+        log = runs_path(path)
+        assert log.is_relative_to(tmp_path)
+        original_history = log.read_bytes()
+        if copy_document:
+            sibling = path.with_name("Second canvas.archhub")
+            sibling.write_bytes(saved)
+            with pytest.raises(ValueError, match="shares this run history"):
+                workshop_tasks.delete_home_task(history, task["id"])
+        else:
+            assert workshop_tasks.delete_home_task(history, task["id"])["deleted"]
+    with application_history() as reopened:
+        if copy_document:
+            assert workshop_tasks.get(reopened, task["id"]) == task
+            assert path.read_bytes() == sibling.read_bytes() == saved and log.read_bytes() == original_history
+        else:
+            assert workshop_tasks.get(reopened, task["id"]) is None and not path.exists() and not log.exists()

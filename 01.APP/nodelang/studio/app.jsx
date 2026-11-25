@@ -736,6 +736,27 @@
     };
     const saveForm=async fn=>{const result=await formAction.run(fn);if(result)close();};
     const k = m.kind;
+    if (k === 'Delete task') {
+      const remove = async () => {
+        const generation = voiceGeneration.current;
+        const result = await formAction.run(async () => {
+          const receipt = await api.deleteTask(m.id, m.revision);
+          if (receipt?.ok !== true || receipt.deleted !== true || receipt.id !== m.id)
+            throw Error(receipt?.message || receipt?.error || 'ArchHub did not confirm this deletion.');
+          return receipt;
+        });
+        if (!result) return;
+        if (voiceGeneration.current === generation) close();
+        if (u.canvasTabs.tabs.some(tab => tab.id === m.id)) await u.act(() => u.closeTaskTab(m.id));
+      };
+      const pending = formAction.state === 'waiting';
+      return <div className="overlay"><section ref={ref} className="dialog v22g-form" role="alertdialog" aria-modal="true" aria-label="Delete task" aria-describedby="delete-task-warning">
+        <h2>Delete task</h2><p id="delete-task-warning">Delete {m.title}? Its file and history are removed. This cannot be undone.</p>
+        {formAction.error && <p role="alert">{formAction.error}</p>}
+        <div className="flex"><Btn sm disabled={pending} onClick={event => executeAction('projects.controls.activate', {handler:close}, event)}>Cancel</Btn>
+          <Btn sm danger disabled={pending} onClick={event => executeAction('projects.controls.activate', {handler:remove}, event)}>Delete</Btn></div>
+      </section></div>;
+    }
     if(k==='Save node type')return <div className="overlay"><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={m.skill?'Save as skill':'Save as node type'}><h2>{m.skill?'Save as skill':'Save as node type'}</h2><NodeTypeForm modal={m} close={close}/></section></div>;
     if(['Rename node','Note','Wire rule','Node colour','Find node','Add node'].includes(k))return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close();}}><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={k}><h2>{k==='Rename node'?'Rename':k==='Note'?'Add note':k}</h2><window.UI.ActionStatus action={formAction}/>
       {k==='Find node'||k==='Add node'?<><input data-design={k==='Find node'?'find.input':'addnode.input'} aria-label={k==='Find node'?'Find a node':'Add node'} placeholder={k==='Find node'?'Find a node…':'Search the Library…'} value={query} onChange={e=>setQuery(e.target.value)}/><div className="v22g-results">{(k==='Find node'?s.graph.nodes:s.libraryPorts.filter(n=>!n.noEngine)).filter(n=>n.title.toLowerCase().includes(query.toLowerCase())).map(n=><button type="button" className="listbutton" key={n.id} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(async()=>{if(k==='Find node'){u.setSelectedNodeId(n.id);return {ok:true};}const node=m.wireId?await api.insertNodeOnWire(m.wireId,n.id,m.point):await api.addNode(n.id,m.point);u.setSelectedNodeId(node.id);return node;})},event)}>{n.title}</button>)}</div></>:k==='Node colour'?<label>Colour<input type="color" aria-label="Node colour" value={text||s.graph.nodes.find(n=>n.id===m.id)?.color||'#d97757'} onChange={e=>setText(e.target.value)}/></label>:<label>{k==='Wire rule'?'Only pass values when':k==='Note'?'Note':'Name'}{k==='Note'?<textarea data-design="field.note" aria-label="Note" value={text} onChange={e=>setText(e.target.value)}/>:<input data-design={k==='Wire rule'?'field.only-pass-values-when':'field.rnt'} aria-label={k==='Wire rule'?'Only pass values when':'Node name'} value={text} onChange={e=>setText(e.target.value)}/>}</label>}

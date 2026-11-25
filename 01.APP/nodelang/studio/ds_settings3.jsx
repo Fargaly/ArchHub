@@ -1161,6 +1161,15 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     const destination=s.settingsDestination,scope=s.settingsScope||'User',label={User:'Everywhere',Workspace:'Current workspace',Session:'Current session'}[scope];
     const run=action=>{last.current=action;setLoad({status:'waiting'});return u.act(async()=>{try{const result=await action();setLoad({status:'loaded'});return result;}catch(error){setLoad({status:'error',message:error.message||String(error)});throw error;}});};
     return <section aria-label="Transfer settings"><div className="flex">
+      <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(async()=>{
+        const {content}=await api.exportData('Settings','All');
+        await navigator.clipboard.writeText(content);
+        u.setToast('Settings copied.');
+      })},event)}>Copy all settings</Btn>
+      <Btn sm ghost disabled={!destination||s.settingsScopePending} onClick={event=>executeAction('projects.controls.activate',{handler:()=>run(async()=>{
+        const {content}=await api.exportData('Settings',scope);
+        u.show('Paste settings',{text:content,destination,label});
+      })},event)}>Paste settings…</Btn>
       <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.download('Settings',scope)},event)}>Export {label}</Btn>
       <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.download('Settings','All')},event)}>Export all scopes</Btn>
       <Btn sm ghost disabled={!destination||s.settingsScopePending||load.status==='waiting'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>input.current?.click()},event)}>Import into {label}</Btn>
@@ -1171,6 +1180,30 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     </section>;
   }
 
+  function PasteSettings({initial, destination, label, close}) {
+    const [text,setText]=React.useState(initial), [error,setError]=React.useState(''), [busy,setBusy]=React.useState(false);
+    const submit=async copy=>{
+      setError('');
+      setBusy(true);
+      try {
+        if(copy) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          if(new Blob([text]).size>1048576) throw Error('Paste a settings export up to 1 MiB.');
+          await api.importPreferences(JSON.parse(text),destination);
+          close();
+        }
+      } catch(e) { setError(e.message||String(e)); }
+      finally { setBusy(false); }
+    };
+    return <div className="grid"><p>Apply these settings to {label}.</p>
+      <textarea aria-label="Settings as JSON" rows={12} spellCheck={false} value={text} onChange={e=>setText(e.target.value)}/>
+      {error&&<p role="alert">{error}</p>}
+      <div className="flex"><Btn p disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>submit(false)},event)}>Apply</Btn>
+        <Btn disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>submit(true)},event)}>Copy</Btn>
+        <Btn ghost onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Back to rows</Btn></div>
+    </div>;
+  }
   function KeyboardSettings({changedOnly=false}) {
     const s=useData(),u=useApp(),[capturing,setCapturing]=React.useState('');
     const [load,setLoad]=React.useState({status:'waiting'}),failed=React.useRef(null);
@@ -1465,6 +1498,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
   }
   window.UI.Settings = Settings;
   window.UI.requestGroups = requestGroups;
+  window.UI.PasteSettings = PasteSettings;
   window.UI.KeyboardSettings = KeyboardSettings;
   window.UI.Account = Account;
   window.UI.Connections = Connections;

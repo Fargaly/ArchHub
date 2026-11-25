@@ -284,6 +284,8 @@ test('search reveals a design-only advanced row across pages and an owner row st
     ['thickness of wires','Wire width','Appearance','wire']
   ]){
    await search.fill(query);
+   assert.match(await page.getByText(/^Found [0-9]+\. Enter goes to the first\./).innerText(), /Enter/);
+   assert.ok((await hits.getByRole('option',{name:new RegExp(label)}).first().innerText()).includes(' › '));
    await hits.getByRole('option',{name:new RegExp(label)}).click();
    await page.locator('[data-screen="settings/'+area+'"]').waitFor();
    const row=page.locator('[data-row="'+field+'"]');
@@ -306,7 +308,7 @@ test('Look uses the five design families and passes the actual workflow to the e
  const data={settings,graph,pages:['Appearance'],profile:{checking:false},runtimeParameters:{},hosts:[],agents:[],workspaces:[],connections:[],settingsScope:'User'};
  const calls=[];
  const plain=({children})=>React.createElement('div',null,children);
- const window={UI:{A:{},D:{},api:{supportsAction:()=>false},useData:()=>data,useApp:()=>({}),useRegisteredActions:()=>({}),RegisteredActionStatus:()=>null,
+ const window={UI:{A:{},D:{},productLabel:label=>label,api:{supportsAction:()=>false},useData:()=>data,useApp:()=>({}),useRegisteredActions:()=>({}),RegisteredActionStatus:()=>null,
   Btn:plain,Card:plain,Empty:plain,Heading:plain,Chip:plain,Providers:plain,Soon:plain,Ctx:React.createContext(null),
   SettingControl:({row})=>React.createElement('div',{'data-setting':row.id},row.label),
   Canvas:props=>{calls.push(props);return React.createElement('div',{'data-preview':props.preview.id});}},AHIcon:()=>null};

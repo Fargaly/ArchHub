@@ -12856,6 +12856,14 @@
         "CHANGELOG.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ROUTERCOURTS": {
+      "source": "Coordinator 2026-11-25 (child of RELAYMODELS, F20 known problem first): router courts that read retired application_server.py / studio-lm.jsx are rewritten against the NoGraph routes over model_router and exercise the real code path (F6); the three free tool-routing courts are repaired (test isolation, SWITCHFIX refusal code) and proved live on OpenRouter.",
+      "scope": [
+        "02.TESTS/tests_replica/test_the_router_sends_it_where_it_says.py",
+        "02.TESTS/tests_replica/test_openrouter_free_tool_routing.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   },
   "DRAFTNOASK": {

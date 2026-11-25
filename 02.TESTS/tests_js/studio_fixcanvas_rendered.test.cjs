@@ -16,7 +16,8 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   const page=await browser.newPage({viewport:{width:1496,height:960}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<div id="root" style="height:100vh;display:grid"></div>'}));
-  await page.goto('http://fixcanvas.test');
+  // api.js reads crypto.randomUUID at load (d2535174); the app always runs in a secure context, so the fixture page does too.
+  await page.goto('https://fixcanvas.test');
   await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
   for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])await page.addScriptTag({content:name==='xyflow'?xyflow.script():script(name)});
   await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
@@ -30,6 +31,8 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
       if(url==='/api/universal/set-property')return new Promise(resolve=>{window.releaseDraft=()=>{raw={...raw,revision:raw.revision+1,nodes:raw.nodes.map(n=>({...n,properties:n.properties.map(p=>p.relation===call.body.relation?{...p,value:call.body.value}:p)}))};resolve({ok:true,status:200,json:async()=>raw});};});
       let data={ok:true,result:[],providers:[],agents:[],items:[],workspaces:[],templates:[]};
       if(url==='/api/commands')data=commands;
+      // Desktop work needs a verified ArchHub account (cd19d5d4); this fixture is signed in.
+      else if(url==='/api/universal/desktop-access')data={ok:true,admitted:true,state:'admitted',subject:'fixcanvas-fixture'};
       else if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
       else if(url==='/api/universal/canvas'||url.startsWith('/api/universal/canvas?'))data=url.includes('screen=home')?{...raw,nodes:[],canvas_deferred:true}:url.includes('since_revision')?{ok:true,unchanged:true,revision:raw.revision,scope:'nested',graph_id:'app'}:raw;
       else if(url==='/api/universal/gesture'){raw={...raw,revision:raw.revision+1,viewport:{...raw.viewport,...call.body.viewport}};data=raw;}

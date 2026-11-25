@@ -23,6 +23,10 @@ import urllib.request
 import zipfile
 
 RELEASE_API = "https://api.github.com/repos/Fargaly/ArchHub/releases/latest"
+# Kept current by release propagation; redirects to the latest release's own release.json asset.
+OFFER_URL = "https://archhub.io/download.json"
+RELEASE_RECORD = "https://github.com/Fargaly/ArchHub/releases/download/%s/release.json"
+UPDATE_FEED_NODE = {'id': 'update.feed', 'params': {'request_seconds': 15, 'gh_seconds': 5}}
 ASSET_NAME = "ArchHub-Setup-0.exe"
 _BUILD_RE = re.compile(r"(?m)^BUILD_ID:[ \t]*([A-Za-z0-9._-]{1,128})[ \t]*\r?$")
 _SHA_RE = re.compile(r"(?m)^SHA256 " + re.escape(ASSET_NAME)
@@ -495,6 +499,9 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
             raise ValueError("update channel must be stable or preview")
         url = release_feed_url() if channel == "stable" else RELEASE_API.rsplit("/", 1)[0] + "?per_page=20"
         request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ArchHub"})
+        token = _github_token() if url.startswith("https://api.github.com/") else ""
+        if token:
+            request.add_unredirected_header("Authorization", "Bearer " + token)
         with opener(request, timeout=15) as response:
             raw = response.read(_RELEASE_BYTES + 1)
         if len(raw) > _RELEASE_BYTES:
@@ -530,6 +537,69 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
     except (ValueError, TypeError):
         read_latest_release.saw_prerelease = False
         return None
+
+
+def _github_token() -> str:
+    """GH_TOKEN, GITHUB_TOKEN or the signed-in gh CLI; "" when none. The anonymous API quota is shared per IP."""
+    token = (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or "").strip()
+    if token:
+        return token
+    import shutil
+    gh = shutil.which("gh")
+    if not gh:
+        return ""
+    try:
+        run = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=UPDATE_FEED_NODE["params"]["gh_seconds"],
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return run.stdout.strip() if run.returncode == 0 else ""
+
+
+def _release_record(opener, url):
+    request = urllib.request.Request(url, headers={"User-Agent": "ArchHub"})
+    with opener(request, timeout=UPDATE_FEED_NODE["params"]["request_seconds"]) as response:
+        raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("release record exceeds size budget")
+    data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_object)
+    if type(data) is not dict:
+        raise ValueError("release record is not an object")
+    return data
+
+
+def read_offer_release(opener=urllib.request.urlopen) -> dict | None:
+    """The website offer, used when the GitHub API is rate limited or unreachable.
+
+    Accepted only when the GitHub release of the offered build serves the same
+    release.json (build, date, installer name, size, SHA-256). The installer URL
+    is the fixed GitHub release URL for that build. ``cause`` says why it was refused.
+    """
+    read_offer_release.cause = ""
+    try:
+        offer = _release_record(opener, OFFER_URL)
+        build = offer.get("build_id")
+        if type(build) is not str or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", build):
+            raise ValueError("offer has no valid build id")
+        tag = "build-" + build
+        record = _release_record(opener, RELEASE_RECORD % urllib.parse.quote(tag, safe=""))
+        fields = ("build_id", "built_at", "asset_name", "asset_sha256", "asset_bytes")
+        if any(offer.get(key) != record.get(key) for key in fields):
+            raise ValueError("offer does not match the GitHub release record of " + tag)
+        sha, size = record.get("asset_sha256"), record.get("asset_bytes")
+        if (record.get("asset_name") != ASSET_NAME or type(sha) is not str
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", sha)
+                or type(size) is not int or not 0 < size <= _INSTALLER_BYTES
+                or _utc_build_time(record.get("built_at")) is None):
+            raise ValueError("GitHub release record of " + tag + " is incomplete")
+        url = ("https://github.com/Fargaly/ArchHub/releases/download/"
+               + urllib.parse.quote(tag, safe="") + "/" + ASSET_NAME)
+        return {"build_id": build, "built_at": record["built_at"], "sha256": sha.lower(), "url": url, "tag": tag}
+    except OSError as exc:
+        read_offer_release.cause = _read_cause(exc)
+    except (ValueError, TypeError, UnicodeError) as exc:
+        read_offer_release.cause = str(exc) or type(exc).__name__
+    return None
 
 
 def _release_identity(data, channel):
@@ -810,7 +880,16 @@ def _keep_held_stage(held, latest) -> bool:
 
 
 def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, *, cancellation_event=None, channel="stable") -> dict:
-    """Download bounded bytes under exclusive staging ownership; never install."""
+    """Download bounded bytes under exclusive staging ownership; never install.
+
+    ``source`` names where the release identity came from; ``fallback`` why the website offer was refused.
+    """
+    seen = {}
+    result = _stage_if_newer(state_dir, app_dir, opener, cancellation_event, channel, seen)
+    return {**result, **seen}
+
+
+def _stage_if_newer(state_dir, app_dir, opener, cancellation_event, channel, seen):
     partial = None
     def check_cancelled():
         if cancellation_event is not None and cancellation_event.is_set():
@@ -827,6 +906,16 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             wait = cancellation_event.wait if cancellation_event is not None else time.sleep
             options = {} if channel == "stable" else {"channel": channel}
             latest = read_latest_release_retrying(opener, _RELEASE_RETRY_WAITS, wait, **options)
+            if latest is not None:
+                seen["source"] = "api.github.com"
+            elif (channel == "stable" and release_feed_url() == RELEASE_API
+                  and (read_latest_release.transient or read_latest_release.cause == "HTTP 401")):
+                check_cancelled()
+                latest = read_offer_release(opener)
+                if latest is not None:
+                    seen["source"] = OFFER_URL + " (verified against GitHub release " + latest["tag"] + ")"
+                else:
+                    seen["fallback"] = read_offer_release.cause
             current = installed_build_id(app_dir)
             check_cancelled()
             # A staged installer older than GitHub Latest must not block it.
@@ -1514,6 +1603,10 @@ def note_check(state_dir: Path, app_dir: Path, result: dict) -> dict:
     if result.get("reason") == "up to date":
         latest = installed
     append_update_log(state_dir, "update: checked latest=%s installed=%s" % (latest, installed))
+    if result.get("source"):
+        append_update_log(state_dir, "update: source %s" % result["source"])
+    if result.get("fallback"):
+        append_update_log(state_dir, "update: %s not used (%s); nothing staged from it" % (OFFER_URL, result["fallback"]))
     if result.get("downloaded") and result.get("build_id"):
         append_update_log(state_dir, "update: staged %s" % result["build_id"])
     if result.get("status") in ("unavailable", "failed") or result.get("reason") == "no release information":

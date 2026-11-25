@@ -837,7 +837,7 @@ def test_newer_local_release_is_verified_applied_confirmed_and_keeps_graph_and_c
         connection.close()
 
     again = qu.stage_if_newer(state, app, opener=_local_github(release, downloads=downloads))
-    assert again == {"staged": False, "reason": "up to date", "build_id": "20260924-0900-abc1234"}
+    assert again == {"staged": False, "reason": "up to date", "build_id": "20260924-0900-abc1234", "source": "api.github.com"}
     assert len(downloads) == 1, "an installed build is never downloaded again"
 
 
@@ -1137,10 +1137,34 @@ def test_live_reads_use_gh_token_when_present_and_are_anonymous_otherwise(monkey
     monkeypatch.setattr(offer_check.urllib.request, "urlopen", urlopen)
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert offer_check._status("https://api.github.com/repos/Fargaly/ArchHub/commits/x") == 200
+    # A publisher signed in to gh reads with that account, never the shared anonymous quota.
+    monkeypatch.setattr(shutil, "which", lambda name: "gh.exe" if name == "gh" else None)
+    monkeypatch.setattr(qu.subprocess, "run", lambda argv, **o: SimpleNamespace(
+        returncode=0, stdout="fixture-gh-credential\n") if argv[1:] == ["auth", "token"] else pytest.fail(argv))
     assert offer_check._status("https://api.github.com/repos/Fargaly/ArchHub/commits/x") == 200
     monkeypatch.setenv("GH_TOKEN", "fixture-credential-not-real")
     assert offer_check._status("https://api.github.com/repos/Fargaly/ArchHub/commits/x") == 200
-    assert sent == [None, "Bearer fixture-credential-not-real"]
+    assert sent == [None, "Bearer fixture-gh-credential", "Bearer fixture-credential-not-real"]
+
+
+def test_publication_feed_check_reads_latest_with_the_signed_in_gh_account(monkeypatch):
+    """check_update_offer's after-check calls qu.read_latest_release; it must not use the anonymous quota."""
+    import shutil
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda name: "gh.exe" if name == "gh" else None)
+    monkeypatch.setattr(qu.subprocess, "run", lambda argv, **o: SimpleNamespace(returncode=0, stdout="fixture-gh-credential\n"))
+    sent = []
+    def opener(request, timeout=0):
+        sent.append((request.full_url, request.unredirected_hdrs.get("Authorization")))
+        raise OSError("offline")
+    for channel in ("stable", "preview"):
+        assert qu.read_latest_release(opener, channel=channel) is None
+    assert sent == [(qu.RELEASE_API, "Bearer fixture-gh-credential"),
+                    (qu.RELEASE_API.rsplit("/", 1)[0] + "?per_page=20", "Bearer fixture-gh-credential")]
 
 
 def test_real_installer_deletes_only_named_application_files_never_user_state():
@@ -1287,6 +1311,84 @@ def test_feed_read_retries_quietly_and_logs_why_it_failed(tmp_path):
                                "cause": "HTTP 403 rate limited"})
     assert ("update: error no release information (HTTP 403 rate limited)"
             in (state / "logs" / "updates.log").read_text(encoding="utf-8"))
+
+
+def _api_refused_then_website(release_dir, code, offer_edit=None, calls=None):
+    """GitHub API answers ``code``; archhub.io/download.json and the release's own release.json still serve."""
+    import urllib.error
+    record = json.loads((release_dir / "release.json").read_text(encoding="utf-8-sig"))
+    offer = {**record, **(offer_edit or {})}
+    github = _local_github(release_dir)
+
+    def opener(request, timeout=0):
+        url = getattr(request, "full_url", request)
+        if calls is not None:
+            calls.append(url)
+        if url == qu.RELEASE_API:
+            if code == 200:
+                return github(request, timeout)
+            headers = {"X-RateLimit-Remaining": "0"} if code in (403, 429) else {}
+            raise urllib.error.HTTPError(url, code, "refused", headers, None)
+        if url == qu.OFFER_URL:
+            return _Body(json.dumps(offer).encode("utf-8"))
+        if url == qu.RELEASE_RECORD % ("build-" + record["build_id"]):
+            return _Body(json.dumps(record).encode("utf-8"))
+        if url.endswith("/release.json"):
+            raise urllib.error.HTTPError(url, 404, "missing", {}, None)
+        return github(request, timeout)
+    return opener
+
+
+@pytest.mark.parametrize("code", [403, 429])
+def test_rate_limited_api_falls_back_to_the_verified_website_offer(tmp_path, monkeypatch, code):
+    monkeypatch.setattr(qu, "_RELEASE_RETRY_WAITS", ())
+    release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20260923-1945-72bcaae", "2026-09-23T15:57:49Z")
+    state = tmp_path / "state"
+    sha = json.loads((release / "release.json").read_text(encoding="utf-8-sig"))["asset_sha256"]
+    result = qu.note_check(state, app, qu.stage_if_newer(state, app, opener=_api_refused_then_website(release, code)))
+    assert result["staged"] is True and result["build_id"] == "20260924-0900-abc1234" and result["sha256"] == sha
+    log = (state / "logs" / "updates.log").read_text(encoding="utf-8")
+    assert "update: source https://archhub.io/download.json (verified against GitHub release build-20260924-0900-abc1234)" in log
+    assert "update: staged 20260924-0900-abc1234" in log
+
+
+@pytest.mark.parametrize("edit", [{"asset_sha256": "0" * 64}, {"build_id": "20260930-0900-fff9999"}])
+def test_website_offer_that_differs_from_the_github_release_is_never_staged(tmp_path, monkeypatch, edit):
+    monkeypatch.setattr(qu, "_RELEASE_RETRY_WAITS", ())
+    release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20260923-1945-72bcaae", "2026-09-23T15:57:49Z")
+    state, calls = tmp_path / "state", []
+    result = qu.note_check(state, app, qu.stage_if_newer(state, app, opener=_api_refused_then_website(release, 403, edit, calls)))
+    assert result["staged"] is False and result["reason"] == "no release information" and "source" not in result
+    assert not any(url.endswith(qu.ASSET_NAME) for url in calls)
+    assert not (state / "updates" / qu.ASSET_NAME).exists()
+    log = (state / "logs" / "updates.log").read_text(encoding="utf-8")
+    assert "update: https://archhub.io/download.json not used (" in log
+    assert "update: error no release information (HTTP 403 rate limited)" in log
+
+
+def test_api_answer_keeps_the_api_path_and_never_asks_the_website(tmp_path, monkeypatch):
+    monkeypatch.setattr(qu, "_RELEASE_RETRY_WAITS", ())
+    release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20260923-1945-72bcaae", "2026-09-23T15:57:49Z")
+    state, calls = tmp_path / "state", []
+    result = qu.note_check(state, app, qu.stage_if_newer(state, app, opener=_api_refused_then_website(release, 200, calls=calls)))
+    assert result["staged"] is True and result["source"] == "api.github.com"
+    assert qu.OFFER_URL not in calls and not any(url.endswith("/release.json") for url in calls)
+    assert "update: source api.github.com" in (state / "logs" / "updates.log").read_text(encoding="utf-8")
+
+
+def test_api_read_sends_a_token_only_when_one_is_present(monkeypatch):
+    sent = []
+    def opener(request, timeout=0):
+        sent.append((request.get_header("Authorization"), request.unredirected_hdrs.get("Authorization")))
+        raise OSError("offline")
+    monkeypatch.setattr(qu, "_github_token", lambda: "")
+    qu.read_latest_release(opener)
+    monkeypatch.setattr(qu, "_github_token", lambda: "fixture-credential-not-real")
+    qu.read_latest_release(opener)
+    assert sent == [(None, None), ("Bearer fixture-credential-not-real", "Bearer fixture-credential-not-real")]
 
 
 def test_review1_busy_desktop_refuses_every_restart_path(monkeypatch):
@@ -1514,7 +1616,8 @@ def test_publish_reads_back_latest_through_the_real_parser_in_both_layouts(tmp_p
         assert recorded == []                                  # refused before any GitHub call
         return
     assert result.returncode == 0, result.stdout + result.stderr
-    assert [line.split()[:2] for line in recorded] == [["auth", "status"], ["release", "create"], ["release", "edit"]]
+    # The read-back asks gh for its token: the anonymous API quota is shared per IP.
+    assert [line.split()[:2] for line in recorded] == [["auth", "status"], ["release", "create"], ["release", "edit"], ["auth", "token"]]
     assert '"build_id": "20261108-test"' in result.stdout     # read back by quiet_update.read_latest_release
     assert "PUBLISHED build-20261108-test as latest" in result.stdout
 

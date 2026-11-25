@@ -20,7 +20,6 @@ import argparse
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 import re
 import sys
@@ -200,7 +199,7 @@ def updater_reads(github_release: dict, *, channel="stable") -> dict | None:
 
 def _headers() -> dict:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "ArchHub-release"}
-    credential = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    credential = qu._github_token()  # GH_TOKEN, GITHUB_TOKEN or the signed-in gh CLI
     if credential:
         headers["Authorization"] = "Bearer " + credential
     return headers

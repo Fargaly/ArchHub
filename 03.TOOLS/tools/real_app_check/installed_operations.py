@@ -79,6 +79,56 @@ def pdf(root):
     return "Level 3 door D-312 on page 1, twice"
 
 
+def whatsapp_fixture(root):
+    """Read two isolated cloud-owner rows through the packaged desktop reader and Social node."""
+    from functools import partial
+    from unittest.mock import patch
+    from nodelang import cloud_social_oauth as oauth
+    from nodelang.nograph_server import JsonFile
+    from nodelang.social_surface import SocialSurface
+
+    cloud = Path(__file__).resolve().parents[3] / "06.CLOUD/cloud_backend"
+    database = root / "guest-whatsapp.sqlite"
+    assert not database.exists() and not (cloud / ".env").exists()
+    sys.path.insert(0, str(cloud))
+    try:
+        with patch.dict(os.environ, {"DATABASE_URL": str(database)}):
+            import config, db
+            assert Path(db.__file__).resolve() == cloud / "db.py" and Path(config.DATABASE_URL) == database
+            db.init_schema()
+            owner = db.get_or_create_user("reader@example.invalid")["id"]
+            other = db.get_or_create_user("neighbor@example.invalid")["id"]
+            ticket = db.issue_token(owner)
+            rows = [{"user_id": tenant, "phone_number_id": number, "wamid": "qa-" + number,
+                     "direction": "in", "contact": number, "contact_name": "QA Contact", "kind": "text",
+                     "text": text, "sent_at": 1} for tenant, number, text in (
+                         (owner, "10001", "Review sheet A-101"), (other, "20002", "Neighbor only"))]
+            assert db.store_whatsapp_messages(rows) == 2 and db.store_whatsapp_messages(rows) == 0
+
+            def fixture_transport(method, url, *, bearer, body):
+                assert method == "POST" and url == oauth.DEFAULT_BASE + "/oauth/whatsapp/messages"
+                user = db.user_for_token(bearer)
+                assert user and user["id"] == owner
+                saved = db.list_whatsapp_messages(user_id=user["id"], **body)
+                return 200, {"messages": saved, "next": saved[-1]["id"] if saved else body["since"]}
+
+            # The ticket authenticates only to this temporary SQLite owner. Desktop admission is untouched.
+            read = partial(oauth.whatsapp_messages, path=root / "fixture-account", http=fixture_transport)
+            social_file = root / "social-fixture.json"
+            node = SocialSurface(store=JsonFile(social_file, {"state": {}}))
+            with patch.object(oauth, "read_cloud_session", return_value={"token": ticket}), \
+                    patch.object(oauth, "whatsapp_messages", read):
+                assert [m["wamid"] for m in read("QA Contact")["messages"]] == ["qa-10001"]
+                assert node.dispatch("read_whatsapp_inbox", [])["result"]["added"] == 1
+                reopened = SocialSurface(store=JsonFile(social_file, {"state": {}}))
+                assert reopened.dispatch("read_whatsapp_inbox", [])["result"]["added"] == 0
+                inbox = reopened.get_social_snapshot()["inbox"]
+                assert [(m["id"], m["text"]) for m in inbox] == [("wa:qa-10001", "Review sheet A-101")]
+    finally:
+        sys.path.remove(str(cloud))
+    return "Stored fixture reached the installed reader and reopened Inbox once; neighbor excluded. Offline fixture transport."
+
+
 def solver():
     import highspy
     from nodelang.pipeline_engines import PIPELINE_ENGINES
@@ -111,7 +161,7 @@ if __name__ == "__main__":
             os.environ[key] = str(folder)
         os.environ["ARCHHUB_TEST_NO_OPEN"] = "1"
         for name, verify in (("flow", lambda: flows(root, fixtures)), ("hosts", hosts),
-                             ("pdf", lambda: pdf(root)), ("solver", solver)):
+                             ("pdf", lambda: pdf(root)), ("solver", solver), ("whatsapp", lambda: whatsapp_fixture(root))):
             try:
                 print("PASS", name, json.dumps(verify()))
             except Exception as error:

@@ -678,3 +678,13 @@ Replaces: nothing. No new store or file: the read targets the throwaway workshop
 Budgets: the composer witness runs in seconds (local run: 12/12 seats, two sends). Not measured: hosted-runner wall time.
 
 Verification: 03.TOOLS/tools/real_app_check/upgrade_persistence.py composer_fanout_snapshot, run locally against main's modules: both sends 12/12 first reads, 0 excluded, 0 repeats, 12 receipts each.
+
+## D-051 Verify WhatsApp reads against stored messages in the Windows release test (2026-11-25)
+
+Request: F6 and VERIFYRELEASE. Show that the packaged reader and Social Inbox can read a saved message and keep each account's messages private.
+
+Prior art: The ArchHub cloud webhook tests -> store and filter messages by account in temporary SQLite. The installed release verifier -> run the packaged owners with a disposable profile and reopen their saved output.
+
+Replaces: An in-memory response alone as evidence of a stored-message read. The check uses the existing cloud database owner for two synthetic tenants. An in-process transport keeps the test offline.
+
+Evidence: Two rows inserted, duplicate insert ignored, one visible Inbox message after reopening, zero rows from the other tenant. Live Meta onboarding and desktop sign-in require their own installed checks.

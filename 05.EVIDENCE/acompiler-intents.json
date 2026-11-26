@@ -38,6 +38,7 @@
         "02.TESTS/tests_js/newapp_account.test.cjs",
         "02.TESTS/tests_js/raildoors.test.cjs",
         "02.TESTS/tests_js/settings_design_areas.test.cjs",
+        "02.TESTS/tests_js/settingsmatch.test.cjs",
         "02.TESTS/tests_replica/test_command_registry.py",
         "02.TESTS/tests_replica/test_scope_override_reset.py",
         "05.EVIDENCE/acompiler-intents.json"

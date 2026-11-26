@@ -1390,7 +1390,7 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
 // Settings › This PC › The app: backup place and folder, Back up now, Export diagnostics (settings_owner.maintenance_settings).
-for(const functionName of ['readMaintenance','setMaintenance','exportDiagnostics'])api[functionName]=(...args)=>settingsAction(functionName,args);
+for(const functionName of ['readMaintenance','setMaintenance','exportDiagnostics','readWorkspaceAccess','setWorkspaceReadOnly'])api[functionName]=(...args)=>settingsAction(functionName,args);
 api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value,destination=state.settingsDestination){

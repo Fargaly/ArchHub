@@ -506,6 +506,34 @@ class ConversationHistoryStore(ConversationPageProtection):
         status["protected_until_known"] = status["last_activity_at"] is None
         return status
 
+    def archive_inactive(self, days):
+        """Settings > This PC > Conversation retention: ARCHIVE (never delete) conversations with no activity for
+        `days`. An archived conversation keeps every message and stays readable; each archive is read back."""
+        if type(days) is not int or not 1 <= days <= 3650:
+            raise ValueError("Choose a retention of 1 to 3650 days.")
+        with self._transaction():
+            if not self._retention_active():
+                return {"archived": [], "skipped": "retention is not initialized for this history"}
+            cutoff = self._retention_now() - days * 86400
+            ids = [row[0] for row in self._db.execute(
+                "SELECT conversation_id FROM conversation_retention WHERE archived_at IS NULL "
+                "AND last_activity_at IS NOT NULL AND last_activity_at < ?", (cutoff,)).fetchall()]
+        archived = []
+        for conversation_id in ids:
+            status = self.retention_status(conversation_id)
+            try:
+                self.archive(conversation_id, expected_activity_revision=status["activity_revision"],
+                             expected_archive_revision=status["archive_revision"], expected_head=status["last_sequence"],
+                             expected_content_generation=status["content_generation"], protected=False,
+                             before_commit=lambda: None)
+            except ValueError:
+                continue  # an open page or a change since the read: it stays active until the next run
+            after = self.retention_status(conversation_id)
+            if after["archived_at"] is None or after["last_sequence"] != status["last_sequence"] or after["purged_messages"]:
+                raise RuntimeError("archive read-back failed for " + conversation_id)
+            archived.append(conversation_id)
+        return {"archived": archived}
+
     def retention_status(self, conversation_id):
         with self._transaction():
             return self._retention_status(conversation_id)

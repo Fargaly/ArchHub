@@ -646,6 +646,43 @@
     const choose=async mode=>{const [a,i]=UPDATE_MODES[mode];await u.act(()=>api.setApplicationSetting('update_auto_apply_on_quit',a));const saved=await u.act(()=>api.setApplicationSetting('update_install_when_idle',i));if(saved)setLoad({status:'loaded',saved});};
     return <><select aria-label={label} value={value} onChange={event=>choose(event.target.value)}>{options.map(option=><option key={option}>{option}</option>)}</select>{load.status==='empty'&&<small className="muted">App default</small>}{load.status==='loaded'&&<small className="muted">Saved</small>}</>;
   }
+  // One on/off owned by another settings owner: Review before sharing (hook permissions) and Read-only for agents
+  // (the workspace's workspaces.json row). read() gives the owner's value; write(on) saves it and returns the new value.
+  function OwnerSwitch({label,read,write,disabled=false,note=''}) {
+    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',value:false}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{
+      let current=true;
+      setLoad(held=>({...held,status:'waiting'}));
+      Promise.resolve().then(read).then(value=>{if(current)setLoad({status:typeof value==='boolean'?'loaded':'empty',value:value===true});},
+        error=>{if(current)setLoad({status:'error',value:false,message:error.message||String(error)});});
+      return ()=>{current=false;};
+    },[attempt]);  // read is fixed per mount (key)
+    if(load.status==='waiting')return <span role="status">Reading…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='empty')return <span role="status">The app reported no value. <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    return <>{load.status==='loaded'&&<span className="visually-hidden" role="status">Read from the app</span>}{note&&<small className="muted">{note}</small>}<D.Toggle variant="settings" label={label} disabled={disabled} checked={load.value} onCheckedChange={value=>u.act(()=>write(value)).then(saved=>{if(typeof saved==='boolean')setLoad({status:'loaded',value:saved});})}/></>;
+  }
+  // Conversation retention: days before an inactive transcript moves to the archive (still readable; nothing deleted).
+  const RETENTION_DAYS={'20 days':20,'30 days':30,'90 days':90,Keep:0};
+  function RetentionControl({label,options}) {
+    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',saved:{}}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{
+      let current=true;
+      setLoad(held=>({...held,status:'waiting'}));
+      Promise.resolve().then(()=>api.getApplicationSettings()).then(saved=>{if(current)setLoad({status:saved&&Object.keys(saved).length?'loaded':'empty',saved:saved||{}});},
+        error=>{if(current)setLoad({status:'error',saved:{},message:error.message||String(error)});});
+      return ()=>{current=false;};
+    },[attempt]);
+    if(load.status==='waiting')return <span role="status">Reading…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    const days=load.saved.conversation_retention_days??load.saved._defaults?.conversation_retention_days??20;
+    const value=Object.keys(RETENTION_DAYS).find(key=>RETENTION_DAYS[key]===days)||days+' days';
+    const choose=option=>u.act(()=>api.setApplicationSetting('conversation_retention_days',RETENTION_DAYS[option])).then(saved=>{if(saved)setLoad({status:'loaded',saved});});
+    return <><select aria-label={label} value={value} onChange={event=>choose(event.target.value)}>{[...new Set([...options,value])].map(option=><option key={option} disabled={!(option in RETENTION_DAYS)}>{option}</option>)}</select>
+      {load.status==='empty'&&<small className="muted">App default</small>}{load.status==='loaded'&&<small className="muted">Archived, never deleted</small>}</>;
+  }
+  const readReviewShare=()=>api.readPermissions().then(r=>(r?.permissions||r)?.reviewBeforeSharing);
+  const writeReviewShare=on=>api.setPermissions({reviewBeforeSharing:on}).then(r=>(r?.permissions||r)?.reviewBeforeSharing);
   // Settings > The app: backup place, folder, Back up now and Diagnostics (settings_owner.maintenance_settings).
   function MaintenanceControl({id,label,options}) {
     const u=useApp(),[load,setLoad]=React.useState({status:'waiting',held:null}),[attempt,setAttempt]=React.useState(0);
@@ -668,18 +705,19 @@
     return <>{shown}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(api.exportDiagnostics).then(r=>{if(r?.maintenance)u.setToast('Diagnostics saved to '+r.maintenance.diagnostics);})},event)}>Export diagnostics</Btn></>;
   }
   // Share the look: the Look rows as one JSON on the clipboard; Paste applies each through its own owner.
-  function LookTransfer() {
+  // Design: Copy the look sits on the row; Paste the look sits in the Settings ⋯ menu.
+  function LookTransfer({paste=false}) {
     const s=useData(),u=useApp();
     const look=()=>Object.fromEntries(s.settings.filter(row=>row.page==='Appearance'&&String(row.id).startsWith('Appearance.')).map(row=>[row.id,row.value]));
     const copy=async()=>{await navigator.clipboard.writeText(JSON.stringify({format:'archhub.look',version:1,values:look()},null,1));u.setToast('Look copied. Paste it on another PC from Share the look.');};
-    const paste=async()=>{
+    const pasteLook=async()=>{
       const held=JSON.parse(await navigator.clipboard.readText());
       if(held?.format!=='archhub.look'||held.version!==1||!held.values||typeof held.values!=='object')throw Error('Copy a look from Share the look first.');
       const known=new Set(s.settings.map(row=>row.id));
       for(const [id,value] of Object.entries(held.values))if(known.has(id)&&String(id).startsWith('Appearance.'))await api.setSetting(id,value);
       u.setToast('Look applied.');
     };
-    return <span className="flex"><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(copy)},event)}>Copy the look</Btn><Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(paste)},event)}>Paste the look</Btn></span>;
+    return paste?<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(pasteLook)},event)}>Paste the look</Btn>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(copy)},event)}>Copy the look</Btn>;
   }
   // Panels: the user's one dock layout (settings_owner.dock_layout through dock.jsx), set from here.
   function DockLayoutControl({id,label,options}) {
@@ -765,6 +803,14 @@
         case 'updMode': return <UpdateModeControl label={label} options={options}/>;
         case 'backupTo': case 'backupDir': case 'backupNow': case 'diagExport': return <MaintenanceControl id={id} label={label} options={options}/>;
         case 'telemetry': return <span className="muted">Off · ArchHub sends no usage data</span>;
+        case 'reviewShare': return <OwnerSwitch label={label} read={readReviewShare} write={writeReviewShare}/>;
+        case 'retention': return <RetentionControl label={label} options={options}/>;
+        case 'wsReadOnly': {
+          const id=workspace&&!workspace.builtIn?workspace.id:'';
+          return <OwnerSwitch key={id} label={label} disabled={!id} note={id?'':'Choose a registered workspace first'}
+            read={()=>id?api.readWorkspaceAccess().then(r=>r.readOnlyWorkspaces.includes(id)):Promise.resolve(false)}
+            write={on=>api.setWorkspaceReadOnly(id,on).then(r=>r.readOnlyWorkspaces.includes(id))}/>;
+        }
         case 'askTranscribe': return <><span className="muted">Always on · transcription starts only after everyone agrees</span>{actButton('Open Meetings',()=>u.go('meetings'))}</>;
       }
       if(id.startsWith('gate.')){
@@ -1451,7 +1497,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
             u.setHomeInspector({path:api.getSessionPath(),tab:'Session'});
         });
       }}><option value="">Every session</option>{sessionChoices.map(row=><option key={row.path} value={row.path}>{row.title}</option>)}</select></label>
-      {sources.sessions?.error && sourceNotice('sessions','Reading sessions…')}<label className="sheet-find"><window.AHIcon name="search" size={15}/><input ref={searchInput} className="sheet-search" aria-label="Search settings" placeholder={window.UI.productLabel("Search, or ask where something is",s.settings)} value={query} onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&matched[0]){event.preventDefault();revealSetting(matched[0]);}if(event.key==='Escape')setQuery('');}} /><kbd>/</kbd></label><div className="sheet-view-filter" aria-label="Settings view"><button type="button" className="sheet-action secondary" aria-pressed={!changedOnly} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setChangedOnly(false);setQuery('');}},event)}>All</button><button type="button" className="sheet-action secondary" aria-pressed={changedOnly} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setChangedOnly(true);setQuery('');}},event)}>Changed {s.settings.filter(isChanged).length+changedKeys.length || ''}</button></div><button type="button" className="sheet-action" onClick={event=>executeAction('projects.controls.activate',{handler:()=>go(u.settingsOrigin||'home')},event)}>Back to task</button><details className="sheet-tools-menu"><summary aria-label="Copy, paste or reset all settings" title="Copy, paste or reset all settings"><window.AHIcon name="more" size={16}/></summary><div>{typeof api.setSettingsScope==='function'&&<label className="sheet-settings-scope">Scope<select disabled={!s.settingsDestination||s.settingsScopePending} aria-busy={Boolean(s.settingsScopePending)} aria-label="Settings scope" value={s.settingsScope||'User'} onChange={event=>{const value=event.target.value,destination=s.settingsDestination;return act(()=>api.setSettingsScope(value,destination));}}><option value="User">Everywhere</option><option value="Workspace" disabled={!s.settingsScopes?.Workspace}>Current workspace</option><option value="Session" disabled={!s.settingsScopes?.Session}>Current session</option></select></label>}{!needle&&area.pages.length>1&&!changedOnly&&<nav className="sheet-subpages" aria-label={area.label+' pages'}>{area.pages.map(target=><Btn sm ghost key={target} aria-current={currentCategory===target?'page':undefined} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/'+target)},event)}>{pageLabels[target]||target}</Btn>)}</nav>}<button type="button" className="sheet-action secondary" aria-expanded={advancedOpen} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAdvancedOpen(value=>!value)},event)}>{advancedOpen?'Hide advanced':'Show advanced'}</button><PreferencesTransfer /></div></details></header><div className="sheet-layout"><nav className="sheet-tabs" aria-label="Settings categories">{sheetAreas.map(item=><button type="button" className="settings-section" aria-label={window.UI.productLabel(item.label,s.settings)} aria-current={!needle&&!changedOnly&&area===item?'page':undefined} key={item.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setQuery('');setChangedOnly(false);go('settings/'+item.target);}},event)}><window.AHIcon name={item.icon} size={16}/><span><b>{window.UI.productLabel(item.label,s.settings)}</b><small>{item.description}</small>{formerPageLabels[item.label]&&<em className="sheet-nav-former">Was: {formerPageLabels[item.label]}</em>}</span>{changedForArea(item)>0&&<span className="sheet-change-count">{changedForArea(item)}</span>}</button>)}</nav><div className="sheet-content" ref={content}>{s.settingsScopePending&&<p role="status" aria-live="polite">Changing settings scope…</p>}{s.settingsScopeNotice&&<div role="alert">{s.settingsScopeNotice}<Btn sm ghost disabled={s.settingsScopePending} onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(()=>api.refreshPreferences())},event)}>Refresh settings scope</Btn></div>}
+      {sources.sessions?.error && sourceNotice('sessions','Reading sessions…')}<label className="sheet-find"><window.AHIcon name="search" size={15}/><input ref={searchInput} className="sheet-search" aria-label="Search settings" placeholder={window.UI.productLabel("Search, or ask where something is",s.settings)} value={query} onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&matched[0]){event.preventDefault();revealSetting(matched[0]);}if(event.key==='Escape')setQuery('');}} /><kbd>/</kbd></label><div className="sheet-view-filter" aria-label="Settings view"><button type="button" className="sheet-action secondary" aria-pressed={!changedOnly} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setChangedOnly(false);setQuery('');}},event)}>All</button><button type="button" className="sheet-action secondary" aria-pressed={changedOnly} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setChangedOnly(true);setQuery('');}},event)}>Changed {s.settings.filter(isChanged).length+changedKeys.length || ''}</button></div><button type="button" className="sheet-action" onClick={event=>executeAction('projects.controls.activate',{handler:()=>go(u.settingsOrigin||'home')},event)}>Back to task</button><details className="sheet-tools-menu"><summary aria-label="Copy, paste or reset all settings" title="Copy, paste or reset all settings"><window.AHIcon name="more" size={16}/></summary><div>{typeof api.setSettingsScope==='function'&&<label className="sheet-settings-scope">Scope<select disabled={!s.settingsDestination||s.settingsScopePending} aria-busy={Boolean(s.settingsScopePending)} aria-label="Settings scope" value={s.settingsScope||'User'} onChange={event=>{const value=event.target.value,destination=s.settingsDestination;return act(()=>api.setSettingsScope(value,destination));}}><option value="User">Everywhere</option><option value="Workspace" disabled={!s.settingsScopes?.Workspace}>Current workspace</option><option value="Session" disabled={!s.settingsScopes?.Session}>Current session</option></select></label>}{!needle&&area.pages.length>1&&!changedOnly&&<nav className="sheet-subpages" aria-label={area.label+' pages'}>{area.pages.map(target=><Btn sm ghost key={target} aria-current={currentCategory===target?'page':undefined} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/'+target)},event)}>{pageLabels[target]||target}</Btn>)}</nav>}<button type="button" className="sheet-action secondary" aria-expanded={advancedOpen} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAdvancedOpen(value=>!value)},event)}>{advancedOpen?'Hide advanced':'Show advanced'}</button><PreferencesTransfer /><LookTransfer paste/></div></details></header><div className="sheet-layout"><nav className="sheet-tabs" aria-label="Settings categories">{sheetAreas.map(item=><button type="button" className="settings-section" aria-label={window.UI.productLabel(item.label,s.settings)} aria-current={!needle&&!changedOnly&&area===item?'page':undefined} key={item.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setQuery('');setChangedOnly(false);go('settings/'+item.target);}},event)}><window.AHIcon name={item.icon} size={16}/><span><b>{window.UI.productLabel(item.label,s.settings)}</b><small>{item.description}</small>{formerPageLabels[item.label]&&<em className="sheet-nav-former">Was: {formerPageLabels[item.label]}</em>}</span>{changedForArea(item)>0&&<span className="sheet-change-count">{changedForArea(item)}</span>}</button>)}</nav><div className="sheet-content" ref={content}>{s.settingsScopePending&&<p role="status" aria-live="polite">Changing settings scope…</p>}{s.settingsScopeNotice&&<div role="alert">{s.settingsScopeNotice}<Btn sm ghost disabled={s.settingsScopePending} onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(()=>api.refreshPreferences())},event)}>Refresh settings scope</Btn></div>}
       <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>
       {load.status==='waiting'&&<span className="visually-hidden" role="status">Reading settings…</span>}
       {load.status==='error'&&<div role="alert">Some settings could not be read; the rest are shown. <Btn sm onClick={()=>runAction('settings.sheet.Refresh','')}>Retry all</Btn></div>}

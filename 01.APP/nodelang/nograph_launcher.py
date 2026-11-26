@@ -419,7 +419,12 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             from .pc_maintenance import _setting, prune_cache, prune_logs
             prune_logs(state_dir, _setting(state_dir, 'log_keep_days'))
             prune_cache(state_dir, _setting(state_dir, 'cache_limit_gb'))
-        except (OSError, ValueError) as refused:
+            days = _setting(state_dir, 'conversation_retention_days')
+            if days:  # Conversation retention archives old transcripts; they stay readable, nothing is deleted
+                from .workshop_mailbox import application_history
+                with application_history() as history:
+                    history.archive_inactive(days)
+        except (OSError, ValueError, RuntimeError) as refused:
             print('  logs       : prune skipped (%s)' % refused, flush=True)
     QTimer.singleShot(60_000, prune_old_logs)
     def consider_update():

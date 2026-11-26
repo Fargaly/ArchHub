@@ -86,3 +86,57 @@ def test_cache_size_removes_oldest_cache_files_first(tmp_path, monkeypatch):
     assert prune_cache(tmp_path, 1) == ['old.bin'] and new.exists()
     with pytest.raises(ValueError):
         prune_cache(tmp_path, 0)
+
+
+def test_review_before_sharing_holds_a_send_that_leaves_the_account_on_the_approve_card(tmp_path):
+    from nodelang.hook_decision import checked_permissions, mode_verdict
+    send = {"tool": "mcp__slack__post_message", "input": {"channel": "general", "text": "hi"}, "cwd": str(tmp_path)}
+    workshop = {"tool": "mcp__workshop__send", "input": {"text": "hi"}, "cwd": str(tmp_path)}
+    on, off = checked_permissions({}), checked_permissions({"reviewBeforeSharing": False})
+    assert on["reviewBeforeSharing"] is True  # design default: on
+    assert mode_verdict(send, "send", on, {}) == ("ask", "review-before-sharing")
+    assert mode_verdict(send, "send", off, {}) is None  # Accept edits, switch off: never asks
+    assert mode_verdict(workshop, "send", on, {}) is None  # his own Workshop never leaves his account
+    with pytest.raises(ValueError):
+        checked_permissions({"reviewBeforeSharing": "yes"})
+
+
+def test_read_only_workspace_refuses_agent_writes_inside_it_only_when_on(tmp_path):
+    from nodelang.hook_decision import read_only_workspace
+    from nodelang.settings_owner import workspace_access
+    from nodelang.nograph_server import JsonFile
+    state, folder = tmp_path / "state", tmp_path / "project"
+    folder.mkdir()
+    workspaces = JsonFile(state / "settings" / "workspaces.json", {"roots": []})
+    workspaces.write({"roots": [{"root_id": "workspace:p1", "label": "project", "path": str(folder)}]})
+    env = {"ARCHHUB_TEST_STATE_DIR": str(state)}
+    write = {"tool": "Write", "input": {"file_path": str(folder / "a.txt")}, "cwd": str(tmp_path)}
+    outside = {"tool": "Write", "input": {"file_path": str(tmp_path / "b.txt")}, "cwd": str(tmp_path)}
+    assert read_only_workspace(write, "write", env) == ""  # off by default: never blocks
+    assert workspace_access("setWorkspaceReadOnly", ["workspace:p1", True], workspaces) == {"readOnlyWorkspaces": ["workspace:p1"]}
+    assert read_only_workspace(write, "write", env) == str(folder.resolve())
+    assert read_only_workspace(write, "read", env) == ""  # reading stays open
+    assert read_only_workspace(outside, "write", env) == ""
+    workspace_access("setWorkspaceReadOnly", ["workspace:p1", False], workspaces)
+    assert read_only_workspace(write, "write", env) == ""
+    with pytest.raises(ValueError):
+        workspace_access("setWorkspaceReadOnly", ["workspace:gone", True], workspaces)
+
+
+def test_conversation_retention_archives_and_never_deletes(tmp_path):
+    from nodelang.conversation_history import ConversationHistoryStore
+    now = [1_800_000_000.0]
+    with ConversationHistoryStore(tmp_path / "workshop.sqlite3", instance_id="room", retention_clock=lambda: now[0]) as history:
+        history.initialize_retention()
+        for room in ("old-room", "new-room"):
+            history.append(room, author="Agent", content="kept text", idempotency_key=room + "-1")
+            history.record_activity(room)
+        now[0] += 25 * 86400
+        history.record_activity("new-room")
+        with pytest.raises(ValueError):
+            history.archive_inactive(0)
+        assert history.archive_inactive(20) == {"archived": ["old-room"]}
+        old = history.retention_status("old-room")
+        assert old["archived_at"] is not None and old["purged_messages"] == 0 and old["last_sequence"] == 1
+        assert history.retention_status("new-room")["archived_at"] is None
+        assert history.archive_inactive(20) == {"archived": []}  # already archived: nothing moves twice

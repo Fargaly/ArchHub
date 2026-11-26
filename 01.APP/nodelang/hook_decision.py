@@ -1271,7 +1271,7 @@ def _checked_rule(rule_id, value):
 def _rule_applies(rule, vendor) -> bool:
     who = rule["appliesTo"].strip()
     return who.casefold() == "all agents" or vendor.casefold() in {w.strip().casefold() for w in who.split(",")}
-DEFAULT_PERMISSIONS = {"runMode": "Accept edits", "tools": {}, "rules": {}}
+DEFAULT_PERMISSIONS = {"runMode": "Accept edits", "tools": {}, "rules": {}, "reviewBeforeSharing": True}
 _ROUTINE = ("read", "write", "shell", "other")
 
 
@@ -1287,6 +1287,8 @@ def checked_permissions(values) -> dict:
     tools = values["tools"]
     if values["runMode"] not in RUN_MODES:
         raise ValueError("Choose Ask first, Accept edits or Plan only.")
+    if type(values["reviewBeforeSharing"]) is not bool:
+        raise ValueError("Review before sharing is on or off.")
     if (type(tools) is not dict or len(tools) > 200
             or any(type(k) is not str or not k.strip() or len(k) > 200 or v not in TOOL_MODES for k, v in tools.items())):
         raise ValueError("Each tool mode is a tool name (or pattern) set to Off, Ask or Allowed.")
@@ -1294,7 +1296,7 @@ def checked_permissions(values) -> dict:
     if type(rules) is not dict:
         raise ValueError("Workspace rules are a list of rules.")
     checked = {key: _checked_rule(key, value) for key, value in rules.items()}
-    return {"runMode": values["runMode"], "tools": dict(tools),
+    return {"runMode": values["runMode"], "tools": dict(tools), "reviewBeforeSharing": values["reviewBeforeSharing"],
             "rules": {key: checked.get(key) or _rule_default(key) for key in WORKSPACE_RULES}}
 
 
@@ -1330,6 +1332,26 @@ def write_permissions(changes, environment=None, path: Path | None = None) -> di
     finally:
         temporary.unlink(missing_ok=True)
     return values
+
+
+def _call_path(event: dict):
+    data = event["input"]
+    raw = str(data.get("file_path") or data.get("path") or data.get("filePath") or data.get("workdir")
+              or data.get("cwd") or event["cwd"])
+    path = Path(raw) if Path(raw).is_absolute() else Path(event["cwd"]) / raw
+    return path.resolve()  # non-strict: a file still to be written resolves too
+
+
+def read_only_workspace(event: dict, action: str, environment) -> str:
+    """The read-only workspace a write or delete lands in (Settings > This PC > Read-only for agents), else ''."""
+    if action not in ("write", "delete"):
+        return ""
+    from .settings_owner import read_only_workspace_roots
+    path = _call_path(event)
+    for root in read_only_workspace_roots(_settings_dir(environment)):
+        if _under(path, root):
+            return str(root)
+    return ""
 
 
 def own_folder(event: dict, environment) -> bool:
@@ -1381,6 +1403,8 @@ def mode_verdict(event: dict, action: str, permissions: dict, environment):
     data = event["input"]
     if _draft_call(event["tool"], data):
         return None  # a draft in his own mailbox never asks (it sends nothing)
+    if permissions["reviewBeforeSharing"] and _leaves_his_account(action, event["tool"], data):
+        return "ask", "review-before-sharing"  # Settings > This PC > Review before sharing: the one Approve card
     if tool == "host.exec" or (tool == "write" and isinstance(data, dict) and "host" in data and "code" in data):
         return "ask", "host-effect-approval"
     if run == "Accept edits":
@@ -1612,6 +1636,10 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
             rules = [*rules, "loose-root-file"]
         notes.append("STD %s: a governed folder's root holds only %s and named results. Put this file in %s instead."
                      % (WORKSPACE_RULES["loose-root-file"]["standard"], loose["params"]["rootFiles"], instead))
+    locked = read_only_workspace(event, action, environment)
+    if locked:
+        rules = [*rules, "workspace-read-only"]
+        notes.append("This workspace is read-only for agents (Settings > This PC): %s. Write somewhere else." % locked)
     mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
     hold_id = ""
     if mode and mode[0] == "ask":
@@ -1711,6 +1739,8 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "banned-package": BANNED_REASON,
             "raw-outlook-mail": RAW_OUTLOOK_REASON,
             "loose-root-file": "a new loose file would land at a governed folder's root",
+            "workspace-read-only": "this workspace is read-only for agents",
+            "review-before-sharing": "this leaves your account; Review before sharing is on",
             "tool-off": "this tool is Off in Settings",
             "plan-only": "Plan only is on in Settings, so nothing changes",
             "tool-ask": "this tool is set to Ask in Settings",

@@ -1540,7 +1540,39 @@ _APPLICATION_SETTING_SPECS = {
     "forget_idle_agents_hours": ("number", {"min": 1, "max": 72, "step": 1}),
     "log_keep_days": ("number", {"min": 1, "max": 90, "step": 1}),
     "cache_limit_gb": ("number", {"min": 1, "max": 32, "step": 1}),
+    "conversation_retention_days": ("number", {"min": 0, "max": 3650, "step": 1}),  # 0 = Keep: never archived
 }
+
+def read_only_workspace_roots(settings_dir) -> list:
+    """Workspaces the user set read-only for agents (settings/workspaces.json 'readOnly'); hook_decision reads this.
+    An unreadable file means no read-only workspace: the switch is his, and off never blocks."""
+    try:
+        rows = json.loads((Path(settings_dir) / 'workspaces.json').read_text(encoding='utf-8')).get('roots') or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [Path(row['path']) for row in rows if isinstance(row, dict) and row.get('readOnly') is True and row.get('path')]
+
+
+def workspace_access(function, args, workspaces):
+    """Settings > This PC > Read-only for agents: one switch per registered workspace, in its workspaces.json row."""
+    if function == 'setWorkspaceReadOnly':
+        if len(args) != 2 or type(args[0]) is not str or type(args[1]) is not bool:
+            raise ValueError('Choose a registered workspace and on or off.')
+        with workspaces.lock:
+            held = workspaces.read()
+            row = next((r for r in held.get('roots', []) if args[0] in (r.get('root_id'), r.get('id'))), None)
+            if row is None:
+                raise ValueError('This workspace is no longer registered. Refresh Settings.')
+            if args[1]:
+                row['readOnly'] = True
+            else:
+                row.pop('readOnly', None)
+            workspaces.write(held)
+    elif function != 'readWorkspaceAccess':
+        raise ValueError('Use a declared workspace access action.')
+    rows = workspaces.read().get('roots', [])
+    return {'readOnlyWorkspaces': [r.get('root_id', r.get('id')) for r in rows if r.get('readOnly') is True]}
+
 
 BACKUP_TARGETS = ('This PC', 'Office server', 'OneDrive', 'Google Drive')
 

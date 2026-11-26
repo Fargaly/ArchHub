@@ -2577,6 +2577,13 @@ def r_settings_action(s, req):
         defaults = {key: (bool if editor == 'boolean' else int)(application_defaults._application_setting_default(key))
                     for key, (editor, _bounds) in application_defaults._APPLICATION_SETTING_SPECS.items()}
         return {'ok': True, 'result': {**saved_application_settings(s.state_dir), '_defaults': defaults}}
+    if function in ('readWorkspaceAccess', 'setWorkspaceReadOnly'):
+        from .settings_owner import workspace_access
+        try:
+            return {'ok': True, 'result': workspace_access(function, list(args or []), s.files.get('workspaces')
+                                                           or JsonFile(settings.path.with_name('workspaces.json'), {'roots': []}))}
+        except ValueError as refused:
+            raise Refused(str(refused)) from None
     if function in ('readMaintenance', 'setMaintenance', 'backUpNow', 'exportDiagnostics'):
         from .settings_owner import maintenance_settings
         try:

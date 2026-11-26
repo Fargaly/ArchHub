@@ -120,6 +120,7 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'forget_idle_agents_hours': params.get('forget_idle_agents_hours'),
             'log_keep_days': params.get('log_keep_days'),
             'cache_limit_gb': params.get('cache_limit_gb'),
+            'conversation_retention_days': params.get('conversation_retention_days'),
         }
         from .application_update import saved_application_settings
         saved = saved_application_settings()

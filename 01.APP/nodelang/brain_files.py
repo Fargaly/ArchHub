@@ -359,7 +359,8 @@ def call(tool, arguments):
         with _LOCK:
             return {'ok': True, 'facts': _db().execute('SELECT count(*) FROM beliefs WHERE valid_to IS NULL').fetchone()[0], 'skills': None, 'owner_user': 'local', 'store': 'sqlite'}
     if tool == 'brain.context':
-        return context(arguments.get('prompt', ''), arguments.get('limit', params['context_limit']), arguments.get('as_of'))
+        from .settings_owner import declared_setting  # Settings › Account › Memories in each request
+        return context(arguments.get('prompt', ''), arguments.get('limit', declared_setting('Account.Memories in each request')), arguments.get('as_of'))
     if tool == 'brain.list_facts':
         return list_facts(arguments.get('limit', params['list_limit']), arguments.get('offset', 0))
     if tool == 'brain.history':

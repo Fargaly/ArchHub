@@ -520,7 +520,7 @@ class SettingsOwner:
         if type(email) is not str or '@' not in email or len(email) > 254:
             raise ValueError('Enter your teammate’s email address and retry.')
         result = self.cloud('POST', '/v1/companies/' + self._company() + '/invites',
-                            {'email': email.strip(), 'role': 'member'})
+                            {'email': email.strip(), 'role': declared_setting('Account.Role for new invites').lower()})
         # An issued invite is not proof that the mail provider delivered it.
         return {'email': result['email'], 'message': 'Invitation issued; delivery is confirmed by your mail provider.'}
 
@@ -1277,6 +1277,13 @@ def preference_settings(function='readControls', args=(), settings=None):
         else:
             settings.update({}, remove=['ifcVersion'])
         function, args = 'readControls', ()
+    for spec in DECLARED_ROWS:
+        if args and args[0] == spec['id'] and function in ('setAppearance', 'resetAppearance'):
+            if function == 'setAppearance':
+                settings.update({spec['storageKey']: declared_value(spec, args[1])})
+            else:
+                settings.update({}, remove=[spec['storageKey']])
+            function, args = 'readControls', ()
     identity, key = 'Projects.Working subfolder', 'projectWorkingSubfolder'
     if args and args[0] == 'Projects.BCF version' and function in ('setAppearance', 'resetAppearance'):
         if function == 'setAppearance':
@@ -1329,7 +1336,155 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows, *agent_rows]}
+    declared = [{**spec, 'value': settings.read().get(spec['storageKey'], spec['default'])} for spec in DECLARED_ROWS]
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows, *agent_rows, *declared]}
+
+
+def _declared(page, group, label, key, kind, default, **extra):
+    prefix = 'Account' if page in ('Account', 'Brain') else page
+    return {'id': prefix + '.' + label, 'storageKey': key, 'page': page, 'group': group, 'label': label,
+            'type': kind, 'default': default, **extra}
+
+
+def _choices(page, group, label, key, options):
+    return _declared(page, group, label, key, 'choice', options[0], options=list(options))
+
+
+# Settings rows the design shows in Account, Connections and Projects whose one owner is settings/settings.json
+# (scoped User > Workspace > Session like every preference). Each is also a Library 'thing.setting' node, and the
+# effective values reach every agent that joins a session (workshop_tasks.handover 'settings').
+DECLARED_ROWS = (
+    _choices('Account', 'You', 'Numbers', 'numerals', ('123', '١٢٣')),
+    _choices('Account', 'You', 'Time zone', 'timezone', ('Asia/Riyadh (GMT+3)', 'Africa/Cairo (GMT+2)', 'Asia/Dubai (GMT+4)', 'UTC')),
+    _choices('Account', 'Plan & access', 'Office policy', 'policyLock', ('Office defaults, I can change them', 'Office policy, locked by the admin')),
+    _choices('Account', 'Plan & access', 'Role for new invites', 'inviteRole', ('Member', 'Admin')),  # the cloud invites as member or admin only,
+    _choices('Account', 'Plan & access', 'Access ends', 'accessEnds', ('Never', '30 days', '90 days', 'When the project ends')),
+    _declared('Account', 'Community', 'Public profile', 'commProfile', 'boolean', False),
+    _declared('Account', 'Community', 'Profile address', 'commHandle', 'text', '', pattern=r'[a-z0-9-]{0,40}'),
+    _declared('Account', 'Community', 'Tell me about installs and comments', 'commNotify', 'boolean', True),
+    _declared('Account', 'Social media', 'Send replies without asking', 'socialAutoSend', 'boolean', False),
+    _choices('Account', 'Social media', 'Inbox digest', 'socialDigest', ('Off', 'Daily', 'Weekly')),
+    _declared('Account', 'Brain and cloud sync', 'Memories in each request', 'brainContext', 'number', 8, control='range', min=0, max=50),
+    _declared('Account', 'Brain and cloud sync', 'Brain follows your account', 'syncBrain', 'boolean', True),
+    _declared('Account', 'Brain and cloud sync', 'Settings follow your account', 'syncSettings', 'boolean', True),
+    _choices('Account', 'Brain and cloud sync', 'Sync .archhub files', 'syncFiles', ('Off', 'Office server', 'OneDrive', 'Google Drive')),
+    _declared('Connections', 'Program options', 'Connect when a program opens', 'autoConnect', 'boolean', True),
+    _choices('Connections', 'Program options', 'Revit version', 'revitVer', ('Newest installed', '2026', '2025', '2024', '2023')),
+    _choices('Connections', 'Program options', 'AutoCAD version', 'acadVer', ('Newest installed', '2026', '2025', '2024')),
+    _declared('Connections', 'Program options', 'Other Windows apps agents may drive', 'uiaApps', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
+    _declared('Connections', 'Phone and cloud', 'Let your cloud agents reach this PC', 'cloudReach', 'boolean', False),
+    _declared('Connections', 'Phone and cloud', 'Publish to ArchHub cloud', 'cloudPublish', 'boolean', False),
+    _declared('Connections', 'Network', 'Proxy', 'proxy', 'text', '', pattern=r'[^\s@]{0,200}'),  # no user:password@ (secrets never in this file)
+    _declared('Connections', 'Network', 'Work offline', 'offline', 'boolean', False),
+    _declared('Connections', 'Notifications', 'Notify when something needs you', 'notifyNeeds', 'boolean', True),
+    _declared('Connections', 'Notifications', 'Notify when a task finishes', 'notifyDone', 'boolean', True),
+    _declared('Connections', 'Notifications', 'Every message in my threads', 'notifyEvery', 'boolean', True),
+    _declared('Connections', 'Notifications', 'Windows notifications', 'desktopNotify', 'boolean', False),
+    _declared('Connections', 'Notifications', 'Sound', 'sound', 'boolean', False),
+    _choices('Connections', 'Notifications', 'Quiet hours from', 'quietFrom', ('Off', '20:00', '21:00', '22:00', '23:00')),
+    _choices('Connections', 'Notifications', 'Quiet hours until', 'quietTo', ('06:00', '07:00', '08:00', '09:00')),
+    _choices('Projects', 'Project register', 'Stage', 'projStage', ('Concept', 'Schematic', 'Detailed design', 'Construction documents', 'Tender', 'Construction')),
+    _declared('Projects', 'Office standard', 'Office standard folder', 'stdFolder', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
+    _declared('Projects', 'Office standard', 'Standard website', 'stdSite', 'text', '', pattern=r'[^\s]{0,300}'),
+    _choices('Projects', 'Office standard', 'Parameter names', 'paramDict', ('buildingSMART Data Dictionary', 'Office dictionary')),
+    _declared('Projects', 'Office standard', 'Knows the Office standard', 'knowsStd', 'boolean', True),
+    _declared('Projects', 'Templates', 'Revit template', 'revitTpl', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
+    _declared('Projects', 'Templates', 'AutoCAD template', 'acadTpl', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
+    _choices('Projects', 'Templates', 'Drawing labels', 'drawLang', ('English', 'Arabic', 'English above Arabic')),
+    _choices('Projects', 'Templates', 'Model detail', 'lod', ('LOD 300', 'LOD 200', 'LOD 350', 'LOD 400')),
+    _choices('Projects', 'Templates', 'Coordinates', 'coords', ('Shared coordinates', 'Project base point')),
+    _declared('Projects', 'Location', 'Survey point east', 'surveyE', 'text', '0', pattern=r'-?\d{0,9}(\.\d{0,4})?'),
+    _declared('Projects', 'Location', 'Survey point north', 'surveyN', 'text', '0', pattern=r'-?\d{0,9}(\.\d{0,4})?'),
+    _declared('Projects', 'Location', 'Survey point elevation', 'surveyElev', 'text', '0', pattern=r'-?\d{0,6}(\.\d{0,4})?'),
+    _declared('Projects', 'Location', 'Angle to true north', 'gridNorth', 'number', 0, control='range', min=0, max=359),
+    _declared('Projects', 'Revit worksharing', 'Central model folder', 'centralPath', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
+    _declared('Projects', 'Revit worksharing', 'Sync with central every', 'syncEvery', 'number', 30, control='range', min=5, max=240),
+    _declared('Projects', 'Revit worksharing', 'Give back borrowed elements on sync', 'relinquish', 'boolean', True),
+    _choices('Projects', 'Print and PDF', 'Pen table', 'ctb', ('Office monochrome.ctb', 'Office colour.ctb', 'None')),
+    _choices('Projects', 'Print and PDF', 'Default scale', 'defaultScale', ('1:100', '1:50', '1:200', '1:500')),
+    _choices('Projects', 'CAD', 'Layer standard', 'layerStd', ('Office layers (AIA based)', 'ISO 13567')),
+    _choices('Projects', 'CAD', 'Colour to lineweight', 'colorWeight', ('Office colour to lineweight', 'AutoCAD default')),
+    _declared('Projects', 'CDE folders', 'Projects folder', 'cdeRoot', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
+    _choices('Projects', 'CDE folders', 'Folder order', 'cdeOrder', ('State, then data type, then discipline (ISO 19650)', 'State, then discipline, then data type')),
+    _declared('Projects', 'CDE folders', 'Discipline codes', 'disciplines', 'text', 'A, S, M, E, P', pattern=r'[A-Z, ]{0,120}'),
+)
+
+
+def declared_value(spec, value):
+    """A value outside the row's declared type, options, range or pattern is refused, never stored."""
+    kind = spec['type']
+    if kind == 'boolean' and type(value) is bool:
+        return value
+    if kind == 'choice' and value in spec['options']:
+        return value
+    if kind == 'number' and type(value) is int and spec['min'] <= value <= spec['max']:
+        return value
+    if kind == 'text' and type(value) is str and re.fullmatch(spec.get('pattern', r'[^\x00-\x1f]{0,400}'), value.strip()):
+        return value.strip()
+    raise ValueError('Choose a valid value for ' + spec['label'] + '.')
+
+
+def declared_settings(document=None):
+    """The effective declared rows for a conversation (Session > Workspace > User), keyed by Settings page and label."""
+    scope = preference_scope(document)
+    level = 'Session' if scope.document else 'Workspace' if scope.workspace else 'User'
+    values = scope.effective(level)
+    shown = {}
+    for spec in DECLARED_ROWS:
+        shown.setdefault(spec['page'], {})[spec['label']] = values.get(spec['id'], spec['default'])
+    return shown
+
+
+def _local(req):
+    return (req.host or '').rsplit(':', 1)[0].strip('[]') in ('localhost', '127.0.0.1', '::1')
+
+
+def apply_network_settings():
+    """Settings › Connections › Network for every urllib request this process makes (the default opener).
+
+    Work offline refuses any host but this PC; Proxy routes the others through the proxy. Local brokers stay direct."""
+    from urllib.error import URLError
+    from urllib.request import BaseHandler, ProxyHandler, build_opener, install_opener
+
+    class Offline(BaseHandler):
+        handler_order = 100
+
+        def http_open(self, req):
+            if not _local(req):
+                raise URLError('Work offline is on (Settings › Connections › Network); nothing is sent.')
+        https_open = http_open
+
+    class Proxy(ProxyHandler):
+        def proxy_open(self, req, proxy, type):
+            return None if _local(req) else super().proxy_open(req, proxy, type)
+
+    offline, proxy = declared_setting('Connections.Work offline'), declared_setting('Connections.Proxy')
+    if not re.fullmatch(r'https?://[A-Za-z0-9.\-]+(:\d{1,5})?/?', proxy):
+        proxy = ''  # a half-typed or empty address keeps direct connections
+    handlers = ([Offline()] if offline else []) + ([Proxy({'http': proxy, 'https': proxy})] if proxy else [])
+    install_opener(build_opener(*handlers) if handlers else None)
+    return {'offline': offline, 'proxy': proxy}
+
+
+def quiet_hours(start, end, now):
+    """Quiet hours from start until end ('HH:MM'), across midnight when start is later than end; 'Off' is never quiet."""
+    return start != 'Off' and ((start <= now or now < end) if start > end else start <= now < end)
+
+
+def declared_values(held, page):
+    """One page's declared rows from an already-read settings file (Everywhere values), keyed by label."""
+    return {spec['label']: held.get(spec['storageKey'], spec['default']) for spec in DECLARED_ROWS if spec['page'] == page}
+
+
+def declared_setting(identity):
+    """One declared row's User value, read from the owner file (for owners outside a conversation)."""
+    from .session_files import profile_directory
+    spec = next(row for row in DECLARED_ROWS if row['id'] == identity)
+    try:  # a read only: no settings file is created for it
+        held = json.loads((profile_directory() / 'settings/settings.json').read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        held = {}
+    return held.get(spec['storageKey'], spec['default']) if isinstance(held, dict) else spec['default']
 
 
 def preference_setting(identity):
@@ -1732,6 +1887,7 @@ class PreferenceScope:
             if keyboard:
                 patch['keybindings'] = {id.removeprefix('Keyboard.'): value for id, value in values.items() if id in self.keyboard}
             self.settings.update(patch, remove=remove)
+            follow_settings_to_account(self.settings.read())
         elif scope == 'Workspace':
             with self.workspaces.lock:
                 held = self.workspaces.read()
@@ -1811,6 +1967,64 @@ def validate_session_preferences(document, values):
     context.validate('Session', values, {**context.maps(), 'Session': values})
 
 
+
+
+_SYNC_PATH = 'settings/preferences.json'
+_PC_ONLY = ('Connections.Proxy', 'Connections.Work offline')  # the network is this PC's
+
+
+def _synced_keys():
+    rows = preference_settings(settings=_PreferenceValues({}))['appearanceSettings']
+    return {row['storageKey'] for row in rows if row['page'] in ('Appearance', 'Connections') and row['id'] not in _PC_ONLY}
+
+
+def _synced(held):
+    """Look and Connections choices follow the account; Projects, Account and This PC stay on this PC."""
+    return {key: held[key] for key in sorted(_synced_keys()) if key in held}
+
+
+def _settings_file():
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    return JsonFile(profile_directory() / 'settings/settings.json', {})
+
+
+def follow_settings_to_account(held):
+    """Settings follow your account: a saved Everywhere value goes to the account (inert when signed out)."""
+    if not held.get('syncSettings', True):
+        return
+    from . import account_sync
+    content = account_sync.canonical(_synced(held))
+    threading.Thread(target=account_sync.put, args=(_SYNC_PATH, content), name='settings-sync', daemon=True).start()
+
+
+def _sync_items():
+    from . import account_sync
+    held = _settings_file().read()
+    return {_SYNC_PATH: ({}, account_sync.canonical(_synced(held)))} if held.get('syncSettings', True) else {}
+
+
+def _sync_cache(path, content):
+    settings = _settings_file()
+    if path != _SYNC_PATH or not settings.read().get('syncSettings', True):
+        return
+    rows = {row['storageKey']: row['id'] for row in preference_settings(settings=_PreferenceValues({}))['appearanceSettings']}
+    admitted = {}
+    for key, value in json.loads(content).items():
+        if key in _synced_keys():
+            try:  # the account's copy is checked like a local edit; a value this build refuses is skipped
+                preference_settings('setAppearance', [rows[key], value], _PreferenceValues({}))
+                admitted[key] = value
+            except ValueError:
+                continue
+    settings.update(admitted)
+
+
+def register_settings_sync():
+    """The settings/ namespace of the account-sync owner (idempotent), next to connections/."""
+    from . import account_sync
+    account_sync.register('settings/', items=_sync_items, cache=_sync_cache, drop=lambda path, meta: None,
+                          conflict_copies=False)
 
 
 def preference_scope(document=None):

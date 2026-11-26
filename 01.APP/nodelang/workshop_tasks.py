@@ -964,13 +964,15 @@ def handover(history, task):
     if document and not held:
         shared = next((n['params'] for n in document['nodes'] if n['id'] == 'start' and n.get('fixed')), {})
         values.update(shared)
-    from .settings_owner import agent_reply_language, reply_instruction
+    from .settings_owner import agent_reply_language, declared_settings, reply_instruction
     values['reply_in'] = agent_reply_language(document, values['reply_in'])
     values['project_folder'] = resolve_project_folder(document, values['project_folder'])
     return {"task": task, "title": context.get('sessionTitle') or (short_title(row["title"]) if row else ""), "path": (row or {}).get("session_path") or "",
             "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {}),
             "context": {"brief": values["brief"], "project_folder": values["project_folder"], "standard": values["standard"],
                         "reply_in": values["reply_in"]},
+            # Settings > Account, Connections and Projects as this session sees them (Session > Workspace > User).
+            "settings": declared_settings(document),
             "instructions": reply_instruction(values["reply_in"]) if values["reply_in"] == "Both" else "Reply in %s in this session." % values["reply_in"]}
 
 

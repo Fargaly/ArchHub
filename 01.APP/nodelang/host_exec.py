@@ -467,8 +467,10 @@ def find_console(explicit):
     text = str(explicit or "").strip()
     if text:
         return text if os.path.isfile(text) else ""
+    from .settings_owner import declared_setting
+    wanted = declared_setting('Connections.AutoCAD version')  # Settings › Connections › Program options
     for candidate in _CONSOLE_NAMES:
-        if os.path.isfile(candidate):
+        if (wanted == 'Newest installed' or 'AutoCAD %s' % wanted in candidate) and os.path.isfile(candidate):
             return candidate
     return ""
 

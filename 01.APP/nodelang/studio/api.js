@@ -624,7 +624,7 @@ Object.assign(api,{
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId,false);},
  async setSetting(id,value,destination=state.settingsDestination){
-  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||id.startsWith('Agents.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey)))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
+  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||id.startsWith('Agents.')||id.startsWith('Connections.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey)))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -632,7 +632,7 @@ Object.assign(api,{
   }
   return nodeProperty(row.owner,row.key,value);
  },
- async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||id.startsWith('Agents.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey))))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
+ async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||id.startsWith('Agents.')||id.startsWith('Connections.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey))))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
  async resetPage(page){for(const row of state.settings.filter(r=>r.page===page&&(r.id!=='Appearance.Zoom percentage'||r.default!==undefined))) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
  setNodeParam:nodeProperty,
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
@@ -1190,11 +1190,31 @@ api.setSourceReadSeconds=seconds=>socialOperation('set_source_read_seconds',[sec
 async function refreshSettingsControls(refreshModels=false){
  const result=await settingsAction('readControls',[refreshModels]);projectProviders();return result;
 }
+let notificationsListed=false;
 async function refreshNotifications(){
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding()),generation=notificationGeneration;
  const result=await workshop('listNotifications');
- if(generation===notificationGeneration&&epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())&&Array.isArray(result?.notifications))publish({notifications:result.notifications});
+ if(generation===notificationGeneration&&epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())&&Array.isArray(result?.notifications)){
+  // The first read after launch lists what is already there; only later arrivals are announced.
+  const seen=new Set((state.notifications||[]).map(n=>n.id)),fresh=notificationsListed?result.notifications.filter(n=>!n.read&&!seen.has(n.id)):[];
+  notificationsListed=true;
+  publish({notifications:result.notifications});
+  if(fresh.length)announceNotifications(fresh);
+ }
  return result;
+}
+// Settings › Connections › Notifications: Windows notifications and Sound for notices that arrive while the app runs.
+function announceNotifications(fresh){
+ const on=label=>state.settings.find(row=>row.id==='Connections.'+label)?.value===true;
+ if(on('Windows notifications')&&window.Notification){
+  const send=()=>fresh.slice(0,3).forEach(n=>new window.Notification('ArchHub',{body:n.text,tag:n.id}));
+  if(window.Notification.permission==='granted')send();else if(window.Notification.permission==='default')window.Notification.requestPermission().then(p=>{if(p==='granted')send();});
+ }
+ if(on('Sound')&&window.AudioContext){
+  const audio=new window.AudioContext(),tone=audio.createOscillator(),gain=audio.createGain();
+  tone.frequency.value=880;gain.gain.setValueAtTime(0.08,audio.currentTime);gain.gain.exponentialRampToValueAtTime(0.0001,audio.currentTime+0.25);
+  tone.connect(gain).connect(audio.destination);tone.start();tone.stop(audio.currentTime+0.25);tone.onended=()=>audio.close();
+ }
 }
 api.readNotification=async id=>{
  notificationGeneration++;

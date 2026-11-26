@@ -440,8 +440,10 @@
     };
     live.role=<ProfileField key={JSON.stringify([profile.id,profile.role])} field="role" label="Role" value={profile.role||''}/>;
     live.photo=<window.UI.PhotoControl value={u.userPhoto||''}/>;
-    if(s.firms?.length)live.office=<select aria-label="Active office" value={s.activeFirm||''} onChange={event=>u.act(()=>api.selectFirm(event.target.value))}>
-      {s.firms.map(firm=><option key={firm.id} value={firm.id}>{firm.name}</option>)}</select>;
+    // An account in no office works in Personal only: the one choice there is.
+    live.office=s.firms?.length?<select aria-label="Active office" value={s.activeFirm||''} onChange={event=>u.act(()=>api.selectFirm(event.target.value))}>
+      {s.firms.map(firm=><option key={firm.id} value={firm.id}>{firm.name}</option>)}</select>:<select aria-label="Active office" value="Personal" onChange={()=>{}}><option>Personal</option></select>;
+    live.commPublished=open('Open Community',()=>u.go('community'));
     if(Array.isArray(s.officeInvitations))live.officeInvites=<div>
       {s.controlErrors?.officeInvitations?<span role="status">{s.controlErrors.officeInvitations}</span>:!s.officeInvitations.length&&<span>No office invitations.</span>}
       {s.officeInvitations.map(invite=><div key={invite.id}><b>{invite.office}</b> · {invite.status}
@@ -449,7 +451,6 @@
 
     const extras={
       people:<>{window.UI.Access&&<details><summary>Plan, usage and billing</summary><window.UI.Access/></details>}{window.UI.Colleagues&&<details><summary>Team: people and agents</summary><window.UI.Colleagues/></details>}</>,
-      community:open('Open Community',()=>u.go('community')),
       social:open('Social inbox in Connections',()=>u.go('settings/Social'))
     };
     return <AreaDesignCards area="Account" live={live} extras={extras} focused={focused}/>;
@@ -466,6 +467,12 @@
     };
     const hosts=s.hosts||[],accounts=(s.connections||[]).filter(row=>!row.host);
     const selected=hosts.find(host=>host.id===chosen);
+    // Read from the installed programs: the same host records as the Programs tiles.
+    const found=name=>{const row=hosts.find(host=>host.name===name);return <span>{row?[row.state||'Status unavailable',row.version||row.detail].filter(Boolean).join(' · '):'Not found on this PC'}</span>;};
+    live.revitPaths=found('Revit');live.acadPaths=found('AutoCAD');
+    const openrouter=s.router?.providers?.openrouter;
+    live.openrouter=openrouter?<D.Toggle variant="settings" label="OpenRouter free models" checked={openrouter.enabled} onCheckedChange={value=>u.act(()=>api.setRouterSettings({providers:{openrouter:{...openrouter,enabled:value}}}))}/>:open('Read the model router',()=>u.act(()=>api.refreshRouter()));
+    live.phone=open('Open connected devices',()=>u.go('settings/Access'));
     const socialProviders={LinkedIn:'linkedin',Instagram:'instagram',Facebook:'facebook','WhatsApp Business':'whatsapp',X:'x',TikTok:'tiktok',YouTube:'youtube'};
     function tiles(cardId,records,program) {
       const specs=areaCardSpecs.find(card=>card.id===cardId).rows;
@@ -474,13 +481,15 @@
       return <div className="sheet-connection-tiles">{names.map(name=>{
         // A social account the cloud can connect stays clickable before the accounts read lands.
         const provider=program?'':socialProviders[name],record=byName.get(name)||(provider&&{id:provider,name,connected:false}),connected=program?['connected','listening'].includes(record?.state):Boolean(record?.connected);
-        const status=record?(program?(record.state||'Status unavailable'):connected?(record.display_name||'Connected'):(record.status||record.blocker||'Not connected')):'';
-        const activate=()=>{if(provider&&!byName.has(name))api.refreshSocialConnections().catch(()=>{});return program?setChosen(chosen===record.id?'':record.id):record.credential?u.show('My secrets'):u.show(connected?'Connection':'Connect',{id:record.id});};
-        const button=<button type="button" className="sheet-connection-tile" disabled={!record} data-connected={connected} aria-label={name+' · '+status} title={specs.find(spec=>spec[1]===name)?.[2]} onClick={event=>executeAction('projects.controls.activate',{handler:activate},event)}>
-          <span aria-hidden="true">{name[0]}</span><b>{name}</b><small>{record?status:"\u00a0"}</small></button>;
-        return record?<React.Fragment key={name}>{button}</React.Fragment>:<window.UI.Soon key={name} label={name}>{button}</window.UI.Soon>;
+        const status=record?(program?(record.state||'Status unavailable'):connected?(record.display_name||'Connected'):(record.status||record.blocker||'Not connected')):program?'Not found on this PC':'Not connected';
+        // No record: a program the host probe did not find, or an account with no connection yet (Connect lists what can connect).
+        const activate=()=>{if(provider&&!byName.has(name))api.refreshSocialConnections().catch(()=>{});return program?setChosen(chosen===record.id?'':record.id):!record?u.show('Connect'):record.credential?u.show('My secrets'):u.show(connected?'Connection':'Connect',{id:record.id});};
+        return <button type="button" key={name} className="sheet-connection-tile" disabled={program&&!record} data-connected={connected} aria-label={name+' · '+status} title={specs.find(spec=>spec[1]===name)?.[2]} onClick={event=>executeAction('projects.controls.activate',{handler:activate},event)}>
+          <span aria-hidden="true">{name[0]}</span><b>{name}</b><small>{status}</small></button>;
       })}</div>;
     }
+    // A subscription whose agent this PC does not have: its own app is not installed here.
+    for(const spec of areaCardSpecs.find(card=>card.id==='subs').rows)live[spec[0]]=<span role="status">{s.providers?.length?'Not found on this PC':'Checking…'}</span>;
     for(const provider of (s.providers||[]).filter(row=>typeof row.signIn==='boolean')){
       const status=provider.state==='not installed'?'Not installed':provider.signedIn===true?'Signed in':provider.signedIn===false?'Not signed in':'Installed · sign-in not checked';
       if(provider.state==='not supported')continue;
@@ -491,7 +500,6 @@
       // Design: Settings > Connections > Social holds the social inbox, drafts and posts (no Social media page).
       accts:<>{open('Connect',()=>u.show('Connect'))}{open('Refresh',refresh)}{window.UI.Social&&<details data-design="settings.connections.social"><summary>Social inbox, drafts and posts</summary><window.UI.Social/></details>}</>,
       ai:focused?.title==='AI providers'?null:open('Open model providers',()=>u.go('settings/Providers')),
-      phone:open('Open connected devices',()=>u.go('settings/Access')),
       notify:open('Open notification setting',()=>u.go('settings/BABOOM'))
     };
     return <AreaDesignCards area="Connections" focused={focused} live={live} extras={extras} bodies={{progs:tiles('progs',hosts,true),accts:tiles('accts',accounts,false)}}/>;
@@ -999,8 +1007,13 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
     const controls={
       projNumber:<input aria-label="Project number" disabled={!register} value={number} maxLength={80} onChange={event=>setNumber(event.target.value)}/>,
       projOverride:<D.Toggle label="This project overrides office defaults" disabled={!register} checked={override} onCheckedChange={setOverride}/>,
-      projClient:workspace?.nativeClientEditor?<Btn sm aria-label="Edit local client" onClick={event=>runAction('settings.ds_settings3.EditLocalClient',event)}>Edit client on this PC</Btn>:null
+      // The client name is kept by the desktop app's own editor on this PC, never in a shared file.
+      projClient:<Btn sm aria-label="Edit local client" disabled={!register||!workspace?.nativeClientEditor} title={workspace?.nativeClientEditor?undefined:'Opens in the ArchHub desktop app'} onClick={event=>runAction('settings.ds_settings3.EditLocalClient',event)}>Edit client on this PC</Btn>,
+      projConf:<select aria-label="Confidentiality" disabled={!register||workspace?.builtIn} value={(s.workspacePolicies?.[workspace?.id]||workspace||{}).privacy||''} onChange={event=>{const privacy=event.target.value;return u.act(()=>api.setWorkspaceRules(workspace.id,{privacy}));}}>
+        <option value="" disabled>Choose privacy</option>{['Internal','Confidential','Secret'].map(item=><option key={item}>{item}</option>)}</select>
     };
+    const stage=s.settings.find(row=>row.id==='Projects.Stage');
+    if(stage)controls.projStage=<SettingControl row={stage}/>;
     return <form aria-label="Edit project register" onSubmit={event=>{event.preventDefault();if(changed)runAction('settings.ds_settings3.SaveProjectRegister',event);}}>
       <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>
       {fields.map(spec=><div key={spec[0]} className="sheet-property-row"><span className="sheet-property-copy">{spec[1]}<small>{spec[2]}</small></span>

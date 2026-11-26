@@ -288,7 +288,8 @@ def _run_you(params, feeds):
     rows = {row['id']: row['value'] for row in preference_settings()['appearanceSettings'] if row['id'].startswith('Account.')}
     profile = {'name': rows.get('Account.Display name', ''), 'role': rows.get('Account.Your role', ''),
                'language': rows.get('Account.App language', ''), 'reply_in': rows.get('Account.Agents reply in', ''),
-               'presence': rows.get('Account.Presence status', '')}
+               'presence': rows.get('Account.Presence status', ''), 'time_zone': rows.get('Account.Time zone', ''),
+               'numbers': rows.get('Account.Numbers', '')}
     return {'profile': profile}, ' · '.join(value for value in (profile['name'], profile['role']) if value) or 'No profile set in Settings'
 
 

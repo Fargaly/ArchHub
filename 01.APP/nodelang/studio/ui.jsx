@@ -577,13 +577,20 @@
       {value && <Btn sm ghost aria-label="Reset Photo" onClick={event => executeAction('projects.controls.activate', {handler: () => u.saveProfileFields({photo: ''})}, event)}>Reset</Btn>}
     </span>;
   }
+  // A text row is typed as a draft and saved once, on Enter or leaving the field; Escape puts the saved value back.
+  function TextSetting({row, disabled, save}) {
+    const [draft, setDraft] = React.useState(String(row.value ?? ''));
+    return <input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="text" dir="auto" value={draft}
+      onChange={e => setDraft(e.target.value)} onBlur={() => { if (draft !== String(row.value ?? '')) save(draft); }}
+      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setDraft(String(row.value ?? '')); }} />;
+  }
   function SettingControl({
     row,
     presentation, unit,
     raw = false
   }) {
     const u = useApp(), data = useData(), destination = data.settingsDestination;
-    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||row.id.startsWith('Agents.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
+    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||row.id.startsWith('Agents.')||id.startsWith('Connections.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
     const changed = settingOverridden(row);
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',
@@ -622,7 +629,8 @@
         <i aria-hidden="true" /><span>{value}</span>
       </button>)}
     </div>
-  ) : row.options ? <select disabled={disabled} id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}}>{row.options.map(v => <option key={v} value={v} disabled={Boolean(row.disabledOptions?.[v])} title={row.disabledOptions?.[v]}>{productLabel(v,data.settings)}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button disabled={disabled} type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1, destination))}, event)}>−</button><input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => {const value=Number(e.target.value);return u.act(() => api.setSetting(row.id, value, destination));}} /><button disabled={disabled} type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1, destination))}, event)}>+</button></span> : <input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type={row.type === 'color' ? 'color' : 'text'} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}} />}
+  ) : row.options ? <select disabled={disabled} id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}}>{row.options.map(v => <option key={v} value={v} disabled={Boolean(row.disabledOptions?.[v])} title={row.disabledOptions?.[v]}>{productLabel(v,data.settings)}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button disabled={disabled} type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1, destination))}, event)}>−</button><input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => {const value=Number(e.target.value);return u.act(() => api.setSetting(row.id, value, destination));}} /><button disabled={disabled} type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1, destination))}, event)}>+</button></span> : row.type === 'color' ? <input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="color" value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}} />
+   : <TextSetting key={row.id + '\0' + row.value} row={row} disabled={disabled} save={value => u.act(() => api.setSetting(row.id, value, destination))} />}
   {changed && row.id !== 'Account.Photo' && <button disabled={disabled} className="reset" aria-label={'Reset ' + row.label} onClick={event => executeAction("sharedUI.Reset.21", {
           api,
           row,

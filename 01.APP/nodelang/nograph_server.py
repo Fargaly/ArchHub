@@ -339,6 +339,12 @@ class NoGraphServer:
             import_module('.' + module, __package__)
         from .model_router import request_profiles
         request_profiles()
+        from .settings_owner import apply_network_settings, register_settings_sync
+        register_settings_sync()
+        try:
+            apply_network_settings()
+        except (OSError, ValueError) as error:  # an unreadable settings file keeps direct connections
+            logging.getLogger(__name__).warning('Network settings not applied: %s', error)
         if self.desktop_access is None:
             self._messages.value = _list_messages()
             self._messages.at = time.time()
@@ -2235,14 +2241,20 @@ def _list_notifications():
         if approval_id:
             row['approvalId'] = approval_id
         result.append(row)
+    # Settings › Connections › Notifications: approvals always come through (they block work), even in quiet hours.
+    from .settings_owner import declared_values, quiet_hours
+    wanted = declared_values(_SERVER.files['settings'].read(), 'Connections')
+    quiet = quiet_hours(wanted['Quiet hours from'], wanted['Quiet hours until'], time.strftime('%H:%M'))
     for card in _list_approvals():
         if card.get('status') == 'pending':
             add('approval', card['id'], card.get('title') or 'Approval needed', card.get('taskId') or card.get('work') or '', card['id'])
-    for task in _list_tasks():
-        for activity in task.get('activity') or []:
+    for task in [] if quiet else _list_tasks():
+        for activity in task.get('activity') or [] if wanted['Notify when something needs you'] else []:
             if activity.get('status') == 'Error':
                 add('failed', task['id'] + ':' + activity['id'], task['title'] + ': a step failed', task['id'])
-        replies = [row for row in task.get('agentLog') or [] if row.get('who') != 'You']
+        if wanted['Notify when a task finishes'] and str(task.get('status', '')).lower() == 'done':
+            add('done', task['id'], task['title'] + ': finished', task['id'])
+        replies = [row for row in task.get('agentLog') or [] if row.get('who') != 'You'] if wanted['Every message in my threads'] else []
         if replies:
             last = replies[-1]
             add('message', last['id'], task['title'] + ': ' + str(last.get('text') or '')[:200], task['id'])
@@ -2494,6 +2506,9 @@ def r_settings_action(s, req):
                 if args[0].startswith('Agents.'):
                     from .baboom_companion_process import settings_changed as companion_reread
                     companion_reread()  # BABOOM's own process re-reads Shows as and Presence now
+                if args[0] in ('Connections.Proxy', 'Connections.Work offline'):
+                    from .settings_owner import apply_network_settings
+                    apply_network_settings()
                 return {'ok': True, 'result': changed}
             if function == 'setKeybinding':
                 if len(args) != 2 or 'Keyboard.' + str(args[0]) not in scope_owner.keyboard:
@@ -2681,10 +2696,13 @@ def r_settings_action(s, req):
         # The first-run "Open Revit": start the newest installed Revit (Autodesk installs one folder per year).
         if (args[0] if args else '') != 'revit':
             raise Refused('Only Revit can be opened from here.')
-        found = max(Path(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Autodesk').glob('Revit 20[0-9][0-9]/Revit.exe'),
-                    default=None)
+        from .settings_owner import declared_setting
+        autodesk, wanted = Path(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Autodesk'), declared_setting('Connections.Revit version')
+        found = (max(autodesk.glob('Revit 20[0-9][0-9]/Revit.exe'), default=None) if wanted == 'Newest installed'
+                 else next(iter(autodesk.glob('Revit %s/Revit.exe' % wanted)), None))
         if found is None:
-            raise Refused('Revit is not installed on this PC.')
+            raise Refused('Revit is not installed on this PC.' if wanted == 'Newest installed'
+                          else 'Revit %s is not installed on this PC. Choose another Revit version in Settings › Connections.' % wanted)
         os.startfile(str(found))  # noqa: S606 - the founder pressed Open; the installed program starts
         return {'ok': True, 'result': {'opened': str(found)}}
     local = {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'), 'workspacePolicies': {}}

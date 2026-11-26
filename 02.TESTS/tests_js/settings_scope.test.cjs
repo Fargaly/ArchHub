@@ -60,6 +60,7 @@ test('Settings scopes and transfers use checkout sources and preserve the destin
   await selector.selectOption('Workspace');
   assert.deepEqual(await page.evaluate(()=>window.writes[0]),{scope:'Workspace',destination:{scope:'User',workspace:'example',session:'fixture'}});
   await page.getByLabel('Working subfolder (relative)',{exact:true}).fill('Models');
+  await page.getByLabel('Working subfolder (relative)',{exact:true}).press('Enter'); // a text row saves once, on Enter or leaving it
   assert.deepEqual(await page.evaluate(()=>window.settingCalls.at(-1)),{id:'Projects.Working subfolder',value:'Models',destination:{scope:'Workspace',workspace:'example',session:'fixture'}});
   await page.getByRole('button',{name:'Import into Current workspace',exact:true}).waitFor();
   await page.getByRole('button',{name:'Export Current workspace',exact:true}).click();await page.getByRole('button',{name:'Export all scopes',exact:true}).click();

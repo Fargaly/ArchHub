@@ -66,6 +66,9 @@ BROKER_NODE = {
         'default_samples': 64,
         'min_samples': 8,
         'max_samples': 1024,
+        'launch_timeout_seconds': 180.0,
+        'launch_max_timeout_seconds': 600.0,
+        'launch_poll_seconds': 1.0,
     },
 }
 
@@ -1532,6 +1535,13 @@ def broker_actions():
         {"Samples": "integer"},
         "blender",
     ))
+    launch = {"app": "", "version": "", "profile": "default",
+              "timeout_seconds": float(BROKER_NODE["params"]["launch_timeout_seconds"])}
+    add(_broker_spec(
+        "host.launch", "Open a program",
+        "Open an installed program with its ArchHub add-in and wait until it connects; reuses one already connected.",
+        "host.launch", "write", launch, {name: _typed_value(value)[1] for name, value in launch.items()},
+    ))
     for operation, spec in COORDINATION_NODES.items():
         if operation == "library.draft_email":
             continue
@@ -1652,9 +1662,10 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
         if running:
             return {"ok": False, "host": host, "state": "running",
                     "error": 'Rhino is already open without the bridge; in Rhino run: _-RunPythonScript "%s"' % script}
-        popen([exe, "/nosplash", '/runscript=_-RunPythonScript "%s"' % script], close_fds=True,
-              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return {"ok": True, "host": host, "action": "launched with the ArchHub bridge (:9879)", "state": "launching"}
+        proc = popen([exe, "/nosplash", '/runscript=_-RunPythonScript "%s"' % script], close_fds=True,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {"ok": True, "host": host, "action": "launched with the ArchHub bridge (:9879)", "state": "launching",
+                "pid": getattr(proc, "pid", None), "process": proc}
     if host == "blender":
         exe = _blender_exe()
         addon = _bridges_dir() / "blender" / "archhub_mcp" / "__init__.py"
@@ -1671,8 +1682,271 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
             return {"ok": False, "host": host, "state": "running",
                     "error": "Blender is already open without the add-on; enable ArchHub MCP Bridge in Edit > Preferences > Add-ons (%s)" % addon.parent}
         boot = "import sys; sys.path.insert(0, %r); import archhub_mcp; archhub_mcp.register()" % str(addon.parent.parent)
-        popen([exe, "--python-expr", boot], close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return {"ok": True, "host": host, "action": "launched with the ArchHub add-on (:9876)", "state": "launching"}
+        proc = popen([exe, "--python-expr", boot], close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {"ok": True, "host": host, "action": "launched with the ArchHub add-on (:9876)", "state": "launching",
+                "pid": getattr(proc, "pid", None), "process": proc}
     if host == "max":
         return {"ok": False, "host": host, "error": MAX_PLUGIN_ABSENT}
     return {"ok": False, "host": host, "error": "no way to open %r from ArchHub" % host}
+
+
+# -------------------------------------------------------------- launch --
+# One managed launch (brief aec-001 section 6): open an INSTALLED program with
+# its ArchHub bridge and wait until that exact process answers. Revit/AutoCAD
+# bind to the spawned pid, the requested year and a signed /info answer.
+# Every outcome has its own status; a user's process is never closed.
+LAUNCH_NODE = {"params": {key[len("launch_"):]: BROKER_NODE["params"][key] for key in
+                          ("launch_timeout_seconds", "launch_max_timeout_seconds", "launch_poll_seconds")}}
+LAUNCH_PROFILES = ("default",)   # named approved profiles; only the plain start is approved today
+_LAUNCH_EFFECT = {"revit": "revit", "autocad": "acad", "acad": "acad", "max": "max", "3dsmax": "max",
+                  "rhino": "rhino", "blender": "blender"}
+_LAUNCH_EXE = {"revit": ("Revit", "Revit.exe"), "acad": ("AutoCAD", "acad.exe"), "max": ("3ds Max", "3dsmax.exe")}
+_LAUNCHING: dict = {}
+_LAUNCH_LOCK = threading.Lock()
+
+
+def launch_effect_host(app) -> str:
+    """The host_effects key a launch of this app is admitted under ('' = no bridged host)."""
+    return _LAUNCH_EFFECT.get(str(app or "").strip().casefold(), "")
+
+
+def _autodesk_installed(service: str) -> dict:
+    """{year: absolute exe} for every installed year of one Autodesk host."""
+    folder, exe = _LAUNCH_EXE[service]
+    root = Path(os.environ.get("ProgramFiles") or r"C:\Program Files") / "Autodesk"
+    found = {}
+    for path in root.glob("%s */%s" % (folder, exe)):
+        year = path.parent.name.rsplit(" ", 1)[-1]
+        if year.isdigit():
+            found[year] = str(path)
+    return found
+
+
+def _acad_addin_years() -> list[str]:
+    """AutoCAD years the ArchHub bundle (autocad_broker_installation) registers."""
+    from .autocad_broker_installation import BUNDLE, SERIES
+    contents = Path(os.environ.get("APPDATA", "")) / "Autodesk" / "ApplicationPlugins" / BUNDLE / "PackageContents.xml"
+    try:
+        text = contents.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return sorted(year for year, series in SERIES.items() if 'SeriesMin="%s"' % series in text)
+
+
+def _version_matches(service: str, row: Mapping, year: str) -> bool:
+    if service == "revit":
+        return year in str(row.get("revit_version") or "")
+    from .autocad_broker_installation import SERIES
+    series = SERIES.get(year, "")[1:]
+    return bool(series) and str(row.get("acad_version") or "").startswith(series)
+
+
+def _signed_ready(row: Mapping) -> str:
+    """ok / refused / busy: one signed /info call to the bridge on this port."""
+    from .clean_revit_adapter import _call
+    try:
+        answer = _call(row["port"], "/info", timeout=BROKER_NODE["params"]["info_timeout_seconds"])
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return "busy"
+    if answer.get("http_status") in (401, 403):
+        return "refused"
+    return "ok" if answer.get("status") == "ok" else "busy"
+
+
+def _launched(app, status, detail, *, ok=False, **extra):
+    row = {"app": app, "status": status, "detail": detail, **extra}
+    return {"ok": ok, **row, "out": row}
+
+
+def _connected(app, service, row, reused, detail):
+    return _launched(app, "connected", detail, ok=True, reused=reused, pid=row["pid"], port=row["port"],
+                     handle="%s:%d" % (service, row["port"]))
+
+
+def _launch_autodesk(app, service, version, timeout, popen):
+    name = "AutoCAD" if service == "acad" else "Revit"
+    installed = _autodesk_installed(service)
+    if not installed or version and version not in installed:
+        return _launched(app, "not_installed", ("%s %s is not installed on this machine" % (name, version)).replace("  ", " "))
+    years = [version] if version else sorted(installed, reverse=True)
+    sessions = broker_sessions(service, include_document=False)
+    for row in sessions:
+        if any(_version_matches(service, row, year) for year in years) and _signed_ready(row) != "refused":
+            return _connected(app, service, row, True, "%s is already open and connected" % name)
+    registered = set(revit_years() if service == "revit" else _acad_addin_years())
+    candidates = [year for year in years if year in registered]
+    if not candidates:
+        return _launched(app, "addin_missing", _revit_absent() if service == "revit" else
+                         "The ArchHub AutoCAD add-in is not registered for AutoCAD %s; run ArchHub setup" % "/".join(years))
+    year = candidates[0]
+    before = {row["pid"] for row in sessions}
+    proc = popen([installed[year]], close_fds=True)
+    pid = proc.pid
+    foreign = None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return _launched(app, "startup_failed", "%s %s exited during startup (code %s)" % (name, year, proc.poll()),
+                             pid=pid, version=year)
+        for row in broker_sessions(service, include_document=False):
+            if row["pid"] != pid:
+                if foreign is None and row["pid"] not in before:
+                    foreign = row
+                continue
+            if not _version_matches(service, row, year):
+                return _launched(app, "wrong_instance", "the bridge on :%d answered as another %s version" % (row["port"], name),
+                                 pid=pid, version=year)
+            ready = _signed_ready(row)
+            if ready == "refused":
+                return _launched(app, "wrong_instance", "the bridge on :%d refused this ArchHub's signature" % row["port"],
+                                 pid=pid, version=year)
+            if ready == "ok":
+                return _connected(app, service, row, False, "%s %s opened with the ArchHub add-in" % (name, year))
+        time.sleep(LAUNCH_NODE["params"]["poll_seconds"])
+    if foreign is not None:
+        return _launched(app, "wrong_instance",
+                         "a different %s process (pid %d) answered, not the one launched" % (name, foreign["pid"]),
+                         pid=pid, version=year)
+    return _launched(app, "bridge_timeout",
+                     "%s %s started but its bridge did not answer in %ds; it was left open" % (name, year, timeout),
+                     pid=pid, version=year)
+
+
+def _wait_ready(app, proc, ready, timeout, detail):
+    pid = getattr(proc, "pid", None)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ready():
+            return _launched(app, "connected", detail, ok=True, reused=False, pid=pid, handle=app)
+        if proc is not None and proc.poll() is not None:
+            return _launched(app, "startup_failed", "%s exited during startup (code %s)" % (app, proc.poll()), pid=pid)
+        time.sleep(LAUNCH_NODE["params"]["poll_seconds"])
+    return _launched(app, "bridge_timeout",
+                     "%s started but its bridge did not answer in %ds; it was left open" % (app, timeout), pid=pid)
+
+
+def _office_registered(app) -> bool:
+    try:
+        import winreg
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, _OFFICE_PROGIDS[app]))
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+def _launch_open_host(app, timeout, popen):
+    port = {"rhino": 9879, "blender": 9876}.get(app)
+    if port and _port_open(port):
+        return _launched(app, "connected", "%s is already open and connected" % app, ok=True, reused=True, handle=app)
+    if app in _OFFICE_PROGIDS and not _office_registered(app):
+        return _launched(app, "not_installed", "%s is not installed on this machine" % app)
+    result = open_host(app, popen=popen, wait_s=timeout)
+    proc = result.pop("process", None)
+    error = str(result.get("error") or "")
+    if result.get("state") == "connected":
+        return _launched(app, "connected", result.get("action", ""), ok=True,
+                         reused=result.get("action") == "already open", handle=app)
+    if "not installed" in error:
+        return _launched(app, "not_installed", error)
+    if "did not ship" in error:
+        return _launched(app, "addin_missing", error)
+    if result.get("state") == "running":
+        return _launched(app, "running_without_bridge", error)
+    if not result.get("ok"):
+        return _launched(app, "startup_failed", error)
+    if port:
+        return _wait_ready(app, proc, lambda: _port_open(port), timeout, result.get("action", ""))
+    return _launched(app, "bridge_timeout", "%s opened but did not register in %ds" % (app, timeout))
+
+
+def _launch_max(app, version, timeout, popen):
+    if _max_endpoint() is not None:
+        return _launched(app, "connected", "3ds Max is already open and connected", ok=True, reused=True, handle="max")
+    installed = _autodesk_installed("max")
+    if not installed or version and version not in installed:
+        return _launched(app, "not_installed", "3ds Max %s is not installed on this machine" % (version or ""))
+    if not _max_plugin_installed():
+        return _launched(app, "addin_missing", MAX_PLUGIN_ABSENT)
+    year = version or max(installed)
+    proc = popen([installed[year]], close_fds=True)
+    return _wait_ready(app, proc, lambda: _max_endpoint() is not None, timeout, "3ds Max %s opened with MaxMCP" % year)
+
+
+def _launch_unbridged(app, popen):
+    for host_id, name, processes, paths, _port in _CATALOGUE:
+        if app not in (host_id, host_id.split("-")[0], name.casefold()):
+            continue
+        exe = None
+        for path in paths:
+            base = Path(path)
+            if base.is_file():
+                exe = base
+            elif base.is_dir() and processes:
+                exe = next(iter(sorted(base.glob("*/" + processes[0]), reverse=True)), None)
+            if exe:
+                break
+        if exe is None:
+            return _launched(app, "not_installed", "%s is not installed on this machine" % name)
+        if _running(processes):
+            return _launched(app, "bridge_unavailable", "%s is already open; ArchHub has no bridge for it" % name,
+                             launched=False)
+        proc = popen([str(exe)], close_fds=True)
+        return _launched(app, "bridge_unavailable", "%s opened; ArchHub has no bridge for it" % name,
+                         launched=True, pid=proc.pid)
+    return _launched(app, "unknown_app", "%r is not a program ArchHub knows how to open" % app)
+
+
+def _launch(app, version, timeout, popen):
+    service = {"revit": "revit", "autocad": "acad", "acad": "acad"}.get(app)
+    if service:
+        return _launch_autodesk(app, service, version, timeout, popen)
+    if app in ("max", "3dsmax"):
+        return _launch_max("max", version, timeout, popen)
+    if app in ("rhino", "blender", *_OFFICE_PROGIDS):
+        return _launch_open_host(app, timeout, popen)
+    return _launch_unbridged(app, popen)
+
+
+def launch_host(params: Mapping[str, object], feeds: Mapping[str, object], *, popen=None):
+    """Open a program with its ArchHub bridge, or reuse the connected one (an effect: Approve card first)."""
+    app = str(params.get("app") or "").strip().casefold()
+    version = str(params.get("version") or "").strip()
+    profile = str(params.get("profile") or "default").strip().casefold()
+    limits = LAUNCH_NODE["params"]
+    try:
+        timeout = float(params.get("timeout_seconds") or limits["timeout_seconds"])
+    except (TypeError, ValueError):
+        timeout = limits["timeout_seconds"]
+    timeout = max(1.0, min(timeout, limits["max_timeout_seconds"]))
+    if not app:
+        return _launched(app, "unknown_app", "name the program to open"), "program: unknown_app"
+    if profile not in LAUNCH_PROFILES:
+        out = _launched(app, "profile_not_approved", "profile %r is not an approved launch profile" % profile)
+        return out, "%s: %s" % (app, out["status"])
+    key = (app, version)
+    with _LAUNCH_LOCK:
+        waiter = _LAUNCHING.get(key)
+        owner = waiter is None
+        if owner:
+            waiter = _LAUNCHING[key] = {"done": threading.Event(), "result": None}
+    if not owner:   # a launch of this target is already running: share its answer, never a second start
+        waiter["done"].wait(timeout + 5.0)
+        out = dict(waiter["result"] or _launched(app, "bridge_timeout", "the launch in progress did not finish"))
+        out["coalesced"] = True
+        return out, "%s: %s" % (app, out["status"])
+    out = _launched(app, "startup_failed", "the launch stopped unexpectedly")
+    try:
+        out = _launch(app, version, timeout, popen or subprocess.Popen)
+    except ProcessEnumerationUnavailable:
+        out = _launched(app, "startup_failed", "process status is unavailable; nothing was launched")
+    except OSError as exc:
+        out = _launched(app, "startup_failed", "%s: %s" % (type(exc).__name__, exc))
+    finally:
+        with _LAUNCH_LOCK:
+            waiter["result"] = out
+            _LAUNCHING.pop(key, None)
+        waiter["done"].set()
+    return out, "%s: %s" % (app, out["status"])
+
+
+ENGINES["host.launch"] = launch_host

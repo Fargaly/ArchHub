@@ -366,3 +366,161 @@ def test_mcp_server_spec_writes_only_the_shipped_server_and_asks_before_brain(in
     assert opencode["environment"]["ARCHHUB_COORDINATION_VENDOR"] == "opencode"
     with pytest.raises(ValueError):
         mcp_server_spec("unknown-client", environment={})
+
+
+
+# ---- host.launch: synthetic installed hosts and fake bridges only (brief aec-001 section 6) ----
+
+class FakeProcess:
+    """A spawned program that never touches the machine; nothing in launch may close it."""
+    def __init__(self, pid, exit_code=None):
+        self.pid, self.exit_code = pid, exit_code
+
+    def poll(self):
+        return self.exit_code
+
+    def kill(self):  # pragma: no cover - a launch must never call it
+        raise AssertionError("launch closed a process")
+    terminate = kill
+
+
+@pytest.fixture
+def launch_rig(monkeypatch, tmp_path):
+    from nodelang import clean_revit_adapter, host_brokers
+    program_files, appdata = tmp_path / "pf", tmp_path / "appdata"
+    for folder, exe in (("Revit 2025", "Revit.exe"), ("AutoCAD 2025", "acad.exe")):
+        (program_files / "Autodesk" / folder).mkdir(parents=True)
+        (program_files / "Autodesk" / folder / exe).write_bytes(b"")
+    addin = appdata / "Autodesk" / "Revit" / "Addins" / "2025" / "ArchHub.addin"
+    addin.parent.mkdir(parents=True)
+    addin.write_text("<FullClassName>RevitMCP.RevitMCPApp</FullClassName>")
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setitem(host_brokers.LAUNCH_NODE["params"], "poll_seconds", 0.01)
+    state = SimpleNamespace(sessions=[], spawned=[], exit_code=None, info={"status": "ok"}, on_spawn=None)
+
+    def popen(argv, **kw):
+        state.spawned.append(argv)
+        process = FakeProcess(9000 + len(state.spawned), state.exit_code)
+        if state.on_spawn:
+            state.on_spawn(process)
+        return process
+
+    monkeypatch.setattr(host_brokers.subprocess, "Popen", popen)
+    monkeypatch.setattr(host_brokers, "broker_sessions", lambda service, **kw: [
+        row for row in state.sessions if row["service"] == service])
+    monkeypatch.setattr(clean_revit_adapter, "_call", lambda port, route, body=None, timeout=0: dict(state.info))
+    return state
+
+
+def launch(**params):
+    from nodelang.host_brokers import launch_host
+    return launch_host({"timeout_seconds": 1, **params}, {})[0]
+
+
+def _bridge_comes_up(state, version="2025 build", service="revit", pid=None):
+    def up(process):
+        state.sessions.append({"service": service, "port": 48884, "pid": pid or process.pid,
+                               "revit_version": version, "acad_version": "25.0.1"})
+    return up
+
+
+def test_launch_binds_to_spawned_instance_then_reuses(launch_rig):
+    launch_rig.on_spawn = _bridge_comes_up(launch_rig)
+    first = launch(app="revit")
+    assert first["status"] == "connected" and first["reused"] is False
+    assert first["pid"] == 9001 and first["handle"] == "revit:48884"
+    assert Path(launch_rig.spawned[0][0]).parent.name == "Revit 2025"
+    second = launch(app="revit", version="2025")
+    assert second["status"] == "connected" and second["reused"] is True and len(launch_rig.spawned) == 1
+
+
+def test_simultaneous_launches_start_one_process(launch_rig, monkeypatch):
+    import threading
+    import time
+    from nodelang import host_brokers
+    real = host_brokers.broker_sessions
+
+    def slow(service, **kw):
+        time.sleep(0.05)
+        return real(service, **kw)
+    monkeypatch.setattr(host_brokers, "broker_sessions", slow)
+    launch_rig.on_spawn = _bridge_comes_up(launch_rig)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(launch(app="revit"))) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(launch_rig.spawned) == 1
+    assert [r["status"] for r in results] == ["connected"] * 3
+    assert sum(1 for r in results if r.get("coalesced")) == 2
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("other-process", "wrong_instance"), ("other-version", "wrong_instance"),
+    ("unsigned", "wrong_instance"), ("silent", "bridge_timeout"), ("crash", "startup_failed")])
+def test_launch_rejects_wrong_instance_and_reports_each_failure(launch_rig, case, expected):
+    if case == "other-process":
+        launch_rig.on_spawn = _bridge_comes_up(launch_rig, pid=4242)
+    elif case == "other-version":
+        launch_rig.on_spawn = _bridge_comes_up(launch_rig, version="2024")
+    elif case == "unsigned":
+        launch_rig.on_spawn = _bridge_comes_up(launch_rig)
+        launch_rig.info = {"status": "error", "http_status": 401}
+    elif case == "crash":
+        launch_rig.exit_code = 1
+    answer = launch(app="revit")
+    assert answer["status"] == expected and answer["ok"] is False and answer["pid"] == 9001
+    assert len(launch_rig.spawned) == 1   # one start, left running (FakeProcess.kill raises)
+
+
+def test_launch_missing_addin_and_not_installed_start_nothing(launch_rig, tmp_path):
+    (tmp_path / "appdata" / "Autodesk" / "Revit" / "Addins" / "2025" / "ArchHub.addin").unlink()
+    assert launch(app="revit")["status"] == "addin_missing"
+    assert launch(app="revit", version="2019")["status"] == "not_installed"
+    assert launch(app="autocad")["status"] == "addin_missing"   # no ArchHub bundle registered
+    assert launch(app="revit", profile="admin")["status"] == "profile_not_approved"
+    assert launch(app="no-such-program")["status"] == "unknown_app"
+    assert launch_rig.spawned == []
+
+
+def test_autocad_launch_reads_the_registered_bundle(launch_rig, tmp_path):
+    bundle = tmp_path / "appdata" / "Autodesk" / "ApplicationPlugins" / "ArchHub.AcadMCP.bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "PackageContents.xml").write_text('<RuntimeRequirements SeriesMin="R25.0" SeriesMax="R25.0"/>')
+    launch_rig.on_spawn = _bridge_comes_up(launch_rig, service="acad", version=None)
+    answer = launch(app="autocad")
+    assert answer["status"] == "connected" and answer["handle"] == "acad:48884"
+    assert Path(launch_rig.spawned[0][0]).name == "acad.exe"
+
+
+def test_installed_program_without_bridge_says_bridge_unavailable(launch_rig, monkeypatch, tmp_path):
+    from nodelang import host_brokers
+    exe = tmp_path / "Photoshop.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(host_brokers, "_CATALOGUE", (("photoshop", "Photoshop", ("Photoshop.exe",), (str(exe),), 0),))
+    monkeypatch.setattr(host_brokers, "_running", lambda names: False)
+    answer = launch(app="photoshop")
+    assert answer["status"] == "bridge_unavailable" and answer["launched"] is True
+    monkeypatch.setattr(host_brokers, "_running", lambda names: True)
+    assert launch(app="photoshop")["launched"] is False and len(launch_rig.spawned) == 1
+
+
+def test_agent_launch_waits_on_approve_card_and_local_permission(rig, monkeypatch):
+    approved(rig, monkeypatch, "host_launch", {"app": "revit"})
+    assert [call[0] for call in rig.calls if call[0] == "host.launch"] == ["host.launch"]
+    rig.calls.clear()
+    rig.settings.write_text('{}')
+    with pytest.raises(Exception, match="Local host effect permission"):
+        tool(rig, "host_launch", {"app": "revit"})
+    assert rig.calls == []
+
+
+def test_launch_is_a_library_effect_node():
+    from nodelang.canvas_documents import is_pure
+    from nodelang.library_engines import library_catalogue
+    card = {item["id"]: item for group in library_catalogue() for item in group["items"]}["host_launch"]
+    assert card["engine"] == "host.launch" and card["approvalRequired"] is True
+    assert is_pure("host.launch") is False
+    assert {d["id"] for d in card["paramDefs"]} == {"app", "version", "profile", "timeout_seconds"}

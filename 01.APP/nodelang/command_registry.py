@@ -200,6 +200,9 @@ def _guard_agent_effects(server, commands):
                 if verdict['verdict'] == 'ask':  # it asks but made no card (an agent ArchHub started for chat): not run
                     raise ToolError('Refused: ' + '; '.join(verdict['notes'] or verdict['rules']))
             host = spec.get('effect_host') or spec['engine'].split('.')[0]
+            if spec.get('op') == 'host.launch':  # a launch is admitted under the host it opens
+                from .host_brokers import launch_effect_host
+                host = launch_effect_host(params.get('app'))
             if host in ('revit', 'acad', 'max', 'rhino', 'blender'):
                 _allow_effect(host)
             from hashlib import sha256

@@ -12,7 +12,7 @@ from typing import Callable
 import inspect
 
 from .custom_mcp_gateway import register_tools as register_mcp_tools
-from .host_brokers import BROKER_ACTIONS, ENGINES, EXEC_WAIT_LIMIT
+from .host_brokers import BROKER_ACTIONS, ENGINES, EXEC_WAIT_LIMIT, launch_effect_host
 
 # Reads must answer inside the founder <2s budget; never sit on a hung signed /info.
 INFO_WAIT = 1.5
@@ -395,8 +395,10 @@ def _dispatch_broker(spec, arguments, read, effect):
     def run():
         return _run_engine(spec["engine"], params)
 
-    if spec["kind"] == "write" and spec.get("effect_host"):
-        return effect(spec["effect_host"], run)
+    # A launch is admitted under the host it opens (host_effects), exactly like that host's other effects.
+    effect_host = spec.get("effect_host") or (launch_effect_host(params.get("app")) if spec["op"] == "host.launch" else "")
+    if spec["kind"] == "write" and effect_host:
+        return effect(effect_host, run)
     return read(run)
 
 

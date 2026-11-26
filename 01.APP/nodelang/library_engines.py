@@ -2200,6 +2200,7 @@ LIBRARY_PRESENTATION = (
         ('max_render_view', 'Render a view', 'Render an active or named 3ds Max camera to PNG'),
         ('rhino_bake_geometry', 'Bake geometry', 'Bake wired geometry onto a named Rhino layer'),
         ('blender_render_scene', 'Render scene', 'Set Cycles or EEVEE samples and render the scene to PNG'),
+        ('host_launch', 'Open a program', 'Open an installed program and connect its ArchHub add-in'),
     )),
     ('connect', (
         ('h_notion', 'Notion', 'search your workspace'),
@@ -3954,7 +3955,9 @@ def place_views_on_sheets_engine(params: Mapping[str, object], feeds: Mapping[st
 
 
 from .host_brokers import (  # noqa: E402
+    LAUNCH_NODE,
     blender_render_scene,
+    launch_host,
     max_render_view,
     rhino_bake_geometry,
 )
@@ -3966,6 +3969,28 @@ ENGINE_SOCKETS["max.render_view"] = {"source": ("image", "out"), "target": ("tas
 ENGINE_SOCKETS["rhino.bake_geometry"] = {"source": ("out",), "target": ("geometry", "Layer", "grant", "in")}
 ENGINE_SOCKETS["blender.render_scene"] = {"source": ("image", "out"), "target": ("task", "Samples")}
 
+LIBRARY_ENGINES["host.launch"] = launch_host
+ENGINE_SOCKETS["host.launch"] = {"source": ("out",), "target": ("task", "app", "version", "profile", "timeout_seconds")}
+# Opening a program is an effect on the machine: Run, then the Approve card.
+LIBRARY_ITEM_ENGINES["host_launch"] = {
+    "engine": "host.launch",
+    "approvalRequired": True,
+    "effect": True,
+    "params": {"app": "revit", "version": "", "profile": "default",
+               "timeout_seconds": LAUNCH_NODE["params"]["timeout_seconds"]},
+    "paramDefs": [
+        {"id": "app", "name": "Program", "type": "choice",
+         "options": ["revit", "autocad", "rhino", "max", "blender", "excel", "word", "powerpoint", "outlook"]},
+        {"id": "version", "name": "Version", "type": "text"},
+        {"id": "profile", "name": "Profile", "type": "choice", "options": ["default"]},
+        {"id": "timeout_seconds", "name": "Wait (s)", "type": "number", "min": 1,
+         "max": LAUNCH_NODE["params"]["max_timeout_seconds"]},
+    ],
+    "ports": {
+        "target": [{"id": "task", "type": "event"}],
+        "source": [{"id": "out", "type": "any"}],
+    },
+}
 LIBRARY_ITEM_ENGINES["max_render_view"] = {
     "engine": "max.render_view",
     "program": "3ds Max",

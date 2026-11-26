@@ -69,7 +69,16 @@
         "02.TESTS/tests_replica/test_home_read_no_stall.py",
         "02.TESTS/tests_replica/test_propagation_owners.py",
         "02.TESTS/tests_replica/test_scope_override_reset.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/application_update.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/nograph_launcher.py",
+        "01.APP/nodelang/pipeline_engines.py",
+        "01.APP/nodelang/workshop_live.py",
+        "02.TESTS/tests_replica/test_workshop_live.py",
+        "01.APP/nodelang/pc_maintenance.py",
+        "02.TESTS/tests/test_pc_maintenance.py",
+        "02.TESTS/tests/test_settings_this_pc.py"
       ]
     },
     "WHOLEDESIGN-A8": {

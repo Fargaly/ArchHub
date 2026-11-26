@@ -64,6 +64,7 @@
         "02.TESTS/tests_js/settings_design_areas.test.cjs",
         "02.TESTS/tests_js/settingsmatch.test.cjs",
         "02.TESTS/tests_js/studio_canvaslook.test.cjs",
+        "02.TESTS/tests_js/session_properties_live.cjs",
         "02.TESTS/tests_js/studio_wsinject.test.cjs",
         "02.TESTS/tests_js/wsadd.test.cjs",
         "02.TESTS/tests_replica/test_command_registry.py",

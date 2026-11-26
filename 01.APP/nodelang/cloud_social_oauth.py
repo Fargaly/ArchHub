@@ -342,7 +342,10 @@ def status(provider: str, *, path: Optional[Path] = None,
         return {"state": "missing", "blocker": "Choose a supported social network"}
     if not token:
         return {"state": "signin_required"}
-    code, payload = http("GET", f"{base}/oauth/{provider}/status", bearer=token)
+    try:
+        code, payload = http("GET", f"{base}/oauth/{provider}/status", bearer=token)
+    except OSError:  # an unreachable cloud is a status, never a failed Connections read
+        code, payload = None, {}
     if code != 200 or payload.get("state") != "configured":
         return {"state": payload.get("state", "missing"), "blocker": payload.get("blocker") or "Cloud social OAuth broker unavailable",
                 **({"publish_blocker": payload["publish_blocker"], "review_state": payload.get("review_state", "unverified")}

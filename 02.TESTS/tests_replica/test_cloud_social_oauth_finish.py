@@ -302,3 +302,16 @@ def test_publish_review_never_blocks_connecting_or_reading(monkeypatch):
     row = social_connections.connection("whatsapp", accounts=[], attempt={"phase": "idle"})
     assert row["state"] == "not_connected" and row["blocker"] == "" and row["can_connect"] is True
     assert row["publish_blocker"].startswith("Meta app review")
+
+
+def test_rows_speak_plainly_and_hide_cloud_key_names(monkeypatch):
+    # Founder 2026-11-26 screenshot: "not_connected", "connecting", "LinkedIn cloud publisher app secret missing".
+    from nodelang import social_connections
+    monkeypatch.setattr(cloud_social_oauth, "status", lambda provider: {"state": "configured"})
+    assert social_connections.connection("whatsapp", accounts=[], attempt={"phase": "idle"})["status"] == "Not connected"
+    assert social_connections.connection("whatsapp", accounts=[], attempt={"phase": "waiting"})["status"] == "Finish signing in in your browser"
+    monkeypatch.setattr(cloud_social_oauth, "status", lambda provider: {
+        "state": "blocked", "blocker": "LinkedIn cloud publisher app secret missing"})
+    row = social_connections.connection("linkedin", accounts=[], attempt={"phase": "idle"})
+    assert row["status"] == row["blocker"] == "Needs setup on ArchHub's side"
+    assert row["detail"] == "LinkedIn cloud publisher app secret missing"

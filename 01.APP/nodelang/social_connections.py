@@ -27,6 +27,10 @@ def _matches(provider, account):
     return account.get("provider") == provider
 
 
+_STATUS = {"not_connected": "Not connected", "connecting": "Finish signing in in your browser",
+           "choosing": "Choose the account to connect", "ready": "Saving the connection"}
+
+
 def connection(provider, *, accounts=None, attempt=None):
     provider = _provider(provider)
     row = {"provider": provider, "name": NETWORKS[provider], "state": "not_connected",
@@ -61,7 +65,9 @@ def connection(provider, *, accounts=None, attempt=None):
     if not blocker and config.get("state") not in ("saved", "configured", "signin_required"):
         blocker = "ArchHub cloud connection status unavailable"
     if blocker:
-        row.update(state="blocked", blocker=blocker)
+        # The cloud's own app keys are missing: ours to fix, never the user's; the detail stays for Advanced.
+        row.update(state="blocked", blocker="Needs setup on ArchHub's side", detail=blocker)
+    row["status"] = _STATUS.get(row["state"]) or row.get("blocker") or row.get("display_name") or row["state"]
     row["review_state"] = config.get("review_state", "")
     publish_blocker = config.get("publish_blocker")
     # App review gates publishing only; connecting and reading stay open.

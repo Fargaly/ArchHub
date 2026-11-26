@@ -19,9 +19,6 @@
       u = useApp(),
       actionState = window.UI.useAction(),
       [scenario, setScenario] = React.useState('Ready');
-    function handleRoutingjsx1() {
-      return u.go('settings/Agents');
-    }
     function handleRoutingjsx2() {
       return actionState.run(() => api.checkModelRouting(scenario));
     }
@@ -29,18 +26,16 @@
       return u.go('settings/BABOOM');
     }
     const ACTIONS = {
-      "routing.1": "handleRoutingjsx1",
       "routing.2": "handleRoutingjsx2",
       "routing.3": "handleRoutingjsx3"
     };
     function dispatch(id, ...args) {
       return window.UI.bindActions(ACTIONS, {
-        handleRoutingjsx1,
         handleRoutingjsx2,
         handleRoutingjsx3
       })(id, ...args);
     }
-    return <main className="page routing-page" data-screen="routing"><window.UI.ActionStatus action={actionState} /><Heading title="Model routing" sub="Free first. A stronger model when the work needs it."><Btn sm onClick={(event) => dispatch("routing.1", event)}>Settings</Btn><select aria-label="Routing condition" value={scenario} onChange={(e) => setScenario(e.target.value)}>{['Ready', 'Rate limit', 'Failed check'].map((x) => <option key={x}>{x}</option>)}</select><Btn p onClick={(event) => dispatch("routing.2", event)}>Check routing</Btn></Heading><div className="routing-banner"><div className="flex"><Icon name="shield" /><div><h2>You set the budget</h2><p>Review the owner’s routing limits and run a check before using a provider.</p></div></div><Chip>{s.routingStatus || 'Run a routing check'}</Chip></div><div className="routing-grid"><Card style={{
+    return <section className="routing-embedded" data-design="settings.models.routing" aria-label="Model routing"><window.UI.ActionStatus action={actionState} /><div className="flex routing-check"><select aria-label="Routing condition" value={scenario} onChange={(e) => setScenario(e.target.value)}>{['Ready', 'Rate limit', 'Failed check'].map((x) => <option key={x}>{x}</option>)}</select><Btn p onClick={(event) => dispatch("routing.2", event)}>Check routing</Btn></div><div className="routing-banner"><div className="flex"><Icon name="shield" /><div><h2>You set the budget</h2><p>Review the owner’s routing limits and run a check before using a provider.</p></div></div><Chip>{s.routingStatus || 'Run a routing check'}</Chip></div><div className="routing-grid"><Card style={{
           padding: 22
         }}><h2>Providers</h2>{s.providers.map((p) => <div className="routing-provider" key={p.id}><window.UI.Av id={p.id} /><div className="fill"><h3>{p.name}</h3><small className="muted">{p.model}</small></div><D.Toggle label={'Route to ' + p.name} checked={p.enabled} onCheckedChange={(v) => actionState.run(() => api.setProviderEnabled(p.id, v))} /></div>)}</Card><Card style={{
           padding: 22
@@ -65,7 +60,7 @@
         marginTop: 20
       }}><Heading title="Routing check" sub="The attempt order, availability and budget boundary." /><div className="spread" style={{
           marginBottom: 15
-        }}><Chip c={s.routingStatus === 'Checked' ? A.ok : A.warn}>{s.routingStatus}</Chip>{s.routingStatus === 'Budget reached' && <Btn onClick={(event) => dispatch("routing.3", event)}>Review budget</Btn>}</div><Table rows={s.routingAttempts} columns={['provider', 'state', 'cost']} /></Card>}<window.UI.RefineComparison /><window.UI.ModelAvailability /><window.UI.HealthHistory /></main>;
+        }}><Chip c={s.routingStatus === 'Checked' ? A.ok : A.warn}>{s.routingStatus}</Chip>{s.routingStatus === 'Budget reached' && <Btn onClick={(event) => dispatch("routing.3", event)}>Review budget</Btn>}</div><Table rows={s.routingAttempts} columns={['provider', 'state', 'cost']} /></Card>}<window.UI.RefineComparison /><window.UI.ModelAvailability /><window.UI.HealthHistory /></section>;
   }
   function CapabilityRows({
     page

@@ -49,10 +49,10 @@ BillingAccountAction2: (event) => (() => u.act(() => api.setBilling({
 BillingAccountAction3: (event) => (() => u.act(api.retryPayment))(event),
 BillingAccountAction4: (event) => (() => u.act(api.downgradeBilling))(event),
 BillingAccountAction5: (event) => (() => u.act(api.prepareCheckout))(event),
-BillingAccountAction6: (event) => (() => u.go('routing'))(event),
+BillingAccountAction6: (event) => (() => u.go('settings/Models'))(event),
 BillingAccountAction7: (r, event) => (() => u.download('Invoice ' + r.id))(event),
 BillingAccountAction8: (event) => (() => u.act(api.refreshBilling))(event),
-BillingAccountAction9: (event) => (() => u.go('access'))(event)});
+BillingAccountAction9: (event) => (() => u.go('settings/Access'))(event)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><Card style={{
       padding: 22,
       marginTop: 20

@@ -112,7 +112,7 @@
         })}<div className="social-side-bottom"><span className="status-dot" /> Your review comes before sending<button className="listbutton flex" onClick={event => dispatch("wire.social.6", () => (async () => {
             await wire.call(() => api.addNode('Social media'));
             u.go('canvas');
-          })(event))}><Icon name="canvas" size={16} />Open as a node</button></div></aside><main className="page social-main"><Heading title={social.office.name + ' · social'} sub={platform === 'All' ? 'One view of your office page, conversations and content.' : platform + ' · ' + (s.connections.find(c => c.name === platform)?.connected ? 'Connected' : 'Ready to connect')}><Btn sm ghost aria-label="New social post" title="New post" onClick={event => dispatch("wire.social.7", () => (begin)(event))}><Icon name="plus" /></Btn><Btn sm onClick={event => dispatch("wire.social.8", () => (() => u.go('settings/Connections'))(event))}>Settings</Btn></Heading><div className="social-tabs">{tabs.map(t => <button className="tab-button" key={t} aria-pressed={tab === t} onClick={event => dispatch("wire.social.9", () => (() => setTab(t))(event))}>{t}{t === 'Inbox' && social.inbox.some(m => m.unread) && <i />}</button>)}</div>
+          })(event))}><Icon name="canvas" size={16} />Open as a node</button></div></aside><section className="settings-embedded social-main"><Heading title={social.office.name + ' · social'} sub={platform === 'All' ? 'One view of your office page, conversations and content.' : platform + ' · ' + (s.connections.find(c => c.name === platform)?.connected ? 'Connected' : 'Ready to connect')}><Btn sm ghost aria-label="New social post" title="New post" onClick={event => dispatch("wire.social.7", () => (begin)(event))}><Icon name="plus" /></Btn><Btn sm onClick={event => dispatch("wire.social.8", () => (() => u.go('settings/Connections'))(event))}>Settings</Btn></Heading><div className="social-tabs">{tabs.map(t => <button className="tab-button" key={t} aria-pressed={tab === t} onClick={event => dispatch("wire.social.9", () => (() => setTab(t))(event))}>{t}{t === 'Inbox' && social.inbox.some(m => m.unread) && <i />}</button>)}</div>
   {tab === 'Office page' && <><Card className="office-cover"><div className="eyebrow">Architecture · Engineering · Design</div><h1>{social.office.name}</h1><p>{social.office.headline}</p><div className="flex"><span className="status-dot" /><span>Your office, across {platforms.length} channels</span></div></Card><div className="social-stats">{[['Inbox', social.inbox.filter(m => m.unread).length, 'Unread conversations'], ['Drafts', social.drafts.filter(d => d.status === 'Draft').length, 'Ready for review'], ['Scheduled', social.drafts.filter(d => d.status === 'Scheduled').length, 'Scheduled posts']].map(([name, value, label]) => <button key={name} onClick={event => dispatch("wire.social.10", () => (() => setTab(name))(event))}><span className="mono">{value}</span><span>{label}</span><Icon name="arrow" size={16} /></button>)}</div><Card style={{
             padding: 22
           }}><div className="spread"><h2>Office profile</h2><Btn sm onClick={event => dispatch("wire.social.11", () => (() => setOfficeEdit(v => !v))(event))}>{officeEdit ? 'Close' : 'Edit'}</Btn></div>{officeEdit ? <div className="grid" style={{
@@ -217,7 +217,7 @@
                 setPlatform('YouTube');
                 setTab('Drafts');
               })(event))}>Review YouTube draft →</button></div></Card>)}</div>}
-  </main></div>;
+  </section></div>;
   }
   window.UI.Social = Social;
 })();

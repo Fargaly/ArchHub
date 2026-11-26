@@ -311,7 +311,7 @@
           setToast(result.message || result.error || 'Could not complete that action. Retry.');
           return null;
         }
-        if (result?.uiCommand === 'voice') voice(text => api.setNodeParam(result.nodeId, 'transcript', text));else if (result?.uiCommand === 'desktop') await api.windowAction('hide');else if (result?.uiCommand === 'access') go('access');else if (result?.uiCommand === 'meetings') go('meetings');else if (result?.uiCommand === 'speak') {
+        if (result?.uiCommand === 'voice') voice(text => api.setNodeParam(result.nodeId, 'transcript', text));else if (result?.uiCommand === 'desktop') await api.windowAction('hide');else if (result?.uiCommand === 'access') go('settings/Access');else if (result?.uiCommand === 'meetings') go('meetings');else if (result?.uiCommand === 'speak') {
           const spoken = await api.speak(result.text);
           if (!spoken.ok) setToast(result.text);
         }
@@ -630,7 +630,7 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'xray' ? <window.UI.Xray /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -1120,7 +1120,7 @@
         ['How everything connects', () => u.go('system')],
         ['App health', () => u.show('App health')],
         ['Community', () => u.go('community')],
-        ['Social media', () => u.go('social')],
+        ['Social media', () => u.go('settings/Social')],
         ['Docs', () => u.go('docs')],
         ['Settings', () => u.go('settings/Account')]
       ];
@@ -1396,9 +1396,14 @@
           <Btn onClick={event => executeAction('projects.controls.activate', {handler: close}, event)}>Cancel</Btn>
           <Btn p disabled={!text.trim()} onClick={event => executeAction('projects.controls.activate', {handler: async () => {
             const res = await u.act(() => typeof api.sendFeedback === 'function' ? api.sendFeedback(text.trim()) : Promise.resolve({ok: true}));
-            if (res) { close(); u.setToast({text: 'Feedback sent.'}); }
+            if (res) { setText(''); u.setToast({text: 'Feedback sent.'}); }
           }}, event)}>Send</Btn>
         </div>
+        {(s.feedback || []).length > 0 && <section className="grid" aria-label="Your feedback" style={{gap: 8}}><b>Sent</b>
+          {s.feedback.map(f => <div className="row" key={f.id}><p dir="auto">{f.text}</p><div className="spread"><Chip c={A.ok}>{f.status}</Chip>
+            <Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.checkFeedback(f.id))}, event)}>Check response</Btn></div>
+            {f.response && <p className="muted" dir="auto">{f.response}</p>}
+            {f.updateReady && <Btn p onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Update')}, event)}>View update</Btn>}</div>)}</section>}
       </div>;
     } else if (k === "What's new" || k === 'What’s new') {
       body = <div className="grid" style={{gap: 10}}>
@@ -2506,7 +2511,7 @@
   function appShellOpenTeam95({
     u
   }, event) {
-    const handler = () => u.go('colleagues');
+    const handler = () => u.go('settings/Team');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellUpdatesAbout96({

@@ -43,7 +43,7 @@
         if(saved){executeAction('ui.state',setName,'');executeAction('ui.state',setValue,'');}
       }}>Add property</Btn><label className="spread">Court status<select aria-label="Workflow court status" value={g.courtStatus || 'Not reviewed'} onChange={e => executeAction("updateGraph", u, g.id, {
           courtStatus: e.target.value
-        })}>{['Not reviewed', 'Needs review', 'Pass', 'Fail', 'Inconclusive'].map(x => <option key={x}>{x}</option>)}</select></label><Btn sm onClick={() => executeAction("ui.go", u, 'runs')}>Run history</Btn></div>;
+        })}>{['Not reviewed', 'Needs review', 'Pass', 'Fail', 'Inconclusive'].map(x => <option key={x}>{x}</option>)}</select></label><Btn sm onClick={() => executeAction('ui.select', () => u.show('App health'))}>Run history</Btn></div>;
   }
   function IntakeRules() {
     const s = useData(),

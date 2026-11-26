@@ -3,21 +3,17 @@
 (() => {
   function executeAction(...args) { return window.executeAction(...args); }
   const {
-    A,
     D,
     api,
     useData,
     useApp,
     Btn,
     Card,
-    Chip,
     Heading,
     Empty,
     Table
   } = window.UI;
-  function Automations({
-    embedded = false
-  }) {
+  function Automations() {
     const s = useData(),
       u = useApp();
     const paused = s.desktop?.automationsPaused;
@@ -44,7 +40,7 @@
           marginTop: 12,
           flexWrap: 'wrap'
         }}>{['Manual', 'Schedule', 'File changed', 'Host event', 'Approval granted', 'Webhook'].map(t => <Btn key={t} sm onClick={event => executeAction("projects.surfaces.AsyncConstNAwaitU.3", {api,t,u}, event)}>{t}</Btn>)}</div></Card></div>;
-    return embedded ? body : <main className="page" data-screen="automations"><Heading title="Automations" sub="Repeat work as a node, with the same approval point" />{body}</main>;
+    return body;  // Settings › Agents › Automations holds it (founder 2026-11-26: no page of its own)
   }
   // ArchHub menu › App health (design: archhub-directions diagDialog; "Logs & receipts" lives here, never a page).
   // Checks from their owners, and Activity from the run receipts beside every session file, notifications and the update.
@@ -87,30 +83,17 @@
       {runs.status === 'error' && <div role="alert"><p>{runs.message}</p><Btn sm onClick={event => executeAction('ui.select', () => setAttempt(value => value + 1), event)}>Retry</Btn></div>}
       {runs.status === 'empty' && (activity.length ? <Table rows={activity.slice(0, 60)} columns={['when', 'operation', 'detail', 'status']} /> : <p className="muted">No runs, notices or updates recorded on this PC yet.</p>)}
       {runs.status === 'loaded' && <Table rows={activity.slice(0, 60)} columns={['when', 'operation', 'detail', 'status']} />}
+      {(s.runs || []).length > 0 && <><h3>Runs</h3>{s.runs.map(r => <div className="drow" key={r.id}><span /><b>{r.title}</b><span>{r.status}</span><span className="flex">
+        <Btn sm onClick={event => executeAction('ui.select', () => u.show('Run', {id: r.id}), event)}>Open</Btn>
+        <Btn sm onClick={event => executeAction('ui.select', () => u.act(() => api.sendToBaboom(r.title)), event)}>Retry</Btn></span></div>)}</>}
+      {(s.tasks || []).some(t => t.status === 'STOPPED') && <><h3>Stopped work</h3>{s.tasks.filter(t => t.status === 'STOPPED').map(t => <div className="drow" key={t.id}><span /><b>{t.title}</b><span>stopped</span>
+        <Btn sm onClick={event => executeAction('ui.select', () => u.act(() => api.reassignTask(t.id)), event)}>Retry</Btn></div>)}</>}
       <div className="flex">
         <Btn sm onClick={event => executeAction('ui.select', () => navigator.clipboard?.writeText(report).then(() => u.setToast('Report copied.')), event)}>Copy report</Btn>
         <Btn sm disabled={!activity.length} onClick={event => executeAction('ui.select', () => u.download('Receipts', activity), event)}>Export</Btn>
         <Btn sm disabled={!undoName} title={undoName ? 'Undo ' + undoName : 'Nothing to undo'} onClick={event => executeAction('ui.select', () => u.act(api.undo), event)}>{undoName ? 'Undo ' + undoName : 'Nothing to undo'}</Btn>
       </div>
     </div>;
-  }
-  function Runs() {
-    const s = useData(),
-      u = useApp();
-    return <main className="page" data-screen="runs"><Heading title="Runs" sub="Finished results and stopped work" /><Card>{s.runs.map(r => <div className="spread row" key={r.id}><div><h3>{r.title}</h3><p className="muted">{r.status}</p></div><div className="flex"><Btn sm onClick={event => executeAction("projects.surfaces.Open.6", {r,u}, event)}>Open</Btn><Btn sm onClick={event => executeAction("projects.surfaces.Retry.7", {api,r,u}, event)}>Retry</Btn></div></div>)}{!s.runs.length && <Empty>No runs yet. Run a node or start a task.</Empty>}</Card><div style={{
-        height: 20
-      }} /><Card>{s.tasks.filter(t => t.status === 'STOPPED').map(t => <div className="spread row" key={t.id}><span>{t.title} · stopped</span><Btn sm onClick={event => executeAction("projects.surfaces.Retry.8", {api,t,u}, event)}>Retry</Btn></div>)}</Card></main>;
-  }
-  function Feedback() {
-    const s = useData(),
-      u = useApp();
-    const [text, setText] = React.useState('');
-    return <main className="page" data-screen="feedback"><Heading title="Feedback" sub="Tell the team what should work better" /><Card style={{
-        maxWidth: 800,
-        padding: 22,
-        display: 'grid',
-        gap: 16
-      }}><textarea aria-label="Your feedback" rows={5} placeholder="What happened, and what did you want?" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("projects.surfaces.SendFeedback.9", {api,setText,text,u}, event)}>Send feedback</Btn>{s.feedback.map(f => <div className="row" key={f.id}><p>{f.text}</p><div className="spread"><Chip c={A.ok}>{f.status}</Chip><Btn sm onClick={event => executeAction("projects.surfaces.CheckResponse.10", {api,f,u}, event)}>Check response</Btn></div>{f.response && <p className="muted">{f.response}</p>}{f.updateReady && <Btn p onClick={event => executeAction("projects.surfaces.ViewUpdate.11", {u}, event)}>View update</Btn>}</div>)}</Card></main>;
   }
   function Watcher() {
     const s=useData(),u=useApp();
@@ -138,8 +121,6 @@
   Object.assign(window.UI, {
     Automations,
     AppHealth,
-    Runs,
-    Feedback,
     Watcher
   });
 
@@ -160,35 +141,6 @@ function projectssurfacesjsxAsyncConstNAwaitU3({api,t,u}, event) {
               u.go('canvas');
             }
           };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxOpen6({r,u}, event) {
-  const handler = () => u.show('Run', {
-              id: r.id
-            });
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxRetry7({api,r,u}, event) {
-  const handler = () => u.act(() => api.sendToBaboom(r.title));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxRetry8({api,t,u}, event) {
-  const handler = () => u.act(() => api.reassignTask(t.id));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxSendFeedback9({api,setText,text,u}, event) {
-  const handler = async () => {
-          const r = await u.act(() => api.sendFeedback(text));
-          if (r) setText('');
-        };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxCheckResponse10({api,f,u}, event) {
-  const handler = () => u.act(() => api.checkFeedback(f.id));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxViewUpdate11({u}, event) {
-  const handler = () => u.show('Update');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsWatcherConnections({u}) { return u.go('settings/Connections'); }
@@ -213,13 +165,7 @@ const PROJECT_ACTIONS = {
   'projects.watcher.run':'projectsWatcherRun',
   "projects.surfaces.AddSchedule.1": "projectssurfacesjsxAddSchedule1",
   "projects.surfaces.Reset.2": "projectssurfacesjsxReset2",
-  "projects.surfaces.AsyncConstNAwaitU.3": "projectssurfacesjsxAsyncConstNAwaitU3",
-  "projects.surfaces.Open.6": "projectssurfacesjsxOpen6",
-  "projects.surfaces.Retry.7": "projectssurfacesjsxRetry7",
-  "projects.surfaces.Retry.8": "projectssurfacesjsxRetry8",
-  "projects.surfaces.SendFeedback.9": "projectssurfacesjsxSendFeedback9",
-  "projects.surfaces.CheckResponse.10": "projectssurfacesjsxCheckResponse10",
-  "projects.surfaces.ViewUpdate.11": "projectssurfacesjsxViewUpdate11"
+  "projects.surfaces.AsyncConstNAwaitU.3": "projectssurfacesjsxAsyncConstNAwaitU3"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsOpenTaskCanvas,projectsToggleAutomationPause,projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3,projectssurfacesjsxOpen6,projectssurfacesjsxRetry7,projectssurfacesjsxRetry8,projectssurfacesjsxSendFeedback9,projectssurfacesjsxCheckResponse10,projectssurfacesjsxViewUpdate11});
+window.registerActions(PROJECT_ACTIONS, {projectsOpenTaskCanvas,projectsToggleAutomationPause,projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3});
 })();

@@ -28,7 +28,7 @@
       return setTab(t);
     }
     function handleDecisionresultsjsx2() {
-      return u.go('routing');
+      return u.go('settings/Models');
     }
     function selectDecision(option) { return actionState.run(() => api.setDecisionState(id, {selected:option})); }
     const ACTIONS = {

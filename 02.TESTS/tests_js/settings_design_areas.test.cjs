@@ -58,7 +58,7 @@ async function mount(page,profile,extra){
   await page.addScriptTag({content:transformSync(fs.readFileSync(file,'utf8'),{loader:'jsx'}).code});
  }
  await page.evaluate(()=>{
-  for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
+  for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers','Social','Access','Colleagues','Brain'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
   function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);
    const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
    return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}));}
@@ -144,7 +144,8 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
     const r=target.getBoundingClientRect();
     return shell.getBoundingClientRect().top>=-1&&r.top>=-1&&r.bottom<=window.innerHeight;
    },null,{timeout:3000});
-   await page.getByRole('button',{name:'Open Social media',exact:true}).waitFor();
+   // Social media is in its card (founder 2026-11-26: all settings in one place), not a page behind a door.
+   await page.locator('[data-design-section="Social media"] summary',{hasText:'Social inbox, drafts and posts'}).waitFor();
    // Each page shows only its own rows.
    for(const [route,shown,hidden] of [['settings/Privacy','Privacy.Review','Workshop.Keep messages'],['settings/Look','Appearance.Theme','Workshop.Keep messages'],['settings/Updates & About','Privacy.Review','Workshop.Keep messages'],['settings/Workshop','Workshop.Keep messages','Privacy.Review'],['settings/Automations',null,'Workshop.Keep messages'],['settings/Hooks',null,'Workshop.Keep messages']]){
     await page.evaluate(r=>window.goSettings(r),route);
@@ -249,7 +250,7 @@ test('the five Settings pages show all 44 design cards in order with live owners
    assert.ok(await soon.evaluateAll(parts=>parts.every(node=>node.getAttribute('aria-disabled')==='true'&&node.querySelector('.soon-part[inert]'))),area+' unsupported controls must stay inert');
   }
   // The new doors open the existing owner screens.
-  for(const [route,door,target] of [['Account','Open Plan & access','access'],['Account','Open Community','community'],['Account','Open Social media','social'],['Agents','Open Meetings','meetings'],['Connections','Open model providers','settings/Providers'],['Connections','Open connected devices','access'],['Connections','Open notification setting','settings/BABOOM']]){
+  for(const [route,door,target] of [['Account','Open Community','community'],['Agents','Open Meetings','meetings'],['Connections','Open model providers','settings/Providers'],['Connections','Open connected devices','access'],['Connections','Open notification setting','settings/BABOOM']]){
    await page.evaluate(r=>window.goSettings(r),'settings/'+route);
    await page.locator(`[data-screen="settings/${route}"]`).waitFor();
    await page.locator('.sheet-content').getByRole('button',{name:door,exact:true}).click();

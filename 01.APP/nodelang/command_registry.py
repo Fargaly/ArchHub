@@ -278,13 +278,12 @@ NAVIGATION_ROUTES = {
     "canvas": "Canvas",
     "library": "Library",
     "baboom": "BABOOM",
-    "colleagues": "Team",
+    "settings/Team": "Team",
     "watcher": "Watcher",
-    "brain": "Brain",
+    "settings/Brain": "Brain",
     "system": "System graph",
     "first-run": "First run",
-    "runs": "Runs",
-    "automations": "Automations",
+    "settings/Automations": "Automations",
     "docs": "Docs",
     "meetings": "Meetings",
     "settings/Dependencies": "Dependencies",
@@ -292,14 +291,13 @@ NAVIGATION_ROUTES = {
     "community": "Community",
     "model-review": "Model review",
     "interface": "Interface studio",
-    "feedback": "Feedback",
-    "social": "Social media",
+    "settings/Social": "Social media",
     "xray": "X-RAY",
-    "access": "Plan & access",
-    "routing": "Model routing"
+    "settings/Access": "Plan & access",
+    "settings/Models": "Model routing"
 }
 
-MENU_PAGES = ["meetings","settings/Dependencies","home","workshop","canvas","docs","colleagues","brain","watcher","social","xray","model-review","community","present","interface","access","routing","automations","runs","feedback","system","first-run"]
+MENU_PAGES = ["meetings","settings/Dependencies","home","workshop","canvas","docs","settings/Team","settings/Brain","watcher","settings/Social","xray","model-review","community","present","interface","settings/Access","settings/Models","settings/Automations","system","first-run"]
 
 
 # Existing Studio actions, in their original presentation order. No parameter values live here.
@@ -484,7 +482,7 @@ STUDIO_COMMANDS += tuple(
         ('menu.embed.tab', 'Show its tab', 'office', ['node', 'embed'], 'u.openTaskFile', 'canvas', '', False, True, False, False, 'read'),
         ('menu.embed.detach', 'Detach as copy', 'transform', ['node', 'embed'], 'api.detachSession', 'group', '', False, False, False, False, 'write'),
         ('menu.tray.install.update', 'Install the update', 'host', ['tray'], 'api.installUpdate', 'refresh', '', False, False, False, False, 'write'),
-        ('menu.tray.feedback', 'Send feedback', 'office', ['tray'], 'u.go', 'workshop', '', False, True, False, False, 'read'),
+        ('menu.tray.feedback', 'Send feedback', 'office', ['tray', 'navigation'], 'u.show', 'workshop', '', False, True, False, False, 'read'),
         ('menu.tray.thread', 'Open thread', 'office', ['tray'], 'u.openTaskFile', 'workshop', '', False, True, False, False, 'read'),
         ('menu.tray.check.updates', 'Check for updates', 'host', ['tray'], 'api.checkForUpdates', 'refresh', '', False, False, False, False, 'write'),
         ('menu.tray.receipts', 'App health', 'output', ['tray', 'navigation'], 'u.show', 'docs', '', False, True, False, False, 'read'),

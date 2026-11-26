@@ -72,7 +72,7 @@
     Connections:'Connections', 'This PC':'Look, Appearance, System, Advanced, Updates & About'
   };
   // Former page names stay valid links: [the page that holds them now, the section to scroll to].
-  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Account','Social media'], Providers:['Connections','AI providers','advanced']};
+  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Account','Social media'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced']};
   // Display metadata from the Settings design. Values and writes belong to the settings owners.
   const areaCardSpecs = [
     {area:"Projects", id:"register", title:"Project register", icon:"docs", family:"model", wide:false, rows:[
@@ -431,9 +431,9 @@
       name:<ProfileField key={JSON.stringify([profile.id,profile.name])} field="name" label="Name" value={profile.name||''}/>,
       firm:<ProfileField key={JSON.stringify([profile.id,profile.firm])} field="firm" label="Firm" value={profile.firm||''}/>,
       email:<input readOnly aria-label="Email" value={profile.email||''} placeholder="Add an email" title="Browser sign-in manages your email"/>,
-      plan:open(profile.plan||'Choose plan',()=>u.go('access')),
-      devices:open('Connected devices',()=>u.go('access')),
-      memory:window.UI.MemoryRules?<window.UI.MemoryRules/>:undefined
+      plan:open(profile.plan||'Choose plan',()=>u.go('settings/Access')),
+      devices:open('Connected devices',()=>u.go('settings/Access')),
+      memory:<>{window.UI.MemoryRules&&<window.UI.MemoryRules/>}{window.UI.Brain&&<details><summary>What agents remember</summary><window.UI.Brain/></details>}</>
     };
     live.role=<ProfileField key={JSON.stringify([profile.id,profile.role])} field="role" label="Role" value={profile.role||''}/>;
     live.photo=<window.UI.PhotoControl value={u.userPhoto||''}/>;
@@ -445,9 +445,9 @@
         {!['Accepted','Declined','Expired'].includes(invite.status)&&<>{open('Accept invitation',()=>u.act(()=>api.acceptOfficeInvitation(invite.id)))}{open('Decline invitation',()=>u.act(()=>api.declineOfficeInvitation(invite.id)))}</>}</div>)}</div>;
 
     const extras={
-      people:open('Open Plan & access',()=>u.go('access')),
+      people:<>{window.UI.Access&&<details><summary>Plan, usage and billing</summary><window.UI.Access/></details>}{window.UI.Colleagues&&<details><summary>Team: people and agents</summary><window.UI.Colleagues/></details>}</>,
       community:open('Open Community',()=>u.go('community')),
-      social:open('Open Social media',()=>u.go('social'))
+      social:window.UI.Social&&<details><summary>Social inbox, drafts and posts</summary><window.UI.Social/></details>
     };
     return <AreaDesignCards area="Account" live={live} extras={extras} focused={focused}/>;
   }
@@ -487,7 +487,7 @@
       progs:<>{programNotice}{selected&&<p aria-live="polite">{[selected.name,selected.document||selected.document_name||selected.detail||'No document reported',(selected.agents||[]).map(agent=>agent.name||agent).join(', ')].filter(Boolean).join(' · ')}</p>}</>,
       accts:<>{open('Connect',()=>u.show('Connect'))}{open('Refresh',refresh)}</>,
       ai:focused?.title==='AI providers'?null:open('Open model providers',()=>u.go('settings/Providers')),
-      phone:open('Open connected devices',()=>u.go('access')),
+      phone:open('Open connected devices',()=>u.go('settings/Access')),
       notify:open('Open notification setting',()=>u.go('settings/BABOOM'))
     };
     return <AreaDesignCards area="Connections" focused={focused} live={live} extras={extras} bodies={{progs:tiles('progs',hosts,true),accts:tiles('accts',accounts,false)}}/>;
@@ -1013,7 +1013,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       SettingsAction11: () => u.show('What’s new'),
       SettingsAction12: () => u.go('first-run'),
       SettingsAction13: () => u.go('docs'),
-      SettingsAction14: () => u.go('feedback')
+      SettingsAction14: () => u.show('Send feedback')
     });
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} />
       {load === 'waiting' && <p className="muted">Reading your update setting…</p>}
@@ -1355,7 +1355,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         toolRules:focusSection==='What agents may do'?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>content.current?.querySelector('[aria-label="Tool name or pattern"]')?.focus()},event)}>Edit tool rules</Btn>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Tool rules</Btn>,
         bbPinned:<D.Toggle variant="settings" label="Pin in place" checked={!!s.companion?.pinned} onCheckedChange={value=>act(()=>api.setCompanionState({pinned:value}))}/>,
         finishReport:preference('Finish and report')||undefined,wsRelease:preference('Stale claim after idle minutes')||undefined,wsArchive:preference('Archive after idle days')||undefined
-      }} extras={{perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>,meet:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('meetings')},event)}>Open Meetings</Btn>,auto:requestedPage==='Automations'?null:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Automations')},event)}>Open Automations</Btn>}}/>}
+      }} extras={{models:window.UI.Routing&&<details open={focusSection==='Models'||undefined}><summary>Routing, providers and free sources</summary><window.UI.Routing/></details>,perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>,meet:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('meetings')},event)}>Open Meetings</Btn>,auto:requestedPage==='Automations'||!window.UI.Automations?null:<details><summary>Schedules and triggers</summary><window.UI.Automations embedded/></details>}}/>}
 
       {isPcDesign&&<PcSettingsCards additional={additional} page={currentCategory} advanced={advancedOpen} setAdvanced={setAdvancedOpen}/>}
       {currentCategory==='Projects'&&<AreaDesignCards area="Projects"

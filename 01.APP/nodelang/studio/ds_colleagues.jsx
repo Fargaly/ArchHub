@@ -54,7 +54,7 @@
           id: p.id
         }))(event))}><Av id={p.name} /><span><b>{p.name}</b><p className="muted" style={{
               fontSize: 12
-            }}>{p.task}</p></span></button>)}</aside><main className="page"><section aria-label="Action result" aria-live="polite">
+            }}>{p.task}</p></span></button>)}</aside><section className="settings-embedded"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Loading team…</p>}
       {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
@@ -75,7 +75,7 @@
             height: 20
           }} /><window.UI.MemoryRules /><div style={{
             height: 20
-          }} /><Composer /></div></main></div>;
+          }} /><Composer /></div></section></div>;
   }
   function MemoryRules() {
     const wire = window.UI.useWireSocial();

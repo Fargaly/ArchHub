@@ -874,7 +874,7 @@
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function projectsprojecttoolsjsxBrain13({u}, event) {
-    const handler = () => u.go('brain');
+    const handler = () => u.go('settings/Brain');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function projectsprojecttoolsjsxSetTabT14({setTab, t}, event) {

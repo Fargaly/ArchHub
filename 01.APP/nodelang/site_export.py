@@ -423,7 +423,7 @@ _DOCS_TEMPLATES = MappingProxyType({'getting-started': ('Getting started',
                      '\n'
                      '- Undo last layout restores node positions only. Graph edits have no undo or redo.\n'
                      '- The app does not create or promote skills from a conversation.\n'
-                     '- Settings, Model routing lists only free or local routes that the app can route in '
+                     '- Settings > Agents lists only free or local model routes that the app can route in '
                      'this build.\n'
                      '- Ollama routes cannot take images.\n'),
  'brain': ('The brain and cloud sync',
@@ -482,7 +482,7 @@ _DOCS_TEMPLATES = MappingProxyType({'getting-started': ('Getting started',
                  '## Not working in this build\n'
                  '\n'
                  '- Usage limits show "not available", and the spend-limit buttons are not enforced.\n'
-                 '- The Brain and Team tabs in Settings show "not available".\n'),
+                 '- Brain and cloud sync, in Settings > Account, shows "not available".\n'),
  'connectors': ('Connectors',
                 'Catalogue operations and reviewed packaged host artifacts; availability is separate from a '
                 'running connection.',

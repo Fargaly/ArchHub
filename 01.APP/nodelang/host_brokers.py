@@ -448,8 +448,17 @@ def _windows_process_table() -> dict[int, dict]:
             raise ProcessEnumerationUnavailable("Windows process snapshot could not be closed")
 
 
-def _windows_process_names() -> frozenset[str]:
-    return frozenset(row['name'] for row in _windows_process_table().values())
+_PROCESS_NAMES = (float('-inf'), frozenset())   # (monotonic time read, names)
+
+
+def _windows_process_names(*, max_age_seconds: float = 2.0) -> frozenset[str]:
+    """One snapshot serves every host's running check inside one status pass (was one snapshot per host per poll)."""
+    global _PROCESS_NAMES
+    read_at, names = _PROCESS_NAMES
+    if time.monotonic() - read_at > max_age_seconds:
+        names = frozenset(row['name'] for row in _windows_process_table().values())
+        _PROCESS_NAMES = (time.monotonic(), names)
+    return names
 
 
 def _running(names: tuple[str, ...]) -> bool:

@@ -187,3 +187,119 @@ def test_waiting_query_identical_and_cheaper():
     print("\nwaiting query, 30000 messages: 543 waiting before %.1f ms, after %.1f ms; 2600 waiting before %.1f ms, "
           "after %.1f ms" % (*timings[543], *timings[2600]))
     assert timings[543][1] < timings[543][0]
+
+
+# ---- 75f10a3 installed, still 42.8% of a core idle (py-spy, 2026-11-26) ----
+
+def test_reply_recipients_indexed_identical_and_cheaper():
+    declared = [_record(i, live=i % 20 == 1) for i in range(6000)]
+    for row in declared:
+        row["current"] = row["status"] != "done" and row["pid"] == os.getpid()
+    known = mb._Known(declared)
+    routing = {"recipients": [{"session": declared[i]["session"], "agent": declared[i]["agent"],
+                               "runtime": declared[i]["runtime"]} for i in range(1, 6000, 120)]}
+    message = {**_message(1, routing=routing), "id": "not-stored"}
+    with mb.application_history() as history:
+        _fill(history, count=10)
+        cases = [({"sender": "R [%s]" % row["session"], "sender_key": row["session"], "sender_label": "R"}, row)
+                 for row in declared[1:6000:240]]
+        for identity, declaration in cases:
+            assert (mb._reply_recipients(history, message, identity, declaration, known)
+                    == mb._reply_recipients(history, message, identity, declaration, list(declared)))
+        assert any(mb._reply_recipients(history, message, i, d, known) for i, d in cases)
+        before = _best(lambda: [mb._reply_recipients(history, message, i, d, list(declared)) for i, d in cases], 3)
+        after = _best(lambda: [mb._reply_recipients(history, message, i, d, known) for i, d in cases], 3)
+    print("\nreply recipients, 50 recipients x 25 replies x 6000 declarations: before %.1f ms, after %.1f ms"
+          % (before, after))
+    assert after * 5 < before
+
+
+def test_roster_reads_the_counter_and_sees_another_writer():
+    full = "SELECT count(*), max(json_extract(record,'$.updated_at')) FROM workshop_declarations"
+    with mb.application_history() as history:
+        _fill(history)
+        db = history._db
+        assert mb._roster(db) == tuple(db.execute(full).fetchone())   # no marker: the full-table read, as before
+        with history._transaction(write=True):
+            for statement in mb.DECLARATIONS_MARKER_SCHEMA:
+                db.execute(statement)
+        first = mb._roster(db)
+        assert first == mb._roster(db) and first[0] == "counter"
+        before = _best(lambda: db.execute(full).fetchone())
+        after = _best(lambda: mb._roster(db))
+        other = sqlite3.connect(str(mb.profile_database()), isolation_level=None)
+        try:
+            changed = {**_record(7, live=False), "title": "another writer"}
+            other.execute("UPDATE workshop_declarations SET record=? WHERE root=?", (json.dumps(changed), changed["root"]))
+        finally:
+            other.close()
+        assert mb._roster(db) != first
+    print("\nroster check, 6000 declarations: before %.2f ms, after %.3f ms" % (before, after))
+    assert after < before
+
+
+def _skill(count, kind="pure"):
+    return {**_document(count), "properties": {"nodeType": {"kind": kind}}}
+
+
+def test_large_document_kept_shared_read_identical_and_skill_purity_follows_the_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(sf, "_DOCUMENTS", {})
+    path = tmp_path / "big.archhub"
+    big = _skill(9000)
+    for node in big["nodes"]:
+        node["title"] = "A step with a readable title %s" % node["id"]
+    path.write_text(json.dumps(big), encoding="utf-8")
+    assert path.stat().st_size > 1 << 20   # over the old per-file cap: missed on every poll before
+    old = time.time() - 60
+    os.utime(path, (old, old))
+    expected = _uncached(path)
+    assert sf.read_document(path) == expected and str(path.resolve()) in sf._DOCUMENTS
+    assert json.dumps(sf.read_document(path, shared=True)) == json.dumps(expected)
+    before = _best(lambda: _uncached(path), 3)
+    after = _best(lambda: sf.read_document(path, shared=True), 3)
+
+    small = tmp_path / "small.archhub"
+    small.write_text(json.dumps(_skill(50)), encoding="utf-8")
+    os.utime(small, (old, old))
+    sf.read_document(small)
+    assert sf.read_document(small, shared=True) is sf.read_document(small, shared=True)
+    params = {"skill": "doc-1", "session_file": str(small)}
+    sf._DOCUMENTS.clear()
+    assert sf.canvas_documents.is_pure("skill", params) is True
+    assert sf.canvas_documents.is_pure("skill", params) is True
+    purity_before = _best(lambda: (sf._DOCUMENTS.clear(), sf.canvas_documents.is_pure("skill", params)))
+    purity_after = _best(lambda: sf.canvas_documents.is_pure("skill", params))
+    small.write_text(json.dumps(_skill(50, kind="effect")), encoding="utf-8")
+    os.utime(small, (old + 1, old + 1))
+    assert sf.canvas_documents.is_pure("skill", params) is False   # the changed file decides
+    assert sf.read_document(small, shared=True)["properties"]["nodeType"]["kind"] == "effect"
+    print("\n.archhub over 1 MiB, unchanged: before %.1f ms, after %.1f ms; skill purity before %.2f ms, after %.2f ms"
+          % (before, after, purity_before, purity_after))
+    assert after * 2 < before and purity_after < purity_before
+
+
+def test_process_names_one_snapshot_per_pass(monkeypatch):
+    from nodelang import host_brokers as hb
+    calls = []
+    monkeypatch.setattr(hb, "_PROCESS_NAMES", (float("-inf"), frozenset()))
+    monkeypatch.setattr(hb, "_windows_process_table", lambda: calls.append(1) or {4: {"name": "rhino.exe", "ppid": 0}})
+    assert hb._windows_process_names() == frozenset({"rhino.exe"})
+    assert hb._windows_process_names() == frozenset({"rhino.exe"}) and len(calls) == 1
+    monkeypatch.setattr(hb, "_windows_process_table", lambda: calls.append(1) or {})
+    assert hb._windows_process_names(max_age_seconds=0.0) == frozenset() and len(calls) == 2
+
+
+def test_delivery_events_parsed_once_identical():
+    with mb.application_history() as history:
+        with history._transaction(write=True):
+            parent = history.append(mb.ROOM, author="A [agent:session:a]", content="To b:\nx", category=mb.CATEGORY,
+                                    idempotency_key="parent")
+            for i in range(40):
+                mb._delivery_receipt(history, parent, {"session": "agent:session:%d" % i, "agent": "B%d" % i},
+                                     ("addressed", "attempt")[i % 2], runtime="codex", status="ok")
+        mb._RECEIPT_VALUES.clear()
+        cold = mb.delivery_events(history, parent)
+        warm = mb.delivery_events(history, parent)
+        assert json.dumps(cold, sort_keys=True) == json.dumps(warm, sort_keys=True) and len(cold) == 40
+        warm["agent:session:0"]["addressed"]["status"] = "changed by a caller"
+        assert mb.delivery_events(history, parent)["agent:session:0"]["addressed"]["status"] == "ok"

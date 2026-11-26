@@ -1833,7 +1833,7 @@ def _schedules():
     rows = []
     for path in service.workflows():
         try:
-            document = read_document(path)
+            document = read_document(path, shared=True)   # read only
         except (OSError, ValueError):
             continue
         runs = last_automation_runs(path, document['id'])

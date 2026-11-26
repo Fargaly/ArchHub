@@ -50,7 +50,7 @@ def is_pure(engine, params=None):
             return False
         _PURITY.active = active | {identity}
         try:
-            _path, document = linked_session(params)
+            _path, document = linked_session(params, shared=True)   # read only
             if document.get('properties', {}).get('nodeType', {}).get('kind') != 'pure':
                 return False
             return all(is_pure(n['type'], n['params']) for n in document['nodes'])

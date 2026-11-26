@@ -537,21 +537,31 @@ def local_path(path):
     return resolved
 
 
-# Resolved path -> (file stamp, validated document as marshal bytes). A file whose stamp (id, size, mtime) is
-# unchanged is not read, parsed or validated again (installed launcher re-read every skill and schedule file on every
-# poll, 2026-11-26); each read still rebuilds a detached document, and node purity is the engine's answer now.
+# Resolved path -> [file stamp, validated document as marshal bytes, shared read-only document or None]. A file whose
+# stamp (id, size, mtime) is unchanged is not read, parsed or validated again (installed launcher re-read every skill
+# and schedule file on every poll, 2026-11-26; a 7.9 MB open session missed the old 1 MiB per-file cap on every poll);
+# each read still rebuilds a detached document, and node purity is the engine's answer now.
 _DOCUMENTS = {}
-_DOCUMENTS_LIMIT, _DOCUMENT_CACHE_BYTES = 512, 1 << 20
+_DOCUMENTS_LIMIT, _DOCUMENT_CACHE_BYTES, _SHARED_DOCUMENT_BYTES = 512, 64 << 20, 1 << 20
 
 
 def _stamp(status):
     return status.st_ino, status.st_size, status.st_mtime_ns
 
 
-def read_document(path):
+def read_document(path, *, shared=False):
+    """shared: a read-only caller (it changes nothing in the document and ignores node 'pure') gets the one parsed
+    copy kept for this unchanged file instead of a rebuilt one."""
     target = local_path(str(path))
     held = _DOCUMENTS.get(str(target))
     if held is not None and held[0] == _stamp(_metadata_io(os.stat, target)):
+        if shared:
+            if held[2] is not None:
+                return held[2]
+            document = _without_test_writer(marshal.loads(held[1]))
+            if len(held[1]) <= _SHARED_DOCUMENT_BYTES:   # a large file's objects are not held in memory between reads
+                held[2] = document
+            return document
         document = marshal.loads(held[1])
         for node in document['nodes']:
             if 'pure' in node:   # as validate's check_contract sets it: engines and linked skills can change
@@ -566,10 +576,12 @@ def read_document(path):
     document = validate(json.loads(raw.decode('utf-8-sig')))
     # A file changed in the last 2 s may change again inside one timestamp tick at the same size: not kept (git's
     # racy-clean rule), so a kept stamp always means unchanged bytes.
-    if len(raw) <= _DOCUMENT_CACHE_BYTES and time.time_ns() - status.st_mtime_ns > 2_000_000_000:
-        if len(_DOCUMENTS) >= _DOCUMENTS_LIMIT:
-            _DOCUMENTS.clear()   # shortcut: refilled by the next reads; memory stays bounded by the limit
-        _DOCUMENTS[str(target)] = (_stamp(status), marshal.dumps(document))
+    if time.time_ns() - status.st_mtime_ns > 2_000_000_000:
+        kept = marshal.dumps(document)
+        if (len(_DOCUMENTS) >= _DOCUMENTS_LIMIT
+                or sum(len(row[1]) for row in _DOCUMENTS.values()) + len(kept) > _DOCUMENT_CACHE_BYTES):
+            _DOCUMENTS.clear()   # shortcut: refilled by the next reads; memory stays bounded by the limits
+        _DOCUMENTS[str(target)] = [_stamp(status), kept, None]
     return _without_test_writer(document)
 
 
@@ -1281,11 +1293,12 @@ def skill_result(inner):
     return produced, 'Skill ran %d nodes' % len(inner['order'])
 
 
-def linked_session(params):
-    """Follow identity across APPTIDY renames; never execute a replacement at an old path."""
+def linked_session(params, *, shared=False):
+    """Follow identity across APPTIDY renames; never execute a replacement at an old path.
+    shared: a read-only caller (read_document(shared=True))."""
     path = local_path(params.get('session_file'))
     try:
-        document = read_document(path)
+        document = read_document(path, shared=shared)
     except FileNotFoundError:
         matches = [row for row in load_skills() if row['skill']['id'] == params.get('skill')]
         if len(matches) != 1:

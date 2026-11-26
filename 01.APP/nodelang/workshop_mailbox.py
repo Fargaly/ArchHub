@@ -615,8 +615,10 @@ def _reply_recipients(history, message, identity, declaration, declarations, rep
             target = message["content"].split("\n", 1)[0][3:-1]
             recipients = [{"session":"address:" + target.casefold(), "agent":target}]
     matched = []
+    index = getattr(declarations, "by_session", None)   # the tick's _Known: one lookup, not a 6000-row scan per recipient
     for recipient in recipients:
-        bound = next((row for row in declarations if row["session"] == recipient["session"]), {})
+        bound = (index.get(recipient["session"], {}) if index is not None
+                 else next((row for row in declarations if row["session"] == recipient["session"]), {}))
         native = recipient.get("native_session_id") or bound.get("native_session_id")
         # Address-only threads can be answered by another connection in that same thread.
         if (not native and recipient["session"].startswith("address:")
@@ -655,6 +657,9 @@ def _delivery_receipt(history, message, recipient, event, *, now=None, **details
         created_at=datetime.fromtimestamp(now, timezone.utc).isoformat() if now is not None else None)
 
 
+_RECEIPT_VALUES = {}   # receipt text -> its parsed value, read-only
+
+
 def delivery_events(history, message):
     rows = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND reply_to=? "
         "AND author=? AND category=? ORDER BY sequence", (ROOM, message["id"], DELIVERY_AUTHOR, DELIVERY_CATEGORY))
@@ -662,7 +667,11 @@ def delivery_events(history, message):
     for row in rows:
         if not row["idempotency_key"].startswith(DELIVERY_PREFIX):
             continue
-        value = json.loads(row["content"])
+        value = _RECEIPT_VALUES.get(row["content"])
+        if value is None:   # a receipt's text never changes: parsed once, not on every tick (all values are scalars)
+            if len(_RECEIPT_VALUES) >= 65536:
+                _RECEIPT_VALUES.clear()   # shortcut: refilled by the next reads; memory stays bounded by the limit
+            value = _RECEIPT_VALUES[row["content"]] = json.loads(row["content"])
         entry = result.setdefault(value["recipient"], {})
         entry[value["event"]] = {**value, "created_at":row["created_at"], "sequence":row["sequence"]}
     sequence = message.get("sequence")
@@ -1543,11 +1552,7 @@ class WorkshopInjection:
                 self._pending[message["id"]] = message["sequence"]
         replies = [raw for raw in [*rows, *latest] if raw["reply_to"] is not None and raw["id"] not in self._replies_done]
         # Mail waiting for an absent holder only moves when the declared roster changes: one SQL read, no probes.
-        roster = (history._db.execute("SELECT count(*), max(json_extract(record,'$.updated_at')) "
-                                      "FROM workshop_declarations").fetchone()
-                  if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone()
-                  else None)
-        roster = tuple(roster) if roster is not None else None
+        roster = _roster(history._db)
         # Pending mail is worth a pass while the last pass made progress or the roster changed; a backlog that the
         # last pass could not move (its holders are absent) waits for a new declaration.
         movable = bool(self._pending) and (self._progress or roster != self._waiting_roster)
@@ -1814,6 +1819,19 @@ DECLARATIONS_MARKER_SCHEMA = (
       "BEGIN UPDATE workshop_declarations_version SET counter=counter+1; END" % (event.lower(), event)
       for event in ("INSERT", "UPDATE", "DELETE")))
 _RECORDS = {}   # database file -> (counter, record texts); only the newest read per file is kept
+
+
+def _roster(connection):
+    """A value that changes whenever the declared roster may have: the trigger counter (one row) where it is installed,
+    else the full-table count and newest update (17.7 ms on 6000 rows, every tick)."""
+    present = {name for name, in connection.execute("SELECT name FROM sqlite_master WHERE name IN (?,?,?,?,?)",
+                                                    ("workshop_declarations",) + _MARKED)}
+    if "workshop_declarations" not in present:
+        return None
+    if len(present) == 5:
+        return ("counter", connection.execute("SELECT counter FROM workshop_declarations_version").fetchone()[0])
+    return tuple(connection.execute("SELECT count(*), max(json_extract(record,'$.updated_at')) "
+                                    "FROM workshop_declarations").fetchone())
 
 
 def _records(connection, records=None):

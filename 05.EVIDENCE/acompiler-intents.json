@@ -65,6 +65,8 @@
         "02.TESTS/tests_js/settingsmatch.test.cjs",
         "02.TESTS/tests_js/studio_canvaslook.test.cjs",
         "02.TESTS/tests_js/session_properties_live.cjs",
+        "03.TOOLS/tools/real_app_check/scenarios/menu_owner_data.mjs",
+        "03.TOOLS/tools/real_app_check/scenarios/settings.mjs",
         "02.TESTS/tests_js/studio_wsinject.test.cjs",
         "02.TESTS/tests_js/wsadd.test.cjs",
         "02.TESTS/tests_replica/test_command_registry.py",

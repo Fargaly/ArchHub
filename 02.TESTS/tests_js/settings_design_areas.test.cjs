@@ -250,7 +250,7 @@ test('the five Settings pages show all 44 design cards in order with live owners
    assert.ok(await soon.evaluateAll(parts=>parts.every(node=>node.getAttribute('aria-disabled')==='true'&&node.querySelector('.soon-part[inert]'))),area+' unsupported controls must stay inert');
   }
   // The new doors open the existing owner screens.
-  for(const [route,door,target] of [['Account','Open Community','community'],['Agents','Open Meetings','meetings'],['Connections','Open model providers','settings/Providers'],['Connections','Open connected devices','access'],['Connections','Open notification setting','settings/BABOOM']]){
+  for(const [route,door,target] of [['Account','Open Community','community'],['Agents','Open Meetings','meetings'],['Connections','Open model providers','settings/Providers'],['Connections','Open connected devices','settings/Access'],['Connections','Open notification setting','settings/BABOOM']]){
    await page.evaluate(r=>window.goSettings(r),'settings/'+route);
    await page.locator(`[data-screen="settings/${route}"]`).waitFor();
    await page.locator('.sheet-content').getByRole('button',{name:door,exact:true}).click();

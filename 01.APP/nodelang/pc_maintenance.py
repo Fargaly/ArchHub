@@ -158,6 +158,30 @@ def prune_cache(state_dir, limit_gb) -> list:
     return removed
 
 
+def archive_inactive_conversations(history, days, now=None) -> list:
+    """Settings > This PC > Conversation retention: a Workshop conversation (task and its thread) with no activity
+    for `days` moves to the existing archive (workshop_tasks.archive). Nothing is deleted: its .archhub file and
+    messages stay, and Restore brings it back. Each archive is read back before it counts."""
+    from datetime import datetime, timedelta, timezone
+    from . import workshop_tasks
+    if type(days) is not int or not 1 <= days <= 3650:
+        raise ValueError('Choose a retention of 1 to 3650 days.')
+    moment = now or datetime.now(timezone.utc)
+    rows = history._db.execute(
+        "SELECT id, revision FROM workshop_tasks WHERE archived=0 AND updated_at < ? "
+        "AND (lease_until IS NULL OR lease_until < ?)",
+        ((moment - timedelta(days=days)).isoformat(), moment.timestamp())).fetchall()
+    archived = []
+    for task, revision in rows:
+        if not workshop_tasks.archive(history, task, revision):
+            continue  # it changed since the read: it stays active
+        after = workshop_tasks.get(history, task)
+        if not after or not after['archived'] or (after['session_path'] and not Path(after['session_path']).is_file()):
+            raise RuntimeError('Archive read-back failed for ' + task)
+        archived.append(task)
+    return archived
+
+
 def _redact(text: str) -> str:
     for pattern in _TOKEN_PATTERNS:
         text = pattern.sub('[redacted]', text)

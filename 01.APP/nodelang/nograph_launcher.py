@@ -420,10 +420,11 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             prune_logs(state_dir, _setting(state_dir, 'log_keep_days'))
             prune_cache(state_dir, _setting(state_dir, 'cache_limit_gb'))
             days = _setting(state_dir, 'conversation_retention_days')
-            if days:  # Conversation retention archives old transcripts; they stay readable, nothing is deleted
+            if days:  # Conversation retention archives old conversations; they stay readable, nothing is deleted
+                from .pc_maintenance import archive_inactive_conversations
                 from .workshop_mailbox import application_history
                 with application_history() as history:
-                    history.archive_inactive(days)
+                    archive_inactive_conversations(history, days)
         except (OSError, ValueError, RuntimeError) as refused:
             print('  logs       : prune skipped (%s)' % refused, flush=True)
     QTimer.singleShot(60_000, prune_old_logs)

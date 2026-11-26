@@ -124,19 +124,19 @@ def test_read_only_workspace_refuses_agent_writes_inside_it_only_when_on(tmp_pat
 
 
 def test_conversation_retention_archives_and_never_deletes(tmp_path):
-    from nodelang.conversation_history import ConversationHistoryStore
-    now = [1_800_000_000.0]
-    with ConversationHistoryStore(tmp_path / "workshop.sqlite3", instance_id="room", retention_clock=lambda: now[0]) as history:
-        history.initialize_retention()
-        for room in ("old-room", "new-room"):
-            history.append(room, author="Agent", content="kept text", idempotency_key=room + "-1")
-            history.record_activity(room)
-        now[0] += 25 * 86400
-        history.record_activity("new-room")
+    from datetime import datetime, timedelta, timezone
+    from nodelang import workshop_tasks
+    from nodelang.pc_maintenance import archive_inactive_conversations
+    from nodelang.workshop_mailbox import application_history
+    with application_history(database=tmp_path / "workshop.sqlite3") as history:
+        old = workshop_tasks.create(history, "Old conversation", "test")
+        new = workshop_tasks.create(history, "New conversation", "test")
+        old_id, new_id = old["id"], new["id"]
+        later = datetime.now(timezone.utc) + timedelta(days=25)
+        history._db.execute("UPDATE workshop_tasks SET updated_at=? WHERE id=?", (later.isoformat(), new_id))
         with pytest.raises(ValueError):
-            history.archive_inactive(0)
-        assert history.archive_inactive(20) == {"archived": ["old-room"]}
-        old = history.retention_status("old-room")
-        assert old["archived_at"] is not None and old["purged_messages"] == 0 and old["last_sequence"] == 1
-        assert history.retention_status("new-room")["archived_at"] is None
-        assert history.archive_inactive(20) == {"archived": []}  # already archived: nothing moves twice
+            archive_inactive_conversations(history, 0)
+        assert archive_inactive_conversations(history, 20, now=later) == [old_id]
+        assert workshop_tasks.get(history, old_id)["archived"] == 1  # archived, the row and its file stay
+        assert workshop_tasks.get(history, new_id)["archived"] == 0
+        assert archive_inactive_conversations(history, 20, now=later) == []  # nothing moves twice

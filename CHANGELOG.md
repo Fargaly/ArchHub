@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261126-0751-75f10a3
+
+- Published build 20261126-0751-75f10a3 (source 75f10a3).
+- Installer SHA-256: `e01af40dc12b36eda57f9305e66f29a8d507d67c381cb8d31e09db81f525d9ce`.
+- Built at 2026-11-26T03:51:57Z.
+
+Source: 75f10a3c.
+
 ## 20261126-0535-e24eeb4
 
 - Published build 20261126-0535-e24eeb4 (source e24eeb4).

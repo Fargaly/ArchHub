@@ -35,7 +35,8 @@ def _broker(service: str, route: str, body=None, port=None, wait=INFO_WAIT) -> d
 
 def _sessions(service: str) -> dict:
     from . import host_brokers as brokers
-    rows = brokers.broker_sessions(service, include_document=False)
+    # The add-in writes no document into its session file; only /info names it (busy -> last known).
+    rows = brokers.broker_sessions(service, include_document=True)
     return {"ok": bool(rows), "sessions": rows}
 
 

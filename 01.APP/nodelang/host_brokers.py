@@ -70,6 +70,15 @@ BROKER_NODE = {
 }
 
 
+# Last document each live broker named on /info, keyed (service, port, pid): a busy host is reported with it.
+_LAST_DOCUMENT: dict = {}
+
+
+def _info_document(answer) -> str:
+    return (answer.get("document") or answer.get("document_title") or answer.get("title") or
+            answer.get("doc") or answer.get("document_name") or "")
+
+
 def broker_sessions(service: str, *, include_document=True) -> list[dict]:
     """Discover session files, then verify each live broker's identity."""
     from .clean_revit_adapter import _call, _CONNECT_TIMEOUT, _PING_TIMEOUT
@@ -105,21 +114,23 @@ def broker_sessions(service: str, *, include_document=True) -> list[dict]:
                     service == "revit" and (not ping.get("revit_version") or
                     identity not in (None, "", "revit-mcp"))):
                 continue
-            info = {}
+            info, busy = {}, False
             if include_document:
                 import urllib.error
                 try:
-                    # Cap hard: live add-in /info can hang; fixtures answer immediately.
+                    # Cap hard: live add-in /info runs on the host UI thread and waits while the host is busy.
                     info = _call(port, "/info", timeout=BROKER_NODE["params"]["info_timeout_seconds"])
                 except (urllib.error.URLError, OSError, ValueError, TimeoutError):
-                    info = {}
-            document = (info.get("document") or info.get("document_title") or info.get("title") or
-                        info.get("doc") or info.get("document_name") or
+                    busy = True
+                if info.get("status") == "ok":
+                    _LAST_DOCUMENT[(service, port, pid)] = _info_document(info)
+            document = (_info_document(info) or _LAST_DOCUMENT.get((service, port, pid)) or
                         row.get("document") or row.get("document_title") or row.get("title") or "")
             found[port] = {"port": port, "pid": pid, "service": identity,
                 "revit_version": ping.get("revit_version"),
                 "acad_version": info.get("acad_version") or ping.get("acad_version"),
-                "service_version": ping.get("version"), "document": document}
+                "service_version": ping.get("version"), "document": document,
+                **({"state": "busy"} if busy else {})}
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return [found[port] for port in sorted(found)]
@@ -149,11 +160,14 @@ def broker_call(service: str, route: str, body=None, *, port=None, timeout=10.0)
                       "acad_version": row.get("acad_version"), "version": row.get("service_version"),
                       "document": row.get("document") or "", "info_source": "ping-discovery"}
             if service == "revit":
-                return {**answer, "ok": False, "status": "unavailable", "document": None}
+                # Pinged but /info did not answer: the host is busy, not gone; name its last known document.
+                return {**answer, "ok": False, "status": "busy",
+                        "document": _LAST_DOCUMENT.get((service, row["port"], row["pid"])) or None}
         if service == "revit":
             ok = answer.get("status") == "ok"
-            document = (answer.get("document") or answer.get("document_title") or answer.get("title") or
-                        answer.get("document_name") or "") if ok else None
+            document = _info_document(answer) if ok else None
+            if ok:
+                _LAST_DOCUMENT[(service, row["port"], row.get("pid"))] = document
             return {**answer, "ok": ok, "port": row["port"], "document": document}
         if answer.get("status") != "ok":
             answer = {"status": "ok", "service": row.get("service"), "pid": row.get("pid"),

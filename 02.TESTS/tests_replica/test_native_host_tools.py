@@ -54,6 +54,7 @@ def rig(monkeypatch, tmp_path):
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(json.dumps({"host_effects": dict.fromkeys(["revit", "acad", "max", "rhino", "blender"], True)}))
     sessions = [REVIT.copy(), ACAD.copy()]
+    monkeypatch.setattr(host_brokers, "_LAST_DOCUMENT", {})
     monkeypatch.setattr(host_brokers, "broker_sessions", lambda service, **kw: [row for row in sessions
         if bool(row.get("revit_version")) == (service == "revit") and row.get("service") != "max-mcp"])
     from nodelang import clean_revit_adapter
@@ -151,7 +152,7 @@ def test_native_revit_info_keeps_authorized_result(rig, signed_reply, document):
 def test_native_revit_info_timeout_keeps_discovery_without_a_document(rig, signed_reply):
     calls = signed_reply(None, {})
     reply = payload(tool(rig, "revit_info"))
-    assert reply["ok"] is False and reply["status"] == "unavailable"
+    assert reply["ok"] is False and reply["status"] == "busy"
     assert reply["document"] is None and reply["info_source"] == "ping-discovery"
     assert reply["revit_version"] == REVIT["revit_version"] and reply["port"] == REVIT["port"]
     assert calls == [("/info", 1.5)]

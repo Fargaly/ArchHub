@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261127-0014-0377f10
+
+- Published build 20261127-0014-0377f10 (source 0377f10).
+- Installer SHA-256: `7a35f6c9c79f8fc78346b2d4b49f4dc9893bac8d0991f206e91d0c237be3a545`.
+- Built at 2026-11-26T20:14:07Z.
+
+Source: 0377f10d.
+
 ## 20261126-1106-4c008b6
 
 - Published build 20261126-1106-4c008b6 (source 4c008b6).

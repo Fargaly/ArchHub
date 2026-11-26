@@ -129,7 +129,7 @@ test('every existing menu item preserves its state and owner action calls alongs
   ]);
   const movedToNodeMore=new Set(['Colour','Save as node type']);
   // Founder 2026-11-26 (one door): these pages became cards of Settings; their doors open the card.
-  const MOVED={automations:'settings/Automations',colleagues:'settings/Team',brain:'settings/Brain',social:'settings/Social',access:'settings/Access'};
+  const MOVED={system:'settings/System graph',automations:'settings/Automations',colleagues:'settings/Team',brain:'settings/Brain',social:'settings/Social',access:'settings/Access'};
   let mapped=0;
   for(const fixture of fixtures){
     const state={copied:fixture.copied,graph:{nodes:[{...node,...fixture.node}],wires:[{id:'wire',from:'node',fromPort:'param:value',to:'node',toPort:'in',...fixture.wire}]},
@@ -161,7 +161,7 @@ test('every existing menu item preserves its state and owner action calls alongs
       // #372: Rerun / Run this step runs the node again (runNode(id, true)); Open Home navigates to home; every other control keeps its exact owner call.
       const expected=targetLabel==='Open Home'?[['close'],['u.go','home']]
         // Founder 2026-11-26 (one door): Dependencies opens its Settings section; Logs & receipts is the App health dialog.
-        :rawLabel==='Model routing'?[['u.go','settings/Models']]:rawLabel==='Runs'?[['u.show','App health']]:rawLabel==='Dependencies'?[['u.go','settings/Dependencies']]:rawLabel==='Logs & receipts'?[['u.show','App health']]:rawLabel==='Feedback'&&fixture.kind==='App menu'?[['u.show','Send feedback']]:rawLabel==='Send feedback'&&fixture.kind==='Tray'?[['close'],['u.show','Send feedback']]
+        :rawLabel==='Model routing'?[['u.go','settings/Models']]:rawLabel==='Runs'?[['u.show','App health']]:rawLabel==='Present'&&fixture.kind==='App menu'?[['u.show','Present']]:rawLabel==='First run'&&fixture.kind==='App menu'?[['u.show','First run']]:rawLabel==='Dependencies'?[['u.go','settings/Dependencies']]:rawLabel==='Logs & receipts'?[['u.show','App health']]:rawLabel==='Feedback'&&fixture.kind==='App menu'?[['u.show','Send feedback']]:rawLabel==='Send feedback'&&fixture.kind==='Tray'?[['close'],['u.show','Send feedback']]
         :plain(old.calls).map(call=>rawLabel==='Rerun'&&call[0]==='api.runNode'?[...call,true]
           :rawLabel==='Make a task from this'&&call[0]==='api.createTask'?['api.createTask',call[1],'','','','task']:call[0]==='u.go'&&MOVED[call[1]]?['u.go',MOVED[call[1]]]:call);
       assert.deepEqual(plain(activeRig.calls),expected,fixture.kind+' '+targetLabel);

@@ -76,13 +76,13 @@
       [mode, setMode] = React.useState('Deck');
     const slide = slides.find(r => r.id === id) || slides[0],
       index = slides.indexOf(slide);
-    if(!slide)return <main className="page" data-screen="present"><section aria-label="Action result" aria-live="polite">
+    if(!slide)return <section className="present-dialog" data-design="canvas.present"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
       {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.research.surfaces.retry",wire.retry)}>Retry</Btn></div>}
-    </section><Heading title="Present"><Btn p onClick={event => dispatch("wire.research.surfaces.3", () => (async()=>{const row=await wire.call(api.addSlide);if(row)setId(row.id);})(event))}>Add slide</Btn></Heading><window.UI.Empty>No slides in this workflow. Add the first slide.</window.UI.Empty></main>;
-    return <main className="page" data-screen="present"><section aria-label="Action result" aria-live="polite">
+    </section><Heading title="Present"><Btn p onClick={event => dispatch("wire.research.surfaces.3", () => (async()=>{const row=await wire.call(api.addSlide);if(row)setId(row.id);})(event))}>Add slide</Btn></Heading><window.UI.Empty>No slides in this workflow. Add the first slide.</window.UI.Empty></section>;
+    return <section className="present-dialog" data-design="canvas.present"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
       {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
@@ -105,7 +105,7 @@
               marginTop: 14
             }}>Story<textarea aria-label="Slide story" value={slide.body} onChange={event => wire.act(() => (e => wire.call(() => api.editSlide(slide.id, {
                 body: e.target.value
-              })))(event))} /></label><Btn sm disabled={slides.length === 1} onClick={event => dispatch("wire.research.surfaces.9", () => (() => wire.call(() => api.removeSlide(slide.id)))(event))}>Remove slide</Btn></Card></div></div></main>;
+              })))(event))} /></label><Btn sm disabled={slides.length === 1} onClick={event => dispatch("wire.research.surfaces.9", () => (() => wire.call(() => api.removeSlide(slide.id)))(event))}>Remove slide</Btn></Card></div></div></section>;
   }
   function ModelAvailability() {
     const wire = window.UI.useWireSocial();

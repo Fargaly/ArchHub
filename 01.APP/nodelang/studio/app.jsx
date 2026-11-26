@@ -630,7 +630,7 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'xray' ? <window.UI.Xray /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'xray' ? <window.UI.Xray /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -1025,7 +1025,7 @@
           {helpOpen && <div role="group" aria-label="Help and feedback" style={{paddingLeft: 10, display: 'grid', gap: 2}}>
             <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('docs'); }}, event)}>Docs</button>
             <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Send feedback')}, event)}>Send feedback…</button>
-            <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('system'); }}, event)}>How everything connects</button>
+            <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('settings/System graph'); }}, event)}>How everything connects</button>
           </div>}
           <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show("What's new")}, event)}>What&apos;s new</button>
           <button type="button" className="listbutton" onClick={event => executeAction('projects.controls.activate', {handler: () => { close(); u.go('library'); }}, event)}>Get apps and extensions</button>
@@ -1117,7 +1117,7 @@
     if (k === 'ArchHub menu') {
       const entries = [
         ['All pages…', () => u.show('Search')],
-        ['How everything connects', () => u.go('system')],
+        ['How everything connects', () => u.go('settings/System graph')],
         ['App health', () => u.show('App health')],
         ['Community', () => u.go('community')],
         ['Social media', () => u.go('settings/Social')],
@@ -1664,7 +1664,7 @@
         m,
         text,
         u
-      }, event)}>Review change</Btn></>;else if (k === 'App health') body = <window.UI.AppHealth close={close} />;else if (k === 'Tool check') body = <><p>Check each managed tool from its Settings row.</p><div className="grid">{s.settings.filter(r => r.page === 'Dependencies').map(r => <window.UI.SettingControl key={r.id} row={r} />)}</div></>;else if (k === 'Meeting notes') body = <><h2>{s.meeting.title || "Meeting notes"}</h2><p>{s.meeting.actions.join(" · ") || "No meeting notes available."}</p><Btn onClick={event => executeAction("appShell.OpenTeam.95", {
+      }, event)}>Review change</Btn></>;else if (k === 'App health') body = <window.UI.AppHealth close={close} />;else if (k === 'Present') body = <window.UI.Present />;else if (k === 'First run') body = <window.UI.FirstRun close={close} />;else if (k === 'Tool check') body = <><p>Check each managed tool from its Settings row.</p><div className="grid">{s.settings.filter(r => r.page === 'Dependencies').map(r => <window.UI.SettingControl key={r.id} row={r} />)}</div></>;else if (k === 'Meeting notes') body = <><h2>{s.meeting.title || "Meeting notes"}</h2><p>{s.meeting.actions.join(" · ") || "No meeting notes available."}</p><Btn onClick={event => executeAction("appShell.OpenTeam.95", {
         u
       }, event)}>Open team</Btn></>;else if (k === 'What’s new') body = <><p>One companion, one Workshop, editable nodes and settings, and a clear review before a change.</p><Btn onClick={event => executeAction("appShell.UpdatesAbout.96", {
         u
@@ -2302,7 +2302,7 @@
   function appShellOpenSystemGraph73({
     u
   }, event) {
-    const handler = () => u.go('system');
+    const handler = () => u.go('settings/System graph');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl75({

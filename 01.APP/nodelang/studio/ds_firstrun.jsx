@@ -26,9 +26,11 @@
     Chip,
     ApprovalCard
   } = window.UI;
-  function FirstRun() {
+  function FirstRun({close}) {
     const s = useData(),
       u = useApp();
+    // A dialog (founder 2026-11-26: no page of its own): leaving it for a place closes it.
+    const go = route => { close?.(); return u.go(route); };
     const [step, setStep] = React.useState(0),
       [task, setTask] = React.useState(null),
       [first, setFirst] = React.useState('');
@@ -52,12 +54,12 @@ FirstRunAction4: (event) => (async () => {
                 setStep(4);
               }
             })(event),
-FirstRunAction5: (event) => (() => u.go('canvas'))(event),
-FirstRunAction6: (event) => (() => { u.setTask(task); u.go('workshop'); })(event),
+FirstRunAction5: (event) => (() => go('canvas'))(event),
+FirstRunAction6: (event) => (() => { u.setTask(task); close?.(); return task ? u.openTaskFile(task, 'split') : u.go('home'); })(event),
 FirstRunAction7: (event) => (() => { if (s.tasks.find(t => t.id === task)?.status !== 'DONE') throw Error('Open this task in Workshop and wait for its checked result, then retry.'); setStep(5); })(event),
-FirstRunAction8: (event) => (() => u.go('canvas'))(event),
+FirstRunAction8: (event) => (() => go('canvas'))(event),
 FirstRunAction9: (event) => (() => u.schedule(task))(event),
-FirstRunAction10: (event) => (() => u.go('home'))(event),
+FirstRunAction10: (event) => (() => go('home'))(event),
 FirstRunAction11: (event) => (() => setStep(step + 1))(event),
 FirstRunAction12: (event) => (() => u.act(() => api.openProgram('revit')))(event)});
     return <>{actionState.status === 'waiting' ? <p role="status">Waiting for the account or task owner…</p> : actionState.status === 'error' ? <window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /> : actionState.status === 'loaded' ? <p role="status">{actionState.message || 'Request confirmed'}</p> : actionState.status === 'empty' ? <p className="muted">Choose how to get started.</p> : null}<main className="page" data-screen="first-run" style={{

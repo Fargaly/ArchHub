@@ -479,7 +479,7 @@
       ];
     } else {
       const names = Object.fromEntries(window.ArchHubCommandRegistry.commands.filter(c => c.menuPage).sort((a,b)=>a.menu_order-b.menu_order).map(c => [c.action.route, c.label]));
-      groups = [[...Object.keys(names).map(route => bind('page.' + route, () => u.go(route))), bind('menu.tray.receipts', () => u.show('App health'), null, false), bind('menu.tray.feedback', () => u.show('Send feedback'), null, false)], [bind('menu.settings', () => u.go('settings/Account'), null, false)]];
+      groups = [[...Object.keys(names).map(route => bind('page.' + route, () => u.go(route))), bind('menu.tray.receipts', () => u.show('App health'), null, false), bind('menu.tray.feedback', () => u.show('Send feedback'), null, false), bind('menu.present', () => u.show('Present'), null, false), bind('menu.first.run', () => u.show('First run'), null, false)], [bind('menu.settings', () => u.go('settings/Account'), null, false)]];
     }
     if(more&&kind==='Node menu'&&n&&!n.params?.session_file){
       groups=[

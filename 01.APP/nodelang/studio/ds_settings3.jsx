@@ -1012,7 +1012,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       SettingsAction9: () => u.act(api.acknowledgeUpdate),
       SettingsAction10: () => u.act(api.checkForUpdates),
       SettingsAction11: () => u.show('What’s new'),
-      SettingsAction12: () => u.go('first-run'),
+      SettingsAction12: () => u.show('First run'),
       SettingsAction13: () => u.go('docs'),
       SettingsAction14: () => u.show('Send feedback')
     });

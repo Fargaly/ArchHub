@@ -98,7 +98,7 @@ def test_every_revit_script_compiles_against_the_installed_revit_api_and_core(tm
         scripts.append((op, revit._script_for(op, rows)))
     for version in ("2013", "2018"):
         scripts.append(("dwg-export-" + version, revit._dwg_script(Path(r"C:\Model.rvt"), Path(r"C:\Output"),
-                                                               "Office DWG export", version, [101, 202])))
+                                                               "Office DWG export", version, [101, 202], "ISO13567", True)))
     # The library authoring cards send their scripts through the same broker.
     scripts += [("tag-rooms", library_engines._TAG_ROOMS),
                 ("place-tags", library_engines._PLACE_TAGS % (json.dumps("Doors"), "true")),
@@ -106,7 +106,7 @@ def test_every_revit_script_compiles_against_the_installed_revit_api_and_core(tm
                 ("place-on-new-sheet-with-title-block", library_engines._PLACE_ON_SHEET % (json.dumps("A102"), json.dumps("Plan"), revit.title_block_lookup("Office A1 title block"), revit.TITLE_BLOCK_READBACK)),
                 ("create-sheet-with-title-block", revit._script_for("revit.create_sheets", {**rows, "title_block": "Office A1 title block"})),
                 *[("export-pdf-" + fmt + "-" + mode,
-                   library_engines._EXPORT_PDF % (json.dumps(r"C:\out"), wanted, mode, json.dumps(project_set), fmt))
+                   library_engines._EXPORT_PDF % (json.dumps(r"C:\out"), wanted, mode, json.dumps(project_set), fmt, "BlackLine"))
                   for fmt in library_engines.PDF_PAPER_FORMATS.values()
                   for wanted, mode, project_set in ((json.dumps("A101"), "false", ""), ("", "true", ""),
                                                   ("", "true", "Office issue set"), ("", "true", "Current sheet only"))]]

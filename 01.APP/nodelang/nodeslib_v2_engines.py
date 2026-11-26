@@ -586,6 +586,8 @@ def ifc_export_request(params, feeds, document):
 
 DWG_VERSIONS = ("2018", "2013")
 DWG_PROJECT_SETUPS = ("Office DWG export", "Revit default")
+# Settings › Projects › CAD › Layer standard -> Revit's DWG layer mapping standard.
+DWG_LAYER_STANDARDS = {"Office layers (AIA based)": "AIA", "ISO 13567": "ISO13567"}
 
 
 def validate_dwg_options(request):
@@ -601,6 +603,8 @@ def validate_dwg_options(request):
         raise ValueError("Choose distinct positive Revit view IDs.")
     if request.get("session") not in {str(port) for port in BROKER_PORTS}:
         raise ValueError("Choose the registered Revit session port.")
+    if request.get("layers", "") not in ("", *DWG_LAYER_STANDARDS.values()) or type(request.get("shared_coords", False)) is not bool:
+        raise ValueError("Choose the Office or ISO 13567 layer standard and the coordinates.")
 
 
 def dwg_export_request(params, feeds, document):
@@ -625,6 +629,9 @@ def dwg_export_request(params, feeds, document):
         else:
             raise ValueError("Choose a DWG setup source or enter its name.")
     request["setup"] = setup
+    # Settings › Projects › CAD › Layer standard and Templates › Coordinates, part of the reviewed request.
+    request["layers"] = DWG_LAYER_STANDARDS.get(resolve_setting(document, "Projects.Layer standard")["value"], "AIA")
+    request["shared_coords"] = resolve_setting(document, "Projects.Coordinates")["value"] == "Shared coordinates"
     if isinstance(request["views"], list):
         ids = []
         for row in request["views"]:

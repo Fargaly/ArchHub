@@ -2099,6 +2099,7 @@ def _schedules():
     from datetime import datetime
     from .canvas_triggers import next_delay, _off
     from .session_files import last_automation_runs, read_document
+    from .settings_owner import settings_zone
     service = getattr(_SERVER, 'triggers', None)
     if service is None:
         return []
@@ -2130,7 +2131,7 @@ def _schedules():
             if last:
                 status = labels[last['state']]
                 try:
-                    status += ' · ' + datetime.fromtimestamp(last.get('end') or last.get('at')).strftime('%H:%M')
+                    status += ' · ' + datetime.fromtimestamp(last.get('end') or last.get('at'), settings_zone()).strftime('%H:%M')
                 except Exception:  # Only the saved timestamp can be malformed here.
                     status += ' · time unavailable'
                 last = {**last, 'status': status}
@@ -2820,9 +2821,16 @@ def r_workspace_roots(s, req):
     kind, source = body.get('template', ''), body.get('template_source', '')
     window = body.get('template_window', '')
     if action == 'create':
-        if type(kind) is not str or type(source) is not str or type(window) is not str or kind not in ('', 'Office project tree') or (kind and not source) or (not kind and source):
-            raise Refused('Choose the Office template folder; the ISO template has no approved source yet.')
-        if kind:
+        if type(kind) is not str or type(source) is not str or type(window) is not str or kind not in ('', 'Office project tree', 'ISO 19650 CDE tree') or (kind == 'Office project tree') != bool(source):
+            raise Refused('Choose the Office template folder, or the ISO 19650 CDE tree from Settings › Projects › CDE folders.')
+        if kind == 'ISO 19650 CDE tree':
+            from .settings_owner import declared_setting
+            from .workspace_roots_catalogue import cde_directories
+            try:
+                directories = cde_directories(declared_setting('Projects.Folder order'), declared_setting('Projects.Discipline codes'))
+            except ValueError as error:
+                raise Refused(str(error)) from error
+        elif kind:
             if not Path(source).is_absolute() or '..' in Path(source).parts:
                 raise Refused('Choose the template at its absolute registered or selected location.')
             def source_admitted(roots):

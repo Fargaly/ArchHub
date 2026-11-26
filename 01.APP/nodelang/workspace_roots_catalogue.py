@@ -55,6 +55,25 @@ def read_project_template(template_source, parent, name, governed_root=''):
     return directories
 
 
+CDE_STATES = ('WIP', 'Shared', 'Published', 'Archive')
+CDE_DATA_TYPES = ('Models', 'Drawings', 'Documents')
+
+
+def cde_directories(order, disciplines):
+    """The ISO 19650 CDE tree from Settings › Projects › CDE folders: state, then data type and discipline in its order."""
+    codes = list(dict.fromkeys(code.strip() for code in str(disciplines).split(',') if code.strip()))
+    if not codes or any(not code.isalpha() or not code.isupper() or len(code) > 4 for code in codes):
+        raise ValueError('Enter discipline codes such as A, S, M, E, P in Settings › Projects › CDE folders.')
+    discipline_first = order == 'State, then discipline, then data type'
+    tree = []
+    for state in CDE_STATES:
+        tree.append(Path(state))
+        for outer in (codes if discipline_first else CDE_DATA_TYPES):
+            tree.append(Path(state, outer))
+            tree += [Path(state, outer, inner) for inner in (CDE_DATA_TYPES if discipline_first else codes)]
+    return tree
+
+
 def create_project_folder(parent, name, governed_root='', template_directories=None):
     """Create one new work folder; registration stays with the workspace owner."""
     if (type(name) is not str or not name or len(name) > 100 or name != name.strip()

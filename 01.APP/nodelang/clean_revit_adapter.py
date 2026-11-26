@@ -1640,7 +1640,7 @@ def _ifc_step_digest(path, schema_family):
     return digest.hexdigest()
 
 
-def _dwg_script(source, stage, setup, version, views):
+def _dwg_script(source, stage, setup, version, views, layers="", shared_coords=None):
     return """
 if (Doc == null || Doc.IsFamilyDocument || Doc.IsLinked || !String.Equals(Doc.PathName, %s, StringComparison.OrdinalIgnoreCase))
     throw new InvalidOperationException("The active document differs from the approved model.");
@@ -1655,6 +1655,9 @@ string setup = %s;
 using (var options = setup.Length == 0 ? new DWGExportOptions() : DWGExportOptions.GetPredefinedOptions(Doc, setup)) {
     if (options == null) throw new InvalidOperationException("The named DWG setup is unavailable.");
     options.FileVersion = ACADVersion.%s;
+    string layers = %s;
+    if (layers.Length > 0) options.LayerMapping = layers;
+    %s
     string folder = %s;
     if (!Doc.Export(folder, "Export", views, options)) throw new InvalidOperationException("Revit declined DWG export.");
     var outputs = new List<string>();
@@ -1663,7 +1666,8 @@ using (var options = setup.Length == 0 ? new DWGExportOptions() : DWGExportOptio
     result = outputs;
 }
 """ % (_cs_string(str(source)), ", ".join(str(view) + "L" for view in views), _cs_string(setup),
-       {"2013": "R2013", "2018": "R2018"}[version], _cs_string(str(stage)))
+       {"2013": "R2013", "2018": "R2018"}[version], _cs_string(layers),
+       "" if shared_coords is None else "options.SharedCoords = %s;" % str(bool(shared_coords)).lower(), _cs_string(str(stage)))
 
 
 def _dwg_files(folder):
@@ -1761,7 +1765,8 @@ def _dwg_export(arguments):
     with tempfile.TemporaryDirectory(prefix=".archhub-dwg-", dir=destination.parent) as temporary:
         stage = Path(temporary) / "files"
         stage.mkdir()
-        script = _dwg_script(source, stage, arguments["setup"], arguments["version"], arguments["views"])
+        script = _dwg_script(source, stage, arguments["setup"], arguments["version"], arguments["views"],
+                             arguments.get("layers", ""), arguments.get("shared_coords"))
         answer = _execute(session, script, "ArchHub DWG export", timeout=EXEC_WAIT_LIMIT, transaction_mode=False)
         if answer.get("status") != "ok":
             raise RevitUnreachable("Revit refused DWG export: %s" % answer.get("error"))

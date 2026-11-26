@@ -1324,6 +1324,12 @@ def pdf_sheet_size(value, document=None):
     return value
 
 
+def pdf_color_depth(document=None):
+    """Settings › Projects › Print and PDF › Pen table: the monochrome pen table prints black lines, the others colour."""
+    from .session_files import resolve_setting
+    return "BlackLine" if resolve_setting(document or {}, "Projects.Pen table")["value"] == "Office monochrome.ctb" else "Color"
+
+
 PDF_SHEET_SETS = ("Office issue set", "Current sheet only", "Sheets changed since the last issue")
 PDF_BASELINE_MISSING = "No verified last-issue baseline for this project. Select sheets explicitly."
 
@@ -1372,6 +1378,7 @@ System.IO.Directory.CreateDirectory(folder);
 var options = new PDFExportOptions();
 options.Combine = false;
 options.PaperFormat = ExportPaperFormat.%s;
+options.ColorDepth = ColorDepthType.%s;
 if (!Doc.Export(folder, sheets, options)) throw new Exception("Revit declined the PDF export");
 var written = new List<string>();
 foreach (var f in System.IO.Directory.GetFiles(folder, "*.pdf")) written.Add(f);
@@ -1434,7 +1441,7 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     run_name = "-".join(part for part in (safe, stamp, uuid4().hex) if part)
     folder = os.path.join(base, run_name)
     script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in dict.fromkeys(wanted)),
-                            str(all_sheets).lower(), json.dumps(project_set), PDF_PAPER_FORMATS[size])
+                            str(all_sheets).lower(), json.dumps(project_set), PDF_PAPER_FORMATS[size], pdf_color_depth())
     try:
         # A sheet set takes longer than a read: three minutes before "did not answer".
         answer = _execute(session, script, "ArchHub publish pdf", timeout=180.0)
@@ -2351,10 +2358,10 @@ COMING_NODE_TYPES = (
     {"id": "place_views_on_sheets", "cat": "document", "title": "Place views on sheets",
      "sub": "Places the views itself so nothing overlaps; you choose the sheet size, the scale and the views",
      "engine": "sheets.place_views",
-     "params": {"sheet_size": "A1", "scale": "1:100", "views": "Plans, sections, schedules"},
+     "params": {"sheet_size": "A1", "scale": "From Projects", "views": "Plans, sections, schedules"},
      "_types": {"sheet_size": "enum", "scale": "enum"},
      "paramDefs": [{"id": "sheet_size", "options": ["A0", "A1", "A3"]},
-                   {"id": "scale", "options": ["1:50", "1:100", "1:200"]}],
+                   {"id": "scale", "options": ["From Projects", "1:50", "1:100", "1:200", "1:500"]}],
      "ports": {"source": [{"id": "sheets", "type": "list"}], "target": [{"id": "views", "type": "list"}]}},
 )
 
@@ -3882,6 +3889,9 @@ def place_views_on_sheets_engine(params: Mapping[str, object], feeds: Mapping[st
         (feeds.get("scale") if isinstance(feeds, Mapping) and feeds.get("scale") is not None else params.get("scale"))
         or "1:100"
     ).strip()
+    if scale_text == "From Projects":  # Settings › Projects › Print and PDF › Default scale
+        from .session_files import resolve_setting
+        scale_text = resolve_setting({}, "Projects.Default scale")["value"]
     if ":" not in scale_text:
         raise ValueError("scale must look like 1:50, 1:100, or 1:200")
     try:

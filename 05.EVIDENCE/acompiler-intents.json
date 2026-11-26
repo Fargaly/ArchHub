@@ -37,6 +37,7 @@
         "01.APP/nodelang/workshop_tasks.py",
         "02.TESTS/tests/test_app_health_activity.py",
         "02.TESTS/tests/test_managed_dependencies_inventory.py",
+        "02.TESTS/tests/test_session_properties.py",
         "02.TESTS/tests/test_you_node_live_profile.py",
         "02.TESTS/tests_js/account_rail_header_whole_design.test.cjs",
         "02.TESTS/tests_js/canvas_whole_design.test.cjs",

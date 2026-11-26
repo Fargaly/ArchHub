@@ -104,7 +104,7 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
     ['Workshop','Agents','Agents','Workshop'],['Automations','Agents','Agents','Automations'],
     ['Library & Mods','Agents','Agents','Tools in the Library'],['BABOOM','Agents','Agents','BABOOM'],
     ['Brain','Account','Account','Brain and cloud sync'],['Providers','Connections','Connections','AI providers'],
-    ['Social','Account','Account','Social media']
+    ['Social','Connections','Connections','Accounts']
    ]){
     await page.evaluate(route=>window.goSettings(route),'settings/'+former);
     const sheet=page.locator('[data-screen="settings/'+screen+'"]');
@@ -137,15 +137,15 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    await page.getByLabel('Run mode',{exact:true}).selectOption('Plan only');
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{permissions:{runMode:'Plan only'}});
    await page.evaluate(()=>window.goSettings('settings/Social'));
-   await page.locator('[data-screen="settings/Account"]').waitFor();
+   await page.locator('[data-screen="settings/Connections"]').waitFor();
    await page.waitForFunction(()=>{
-    const target=document.querySelector('[data-design-section="Social media"] h3'),shell=document.querySelector('.settings-sheet');
+    const target=document.querySelector('[data-design-section="Accounts"] h3'),shell=document.querySelector('.settings-sheet');
     if(!target||!shell)return false;
     const r=target.getBoundingClientRect();
     return shell.getBoundingClientRect().top>=-1&&r.top>=-1&&r.bottom<=window.innerHeight;
    },null,{timeout:3000});
-   // Social media is in its card (founder 2026-11-26: all settings in one place), not a page behind a door.
-   await page.locator('[data-design-section="Social media"] summary',{hasText:'Social inbox, drafts and posts'}).waitFor();
+   // Social media lives in Settings > Connections > Accounts (founder 2026-11-26: all settings in one place), not a page.
+   await page.locator('[data-design="settings.connections.social"] summary',{hasText:'Social inbox, drafts and posts'}).waitFor();
    // Each page shows only its own rows.
    for(const [route,shown,hidden] of [['settings/Privacy','Privacy.Review','Workshop.Keep messages'],['settings/Look','Appearance.Theme','Workshop.Keep messages'],['settings/Updates & About','Privacy.Review','Workshop.Keep messages'],['settings/Workshop','Workshop.Keep messages','Privacy.Review'],['settings/Automations',null,'Workshop.Keep messages'],['settings/Hooks',null,'Workshop.Keep messages']]){
     await page.evaluate(r=>window.goSettings(r),route);

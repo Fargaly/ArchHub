@@ -72,7 +72,7 @@
     Connections:'Connections', 'This PC':'Look, Appearance, System, Advanced, Updates & About'
   };
   // Former page names stay valid links: [the page that holds them now, the section to scroll to].
-  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Account','Social media'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced']};
+  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Connections','Accounts'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced']};
   // Display metadata from the Settings design. Values and writes belong to the settings owners.
   const areaCardSpecs = [
     {area:"Projects", id:"register", title:"Project register", icon:"docs", family:"model", wide:false, rows:[
@@ -447,7 +447,7 @@
     const extras={
       people:<>{window.UI.Access&&<details><summary>Plan, usage and billing</summary><window.UI.Access/></details>}{window.UI.Colleagues&&<details><summary>Team: people and agents</summary><window.UI.Colleagues/></details>}</>,
       community:open('Open Community',()=>u.go('community')),
-      social:window.UI.Social&&<details><summary>Social inbox, drafts and posts</summary><window.UI.Social/></details>
+      social:open('Social inbox in Connections',()=>u.go('settings/Social'))
     };
     return <AreaDesignCards area="Account" live={live} extras={extras} focused={focused}/>;
   }
@@ -485,7 +485,8 @@
     }
     const extras={
       progs:<>{programNotice}{selected&&<p aria-live="polite">{[selected.name,selected.document||selected.document_name||selected.detail||'No document reported',(selected.agents||[]).map(agent=>agent.name||agent).join(', ')].filter(Boolean).join(' · ')}</p>}</>,
-      accts:<>{open('Connect',()=>u.show('Connect'))}{open('Refresh',refresh)}</>,
+      // Design: Settings > Connections > Social holds the social inbox, drafts and posts (no Social media page).
+      accts:<>{open('Connect',()=>u.show('Connect'))}{open('Refresh',refresh)}{window.UI.Social&&<details data-design="settings.connections.social"><summary>Social inbox, drafts and posts</summary><window.UI.Social/></details>}</>,
       ai:focused?.title==='AI providers'?null:open('Open model providers',()=>u.go('settings/Providers')),
       phone:open('Open connected devices',()=>u.go('settings/Access')),
       notify:open('Open notification setting',()=>u.go('settings/BABOOM'))

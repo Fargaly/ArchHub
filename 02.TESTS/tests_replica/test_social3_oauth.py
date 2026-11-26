@@ -207,3 +207,24 @@ def test_social_node_reads_new_whatsapp_messages_into_its_inbox(monkeypatch):
     monkeypatch.setattr(oauth, "whatsapp_messages", lambda **_: {"ok": False, "state": "signin_required", "messages": []})
     with pytest.raises(ValueError, match="Sign in"):
         owner.dispatch("read_whatsapp_inbox", [])
+
+
+def test_pressing_connect_again_restarts_a_waiting_attempt(monkeypatch):
+    # Founder 2026-11-26: "+" showed "connecting" and nothing opened, because a waiting attempt swallowed the click.
+    monkeypatch.setattr(oauth, "_session", lambda path: ("fake-session", "https://fake-broker.test"))
+    monkeypatch.setattr(oauth, "_CURRENT", {})
+    opened = []
+    launch = "https://fake-broker.test/oauth/whatsapp/embedded?state=signed-state"
+    http = lambda *args, **kwargs: (200, {"auth_url": "https://www.facebook.com/v25.0/dialog/oauth?state=signed-state", "browser_url": launch})
+    oauth.start("whatsapp", http=http, opener=opened.append)
+    deadline = time.monotonic() + 4
+    while not opened and time.monotonic() < deadline:
+        time.sleep(0.01)
+    first = oauth._CURRENT["whatsapp"]
+    assert first.active
+    oauth.start("whatsapp", http=http, opener=opened.append)
+    while len(opened) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert opened == [launch, launch]
+    assert first.status()["phase"] == "failed" and oauth._CURRENT["whatsapp"] is not first
+    oauth._CURRENT["whatsapp"].cancel()

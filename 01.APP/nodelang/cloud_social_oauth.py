@@ -380,7 +380,8 @@ def start(provider: str, *, path: Optional[Path] = None,
         return {"phase": "failed", "error": "Choose a supported social network"}
     current = _CURRENT.get(provider)
     if current and current.active:
-        return current.status()
+        # Pressing Connect again restarts: a waiting attempt whose browser page was closed must not swallow the click.
+        current.cancel()
     attempt = CloudSocialAttempt(provider, token, base, opener=opener, http=http, session_path=path)
     _register_local_attempt(provider, attempt)
     attempt.start()

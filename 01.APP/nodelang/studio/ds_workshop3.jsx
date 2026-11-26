@@ -1,12 +1,11 @@
-// ds_workshop3.jsx: the Workshop command center (plate archhub-workshop-command-center-native.png); layout in style.css .ws-*.
-// Work | the task conversation | People & agents. Every row is live Workshop data; Send is the
-// composer's existing @mention path (/api/router/chat -> workshop_live.send_as_founder, live injection).
+// ds_workshop3.jsx: the Workshop's shared parts (task rows, messages, the To list and the composer) used by the Workshop
+// dock panel, the Canvas thread and the dialogs; the standalone Workshop page is gone (founder 2026-11-26).
+// Send is the composer's existing @mention path (/api/router/chat -> workshop_live.send_as_founder, live injection).
 (() => {
   const {executeAction} = window.ArchHubAPI;
-  const {A, D, useData, useApp, Btn, Chip, Av, ApprovalCard, Empty} = window.UI;
+  const {A, D, useData, useApp, Btn, Chip, Av} = window.UI;
   // The shared text blocks (ui.jsx); plain text where a host renders this file without them.
   const Prose = props => window.UI.Prose ? React.createElement(window.UI.Prose, props) : <p>{props.text}</p>;
-  const Clamp = props => window.UI.Clamp ? React.createElement(window.UI.Clamp, props) : <span className="ws-small">{props.text}</span>;
   const api = window.ArchHubAPI;
   // The list groups by what it asks of you; a drop sets the group's stage (the Board draws the same groups).
   const laneOf = t => {
@@ -77,36 +76,6 @@
       {task.status === 'DONE' && oneLine(task.result) && <span className="ws-small ws-task-outcome" data-task-outcome={task.id}>{oneLine(task.result)}</span>}
       {task.status === 'WIP' && steps.length > 0 && <span role="progressbar" className="ws-progress" aria-label={task.title + ' steps'} aria-valuemin={0} aria-valuenow={completed} aria-valuemax={steps.length}><i style={{width: `${completed / steps.length * 100}%`}} /></span>}
     </button>;
-  }
-  // The pane layout library, loaded by the Studio build; a host without it renders the same columns unresizable.
-  const RP = window.ReactResizablePanels;
-  const Group = RP ? RP.Group : ({children, className, id, ...rest}) => <div id={id} className={className} data-screen={rest['data-screen']}>{children}</div>;
-  const Column = RP ? RP.Panel : ({children}) => children;
-  const Separator = RP ? RP.Separator : () => null;
-  const RAIL = 48, LAYOUT_KEY = 'archhub.workshop.layout.v1';
-  const readLayout = () => { try { return JSON.parse(window.localStorage.getItem(LAYOUT_KEY) || 'null') || {}; } catch (error) { return {error: String(error)}; } };
-  const writeLayout = value => { try { if (value) window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(value)); else window.localStorage.removeItem(LAYOUT_KEY); return true; } catch (error) { return {error: String(error)}; } };
-  const subscribeWidth = notify => { if (!window.addEventListener) return () => {}; window.addEventListener('resize', notify); return () => window.removeEventListener('resize', notify); };
-  // Receipt words (designer 01a18ba7): Stored in the Workshop, Started in the session, Replied, Unavailable (no door), Uncertain.
-  const ownMessage = message => Boolean(message?.sender_key) && message.sender_key === message.viewer_key || message?.who === 'You' || message?.role === 'task';
-  function TaskBrief({task}) {
-    const what = oneLine(task.description || task.title);
-    const result = oneLine(task.result);
-    const next = (Array.isArray(task.plan) ? task.plan : task.steps || []).map(step => oneLine(typeof step === 'string' ? step : (step?.title || step?.text || step?.name || step?.what || ''))).find(Boolean);
-    return <section data-task-summary className="ws-summary">
-      <p><b>What</b> {what || 'Not yet recorded'}</p>
-      <p><b>State</b> {statusText(task.status)}</p>
-      <p><b>Latest result</b> {result || 'Not yet recorded'}</p>
-      <p><b>Next</b> {next || 'Not yet recorded'}</p>
-    </section>;
-  }
-  function AgentLog({messages, extra}) {
-    const [open, setOpen] = React.useState(false);
-    if (!messages.length && !extra) return null;
-    return <section data-agent-log className="ws-agent-log">
-      <button type="button" className="ws-link" aria-expanded={open} onClick={() => executeAction('ui.select', () => setOpen(!open))}>Agent log</button>
-      {open && <div className="ws-agent-log-body">{extra}{messages.map(message => <article key={message.id}><b>{message.who || 'Agent'}</b><p>{message.text}</p></article>)}</div>}
-    </section>;
   }
   function Messages({task, roles = {}, whoIs = who => ({name: who || 'Agent', detail: '', meta: ''}), onReply}) {
     const [inspect, setInspect] = React.useState(null);
@@ -262,123 +231,7 @@
       </div>
     </D.Composer>;
   }
-  function Win() {
-    const s = useData(), u = useApp();
-    const [history, setHistory] = React.useState(false), [query, setQuery] = React.useState(''), [to, setTo] = React.useState(null),
-      [notesOpen, setNotesOpen] = React.useState(false), [notes, setNotes] = React.useState(''), sendRef = React.useRef(null), [replyTo, setReplyTo] = React.useState(null),
-      [chosenProject, setProject] = React.useState('');
-    const roomScope = JSON.stringify([s.graph.id, s.profile.email, s.profile.signedIn, s.workshopMessagesScope]);
-    const currentScope = React.useRef(roomScope), bodyRef = React.useRef(null), stuck = React.useRef(null);
-    currentScope.current = roomScope;
-    const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
-    const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
-    const known = [...new Set((s.tasks || []).map(t => t.project).filter(Boolean))];
-    const focusedProject = (s.tasks || []).find(t => t.id === (u.task || s.focusedTask))?.project;
-    const project = known.includes(chosenProject) ? chosenProject : focusedProject || known[0] || 'ArchHub';
-    const tasks = (s.tasks || []).filter(t => !t.project || t.project === project), focus = u.task || s.focusedTask || tasks.find(t => t.sessionOpen)?.id, task = tasks.find(t => t.id === focus) || tasks[0];
-    const roomMessages = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
-      .filter(message => (!message.project || message.project === project) && !(task?.agentLog || []).some(item => item.id === message.id) && !(task?.messages || []).some(item => item.id === message.id));
-    const list = tasks.filter(t => !query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase()));
-    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
-    const {agents, people, choices, whoIs} = workshopPeople(s);
-    // Work | thread | People: react-resizable-panels (D-018). Drag below a side's minimum snaps it to a 48 px rail (VS Code sash);
-    // the layout and the collapsed sides are kept under one key; a narrow window folds the sides to rails by itself.
-    const width = React.useSyncExternalStore ? React.useSyncExternalStore(subscribeWidth, () => window.innerWidth || 1440, () => 1440) : 1440;
-    const narrow = {people: width < 1244, work: width < 964};
-    const [layoutEpoch, setLayoutEpoch] = React.useState(0), [rails, setRails] = React.useState({});
-    const saved = readLayout(), workRef = React.useRef(null), peopleRef = React.useRef(null);
-    const folded = side => narrow[side] || Boolean(saved.collapsed && saved.collapsed[side]);
-    const rail = side => (size => { const on = size.inPixels <= RAIL + 1; if (Boolean(rails[side]) !== on) setRails(current => ({...current, [side]: on})); });
-    const keepLayout = (layout, meta) => { if (meta && meta.isUserInteraction) writeLayout({layout, collapsed: {work: Boolean(workRef.current && workRef.current.isCollapsed()), people: Boolean(peopleRef.current && peopleRef.current.isCollapsed())}}); };
-    const reply = r => { setTo(r.handle); setReplyTo(r); };
-    const roles = Object.fromEntries(agents.filter(a => a.task).map(a => [a.name, a.task]));
-    // A task's people: the joined sessions that declared it, else its runtime's provider name.
-    // Live data: a new message keeps the thread at its end (like Slack) when it was there; a task change opens at its end.
-    const messageCount = roomMessages.length + ((task?.messages || []).length);
-    const stickToEnd = el => {
-      const box = bodyRef.current, key = (task?.id || 'room') + ':' + messageCount;
-      if (!el || !box || stuck.current === key) return;
-      if (String(stuck.current).split(':')[0] !== (task?.id || 'room') || box.scrollHeight - box.scrollTop - box.clientHeight < 240) box.scrollTop = box.scrollHeight;
-      stuck.current = key;
-    };
-    const sessionsOf = t => agents.filter(a => a.agent === t.owner || (t.declarations || []).some(d => d.agent === a.agent));  // owner is the session label
-    const nameFor = t => sessionsOf(t).map(a => a.name).join(' and ') || (s.providers || []).find(p => p.id === t.owner)?.name || t.owner;
-    const recipient = to ?? (task && (sessionsOf(task)[0] || agents.find(a => a.app === task.owner)) || agents[0])?.handle ?? '';
-    const request = task?.description || task?.messages.find(m => m.sender_key && m.sender_key === m.viewer_key)?.text;
-    const taskMessages = [...(task?.fileMessages || []), ...(task?.messages || [])];
-    const briefMessages = taskMessages.filter(message => message.role === 'task' || ownMessage(message) || (!message.sender_key && !message.to)).map(message => ({...message, text: oneLine(message.text)}));
-    const boundLog = [...(task?.agentLog || []), ...(task?.messages || []).filter(message => message.role !== 'task' && !ownMessage(message))];
-    return <Group key={layoutEpoch + ':' + narrow.work + narrow.people} id="workshop-layout" orientation="horizontal" data-screen="workshop" className={'ws' + (rails.work ? ' l-rail' : '') + (rails.people ? ' r-rail' : '')}
-      defaultLayout={narrow.work || narrow.people || folded('work') || folded('people') ? undefined : saved.layout} onLayoutChanged={keepLayout}>
-  <Column id="work" panelRef={workRef} collapsible collapsedSize={RAIL} minSize={200} defaultSize={folded('work') ? RAIL : 248} groupResizeBehavior="preserve-pixel-size" onResize={rail('work')}>
-  <aside id="ws-work" data-workshop-column="work" className="ws-col ws-work">
-    <div className="spread ws-head"><h2>Work</h2><button className="ws-link" title="New task" onClick={() => executeAction("ui.show", u, 'New task')}>+<span className="pane-text"> New task</span></button></div>
-    {known.length > 0 && <select aria-label="Project room" value={project} onChange={e => setProject(e.target.value)}>{known.map(name => <option key={name} value={name}>{name}</option>)}</select>}
-    <input aria-label="Search work" className="ws-search" placeholder="Search work…" value={query} onChange={e => setQuery(e.target.value)} />
-    <div className="scroll ws-list">{groupsFor(history, waiting, query).map(([name, member, stage]) => {
-      const rows = list.filter(member);
-      return <div key={name} className="ws-group" data-workshop-group={name} onDragOver={e => e.preventDefault()} onDrop={e => {
-        e.preventDefault();
-        const id = e.dataTransfer.getData('task');
-        if (id) executeAction("setTaskStatus", u, id, stage);
-      }}><div className="spread ws-label"><span>{name}</span><span>{rows.length}</span></div>{rows.map(t => <Task key={t.id} task={t} ownerName={nameFor(t)} on={task?.id === t.id} select={async () => { executeAction("ui.setTask", u, t.id); await executeAction("openTaskGraph", u, t.id); }} />)}</div>;
-    })}</div>
-    <div className="ws-foot"><span>Completed &amp; archived</span><span className="ws-small">All work stays searchable</span>
-      <button className="ws-link" aria-pressed={history} onClick={() => executeAction("ui.select", () => setHistory(!history))}>{history ? 'Hide history' : 'Show history →'}</button>
-      <button className="ws-link" title="Back to the default column sizes" onClick={() => executeAction("ui.select", () => { writeLayout(null); setRails({}); setLayoutEpoch(layoutEpoch + 1); })}>Reset layout</button></div>
-  </aside>
-  </Column>
-  <Separator className="pane-splitter" aria-label="Resize the Work pane" />
-  <Column id="thread" minSize={360}>
-  <main data-workshop-column="thread" className="ws-thread">
-    <header className="spread"><div><h1>{task?.title || (roomMessages.length ? 'Workshop room' : 'What should the agents do?')}</h1><p className="ws-sub">{task ? [nameFor(task), statusText(task.status)].filter(Boolean).join(' · ') : 'One room · ' + (s.graph.name || 'Workshop')}</p></div>
-      <button className="ws-link" onClick={() => executeAction("ui.select", async () => {
-        if (!task) { executeAction("ui.go", u, "canvas"); return; }
-        const opened = await executeAction("openTaskGraph", u, task.id);
-        if (opened) { executeAction("ui.setTask", u, opened.taskId || task.id); executeAction("ui.setSelectedNodeId", u, opened.taskId || task.id); executeAction("ui.go", u, "canvas"); }
-      })}>Open in Canvas ↗</button></header>
-    <div className="scroll ws-body" ref={bodyRef}><div className="ws-stack">
-      {(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending' && card.id !== task?.approvalId).map(card => <ApprovalCard key={card.id} id={card.id} />)}
-      {task ? <><TaskBrief task={{...task, description: request || task.description}} />
-        {task.summary && <section data-workshop-standing className="ws-request"><div className="ws-label">WHERE THIS STANDS</div><Prose text={task.summary} lines={8} /></section>}
-        <TaskSession task={task} />
-        <Messages task={{...task, messages: briefMessages}} roles={roles} whoIs={whoIs} onReply={reply} />
-        <AgentLog messages={boundLog} extra={(previous.before ? previous.more : s.workshopMessagesMore) ? <Btn sm ghost onClick={async () => {
-          const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
-          if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
-        }}>Older messages</Btn> : null} />
-        {task.approvalId && <ApprovalCard id={task.approvalId} />}
-        {task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}
-        {task.status === 'DONE' && task.result && <section data-workshop-result className="ws-request"><div className="ws-label">RESULT</div><Prose text={task.result} lines={6} /></section>}
-        {task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.id)}>Repeat this</Btn></div>}
-      </> : <>
-        {(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
-          const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
-          if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
-        }}>Older messages</Btn>}
-        {roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} whoIs={whoIs} onReply={reply} />}
-        {roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
-      </>}
-      <i ref={stickToEnd} aria-hidden="true" />
-    </div></div>
-    <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} replyTo={replyTo} setReplyTo={setReplyTo} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
-  </main>
-  </Column>
-  <Separator className="pane-splitter" aria-label="Resize the People and agents pane" />
-  <Column id="people" panelRef={peopleRef} collapsible collapsedSize={RAIL} minSize={240} defaultSize={folded('people') ? RAIL : 280} groupResizeBehavior="preserve-pixel-size" onResize={rail('people')}>
-  <aside id="ws-people" data-workshop-column="people" className="ws-col ws-people">
-    <h2>People &amp; agents</h2><p className="ws-small ws-note">{s.liveAgents === undefined ? 'Loading agents…' : people.length + ' in this Workshop · ' + agents.length + ' joined'}</p>{s.liveAgents !== undefined && !agents.length && <p className="ws-small ws-note">No agent session has joined yet. A session that joins appears here and can be messaged.</p>}
-    <div className="scroll ws-people-list">{people.map(p => <div key={p.key} className={'ws-person' + (recipient && p.handle === recipient ? ' to' : '')}><button className="button-reset ws-person-name" title={[(p.handle ? 'Send to ' : '') + p.name, p.role, p.model, p.meta].filter(Boolean).join(' · ')} onClick={() => p.handle ? executeAction("ui.select", () => setTo(p.handle)) : executeAction("ui.show", u, 'Agent', {id: p.id})}><Av id={p.id} size={28} /><span className="pane-text"><b>{p.name}</b><span className="ws-small">{p.state}</span>{p.model ? <span className="ws-small" data-agent-model={p.model}>{p.model}</span> : null}</span></button>{p.detail && <span className="pane-text"><Clamp text={p.detail} /></span>}</div>)}</div>
-    <hr className="ws-rule" />
-    <h2>Meeting input</h2><p className="ws-small ws-note">Notes for this task go to {recipient ? (agents.find(a => a.handle === recipient)?.name || 'Everyone') : 'BABOOM'}.</p>
-    {notesOpen ? <div className="grid"><textarea aria-label="Meeting notes" rows={6} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Paste meeting notes…" /><div className="flex"><Btn sm p disabled={!notes.trim()} onClick={() => executeAction("ui.select", async () => { await sendRef.current?.('Meeting notes:\n' + notes); setNotes(''); setNotesOpen(false); })}>Send notes</Btn><Btn sm ghost onClick={() => executeAction("ui.select", () => setNotesOpen(false))}>Cancel</Btn></div></div>
-      : <button className="ws-link" onClick={() => executeAction("ui.select", () => setNotesOpen(true))}>+ Paste notes</button>}
-  </aside>
-  </Column>
- </Group>;
-  }
   window.UI.TaskComposer = TaskComposer;
-  window.UI.Workshop = Win;
   window.UI.TaskSession = TaskSession;
   window.UI.AgentPicker = AgentPicker;
   window.UI.workshopPeople = workshopPeople;

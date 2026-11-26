@@ -314,6 +314,14 @@
       seenNames.add(label);
       agentRows.push({key: ag.handle || label, name: label, rawName: ag.name || ag.agent || label, status: ag.status || 'idle', detail: ag.task || 'Available', task: null});
     }
+    // Agent sessions running on this PC that have not joined: shown whatever their sign-in state (moved from the Workshop page).
+    for (const p of s.agents || []) {
+      const label = p.name || p.id;
+      if (!label || seenNames.has(label) || liveAgents.some(a => a.app === p.runtime)) continue;
+      seenNames.add(label);
+      const state = p.presence === 'working' ? 'Working' : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle';
+      agentRows.push({key: 'pc:' + (p.id || label), name: label, rawName: label, status: state, detail: 'Not joined' + (p.presence === 'working' && p.task ? ' · ' + p.task : ''), task: null});
+    }
     for (const p of providers.slice(0, 4)) {
       const label = p.name || p.id;
       if (!label || seenNames.has(label)) continue;
@@ -717,9 +725,24 @@
   function WorkshopDockView({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
     const [busy, setBusy] = React.useState(''), [shown, setShown] = React.useState(''), acting = React.useRef('');
-    const tasks = (s.tasks || []).filter(task => task.status !== 'ARCHIVED');
-    const taskOf = card => tasks.find(task => [card.taskId, card.task_id, card.work, ...(card.taskIds || [])].includes(task.id));
-    const waiting = (s.approvals || []).filter(card => card.status === 'pending')
+    const [query, setQuery] = React.useState('');
+    const all = (s.tasks || []).filter(task => task.status !== 'ARCHIVED');
+    const matches = text => !query || String(text || '').toLowerCase().includes(query.toLowerCase());
+    const tasks = all.filter(task => matches(task.title + ' ' + task.status));
+    // The room: Workshop messages bound to no task, shown while no session is open. An older page asked for under one
+    // graph or account is dropped if it arrives after a switch (the scope key), so another room's messages never show.
+    const roomScope = JSON.stringify([s.graph?.id, s.profile?.email, s.profile?.signedIn, s.workshopMessagesScope]);
+    const currentScope = React.useRef(roomScope);
+    currentScope.current = roomScope;
+    const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
+    const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
+    const bound = new Set(all.flatMap(task => [...(task.messages || []), ...(task.agentLog || [])].map(message => message.id)));
+    const room = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
+      .filter(message => !bound.has(message.id) && matches(message.who + ' ' + message.text));
+    const roomMore = previous.before ? previous.more : s.workshopMessagesMore;
+    const roomShown = !(u.route === 'task-file' && u.task);
+    const taskOf = card => all.find(task => [card.taskId, card.task_id, card.work, ...(card.taskIds || [])].includes(task.id));
+    const waiting = (s.approvals || []).filter(card => card.status === 'pending' && (!query || tasks.includes(taskOf(card)) || matches(card.title)))
       .filter((card, index, all) => all.findIndex(row => (row.input_digest || row.id) === (card.input_digest || card.id)) === index);
     const stepTitle = (task, id) => (task.workflow || []).find(node => node.id === id)?.title || (task.sessionOpen ? s.graph.nodes.find(node => node.id === id)?.title : '') || 'A step';
     const failed = tasks.flatMap(task => (task.activity || []).filter(row => row.status === 'Error').map(row => ({task, row})));
@@ -745,6 +768,9 @@
       await u.act(() => api.runNode(row.id));
     });
     return <div className="wsb" data-dock-workshop="">
+      <div className="flex wstb"><input className="field" aria-label="Search threads" placeholder="Search threads" value={query} onChange={event => setQuery(event.target.value)} />
+        <button type="button" className="button-reset icon-btn" aria-label="Board" title="Board: Planned / WIP / In review / Done" onClick={event => executeAction('ui.select', () => u.show('Workshop board'), event)}><Icon name="arrange" size={15} /></button>
+        <button type="button" className="button-reset icon-btn" aria-label="Inbox" title="Inbox: notifications and approvals" onClick={event => executeAction('ui.select', () => u.show('Founder inbox'), event)}><Icon name="bell" size={15} /></button></div>
       <section className="wssec" aria-label="Waiting for you"><span className="eyebrow"><Icon name="shield" size={12} />Waiting for you · {waiting.length}</span>
         {waiting.map(card => { const task = taskOf(card), draft = card.draft || card.send;
           const whereLabel = task?.title || (card.path ? card.path.split(/[\\/]/).pop().replace(/\.archhub$/, '') : '');
@@ -778,6 +804,12 @@
             <span><b>{task.title}</b><em>{(last.who === 'You' ? 'You' : last.who) + ': ' + last.text}</em></span><span className="note">{messages.length}</span></button>
             <button type="button" className="dx-link wsraw" onClick={event => executeAction('ui.select', () => u.show('Raw log', {id: task.id}), event)}>Raw log</button></div>; })}
         {!threads.length && <p className="hint">No thread has messages yet.</p>}</section>)(tasks.map(task => ({task, messages: window.UI.homeTaskMessages?.(task) || []})).filter(row => row.messages.length))}
+      {roomShown && (room.length > 0 || roomMore) && <section className="wssec" aria-label="Workshop room" data-ws-room=""><span className="eyebrow"><Icon name="workshop" size={12} />Workshop room · {room.length}</span>
+        {roomMore && <Btn sm ghost onClick={async () => {
+          const page = await executeAction('listWorkshopMessages', u, previous.before || s.workshopMessagesBefore);
+          if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
+        }}>Older messages</Btn>}
+        {window.UI.Messages && <window.UI.Messages task={{messages: room}} whoIs={window.UI.workshopPeople?.(s).whoIs} />}</section>}
       <p className="hint">Talk to an agent in the composer on its canvas. What it does shows up here and as nodes.</p>
     </div>;
   }

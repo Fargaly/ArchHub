@@ -1390,6 +1390,8 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .dockws .pnl .shared-properties{background:transparent}
 .dockws .wsb{display:grid;gap:14px;padding:10px 10px 16px}
 .dockws .wssec{display:grid;gap:6px}
+.dockws .wstb{display:flex;gap:4px;align-items:center;min-width:0}.dockws .wstb .field{flex:1;min-width:0;width:auto}
+.dockws [data-ws-room],.dockws [data-ws-room] .ws-msg>*{min-width:0}.dockws [data-ws-room] .ws-msgs{gap:12px}.dockws [data-ws-room] .ws-msg{grid-template-columns:28px minmax(0,1fr);gap:8px}.dockws [data-ws-room] .ws-msg.own{grid-template-columns:minmax(0,1fr)}.dockws [data-ws-room] .ws-msg-body{gap:4px}.dockws [data-ws-room] .ws-msg-body .prose{font-size:calc(13px * var(--text-scale,1));overflow-wrap:anywhere}.dockws [data-ws-room] .ws-msg-body b{font-size:calc(12.5px * var(--text-scale,1))}
 .dockws .wssec .eyebrow{display:flex;align-items:center;gap:6px;margin:14px 0 6px;font:600 11px var(--type-family-ui),Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--color-ink-muted)}
 .dockws .wsc{border:1px solid var(--color-line-soft);border-radius:8px;padding:8px 9px;background:var(--color-bg);display:grid;gap:6px}
 .dockws .wsc.warn{border-color:color-mix(in srgb,var(--color-warn) 55%,var(--color-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--color-warn) 10%,transparent)}

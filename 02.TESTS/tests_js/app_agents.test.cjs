@@ -48,9 +48,10 @@ test('An active task without reported steps has no invented progress percentage'
  assert.equal(nodes(tree).some(n=>n.props?.role==='progressbar'),false);
  assert.equal(nodes(tree).some(n=>n.props?.style?.width==='50%'),false);
 });
-test('Workshop shows native working sessions even when OAuth state is unknown',()=>{
+test('The People and agents dock panel shows native working sessions even when OAuth state is unknown',()=>{
  const c=context({agents:[{id:'codex:s',runtime:'codex',name:'Codex',signedIn:null,presence:'working',status_text:'Working',task:'Native task',sessions:[{id:'s'}]}]});
- load(c,'ds_workshop3.jsx');assert.match(text(c.UI.Workshop()),/Codex/);
+ c.c.window.ReactDOM={createPortal:()=>null};
+ load(c,'ds_workshop3.jsx');load(c,'dock.jsx');assert.match(text(c.UI.DockPeople({})),/Codex/);
 });
 test('A message without a model does not claim an independent check',()=>{
  const c=context();load(c,'ds_workshop3.jsx');

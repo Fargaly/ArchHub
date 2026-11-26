@@ -683,7 +683,7 @@
         {visible.length<card.rows.length&&actButton((card.rows.length-visible.length)+' more',()=>setAdvanced(true))}
         {card.id==='app'&&<details open={updatesOpen} onToggle={event=>setUpdatesOpen(event.currentTarget.open)}><summary>Updates &amp; About</summary>{updatesOpen&&<UpdatesPage/>}</details>}
         {additional[card.title]?.length>0&&<details open={advanced||undefined}><summary>More controls</summary>{additional[card.title].map(row=><SettingControl key={row.id} row={row} raw={advanced}/>)}</details>}
-        {card.id==='sysgraph'&&<details><summary>Tools &amp; diagnostics</summary>{[['Agents','settings/Agents'],['Router','settings/BABOOM'],['Workshop','workshop'],['Programs','settings/Connections'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','App health']].map(([title,route])=><Btn sm key={route} onClick={event=>executeAction('projects.controls.activate',{handler:()=>route==='App health'?u.show(route):u.go(route)},event)}>{title}</Btn>)}</details>}
+        {card.id==='sysgraph'&&<details><summary>Tools &amp; diagnostics</summary>{[['Agents','settings/Agents'],['Router','settings/BABOOM'],['Thread','workshop'],['Programs','settings/Connections'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','App health']].map(([title,route])=><Btn sm key={route} onClick={event=>executeAction('projects.controls.activate',{handler:()=>route==='App health'?u.show(route):u.go(route)},event)}>{title}</Btn>)}</details>}
       </section>;
     }), window.UI.DependenciesSection && <window.UI.DependenciesSection key="dependencies"/>];
   }
@@ -1270,7 +1270,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       {requestedPage==='Providers'&&<section><h3>Providers and request profiling</h3><Providers/><RouterSettings/></section>}
       {requestedPage==='Automations'&&<window.UI.Automations embedded/>}
       {requestedPage==='Library & Mods'&&<window.UI.HostSkills/>}
-      {requestedPage==='Workshop'&&<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}>Open Workshop</Btn>}
+      {requestedPage==='Workshop'&&<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}>Open the thread</Btn>}
       {extraRows.map(row=><SettingControl key={row.id} row={row} raw={advancedOpen}/>)}
     </>} : null;
     const lookFamilies={

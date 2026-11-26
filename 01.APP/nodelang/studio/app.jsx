@@ -62,10 +62,12 @@
     if(!opened.current)return <DesktopSignIn/>;
     return <App key={opened.current} desktopAccess={access}/>;
   }
+  // Pages merged into Home, Canvas, Settings and Docs (founder 2026-11-26): a saved view that still names one opens Home.
+  const RETIRED_ROUTES = ['workshop'];
   function App({desktopAccess}) {
     const s = useData();
     const restoredView=api.readDesktopView?.()||{};
-    const [route, setRoute] = React.useState(restoredView.route||'home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
+    const [route, setRoute] = React.useState(RETIRED_ROUTES.includes(restoredView.route) ? 'home' : restoredView.route||'home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
       [canvasOpened, setCanvasOpened] = React.useState(restoredView.canvasOpened||false),
       [task, setTask] = React.useState(restoredView.task||''),
       [taskFace, setTaskFace] = React.useState(restoredView.taskFace||'canvas'),  // the thread pane beside the canvas: one value, the same from one session to the next
@@ -630,7 +632,7 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'xray' ? <window.UI.Xray /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'xray' ? <window.UI.Xray /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',

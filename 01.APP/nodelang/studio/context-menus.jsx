@@ -514,7 +514,7 @@
       return input && choice('menu.surface.search', () => input.focus());
     };
     let surface, owner, context, label, rawGroups;
-    const dedicated = target.closest('[data-screen="library"],[data-screen^="settings/"],[data-screen="docs"],[data-screen="workshop"]');
+    const dedicated = target.closest('[data-screen="library"],[data-screen^="settings/"],[data-screen="docs"]');
     const workshopDock = target.closest('[data-dock-workshop]');
     if (!dedicated && !workshopDock && (surface = target.closest('[data-home-page]'))) {
       const flowNode = target.closest('.react-flow__node');
@@ -641,26 +641,20 @@
         article ? click('menu.docs.open', article.querySelector('.docs-open button')) :
         search(surface, 'input[aria-label="Search docs"]')]];
     } else if (workshopDock) {
-      const card = target.closest('[data-ws-approval],[data-ws-failed],[data-ws-working],[data-ws-thread]');
-      if (!card) return false;
-      owner = card;
-      context = 'workshop';
+      const card = target.closest('[data-ws-approval],[data-ws-failed],[data-ws-working],[data-ws-thread],.ws-msg');
+      owner = card || workshopDock;
+      context = card?.matches('.ws-msg') ? 'message' : 'workshop';
       label = 'Workshop menu';
-      const buttons = [...card.querySelectorAll('button')];
-      const show = card.matches('button') ? card : buttons.find(button => ['Show','Hide'].includes(button.textContent.trim())) ||
-        card.querySelector('button.wsl');
-      rawGroups = [[click('menu.workshop.inspect', show, show?.closest('.wsca') ? show.textContent.trim() : 'Open'),
-        click('menu.workshop.raw', card.querySelector('button.wsraw'))]];
-    } else if ((surface = target.closest('[data-screen="workshop"]'))) {
-      const message = target.closest('.ws-msg');
-      owner = message || surface;
-      context = message ? 'message' : 'workshop';
-      label = 'Workshop menu';
-      const buttons = [...(message?.querySelectorAll('.ws-msg-foot button') || [])];
-      const inspect = buttons.find(button => button.hasAttribute('aria-expanded'));
-      rawGroups = [message ? [click('menu.reply', buttons.find(button => button.textContent.trim() === 'Reply')),
-        click('menu.workshop.inspect', inspect, inspect?.textContent.trim())] :
-        [search(surface, 'input[aria-label="Search work"]')]];
+      const inspect = card?.matches('.ws-msg') && [...card.querySelectorAll('.ws-msg-foot button')].find(button => button.hasAttribute('aria-expanded'));
+      if (!card) rawGroups = [[search(workshopDock, 'input[aria-label="Search threads"]')]];
+      else if (inspect) rawGroups = [[click('menu.workshop.inspect', inspect, inspect.textContent.trim())]];
+      else {
+        const buttons = [...card.querySelectorAll('button')];
+        const show = card.matches('button') ? card : buttons.find(button => ['Show','Hide'].includes(button.textContent.trim())) ||
+          card.querySelector('button.wsl');
+        rawGroups = [[click('menu.workshop.inspect', show, show?.closest('.wsca') ? show.textContent.trim() : 'Open'),
+          click('menu.workshop.raw', card.querySelector('button.wsraw'))]];
+      }
     }
     const cleaned = (rawGroups || []).map(grp => grp.filter(Boolean)).filter(grp => grp.length > 0);
     if (!cleaned.length) return false;

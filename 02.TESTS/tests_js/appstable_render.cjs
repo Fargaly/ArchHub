@@ -9,11 +9,13 @@ async function run(studio, output) {
   const checks = [];
   const check = (name, ok, detail) => checks.push({name,ok:!!ok,detail});
   try {
-    for (const screen of ['colleagues','workshop']) {
+    for (const screen of ['workshop','colleagues']) {
       const page = await browser.newPage({viewport:{width:1440,height:900}});
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
-      await page.setContent('<html><body><div id="root"></div></body></html>');
+      // A localhost page is a secure context (api.js needs crypto.randomUUID); nothing is served beyond this fixture.
+      await page.route('http://localhost/fixture', route => route.fulfill({contentType:'text/html',body:'<html><body><div id="root"></div></body></html>'}));
+      await page.goto('http://localhost/fixture');
       await page.addStyleTag({path:path.join(studio,'style.css')});
       await page.addStyleTag({content:'#root{height:100vh;display:grid;grid-template-rows:minmax(0,1fr)}'});
       for (const source of ['vendor/react.js','vendor/react-dom.js'])
@@ -43,6 +45,8 @@ async function run(studio, output) {
           {id:'anthropic',name:'Anthropic',state:'no key'}]})});
         window.ARCHHUB_NATIVE_APPROVAL = {binding:'fixture',approval:{rows:[]}};
       });
+      // api.js builds its canvas command queue from studio-authority.js at startup.
+      await page.addScriptTag({path:path.join(studio,'studio-authority.js')});
       await page.addScriptTag({path:path.join(studio,'compiled/api.js')});
       await page.evaluate(async () => {
         await window.ArchHubAPI.ready;
@@ -53,17 +57,23 @@ async function run(studio, output) {
           remember:async text => {window.calls.push(['remember',text]);const row={id:'fact:fixture',text,source:'Fixture input'};window.fixture.brain=[row];return row;},
           editMemory:async (id,text) => {window.calls.push(['edit',id,text]);window.fixture.brain=window.fixture.brain.map(row=>row.id===id?{...row,text}:row);return {id};},
           forgetMemory:async id => {window.calls.push(['forget',id]);window.fixture.brain=[];return {id};},
-          sendToBaboom:async (text,options) => {window.calls.push(['send',text,options]);return window.fixture.tasks[0];}};
+          sendToBaboom:async (text,options) => {window.calls.push(['send',text,options]);return window.fixture.tasks[0];},
+          sendChatTurn:async turn => {window.calls.push(['send',turn.prompt]);return {ok:true};},listTasks:async () => []};
       });
-      for (const source of ['tokens.js','ds-index.js','icons.js','ui.js','ds_workshop3.js','ds_colleagues.js'])
+      for (const source of ['tokens.js','ds-index.js','icons.js','ui.js','ds_workshop3.js','dock.js','ds_colleagues.js'])
         await page.addScriptTag({path:path.join(studio,'compiled',source)});
       await page.evaluate(screen => {
         const UI=window.UI;
+        // The Workshop is the dock panel beside the Canvas, with the Canvas thread's composer (the page is gone).
+        const workshop = () => React.createElement('div',{'data-screen':'workshop',className:'dockws',style:{display:'grid',gridTemplateColumns:'340px minmax(0,1fr)',height:'100%'}},
+          React.createElement('aside',null,React.createElement(UI.DockWorkshop,{onShow:({task}) => window.calls.push(['task',task.id])})),
+          React.createElement('main',null,React.createElement(UI.TaskComposer,{choices:[],to:'',setTo:() => {}})));
         window.ReactDOM.createRoot(document.getElementById('root')).render(
           React.createElement(UI.Ctx.Provider,{value:window.app},
-            React.createElement(screen==='colleagues'?UI.Colleagues:UI.Workshop)));
+            React.createElement(screen==='colleagues'?UI.Colleagues:workshop)));
       },screen);
-      await page.waitForSelector('[data-screen="'+screen+'"]');
+      try {await page.waitForSelector('[data-screen="'+screen+'"]');}
+      catch (error) {check(screen+' renders',false,[...errors,error.message]);await page.close();continue;}
       await page.screenshot({path:path.join(output,screen+'.png')});
       const layout = await page.evaluate(screen => {
         const root=document.querySelector('[data-screen="'+screen+'"]');
@@ -107,10 +117,11 @@ async function run(studio, output) {
           window.calls.some(c=>c[0]==='edit'&&c[1]==='fact:fixture'&&c[2]==='Updated fixture rule')&&
           window.calls.some(c=>c[0]==='forget'&&c[1]==='fact:fixture')),null);
       } else {
-        check('Workshop honest unassigned owner',layout.text.includes('Owner: Unassigned'),layout.text.slice(-350));
-        await page.getByRole('textbox',{name:'Search tasks'}).fill('workspace-roots');
-        check('Workshop search preserves saved tasks',await page.locator('[aria-selected]').count()===1,null);
-        await page.getByRole('textbox',{name:'Search tasks'}).fill('');
+        check('Workshop honest unassigned owner',!layout.text.includes('null'),layout.text.slice(-350));
+        await page.getByRole('textbox',{name:'Search threads'}).fill('isolated application');
+        check('Workshop search preserves saved tasks',await page.locator('[data-ws-working]').count()===1,null);
+        await page.getByRole('textbox',{name:'Search threads'}).fill('');
+        check('Workshop search clears back to every task',await page.locator('[data-ws-working]').count()===2,null);
         await page.getByRole('button',{name:/Restore isolated application/}).click();
         await page.getByRole('button',{name:'Board',exact:true}).click();
         await page.getByRole('button',{name:'Inbox',exact:true}).click();

@@ -1287,7 +1287,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     React.useEffect(()=>{
       let current=true;
       setSources({});
-      const reads={sessions:()=>api.listSessionModel(),models:()=>api.refreshRouter(),programs:()=>api.readHostAvailability(),agents:()=>api.listAgentsWorking(),
+      const reads={sessions:()=>api.listSessionModel(),models:()=>api.refreshRouter(),programs:()=>api.readHostAvailability(),accounts:()=>api.refreshSocialConnections(),agents:()=>api.listAgentsWorking(),
         controls:()=>api.refreshSettingsControls(),folder:()=>api.readSessionsFolder()};
       const read=async name=>{
         try {

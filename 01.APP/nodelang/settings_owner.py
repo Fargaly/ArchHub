@@ -49,8 +49,8 @@ def _checked_router_settings(values):
     from .model_router import resolve_model_route
     allowed = {'default_model', 'fallback_models', 'free_first', 'providers', 'agents',
                'providerPreferences', 'generation'}
-    if type(values) is not dict or set(values) - allowed or values.get('free_first') is not True:
-        raise ValueError('Router settings require free-first and credential references only.')
+    if type(values) is not dict or set(values) - allowed or type(values.get('free_first')) is not bool:
+        raise ValueError('Router settings require free-first as a Boolean and credential references only.')
     def route(value, *, free=False):
         if type(value) is not str or len(value) > 200:
             raise ValueError('Choose a free model route.')
@@ -783,7 +783,9 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
             'homeMap': {key: list(choices) for key, choices in HOME_MAP.items()}}  # what each map parameter may be; first is default
 
 
-DOCK_PANELS = ('workshop', 'library', 'map', 'insp', 'people')
+DOCK_PANELS = ('workshop', 'library', 'map', 'insp', 'people', 'thread')
+DOCK_PRESETS = ('Build', 'Review', 'Meeting')
+DOCK_LAYOUT_KEYS = frozenset({'left', 'right', 'cmd', 'bottom', 'float', 'focus', 'closed', 'preset', 'savedName', 'savedChanged'})
 
 
 def _one_dock_layout(held):
@@ -791,6 +793,105 @@ def _one_dock_layout(held):
     if 'layout' in held or not held.get('sessions'):
         return held.get('layout')
     return list(held['sessions'].values())[-1]
+
+
+def _validate_dock_layout(layout):
+    if type(layout) is not dict or not ({'left', 'right'} <= set(layout) <= DOCK_LAYOUT_KEYS):
+        raise ValueError('Choose a left and a right dock.')
+    layout = dict(layout)
+    if 'cmd' in layout:
+        if layout['cmd'] is None:
+            layout.pop('cmd')
+        else:
+            cmd = layout['cmd']
+            if (type(cmd) is not dict or set(cmd) != {'x', 'y'}
+                    or not all(type(cmd[k]) in (int, float) and not isinstance(cmd[k], bool) and 0 <= cmd[k] <= 1 for k in ('x', 'y'))):
+                raise ValueError('Choose a composer position from 0 to 1.')
+    if 'focus' in layout:
+        if layout['focus'] is None:
+            layout.pop('focus')
+        elif type(layout['focus']) is not bool:
+            raise ValueError('Choose whether focus mode is active.')
+    if 'preset' in layout:
+        if layout['preset'] is None:
+            layout.pop('preset')
+        elif type(layout['preset']) is not str or layout['preset'] not in DOCK_PRESETS:
+            raise ValueError('Choose a known dock preset.')
+    if 'savedName' in layout:
+        if layout['savedName'] in (None, ''):
+            layout.pop('savedName')
+            layout.pop('savedChanged', None)
+        elif type(layout['savedName']) is not str or not 1 <= len(layout['savedName'].strip()) <= 80:
+            raise ValueError('Choose a dock layout name from 1 to 80 characters.')
+        else:
+            layout['savedName'] = layout['savedName'].strip()
+    if 'savedChanged' in layout:
+        if layout['savedChanged'] is None:
+            layout.pop('savedChanged')
+        elif type(layout['savedChanged']) is not bool:
+            raise ValueError('Choose whether the saved dock layout changed.')
+    placed = []
+    sides = [('left', {'w', 'c', 'st'}), ('right', {'c', 'st'})]
+    if 'bottom' in layout:
+        if layout['bottom'] is None:
+            layout.pop('bottom')
+        else:
+            sides.append(('bottom', {'h', 'c', 'st'}))
+    for side, keys in sides:
+        dock = layout[side]
+        if (type(dock) is not dict or set(dock) != keys or type(dock['c']) is not bool
+                or type(dock['st']) is not list or len(dock['st']) > len(DOCK_PANELS)):
+            raise ValueError('Choose the panels of the %s dock.' % side)
+        if side == 'left' and (type(dock['w']) is not int or not 200 <= dock['w'] <= 520):
+            raise ValueError('Choose a left dock width from 200 to 520 pixels.')
+        if side == 'bottom' and (type(dock['h']) not in (int, float) or isinstance(dock['h'], bool) or not 80 <= dock['h'] <= 640):
+            raise ValueError('Choose a bottom dock height from 80 to 640 pixels.')
+        for slot in dock['st']:
+            if (type(slot) is not dict or set(slot) != {'p', 'a', 'h', 'c'} or type(slot['c']) is not bool
+                    or type(slot['p']) is not list or slot['a'] not in slot['p']
+                    or type(slot['h']) not in (int, float) or isinstance(slot['h'], bool) or not 0.05 <= slot['h'] <= 20):
+                raise ValueError('Choose the tabs, the open tab and the height of each stacked panel.')
+            placed += slot['p']
+    if 'float' in layout:
+        if layout['float'] is None:
+            layout.pop('float')
+        else:
+            floating = layout['float']
+            if type(floating) is not list or len(floating) > len(DOCK_PANELS):
+                raise ValueError('Choose floating dock panels.')
+            for item in floating:
+                if (type(item) is not dict or set(item) != {'id', 'x', 'y', 'w', 'h'}
+                        or item['id'] not in DOCK_PANELS
+                        or not all(type(item[k]) in (int, float) and not isinstance(item[k], bool) for k in ('x', 'y', 'w', 'h'))
+                        or item['w'] < 120 or item['h'] < 80):
+                    raise ValueError('Each floating panel needs an id, position and size.')
+                placed.append(item['id'])
+    if any(panel not in DOCK_PANELS for panel in placed) or len(set(placed)) != len(placed):
+        raise ValueError('Each dock panel can sit in one place only.')
+    if 'closed' in layout:
+        if layout['closed'] is None or layout['closed'] == []:
+            layout.pop('closed')
+        else:
+            closed = layout['closed']
+            if (type(closed) is not list or len(closed) > len(DOCK_PANELS)
+                    or any(panel not in DOCK_PANELS for panel in closed)
+                    or len(set(closed)) != len(closed) or not set(closed).isdisjoint(placed)):
+                raise ValueError('Each dock panel can sit in one place only.')
+    return layout
+
+
+def _saved_dock_layouts(held):
+    saved = held.get('saved') if isinstance(held, dict) else None
+    if not isinstance(saved, dict):
+        return {}
+    clean = {}
+    for name, value in saved.items():
+        if isinstance(name, str) and 1 <= len(name.strip()) <= 80 and isinstance(value, dict):
+            try:
+                clean[name.strip()] = _validate_dock_layout(value)
+            except ValueError:
+                continue
+    return clean
 
 
 def dock_layout(function='readDockLayout', args=(), settings=None):
@@ -802,63 +903,36 @@ def dock_layout(function='readDockLayout', args=(), settings=None):
     from .session_files import profile_directory
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
     if function == 'setDockLayout':
-        if len(args) != 1:
+        if len(args) not in (1, 2):
             raise ValueError('Choose one dock layout.')
         layout = args[0]
         if layout is not None:  # None is Reset: back to the default layout
-            if type(layout) is not dict or not ({'left', 'right'} <= set(layout) <= {'left', 'right', 'cmd', 'bottom', 'float', 'focus'}):
-                raise ValueError('Choose a left and a right dock.')
-            if 'cmd' in layout:
-                if layout['cmd'] is None:
-                    layout = {k: v for k, v in layout.items() if k != 'cmd'}
-                else:
-                    cmd = layout['cmd']
-                    if (type(cmd) is not dict or set(cmd) != {'x', 'y'}
-                            or not all(type(cmd[k]) in (int, float) and not isinstance(cmd[k], bool) and 0 <= cmd[k] <= 1 for k in ('x', 'y'))):
-                        raise ValueError('Choose a composer position from 0 to 1.')
-            if 'focus' in layout and type(layout['focus']) is not bool:
-                raise ValueError('Choose whether focus mode is active.')
-            placed = []
-            sides = [('left', {'w', 'c', 'st'}), ('right', {'c', 'st'})]
-            if 'bottom' in layout:
-                if layout['bottom'] is None:
-                    layout = {k: v for k, v in layout.items() if k != 'bottom'}
-                else:
-                    sides.append(('bottom', {'h', 'c', 'st'}))
-            for side, keys in sides:
-                dock = layout[side]
-                if (type(dock) is not dict or set(dock) != keys or type(dock['c']) is not bool
-                        or type(dock['st']) is not list or len(dock['st']) > len(DOCK_PANELS)):
-                    raise ValueError('Choose the panels of the %s dock.' % side)
-                if side == 'left' and (type(dock['w']) is not int or not 200 <= dock['w'] <= 520):
-                    raise ValueError('Choose a left dock width from 200 to 520 pixels.')
-                if side == 'bottom' and (type(dock['h']) not in (int, float) or isinstance(dock['h'], bool) or not 80 <= dock['h'] <= 640):
-                    raise ValueError('Choose a bottom dock height from 80 to 640 pixels.')
-                for slot in dock['st']:
-                    if (type(slot) is not dict or set(slot) != {'p', 'a', 'h', 'c'} or type(slot['c']) is not bool
-                            or type(slot['p']) is not list or slot['a'] not in slot['p']
-                            or type(slot['h']) not in (int, float) or not 0.05 <= slot['h'] <= 20):
-                        raise ValueError('Choose the tabs, the open tab and the height of each stacked panel.')
-                    placed += slot['p']
-            if 'float' in layout:
-                if layout['float'] is None:
-                    layout = {k: v for k, v in layout.items() if k != 'float'}
-                else:
-                    floating = layout['float']
-                    if type(floating) is not list or len(floating) > len(DOCK_PANELS):
-                        raise ValueError('Choose floating dock panels.')
-                    for item in floating:
-                        if (type(item) is not dict or set(item) != {'id', 'x', 'y', 'w', 'h'}
-                                or item['id'] not in DOCK_PANELS
-                                or not all(type(item[k]) in (int, float) and not isinstance(item[k], bool) for k in ('x', 'y', 'w', 'h'))
-                                or item['w'] < 120 or item['h'] < 80):
-                            raise ValueError('Each floating panel needs an id, position and size.')
-                        placed.append(item['id'])
-            if any(panel not in DOCK_PANELS for panel in placed) or len(set(placed)) != len(placed):
-                raise ValueError('Each dock panel can sit in one place only.')
+            layout = _validate_dock_layout(layout)
         with settings.lock:
-            settings.update({'dockLayout': {'layout': layout}})  # the one record replaces any per-session records
-    return {'dockLayout': {'layout': _one_dock_layout(settings.read().get('dockLayout', {}))}}
+            existing = settings.read().get('dockLayout', {})
+            saved = _saved_dock_layouts(existing)
+            if len(args) == 2:
+                raw_saved = args[1]
+                if raw_saved is None:
+                    saved = {}
+                elif type(raw_saved) is not dict or len(raw_saved) > 32:
+                    raise ValueError('Choose up to 32 named dock layouts.')
+                else:
+                    saved = {}
+                    for name, item in raw_saved.items():
+                        if type(name) is not str or not 1 <= len(name.strip()) <= 80 or item is None:
+                            raise ValueError('Choose a dock layout name and layout.')
+                        saved[name.strip()] = _validate_dock_layout(item)
+            elif isinstance(layout, dict) and layout.get('savedName') and not layout.get('savedChanged'):
+                if layout['savedName'] not in saved and len(saved) >= 32:
+                    raise ValueError('Choose up to 32 named dock layouts.')
+                saved = {**saved, layout['savedName']: dict(layout)}
+            record = {'layout': layout, **({'saved': saved} if saved else {})}
+            settings.update({'dockLayout': record})  # the one record replaces any per-session records
+            return {'dockLayout': record}
+    held = settings.read().get('dockLayout', {})
+    saved = _saved_dock_layouts(held)
+    return {'dockLayout': {'layout': _one_dock_layout(held), **({'saved': saved} if saved else {})}}
 
 
 def appearance_settings(function='readControls', args=(), settings=None):

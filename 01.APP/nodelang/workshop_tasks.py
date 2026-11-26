@@ -1746,11 +1746,17 @@ def _column_entry(row, session, declaration, project, state, last, threads, live
     waiting = "limit reached" if row.get("capacity") == "LIMIT_REACHED" and shown == "PLANNED" else (
         row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else "")
     bound = threads.get(row["id"], [])
-    owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
+    delegate = session.get("delegate") if isinstance(session.get("delegate"), str) else ""
+    owner = (row["owner_label"] if row["id"] in live or not row["lease_expired"] else None) or delegate or None
+    read_only = [item for item in session.get("readOnlyAgents") or [] if isinstance(item, str) and item]
     agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
     label = owner or ((declaration or {}).get("agent") if declaration else None)
     if isinstance(label, str) and label and label not in agents:
         agents.insert(0, label)
+    for ro_agent in read_only:
+        if ro_agent not in agents:
+            agents.append(ro_agent)
+    agent_access = {a: ("read-only" if a in read_only else "edit") for a in agents}
     plan = list(session.get("plan") or [])
     if not plan and (declaration or owner or shown in ("WIP", "IN REVIEW", "DONE")):
         plan = [{"title": short_title(row["title"]), "status": {"WIP": "working", "IN REVIEW": "blocked", "DONE": "done"}.get(shown, "")}]
@@ -1765,13 +1771,17 @@ def _column_entry(row, session, declaration, project, state, last, threads, live
          'capacity': row.get('capacity') or '',
          'stale': shown == "stale", 'result': result, 'project': session.get('project', row.get('project') or ''), 'parent': row.get('parent_id') or '',
          'summary': _summary(row['title'], shown, result),
-         'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': [dict(entry) for entry in bound], 'steps': [], 'reviews': [], 'queuedMessages': [],
+         'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': [dict(entry) for entry in bound], 'steps': [],
+         'reviews': list(session.get("reviews") or []), 'queuedMessages': list(session.get("queuedMessages") or []),
+         **({'planMode': session['planMode']} if session.get('planMode') else {}),
+         **({'control': session['control']} if isinstance(session.get('control'), dict) else {}),
          'declarations': [declaration] if declaration else [],
          'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
          'rules': list(session.get("rules") or []),
          'pinnedMessages': list(session.get('pinnedMessages') or []),
          'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
-         'agents': agents, 'folders': list(session.get("folders") or []) or paths,
+         'agents': agents, 'readOnlyAgents': read_only, 'agentAccess': agent_access,
+         'folders': list(session.get("folders") or []) or paths,
          # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
          'members': member_presence(row.get('members') or [], declarations, by_owner),
          'references': list(session.get("references") or []),
@@ -1935,6 +1945,29 @@ def _node_task(node, root):
     return node.get('workshopTask') or (node.get('agentWork') or {}).get('task') or root
 
 
+def _read_only_agents_of(document, held):
+    found = []
+    for node in document.get("nodes") or []:
+        if node.get("id") == "start" and node.get("fixed"):
+            raw = (node.get("params") or {}).get("read_only_agents")
+            if isinstance(raw, list):
+                found.extend(item for item in raw if isinstance(item, str) and item.strip())
+    if isinstance(held.get("readOnlyAgents"), list):
+        found.extend(item for item in held["readOnlyAgents"] if isinstance(item, str) and item.strip())
+    return list(dict.fromkeys(item.strip() for item in found))
+
+
+def _sync_read_only_agents(document, held, names):
+    clean = list(dict.fromkeys(item.strip() for item in names if isinstance(item, str) and item.strip()))
+    if clean:
+        held["readOnlyAgents"] = list(clean)
+    else:
+        held.pop("readOnlyAgents", None)
+    for node in document.get("nodes") or []:
+        if node.get("id") == "start" and node.get("fixed"):
+            node.setdefault("params", {})["read_only_agents"] = list(clean)
+
+
 def _held_context(document, *, roots=None, task_row=None):
     props = document.get("properties") if isinstance(document.get("properties"), dict) else {}
     from .session_files import _project_of, _registered_roots, session_plan, task_context
@@ -1943,12 +1976,16 @@ def _held_context(document, *, roots=None, task_row=None):
     held = task_context(document, task)
     project = _project_of(props, _registered_roots() if roots is None else roots, task_row)
     nodes = [n for n in document.get("nodes") or [] if not task or _node_task(n, root) == task]
+    read_only = _read_only_agents_of(document, held)
     agents = list(held["agents"]) if isinstance(held.get("agents"), list) else []
     for node in nodes:
         if node.get("type") == "thing.agent":
             name = str((node.get("params") or {}).get("agent") or ('' if node.get('fixed') else node.get("title")) or "")
             if name and name not in agents:
                 agents.append(name)
+    for ro_name in read_only:
+        if ro_name not in agents:
+            agents.append(ro_name)
     return {
         "scope": "" if held.get("scope") == document["id"] else (held.get("scope") or ""),
         "rules": held["rules"] if isinstance(held.get("rules"), list) else [],
@@ -1958,6 +1995,8 @@ def _held_context(document, *, roots=None, task_row=None):
         "homePinned": (held.get('pinned') is True if task and task != root else
                        props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True),
         "agents": agents,
+        "readOnlyAgents": read_only,
+        "agentAccess": {name: ("read-only" if name in read_only else "edit") for name in agents},
         "plan": session_plan(document, task),
         "handover": held["handover"] if isinstance(held.get("handover"), dict) else {},
         "progress": held["progress"] if isinstance(held.get("progress"), dict) else {},
@@ -1968,6 +2007,11 @@ def _held_context(document, *, roots=None, task_row=None):
                      for node in nodes if isinstance(node.get("result"), dict)],
         "folders": list(held["folders"]) if isinstance(held.get("folders"), list) else [],
         "references": list(held["references"]) if isinstance(held.get("references"), list) else [],
+        "delegate": held["delegate"] if isinstance(held.get("delegate"), str) else "",
+        "planMode": held["planMode"] if held.get("planMode") in ("Run on its own", "Confirm each step", "Keep planning") else "",
+        "reviews": [dict(item) for item in (held.get("reviews") or []) if isinstance(item, dict)],
+        "queuedMessages": [dict(item) for item in (held.get("queuedMessages") or []) if isinstance(item, dict)],
+        "control": dict(held["control"]) if isinstance(held.get("control"), dict) else None,
         "checkpoints": [{key: row[key] for key in ("id", "title", "at")} for row in props.get("checkpoints", [])],
     }
 
@@ -2304,6 +2348,339 @@ def pin_message(history, task, message, pinned):
     return _show(task, path, read_document(path), select=False)
 
 
+_PLAN_MODES = ("Run on its own", "Confirm each step", "Keep planning")
+
+
+def _ensure_task_file(history, task):
+    row = get(history, str(task))
+    if row is None:
+        raise ValueError("No such Workshop task")
+    if not row.get("session_path"):
+        open_session(history, str(task), select=False)
+        row = get(history, str(task))
+    return row
+
+
+def _agent_label(name):
+    from .agent_runtime_registry import AGENT_APPS
+    key = {"claude-code": "claude", "gemini-cli": "gemini"}.get(name, name)
+    return dict(AGENT_APPS).get(key, name)
+
+
+def reassign_task(history, task, agent=''):
+    """Reopen a stopped or stale task for continuation in its same session, notifying the chosen agent."""
+    from . import canvas_documents
+    from .session_files import task_context
+    from .workshop_live import FOUNDER
+    from .workshop_mailbox import _send, record_activity
+    task = _short_text(str(task), "id", 120)
+    successor = _short_text(agent, "agent", 120) if isinstance(agent, str) and agent.strip() else ""
+    label = _agent_label(successor) if successor else ""
+    row = _ensure_task_file(history, task)
+    previous_owner = row.get("owner") or ""
+    members = [{**m, "lease_until": None, "left": True} for m in (row.get("members") or [])]
+
+    def statement(expected):
+        return (
+            "UPDATE workshop_tasks SET archived=0, archive_previous=NULL, archive_revision=NULL, "
+            "status='open', owner=NULL, owner_label=NULL, lease_until=NULL, write_open=0, "
+            "outcome=NULL, capacity=NULL, handover_route=NULL, members=?, updated_at=?, revision=revision+1 "
+            "WHERE id=? AND revision=?",
+            (json.dumps(members), _now(), task, expected),
+        )
+
+    with history._transaction(write=True):
+        if not _update(history, task, row["revision"], statement):
+            raise ValueError("The task changed. Refresh Workshop and retry.")
+        record_activity(history, "You", "reassign", task, previous_owner=previous_owner, successor=label or successor)
+    updated = get(history, task)
+    _file_state(updated, "open")
+    path = updated.get("session_path")
+    dispatch_to = [label or "BABOOM"]
+    if path:
+        def assign_successor(document):
+            held = task_context(document, task)
+            if successor:
+                held["delegate"] = successor
+                existing = [a for a in (held.get("agents") or []) if a not in (successor, label)]
+                held["agents"] = [label, *existing]
+                ro = [a for a in _read_only_agents_of(document, held) if a not in (successor, label)]
+                _sync_read_only_agents(document, held, ro)
+                handover_note = dict(held.get("handover") or {})
+                handover_note["successor"] = label
+                held["handover"] = handover_note
+                for node in document["nodes"]:
+                    if node.get("id") == "fixed-agent" and node.get("fixed"):
+                        node["title"] = label
+                        node.setdefault("params", {})["agent"] = label
+            elif held.get("agents"):
+                dispatch_to[0] = held["agents"][0]
+            return []
+        canvas_documents.edit(path, "You", "reassign task", assign_successor, solve_changed=False)
+    _send(history, {"to": str(dispatch_to[0]),
+                    "text": "Continue task %s (%s) in its existing session." % (task, updated["title"])},
+          {"sender": FOUNDER, "sender_key": "app:founder", "sender_label": FOUNDER},
+          queued=(task,))
+    with _THREADS_LOCK:
+        _THREADS.clear()
+    return get(history, task)
+
+
+def set_task_delegate(history, task, agent):
+    """Assign the task's delegate in its existing session file and notify that agent to continue it."""
+    from . import canvas_documents
+    from .session_files import task_context
+    from .workshop_live import FOUNDER
+    from .workshop_mailbox import _send
+    task = _short_text(str(task), "id", 120)
+    chosen = _short_text(agent, "delegate", 120)
+    label = _agent_label(chosen)
+    row = _ensure_task_file(history, task)
+    path = row["session_path"]
+
+    def change(document):
+        held = task_context(document, task)
+        held["delegate"] = chosen
+        existing = [item for item in (held.get("agents") or []) if item not in (chosen, label)]
+        held["agents"] = [label, *existing]
+        ro = [item for item in _read_only_agents_of(document, held) if item not in (chosen, label)]
+        _sync_read_only_agents(document, held, ro)
+        for node in document["nodes"]:
+            if node.get("id") == "fixed-agent" and node.get("fixed"):
+                node["title"] = label
+                node.setdefault("params", {})["agent"] = label
+        return []
+
+    canvas_documents.edit(path, "You", "set task delegate", change, solve_changed=False)
+    with history._transaction(write=True):
+        _write(history,
+               "UPDATE workshop_tasks SET archived=0, status=CASE WHEN status='done' THEN 'open' ELSE status END, "
+               "outcome=CASE WHEN outcome IN ('interrupted','unknown') THEN NULL ELSE outcome END, "
+               "updated_at=?, revision=revision+1 WHERE id=?",
+               (_now(), task))
+    _send(history, {"to": str(label),
+                    "text": "Assigned to continue task %s (%s) in its existing session." % (task, row["title"])},
+          {"sender": FOUNDER, "sender_key": "app:founder", "sender_label": FOUNDER},
+          queued=(task,))
+    with _THREADS_LOCK:
+        _THREADS.clear()
+    return get(history, task)
+
+
+def set_task_agent_access(history, task, agent, access="edit"):
+    """Grant or revoke edit vs read-only access for an agent in the task's own .archhub session file."""
+    from . import canvas_documents
+    from .session_files import task_context
+    task = _short_text(str(task), "id", 120)
+    chosen = _short_text(agent, "agent", 120)
+    label = _agent_label(chosen)
+    if access in ("edit", "write", True):
+        mode = "edit"
+    elif access in ("read-only", "readonly", "read"):
+        mode = "read-only"
+    elif access in ("remove", "revoke", "none", False):
+        mode = "remove"
+    else:
+        raise ValueError("Choose edit, read-only or remove for agent access.")
+    row = _ensure_task_file(history, task)
+    path = row["session_path"]
+
+    def change(document):
+        held = task_context(document, task)
+        current_agents = [item for item in (held.get("agents") or []) if isinstance(item, str) and item]
+        current_ro = _read_only_agents_of(document, held)
+        filtered_agents = [item for item in current_agents if item not in (chosen, label)]
+        filtered_ro = [item for item in current_ro if item not in (chosen, label)]
+        if mode == "edit":
+            held["agents"] = [*filtered_agents, label] if filtered_agents else [label]
+            _sync_read_only_agents(document, held, filtered_ro)
+        elif mode == "read-only":
+            held["agents"] = [*filtered_agents, label] if filtered_agents else [label]
+            _sync_read_only_agents(document, held, [*filtered_ro, label])
+            if held.get("delegate") in (chosen, label):
+                held.pop("delegate", None)
+        else:
+            held["agents"] = filtered_agents
+            _sync_read_only_agents(document, held, filtered_ro)
+            if held.get("delegate") in (chosen, label):
+                held.pop("delegate", None)
+            next_edit = next((a for a in filtered_agents if a not in filtered_ro), "")
+            for node in document["nodes"]:
+                if node.get("id") == "fixed-agent" and node.get("fixed"):
+                    if (node.get("params") or {}).get("agent") in (chosen, label):
+                        node["title"] = next_edit or "No agent yet"
+                        node.setdefault("params", {})["agent"] = next_edit
+        return []
+
+    canvas_documents.edit(path, "You", "set task agent access", change, solve_changed=False)
+    with history._transaction(write=True):
+        _write(history, "UPDATE workshop_tasks SET updated_at=?, revision=revision+1 WHERE id=?", (_now(), task))
+    return get(history, task)
+
+
+def queue_task_message(history, task, text):
+    """Queue a message on the task's session file for explicit send or withdrawal."""
+    from . import canvas_documents
+    task = _short_text(str(task), "id", 120)
+    body = _short_text(text, "queued message", 4000)
+    row = _ensure_task_file(history, task)
+    path = row["session_path"]
+    entry = {"id": "qmsg-" + uuid4().hex[:12], "text": body, "state": "queued", "at": _now()}
+
+    def change(document):
+        from .session_files import task_context
+        held = task_context(document, task)
+        queued = [dict(item) for item in (held.get("queuedMessages") or []) if isinstance(item, dict)]
+        if len(queued) >= 40:
+            raise ValueError("Send or withdraw queued messages before adding more.")
+        queued.append(entry)
+        held["queuedMessages"] = queued
+        return []
+
+    canvas_documents.edit(path, "You", "queue task message", change, solve_changed=False)
+    return entry
+
+
+def settle_queued_message(history, task, message_id, send_now):
+    """Send a queued task message into the Workshop room bound to this task, or withdraw it."""
+    from . import canvas_documents
+    from .workshop_live import FOUNDER
+    from .workshop_mailbox import _send
+    task = _short_text(str(task), "id", 120)
+    msg_id = _short_text(message_id, "queued message id", 120)
+    if type(send_now) is not bool:
+        raise ValueError("Choose whether to send or withdraw the queued message.")
+    row = _ensure_task_file(history, task)
+    path = row["session_path"]
+    found_text = []
+
+    def inspect_or_withdraw(document):
+        from .session_files import task_context
+        held = task_context(document, task)
+        queued = [dict(item) for item in (held.get("queuedMessages") or []) if isinstance(item, dict)]
+        match = next((item for item in queued if item.get("id") == msg_id), None)
+        if match is None:
+            raise ValueError("No such queued message on this task.")
+        if not send_now:
+            held["queuedMessages"] = [item for item in queued if item.get("id") != msg_id]
+        else:
+            found_text.append((match["text"], (held.get("agents") or [None])[0] or row.get("owner_label") or "*"))
+        return []
+
+    canvas_documents.edit(path, "You", "settle queued message", inspect_or_withdraw, solve_changed=False)
+    if not send_now:
+        return {"ok": True, "id": msg_id, "withdrawn": True}
+    text, target = found_text[0]
+    sent = _send(history, {"to": str(target), "text": text},
+                 {"sender": FOUNDER, "sender_key": "app:founder", "sender_label": FOUNDER},
+                 queued=(task,))
+
+    def mark_sent(document):
+        from .session_files import task_context
+        held = task_context(document, task)
+        held["queuedMessages"] = [
+            {**item, "state": "sent", "messageId": sent["message_id"], "delivery": {"state": "started"}}
+            if item.get("id") == msg_id else item
+            for item in (held.get("queuedMessages") or []) if isinstance(item, dict)
+        ]
+        return []
+
+    canvas_documents.edit(path, "You", "deliver queued message", mark_sent, solve_changed=False)
+    with _THREADS_LOCK:
+        _THREADS.clear()
+    return {"ok": True, "id": msg_id, "message_id": sent["message_id"], "state": "sent"}
+
+
+def steer_task(history, task, instruction):
+    """Send a steering instruction or Pause/Continue control note to the task's Workshop thread."""
+    from . import canvas_documents
+    from .workshop_live import FOUNDER
+    from .workshop_mailbox import _send
+    task = _short_text(str(task), "id", 120)
+    text = _short_text(instruction, "steer instruction", 2000)
+    row = _ensure_task_file(history, task)
+    path = row["session_path"]
+    target = row.get("owner_label") or "*"
+    control = {"request": text, "state": "requested", "at": _now()} if text in ("Pause", "Continue") else None
+
+    def change(document):
+        from .session_files import task_context
+        held = task_context(document, task)
+        nonlocal target
+        if target == "*" and held.get("agents"):
+            target = held["agents"][0]
+        if control is not None:
+            held["control"] = control
+        return []
+
+    canvas_documents.edit(path, "You", "steer task", change, solve_changed=False)
+    sent = _send(history, {"to": str(target), "text": text},
+                 {"sender": FOUNDER, "sender_key": "app:founder", "sender_label": FOUNDER},
+                 queued=(task,))
+    with _THREADS_LOCK:
+        _THREADS.clear()
+    return {"ok": True, "task": task, "message_id": sent["message_id"], **({"control": control} if control else {})}
+
+
+def set_task_plan_mode(history, task, mode):
+    from . import canvas_documents
+    task = _short_text(str(task), "id", 120)
+    if mode not in _PLAN_MODES:
+        raise ValueError("Choose Run on its own, Confirm each step or Keep planning.")
+    row = _ensure_task_file(history, task)
+
+    def change(document):
+        from .session_files import task_context
+        task_context(document, task)["planMode"] = mode
+        return []
+
+    canvas_documents.edit(row["session_path"], "You", "set task plan mode", change, solve_changed=False)
+    return {"ok": True, "task": task, "planMode": mode}
+
+
+def add_task_review(history, task, scope, comment):
+    from . import canvas_documents
+    task = _short_text(str(task), "id", 120)
+    clean_scope = _short_text(scope, "review scope", 80)
+    clean_comment = _short_text(comment, "review comment", 2000)
+    row = _ensure_task_file(history, task)
+    entry = {"scope": clean_scope, "comment": clean_comment, "resolved": False, "at": _now()}
+
+    def change(document):
+        from .session_files import task_context
+        held = task_context(document, task)
+        reviews = [dict(item) for item in (held.get("reviews") or []) if isinstance(item, dict)]
+        if len(reviews) >= 80:
+            raise ValueError("Resolve or archive older review findings first.")
+        reviews.append(entry)
+        held["reviews"] = reviews
+        return []
+
+    canvas_documents.edit(row["session_path"], "You", "add task review", change, solve_changed=False)
+    return entry
+
+
+def resolve_task_review(history, task, index, resolved):
+    from . import canvas_documents
+    task = _short_text(str(task), "id", 120)
+    if type(index) is not int or index < 0 or type(resolved) is not bool:
+        raise ValueError("Choose an existing review finding and resolved state.")
+    row = _ensure_task_file(history, task)
+
+    def change(document):
+        from .session_files import task_context
+        held = task_context(document, task)
+        reviews = [dict(item) for item in (held.get("reviews") or []) if isinstance(item, dict)]
+        if index >= len(reviews):
+            raise ValueError("No such review finding on this task.")
+        reviews[index]["resolved"] = resolved
+        held["reviews"] = reviews
+        return []
+
+    canvas_documents.edit(row["session_path"], "You", "resolve task review", change, solve_changed=False)
+    return {"ok": True, "task": task, "index": index, "resolved": resolved}
+
+
 def duplicate_home_task(history, task, path, files):
     from pathlib import Path
     from . import canvas_documents
@@ -2408,7 +2785,7 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 
-_SESSION_FIELDS = {"materializePlan", "scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned", "project"}
+_SESSION_FIELDS = {"materializePlan", "scope", "rules", "agents", "readOnlyAgents", "delegate", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned", "project"}
 _HANDOVER = ("done", "next", "results", "summary", "next_step", "files_touched", "blocker", "resume_prompt", "successor", "updated_at")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
 _ABSOLUTE = re.compile(
@@ -2621,6 +2998,13 @@ def update_session(history, task, values):
             held["rules"] = _text_list(values["rules"], "rules")
         if "agents" in values:
             held["agents"] = _text_list(values["agents"], "agents")
+        if "readOnlyAgents" in values:
+            _sync_read_only_agents(document, held, _text_list(values["readOnlyAgents"], "readOnlyAgents"))
+        if "delegate" in values:
+            if values["delegate"] in (None, ""):
+                held.pop("delegate", None)
+            else:
+                held["delegate"] = _short_text(values["delegate"], "delegate", 120)
         if "materializePlan" in values:
             expected = _text_list(values["materializePlan"], "plan")
             if "plan" in values or held.get("plan") != expected:

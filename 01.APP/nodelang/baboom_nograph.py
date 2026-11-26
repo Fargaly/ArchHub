@@ -118,7 +118,7 @@ def ask(prompt, context=''):
         return {'text': grounded['answer'], 'links': grounded['links'], 'steps': [],
                 'via': {'family': 'standard', 'provider': 'BABOOM', 'model': 'shared-index'}, 'actions': []}
     from .agent_budget import paused
-    from .model_router import ModelRouteRefused, resolve_model_route
+    from .model_router import DEFAULT_FREE_ROUTE, ModelRouteRefused, _is_openrouter_free_route, resolve_model_route
     from .nograph_server import _SERVER
     from .settings_owner import read_router_settings
     stopped = _SERVER.is_halted if _SERVER is not None else None
@@ -127,8 +127,9 @@ def ask(prompt, context=''):
     if paused('BABOOM'):
         raise ModelRouteRefused('This agent reached its token cap and is paused.', reason_code='agent_paused')
     settings = read_router_settings()
-    model = (settings['agents'].get('BABOOM', {}).get('model')
-             or settings['providerPreferences'].get('BABOOM') or settings['default_model'])
+    explicit = settings['agents'].get('BABOOM', {}).get('model') or settings['providerPreferences'].get('BABOOM')
+    model = explicit or (DEFAULT_FREE_ROUTE if settings['free_first'] and not _is_openrouter_free_route(
+        resolve_model_route(settings['default_model'])) else settings['default_model'])
     if resolve_model_route(model).family == 'openrouter' and not settings['providers']['openrouter']['enabled']:
         raise ModelRouteRefused('OpenRouter is disabled in Settings.')
     active = False

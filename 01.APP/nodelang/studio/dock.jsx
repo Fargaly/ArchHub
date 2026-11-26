@@ -14,7 +14,6 @@
   const SIDES = ['left', 'right'];
   const ALL_SIDES = ['left', 'right', 'bottom'];
   const LEFT = {min: 200, max: 520, base: 268}, RIGHT = {min: 280, max: 480, base: 320}, BOTTOM = {min: 140, max: 480, base: 220};
-  const EXT_KEY = 'archhub.dock.ext.v1';
   const clone = layout => JSON.parse(JSON.stringify(layout));
   const slot = id => ({p: [id], a: id, h: 1, c: false});
   const NARROW = 1280;  // below this window width the right dock starts folded to icons, so the canvas keeps its room
@@ -277,35 +276,6 @@
     return base.endsWith(' (changed)') ? base : base + ' (changed)';
   };
 
-  // Extended dock metadata (bottom, float, people, saved layouts, focus) is also mirrored locally so switching screens keeps it
-  // even if a settings backend only persists the core 4-panel left/right schema.
-  const hasExtended = layout => Boolean(
-    layout && (
-      layout.bottom?.st?.length ||
-      layout.float?.length ||
-      layout.closed?.length ||
-      layout.focus ||
-      layout.preset ||
-      layout.savedName ||
-      SIDES.some(side => (layout[side]?.st || []).some(sl => sl.p.some(id => !CORE.includes(id))))
-    )
-  );
-  const toCoreOwnerLayout = layout => {
-    if (!layout) return null;
-    if (!hasExtended(layout)) return layout;
-    const seen = new Set();
-    const cleanSide = side => ({
-      ...(side === 'left' ? {w: Math.max(LEFT.min, Math.min(LEFT.max, Math.round(layout.left?.w) || LEFT.base))} : {}),
-      c: layout[side]?.c === true,
-      st: (layout[side]?.st || []).map(sl => {
-        const p = sl.p.filter(id => CORE.includes(id) && !seen.has(id) && seen.add(id));
-        return {p, a: p.includes(sl.a) ? sl.a : p[0], h: sl.h > 0 ? Math.max(.05, Math.min(20, sl.h)) : 1, c: sl.c === true};
-      }).filter(sl => sl.p.length),
-    });
-    const out = {left: cleanSide('left'), right: cleanSide('right'), ...(layout.cmd ? {cmd: layout.cmd} : {})};
-    return out;
-  };
-
   window.UI.dockModel = {
     PANELS, PRESETS: Object.keys(PRESETS), LEFT, RIGHT, BOTTOM,
     defaultLayout, presetLayout, normalize, where, visible, place,
@@ -321,16 +291,6 @@
     subscribe(notify) { narrowOpen.listeners.add(notify); return () => narrowOpen.listeners.delete(notify); },
     read() { if (window.innerWidth >= NARROW) narrowOpen.held = false; return narrowOpen.held; },
     set(value) { if (value === narrowOpen.read()) return; narrowOpen.held = value; narrowOpen.listeners.forEach(notify => notify()); }};
-
-  const readExtBag = () => {
-    try { return JSON.parse(window.localStorage?.getItem(EXT_KEY) || '{}') || {}; } catch { return {}; }
-  };
-  const writeExtBag = bag => {
-    if (!window.localStorage) return false;
-    if (!bag || (!bag.active && (!bag.saved || !Object.keys(bag.saved).length))) window.localStorage.removeItem(EXT_KEY);
-    else window.localStorage.setItem(EXT_KEY, JSON.stringify(bag));
-    return true;
-  };
 
   function PeopleDockView({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
@@ -394,25 +354,29 @@
     </div>;
   }
 
-  // onSave(layout | null) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
+  // onSave(layout | null, saved?) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
   function Dock({rightWidth, onRightWidth, onSave, onLayout, panels, controls, onMapHost, children}) {
     const {useData} = window.UI, s = useData();
     const record = s.dockLayout?.layout || null;
-    const [local, setLocal] = React.useState(() => {
-      const ext = readExtBag();
-      return ext.active ? {layout: normalize(ext.active, window.innerWidth)} : null;
-    });
+    const ownerSaved = s.dockLayout?.saved || null;
+    const [local, setLocal] = React.useState(null);
+    const [localSaved, setLocalSaved] = React.useState(null);
     const [tabMenu, setTabMenu] = React.useState(null);
     const savedSet = React.useRef(new Set()), seenRecord = React.useRef(JSON.stringify(record));
+    const seenSaved = React.useRef(JSON.stringify(ownerSaved));
     const recordJson = JSON.stringify(record);
+    const savedJson = JSON.stringify(ownerSaved);
     if (seenRecord.current !== recordJson) {
       seenRecord.current = recordJson;
       if (savedSet.current.has(recordJson)) savedSet.current.delete(recordJson);
       else {
         savedSet.current.clear();
-        const ext = readExtBag();
-        if (!ext.active && local) setLocal(null);
+        if (local) setLocal(null);
       }
+    }
+    if (seenSaved.current !== savedJson) {
+      seenSaved.current = savedJson;
+      if (localSaved) setLocalSaved(null);
     }
     const narrow = React.useSyncExternalStore(onResize, () => window.innerWidth < NARROW, () => false);
     const opened = React.useSyncExternalStore(narrowOpen.subscribe, narrowOpen.read, () => false);
@@ -433,26 +397,22 @@
     current.current = pending.current || kept;
     const layout = narrow && !opened && !kept.right.c ? {...kept, right: {...kept.right, c: true}} : kept;
 
-    const persistChange = (next, keep = true) => {
-      if (next === current.current) return;
+    const namedLayouts = () => localSaved ?? ownerSaved ?? {};
+    const persistChange = (next, keep = true, nextSaved = undefined) => {
+      if (next === current.current && nextSaved === undefined) return;
       current.current = pending.current = next;
       setLocal({layout: next});
+      if (nextSaved !== undefined) setLocalSaved(nextSaved);
       // Before the owner's record has loaded a change shows at once and is not saved (the loaded record then replaces it).
       if (keep && s.dockLayout) {
-        const bag = readExtBag();
-        if (hasExtended(next)) writeExtBag({...bag, active: next});
-        else if (bag.active) { const copyBag = {...bag}; delete copyBag.active; writeExtBag(copyBag); }
-        const ownerRecord = toCoreOwnerLayout(next);
-        savedSet.current.add(JSON.stringify(ownerRecord));
-        onSave(ownerRecord);
+        savedSet.current.add(JSON.stringify(next));
+        onSave(next);
       }
     };
     const change = (next, keep = true) => persistChange(next, keep);
     const reset = () => {
       pending.current = null;
       narrowOpen.set(false);
-      const bag = readExtBag();
-      if (bag.active) { const copyBag = {...bag}; delete copyBag.active; writeExtBag(copyBag); }
       setLocal({layout: null});
       savedSet.current.add('null');
       onSave(null);
@@ -482,18 +442,17 @@
       toggleFocus: on => change(setFocus(current.current, on)),
       isFocus: () => Boolean(current.current?.focus),
       saveNamedLayout: name => {
-        const clean = String(name || '').trim();
+        const clean = String(name || '').trim().slice(0, 80);
         if (!clean) return false;
-        const bag = readExtBag();
         const snapshot = {...clone(current.current), savedName: clean};
         delete snapshot.savedChanged;
-        writeExtBag({...bag, active: snapshot, saved: {...(bag.saved || {}), [clean]: snapshot}});
-        change(snapshot);
+        const nextSaved = {...namedLayouts(), [clean]: snapshot};
+        persistChange(snapshot, true, nextSaved);
         return true;
       },
-      savedLayouts: () => Object.keys(readExtBag().saved || {}),
+      savedLayouts: () => Object.keys(namedLayouts()),
       useSavedLayout: name => {
-        const found = (readExtBag().saved || {})[name];
+        const found = namedLayouts()[name];
         if (found) change(normalize(found, window.innerWidth));
       },
       movePanel: (id, to, rect) => change(movePanel(current.current, id, to, rect)),

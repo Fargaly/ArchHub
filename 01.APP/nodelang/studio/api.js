@@ -726,9 +726,10 @@ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approva
  async addWorkspace(input={}){if(input.create){const result=await request('/api/universal/workspace-roots',{action:'create',parent:input.parent,name:input.name,template:input.template||'',template_source:input.templateSource||'',template_window:projectTemplateWindow});await api.listWorkspaces();return {...result,message:'Project created and added to your workspaces.'};}let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return {cancelled:true,message:'No workspace was added.'};}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return {...result,message:'Workspace added. Your agents can work here.'};},
  async removeWorkspace(id){const result=await request('/api/universal/workspace-roots',{action:'unregister',id});await api.listWorkspaces();return {...result,message:'Workspace removed from ArchHub. Your files are unchanged.'};},
 });
-for(const fn of ['setTaskStatus','archiveTask','restoreArchivedTask','reassignTask','setTaskDelegate','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {
- api[fn]=async(...args)=>{const result=await workshop(fn,args);if(result?.ok===false)return result;await refreshTasks();return result;};
+for(const fn of ['setTaskStatus','archiveTask','restoreArchivedTask','reassignTask','setTaskDelegate','setTaskAgentAccess','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {
+ api[fn]=async(...args)=>{const result=await workshop(fn,args);if(result?.ok===false)return result;await refreshTasks();if(['reassignTask','setTaskDelegate','setTaskAgentAccess'].includes(fn)&&sessionDocument?.properties?.taskContext?.task===args[0])await pollFile(true).catch(()=>{});return result;};
 }
+api.continueTaskWithAgent=(id,agent)=>api.reassignTask(id,agent);
 api.deleteTask=async(id,revision=null)=>{
  const isOpen=()=>sessionDocument?.properties?.taskContext?.task===id;
  if(isOpen()){
@@ -909,7 +910,7 @@ async function refreshAgentSurface() {
 }
 for(const wireMethod of ['setTaskPlanMode','setIntakeRule',
  'setOnboarding','reviewBrainLink','setSourceEvidence','setLearningLayer','setPinnedOutput','setNodeRunPolicy','verifyOutputStamp']) {
- api[wireMethod]=async(...args)=>{const result=await workshop(wireMethod,args);if(result?.ok===false)throw Error(result.message||result.error);await commands.load();project();await refreshTasks();await refreshAgentSurface();return result;};
+ api[wireMethod]=async(...args)=>{const result=await workshop(wireMethod,args);if(result?.ok===false)throw Error(result.message||result.error);if(!sessionDocument){await commands.load();project();}else projectFile();await refreshTasks();await refreshAgentSurface();return result;};
 }
 function rememberTask(result, select=true){
  if(!result||!result.taskId)return result;
@@ -1328,7 +1329,7 @@ async function settingsAction(functionName, args=[], destination=state.settingsD
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
- for(const key of CONTROL_KEYS)if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of CONTROL_KEYS)if(Object.hasOwn(result,key)&&!(functionName==='readOperations'&&key==='dependencies'&&Array.isArray(result.dependencies)&&!result.dependencies.length&&state.dependencies?.length))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
@@ -1376,7 +1377,7 @@ api.readSessionListFilters=()=>settingsAction('readSessionListFilters');
 api.setSessionListFilter=(list,value)=>settingsAction('setSessionListFilter',[list,value]);
 api.readHomeLayout=()=>settingsAction('readHomeLayout');
 api.setHomeLayout=value=>settingsAction('setHomeLayout',[value]);
-api.setDockLayout=layout=>settingsAction('setDockLayout',[layout]);  // the user's one dock layout, the same on Home and in every session
+api.setDockLayout=(layout,saved)=>settingsAction('setDockLayout',saved===undefined?[layout]:[layout,saved]);  // the user's one dock layout, the same on Home and in every session
 // The Workshop settings the update policy reads (one owner: settings/settings.json); the node parameter edits the same value.
 const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel'];
 api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
@@ -1512,6 +1513,7 @@ async function changeSchedule(op,args,add=false){
 }
 const starterCards=library=>(Array.isArray(library?.templates)?library.templates:[]).filter(t=>String(t.id||'').startsWith('starter:')&&Array.isArray(t.children))
  .map(t=>({...t,runs:t.run_count,chain:t.children.map(n=>n.title),library:true}));
+const taskReplyText=t=>[...(t?.messages||[]).filter(m=>m.role!=='user'),...(t?.fileMessages||[]).filter(m=>m.who&&m.who!=='You'),...(t?.agentLog||[]).filter(m=>m.who&&m.who!=='You')].map(m=>m.text||m.content||'').filter(Boolean).join('\n');
 async function refreshProjectData() {
  const [schedules,skills,library]=await Promise.all([
   canvasOperation('project_schedules',[]),canvasOperation('list_skills',[]),request('/api/universal/node-library?templates=1').catch(error=>({error:error.message}))]);
@@ -1522,7 +1524,7 @@ async function refreshProjectData() {
  const templates=[...starterCards(library),...skillCards,...skills.filter(s=>!skillCards.some(c=>c.id===s.id))];
  await refreshTasks();
  const feedback=state.tasks.filter(t=>t.title.startsWith('Feedback: ')).map(t=>({id:t.id,text:t.title.slice('Feedback: '.length),status:t.status,
-  response:t.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n')}));
+  response:taskReplyText(t)}));
  publish({schedules,templates,feedback,templateError:valid?'':library.error||'Templates could not be read. Retry All templates.'});
  return {schedules,templates};
 }
@@ -1552,7 +1554,7 @@ Object.assign(api,{
  getNodeParameters:node=>copy(state.graph.nodes.find(n=>n.id===(typeof node==='string'?node:node?.id))?.parameterSchema||[]),
  
  async checkWatcherSource(){
-  const node=state.graph.nodes.find(n=>n.params.engine==='lines.watch');
+  const node=state.graph.nodes.find(n=>n.params.engine==='lines.watch'||n.type==='watch.preview');
   if(!node)throw Error('Add a Watcher node from Library and wire its geometry input before running.');
   const result=await api.runToHere(node.id);
   const lines=result.lines?.[node.id];
@@ -1618,14 +1620,20 @@ Object.assign(api,{
  async removeMod(id){const result=await request('/api/universal/mods',{action:'remove',id});publish({mods:result.mods.rows});project();return result;},
  async sendFeedback(text){
   if(!text.trim())throw Error('Describe the problem before sending feedback.');
-  const task=await api.sendToBaboom('Feedback: '+text);
-  if(task?.ok===false)return task;
-  publish({feedback:[...state.feedback,{id:task.id,text,status:task.status,response:''}]});return task;
+  const clean=text.trim();
+  const created=await api.createTask('Feedback: '+clean,'BABOOM');
+  if(created?.ok===false)return created;
+  const id=created.taskId||created.id;
+  await workshop('attachMeetingNotes',[id,clean]).catch(()=>{});
+  await refreshTasks();
+  const row=state.tasks.find(t=>t.id===id)||{id,status:created.status||'PLANNED'};
+  publish({feedback:[...state.feedback.filter(f=>f.id!==id),{id,text:clean,status:row.status||'PLANNED',response:taskReplyText(row)}]});
+  return {...created,id,status:row.status||'PLANNED'};
  },
  async checkFeedback(id){
   await refreshTasks();const task=state.tasks.find(t=>t.id===id);
   if(!task)throw Error('Open this feedback task in Workshop and refresh its current status.');
-  const response=task.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n');
+  const response=taskReplyText(task);
   publish({feedback:state.feedback.map(f=>f.id===id?{...f,status:task.status,response}:f)});return task;
  },
  
@@ -1689,8 +1697,25 @@ api.sendToBaboom=async(text,options={})=>{
  const result=await sendBeforeFiles(text+(files.length?'\nAttached project file nodes: '+JSON.stringify(files.map(f=>({id:f.id,path:f.path}))):''),options);
  if(result?.ok!==false)publish({composerAttachments:[]});return result;
 };
-api.saveGraphVersion=()=>api.saveSessionAs();
-api.restoreGraphVersion=id=>api.openSession(id);
+api.saveGraphVersion=async label=>{
+ if(!sessionDocument)throw Error('Open a workflow before saving a version.');
+ const navigation=fileNavigation;
+ if(!sessionPath||localDirty)await api.saveSession();
+ if(navigation!==fileNavigation)return {cancelled:true};
+ const result=await canvasOperation('save_graph_version',[label||null,sessionPath]);
+ if(navigation===fileNavigation&&result?.document){sessionDocument=copy(result.document);sessionRevision=result.document.properties?.revision||sessionRevision;localDirty=false;projectFile();}
+ return result?.version||result;
+};
+api.restoreGraphVersion=async id=>{
+ if(typeof id==='string'&&id.toLowerCase().endsWith('.archhub'))return api.openSession(id);
+ if(!sessionDocument||!sessionPath)throw Error('Open a saved workflow before restoring a version.');
+ const navigation=fileNavigation;
+ if(localDirty)await flushAutosave();
+ if(navigation!==fileNavigation)return {cancelled:true};
+ const result=await canvasOperation('restore_graph_version',[id,sessionPath]);
+ if(navigation===fileNavigation&&result?.document)return adoptFile(result.document,result.path||sessionPath,navigation);
+ return result;
+};
 function reviewNode(operation, source) {
  if(operation!=='Clash & Issues')throw Error('This model check is unavailable in this release.');
  if(!source || !sessionDocument || source.document!==sessionDocument.id || source.path!==sessionPath ||
@@ -1968,7 +1993,8 @@ function projectFile(){
   kept.set(node.id,{stamp,ports:state.libraryPorts,node:projected});return projected;
  });
  projectedNodes=kept;
- const graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
+ const versions=(properties.checkpoints||[]).filter(c=>c&&typeof c.id==='string').map(c=>({id:c.id,name:c.title||c.id,at:c.at||'',nodes:(c.document?.nodes||[]).map(n=>({id:n.id}))}));
+ const graph={...properties,versions,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   ...projectGroups(nodes,sessionDocument.wires.map(w=>projectSessionWire(w,nodes))),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
  syncPreferenceContext();
@@ -2398,9 +2424,13 @@ api.loadLibrary=async()=>{
 async function refreshGraphs(){return refreshSessionFiles();}
 const refreshSessionFiles=async()=>{const data=await sessionRequest('catalogue');publish({graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title}))});return data.sessions;};
 function libraryNode(item,position){return {id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.engine==='script.python'?{ports:{source:[{id:'result',type:'text'}],target:[{id:'a',type:'text'}]}}:{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),...(item.paramDefs?{paramDefs:copy(item.paramDefs)}:{}),position:{x:position.x,y:position.y??100}};}
+const TRIGGER_BY_EVENT={'Manual':'tr_manual','Schedule':'tr_schedule','File changed':'tr_file','Host event':'tr_host','Approval granted':'tr_approval','Webhook':'tr_webhook'};
 api.addNode=async(name,position={})=>{
- const item=(state.libraryPorts||[]).find(i=>i.id===name||i.title===name);
- if(!item||item.noEngine)throw Error('Choose an executable Library node.');
+ if(!sessionDocument&&desktopAdmitted())await api.newSession();
+ if(!(state.libraryPorts||[]).length&&desktopAdmitted())await api.refreshLibraryPorts();
+ const lookup=name==='Trigger'?'tr_manual':(TRIGGER_BY_EVENT[name]||name);
+ const item=(state.libraryPorts||[]).find(i=>i.id===lookup||i.title===lookup||i.id===name||i.title===name);
+ if(!item||item.noEngine||item.available===false)throw Error(item?.reason||'Choose an executable Library node.');
  // NODEPLACE: a placed card holds its spot until it is painted, so concurrent adds never take the same one.
  const scope=scopeEpoch+':'+state.graph.id;let reservation=null;
  if(position.x===undefined){const detail={reserved:[...insertionReservations].filter(point=>point.scope===scope),point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};if(detail.point){reservation={...detail.point,scope};insertionReservations.add(reservation);}}
@@ -2441,6 +2471,14 @@ api.setNodeParam=async(id,key,value)=>{
  if(sessionItem?.paramDefs?.some(d=>d.id===key)){  // the first edit of a session from before its panel values: they join the file with it
   fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.paramDefs=copy(sessionItem.paramDefs);for(const def of sessionItem.paramDefs)if(!Object.hasOwn(n.params,def.id))n.params[def.id]=copy(sessionItem.params[def.id]);n.params[key]=value;},[id],{node:id,key,value});
   return state.graph.nodes.find(n=>n.id===id);}
+ if(held&&held.type?.startsWith('trigger.')&&key==='event'&&Object.hasOwn(TRIGGER_BY_EVENT,value)){
+  if(!(state.libraryPorts||[]).length&&desktopAdmitted())await api.refreshLibraryPorts();
+  const targetItem=(state.libraryPorts||[]).find(i=>i.id===TRIGGER_BY_EVENT[value]);
+  if(targetItem){
+   fileEdit(d=>{const n=d.nodes.find(row=>row.id===id);if(!n)throw Error('Choose a node in this workflow.');n.type=targetItem.engine;n.item=targetItem.id;n.title=targetItem.title;n.params={...copy(targetItem.params),event:Object.hasOwn(targetItem.params,'event')?(n.params.event&&!Object.hasOwn(TRIGGER_BY_EVENT,n.params.event)?n.params.event:targetItem.params.event):value};},[id],{node:id,key,value});
+   return state.graph.nodes.find(n=>n.id===id);
+  }
+ }
  if(held&&(held.type==='param.value'||(held.paramDefs||[]).some(d=>d.id===key))){await paramOp('set',[id,key,value]);return state.graph.nodes.find(n=>n.id===id);}
  fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(!n||!Object.hasOwn(n.params,key))throw Error('Parameter is absent');n.params[key]=value;},[id],{node:id,key,value});return state.graph.nodes.find(n=>n.id===id);};
 async function paramOp(op,args){
@@ -2529,7 +2567,7 @@ api.runNode=async(id,again=false)=>{
 
  try{const result=await sessionRequest('run',{document,path:sessionPath,again,...(roots?{roots}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
   if(result.document){sessionDocument=copy(result.document);sessionRevision=result.revision;}else if(result.run)sessionDocument.properties.canvasRun=copy(result.run);
-  for(const node of sessionDocument.nodes)if(result.results[node.id])node.result=result.results[node.id];projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
+  for(const node of sessionDocument.nodes)if(result.results[node.id])node.result=result.results[node.id];projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const lines=Object.fromEntries(Object.entries(result.results||{}).filter(([nid,val])=>{const n=sessionDocument.nodes.find(x=>x.id===nid);return (n?.type==='watch.preview'||n?.params?.engine==='lines.watch')&&Array.isArray(val?.output);}).map(([nid,val])=>[nid,val.output]));const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,lines,id:run.id};
  }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)if(inRun(node))node.result={status:'Error',error:error.message};projectFile();queueAutosave();}throw error;}
 };
 api.runToHere=api.runNode;
@@ -2540,7 +2578,13 @@ api.recoverRun=async(node,decision)=>{
  return result;
 };
 api.runSelection=ids=>api.runNode(ids);
-api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
+api.setNodeFlags=async(id,values)=>fileEdit(d=>{const n=d.nodes.find(row=>row.id===id);if(!n)throw Error('Choose a node in this workflow.');for(const [k,v] of Object.entries(values||{})){if(v===null||v===undefined||k==='color'&&v==='')delete n[k];else n[k]=v;}},[id]);
+api.setPinnedOutput=async(id,raw)=>{
+ let parsed;try{parsed=typeof raw==='string'?JSON.parse(raw):raw;}catch{throw Error('Enter valid JSON before pinning node output.');}
+ await fileEdit(d=>{const n=d.nodes.find(row=>row.id===id);if(!n)throw Error('Choose a node in this workflow.');n.pinned=true;n.result={...(n.result||{}),status:n.result?.status&&n.result.status!=='Idle'?n.result.status:'Done',error:'',output:parsed};},[id]);
+ return state.graph.nodes.find(n=>n.id===id);
+};
+api.traceNode=(id,direction)=>canvasOperation('trace_node',sessionDocument?[id,direction,portableDocument()]:[id,direction]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
 // Arrangement changes presentation only; keep in-flight pure-node results.
 // Tidy up arranges the document; the first view of a never-arranged file is arranged on screen only (opening never writes).
@@ -2673,7 +2717,25 @@ api.setWireParam=async(id,key,value)=>{
 api.setWireVisibility=async value=>fileEdit(d=>{d.properties={...d.properties,wireVisibility:value};});
 api.setPortVisibility=async(id,port,value)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.portVisibility={...n.portVisibility,[port]:value};});
 api.setPromotedParameter=async(id,key,value)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.parameterPresentation={...n.parameterPresentation,[key]:value};});
-api.updateGraph=async(id,values)=>fileEdit(d=>{if(values.name)d.title=values.name;d.properties={...d.properties,...values};});
+api.updateGraph=async(id,values)=>{
+ if(!values||typeof values!=='object'||Array.isArray(values))throw Error('Choose workflow properties to update.');
+ if(id&&sessionDocument&&id!==sessionDocument.id&&!api.sameSessionPath(id,sessionPath)){
+  const result=await canvasOperation('update_graph',[id,values.name??null,values.pinned??null]);
+  await refreshGraphs();
+  return result;
+ }
+ const out=await fileEdit(d=>{if(values.name)d.title=values.name;d.properties={...d.properties,...values};});
+ if(sessionPath)void flushAutosave().then(()=>refreshGraphs()).catch(()=>{});
+ return out;
+};
+api.removeGraph=async id=>{
+ const removingOpen=sessionDocument&&(id===sessionDocument.id||api.sameSessionPath(id,sessionPath));
+ if(removingOpen){clearTimeout(autosaveTimer);autosaveTimer=null;await fileWrites.catch(()=>{});}
+ const result=await canvasOperation('remove_graph',[id]);
+ if(removingOpen){sessionDocument=null;sessionPath='';localDirty=false;fileHistory=[];fileFuture=[];await api.newSession();}
+ await refreshGraphs();
+ return result;
+};
 api.exportRecipe=async()=>portableDocument();
 api.solveNow=()=>runSolve();api.getSessionPath=()=>desktopAdmitted()?sessionPath:'';
 api.saveSkill=async name=>{if(name)fileEdit(d=>{d.title=String(name).trim()||d.title;});const saved=await api.saveSession();await api.refreshLibraryPorts();return saved;};

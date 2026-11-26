@@ -135,10 +135,15 @@ function projectssurfacesjsxReset2({api,t,u}, event) {
 }
 function projectssurfacesjsxAsyncConstNAwaitU3({api,t,u}, event) {
   const handler = async () => {
-            const n = await u.act(() => api.addNode('Trigger'));
+            const n = await u.act(async () => {
+              const added = await api.addNode('Trigger');
+              if (!added) return null;
+              await api.setNodeParam(added.id, 'event', t);
+              if (api.saveSession && !api.getSessionPath?.()) await api.saveSession();
+              return added;
+            });
             if (n) {
-              await u.act(() => api.setNodeParam(n.id, 'event', t));
-              u.go('canvas');
+              u.go('canvas', api.getSessionPath?.() || undefined);
             }
           };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;

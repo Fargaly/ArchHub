@@ -224,6 +224,7 @@ class NoGraphServer:
         self._account_key = None
         self._account = None
         self._account_lock = threading.Lock()
+        self._dependencies = None
         self._session = Cached(30.0, self._probe_session)
         self._live_agents = Cached(5.0, agent_source if agent_source is not None else self._probe_agents)
         self._providers = Cached(30.0, self._probe_providers)
@@ -1261,6 +1262,236 @@ def r_canvas(s, req):
             'interaction_projection': {'bindings': bindings()}, 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
 
 
+_SESSION_CANVAS_OPS = frozenset((
+    'project_state', 'trace_node', 'set_node_flags', 'run_to_here',
+    'update_graph', 'remove_graph', 'save_graph_version', 'restore_graph_version',
+    'read_company', 'set_account_seats', 'transfer_ownership', 'sign_out_everywhere',
+))
+
+
+def _checkpoint_versions(doc):
+    return [{'id': row['id'], 'name': row.get('title') or row['id'], 'at': row.get('at', ''),
+             'nodes': [{'id': n['id']} for n in (row.get('document') or {}).get('nodes', [])
+                       if isinstance(n, dict) and isinstance(n.get('id'), str)]}
+            for row in (doc.get('properties') or {}).get('checkpoints', [])
+            if isinstance(row, dict) and isinstance(row.get('id'), str)]
+
+
+def _canvas_session_op(s, req, op, args):
+    import re
+    from urllib.parse import quote
+    from . import canvas_documents, session_files
+    from .enforce import guard_effect
+    from .settings_owner import AccountFiles, CloudRouteUnavailable, SettingsOwner
+
+    files_owner = _request_session_files(s, req)
+    if op == 'project_state':
+        versions = []
+        current_file = files_owner.current_path()
+        if current_file:
+            try:
+                versions = _checkpoint_versions(session_files.read_document(current_file))
+            except (OSError, ValueError):
+                versions = []
+        return {'ok': True, 'result': {'versions': versions, 'modelReview': {'operation': '', 'results': [], 'issues': []}, 'dismissed': []}}
+    if op == 'trace_node':
+        node_id = str(args[0] if args else '').strip()
+        direction = str(args[1] if len(args) > 1 else 'back').strip()
+        if direction not in ('back', 'forward') or not node_id:
+            raise Refused('Choose a node and a trace direction (back or forward).')
+        if len(args) > 2 and isinstance(args[2], dict):
+            doc = session_files.validate(args[2])
+        else:
+            path = files_owner.current_path()
+            if not path or not Path(path).is_file():
+                raise Refused('Open a workflow before tracing connections.')
+            doc = session_files.read_document(path)
+        nodes_by_id = {n['id']: n for n in doc['nodes']}
+        if node_id not in nodes_by_id:
+            raise Refused('Choose an existing node in this workflow.')
+        wires = [w for w in doc['wires'] if w.get('enabled') is not False]
+        seen, queue, traced = {node_id}, [node_id], []
+        while queue:
+            cur = queue.pop(0)
+            for w in wires:
+                if direction == 'back' and w['to']['node'] == cur:
+                    nxt = w['from']['node']
+                elif direction == 'forward' and w['from']['node'] == cur:
+                    nxt = w['to']['node']
+                else:
+                    continue
+                if nxt in seen or nxt not in nodes_by_id:
+                    continue
+                seen.add(nxt)
+                queue.append(nxt)
+                src = nodes_by_id[w['from']['node']]
+                dst = nodes_by_id[w['to']['node']]
+                target_node = nodes_by_id[nxt]
+                traced.append({
+                    'id': nxt,
+                    'title': target_node.get('title') or target_node['type'],
+                    'type': target_node['type'],
+                    'direction': direction,
+                    'relation': '%s.%s \u2192 %s.%s' % (
+                        src.get('title') or src['type'], w['from']['socket'],
+                        dst.get('title') or dst['type'], w['to']['socket'],
+                    ),
+                })
+        return {'ok': True, 'result': traced}
+    if op == 'set_node_flags':
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        node_id = str(args[0] if args else '').strip()
+        path = files_owner.current_path()
+        if not path or not node_id:
+            raise Refused('Open a saved workflow and choose a node.')
+        patch = args[1] if len(args) == 2 and isinstance(args[1], dict) else {
+            'frozen': args[1] if len(args) > 1 else None,
+            'pinned': args[2] if len(args) > 2 else None,
+        }
+
+        def apply_flags(document):
+            target = next((n for n in document['nodes'] if n['id'] == node_id), None)
+            if target is None:
+                raise ValueError('Choose an existing node in this workflow.')
+            for flag in ('frozen', 'pinned', 'bypassed'):
+                if flag in patch and patch[flag] is not None:
+                    if type(patch[flag]) is not bool:
+                        raise ValueError('Node ' + flag + ' must be Boolean.')
+                    target[flag] = patch[flag]
+            if 'color' in patch:
+                if patch['color'] in ('', None):
+                    target.pop('color', None)
+                elif isinstance(patch['color'], str) and re.fullmatch(r'#[0-9a-fA-F]{6}', patch['color']):
+                    target['color'] = patch['color']
+                else:
+                    raise ValueError('Choose a six-digit hex colour.')
+            return [node_id]
+
+        canvas_documents.edit(path, 'Studio', 'set node flags', apply_flags, solve_changed=False)
+        updated = session_files.read_document(path)
+        node = next(n for n in updated['nodes'] if n['id'] == node_id)
+        return {'ok': True, 'result': {'id': node_id, 'frozen': bool(node.get('frozen')), 'pinned': bool(node.get('pinned')), 'document': updated}}
+    if op == 'run_to_here':
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        node_id = str(args[0] if args else '').strip()
+        path = files_owner.current_path()
+        if not path or not Path(path).is_file() or not node_id:
+            raise Refused('Open a saved workflow and choose a node to run to.')
+        doc = session_files.read_document(path)
+        if not any(n['id'] == node_id for n in doc['nodes']):
+            raise Refused('Choose an existing node in this workflow.')
+        admitted = getattr(req, 'desktop_admission', None)
+        invoke = (lambda *a, **kw: s.invoke_admitted_effect(admitted, *a, **kw)) if admitted is not None else guard_effect
+        ran = session_files.record_run(path, node_id, lambda: session_files.run_document(
+            doc, path=path, invoke=invoke, roots=[node_id], stopped=s.admit_chat()))
+
+        def persist_results(document):
+            for n in document['nodes']:
+                if n['id'] in ran.get('results', {}):
+                    n['result'] = ran['results'][n['id']]
+            if ran.get('run'):
+                document.setdefault('properties', {})['canvasRun'] = ran['run']
+            return []
+
+        updated, _ = canvas_documents.edit(path, 'Studio', 'run to ' + node_id, persist_results, solve_changed=False)
+        return {'ok': True, 'result': {'roots': [node_id], **ran, 'document': updated}}
+    if op == 'update_graph':
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        ident = str(args[0] if args else '').strip() or files_owner.current_path()
+        name = args[1] if len(args) > 1 else None
+        pinned = args[2] if len(args) > 2 else None
+        target_path = None
+        for row in session_files.load_skills(files_owner.known_paths()):
+            if str(row['path']) == ident or row['skill'].get('id') == ident:
+                target_path = str(row['path'])
+                break
+        if target_path is None and ident:
+            candidate = session_files.local_path(ident)
+            if candidate.is_file():
+                target_path = str(candidate)
+        if not target_path:
+            raise Refused('Choose a saved workflow to update.')
+
+        def update_meta(document):
+            if name is not None:
+                if not isinstance(name, str) or not name.strip() or len(name.strip()) > 200:
+                    raise ValueError('Choose a workflow name from 1 to 200 characters.')
+                document['title'] = name.strip()
+            if pinned is not None:
+                if type(pinned) is not bool:
+                    raise ValueError('Workflow pinned flag must be Boolean.')
+                document.setdefault('properties', {})['pinned'] = pinned
+            return []
+
+        updated, _ = canvas_documents.edit(target_path, 'Studio', 'update workflow', update_meta, solve_changed=False)
+        files_owner.remember(target_path, updated)
+        return {'ok': True, 'result': {'id': target_path, 'name': updated['title'],
+                                       'pinned': bool((updated.get('properties') or {}).get('pinned'))}}
+    if op == 'remove_graph':
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        ident = str(args[0] if args else '').strip()
+        return {'ok': True, 'result': files_owner.remove_session(ident)}
+    if op in ('save_graph_version', 'restore_graph_version'):
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        raw_path = args[1] if len(args) > 1 and args[1] else files_owner.current_path()
+        if not raw_path:
+            raise Refused('Save the workflow before managing versions.')
+        target_path = str(session_files.local_path(str(raw_path)))
+        if not Path(target_path).is_file():
+            raise Refused('Save the workflow before managing versions.')
+        if op == 'save_graph_version':
+            label = args[0] if args and args[0] is not None else None
+            saved = session_files.checkpoint(target_path, label)
+            doc = session_files.read_document(target_path)
+        else:
+            version_id = str(args[0] if args else '').strip()
+            if not version_id:
+                raise Refused('Choose a saved version to restore.')
+            doc = session_files.restore_checkpoint(target_path, version_id)
+            saved = None
+        versions = _checkpoint_versions(doc)
+        return {'ok': True, 'result': {'path': target_path, 'document': doc, 'versions': versions,
+                                       **({'version': {**saved, 'name': saved['title'],
+                                                       'nodes': [{'id': n['id']} for n in doc.get('nodes', [])]}} if saved else {})}}
+    if op == 'sign_out_everywhere':
+        return {'ok': True, 'result': r_cloud_signout(s, req)}
+    owner = SettingsOwner(AccountFiles(s.settings_dir / 'account.json'))
+    try:
+        me, _root = owner._account()
+        companies = owner.cloud('GET', '/v1/companies/mine').get('companies', [])
+        requested_firm = str(args[1]).strip() if len(args) > 1 and args[1] else ''
+        active = (next((x for x in companies if x.get('id') == requested_firm), None)
+                  or next((x for x in companies if x.get('is_current')), None)
+                  or (companies[0] if companies else None))
+        if op == 'set_account_seats':
+            seats = args[0] if args else None
+            if type(seats) is not int or isinstance(seats, bool) or seats < 1 or seats > 10000:
+                raise ValueError('Choose a positive whole number of office seats.')
+            if not active:
+                raise ValueError('Select your office in Account settings before changing seats.')
+            owner.cloud('PATCH', '/v1/companies/' + quote(active['id'], safe=''), {'seat_limit': seats})
+        elif op == 'transfer_ownership':
+            member_id = str(args[0] if args else '').strip()
+            owner.setTeamAccess(member_id, {'accessRole': 'Owner'})
+        detail = owner.cloud('GET', '/v1/companies/' + quote(active['id'], safe='')) if active else {}
+        plan = {'solo': 'Personal', 'studio': 'Office', 'firm': 'Team', 'trial': 'Personal'}.get(me.get('plan'), me.get('plan', 'Personal'))
+        members = detail.get('members', [])
+        return {'ok': True, 'result': {
+            'id': active['id'] if active else '',
+            'name': detail.get('name') or (active or {}).get('name') or me.get('firm_name') or 'Personal',
+            'plan': plan,
+            'seat_limit': detail.get('seat_limit') or (active or {}).get('seat_limit') or max(1, len(members)),
+            'members': members,
+        }}
+    except (ValueError, CloudRouteUnavailable, OSError) as refused:
+        raise Refused(str(refused)) from refused
+
+
 def r_canvas_op(s, req):
     body = req.body or {}
     op, args = body.get('op'), body.get('args') or []
@@ -1298,10 +1529,10 @@ def r_canvas_op(s, req):
             raise Refused('Stopped by you. Press Resume to continue.', 403)
         return {'ok': True, 'result': _mcp_op(
             op, list(args), current_path=lambda: _request_session_files(s, req).current_path())}
-    reads = {'list_skills': [],
-             'project_state': {'versions': [], 'modelReview': {'operation': '', 'results': [], 'issues': []}, 'dismissed': []}}
-    if op in reads:
-        return {'ok': True, 'result': reads[op]}
+    if op == 'list_skills':
+        return {'ok': True, 'result': []}
+    if op in _SESSION_CANVAS_OPS:
+        return _canvas_session_op(s, req, op, args)
     if op == 'library_ports':
         from .session_files import catalogue
         return {'ok': True, 'result': catalogue()}
@@ -2032,6 +2263,20 @@ def _read_notification(identity):
     return {**_list_notifications(), 'receipt': {'id': identity, 'read': True}}
 
 
+def _task_mutation(fn, *args):
+    from .workshop_mailbox import application_history
+    from . import workshop_tasks
+    try:
+        with application_history() as history:
+            result = getattr(workshop_tasks, fn)(history, *args)
+    except (ValueError, TypeError) as refused:
+        return {'ok': False, 'error': str(refused)}
+    if isinstance(result, dict) and 'revision' in result and 'title' in result and 'id' in result:
+        _drop_column()
+        return next((row for row in _list_tasks(include_archived=True) if row['id'] == result['id']), result)
+    return result
+
+
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(a[0] if a else False),
     'renameTask': _rename_task,
@@ -2046,6 +2291,15 @@ WORKSHOP_READS = {
     'setTaskStatus': _set_task_status,
     'archiveTask': _archive_task,
     'restoreArchivedTask': _restore_archived_task,
+    'reassignTask': lambda *a: _task_mutation('reassign_task', *a),
+    'setTaskDelegate': lambda *a: _task_mutation('set_task_delegate', *a),
+    'setTaskAgentAccess': lambda *a: _task_mutation('set_task_agent_access', *a),
+    'queueTaskMessage': lambda *a: _task_mutation('queue_task_message', *a),
+    'settleQueuedMessage': lambda *a: _task_mutation('settle_queued_message', *a),
+    'steerTask': lambda *a: _task_mutation('steer_task', *a),
+    'setTaskPlanMode': lambda *a: _task_mutation('set_task_plan_mode', *a),
+    'addTaskReview': lambda *a: _task_mutation('add_task_review', *a),
+    'resolveTaskReview': lambda *a: _task_mutation('resolve_task_review', *a),
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: (_SERVER._messages.get()
         if before is None else _list_messages(before)),
@@ -2412,7 +2666,8 @@ def r_settings_action(s, req):
         return {'ok': True, 'result': {'opened': str(found)}}
     local = {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'), 'workspacePolicies': {}}
     if function == 'readOperations':
-        return {'ok': True, 'result': {**local, 'dependencies': []}}
+        cached_deps = getattr(s, '_dependencies', None)
+        return {'ok': True, 'result': {**local, **({'dependencies': list(cached_deps)} if cached_deps is not None else {})}}
     if function in SettingsOwner.ACCOUNT:
         if function == 'read':
             return {'ok': True, 'result': {**local, **s.account_read()}}
@@ -2421,6 +2676,8 @@ def r_settings_action(s, req):
         owner = SettingsOwner(AccountFiles(s.settings_dir / 'account.json'))
         try:
             result = owner.dispatch(function, list(args))
+            if isinstance(result, dict) and isinstance(result.get('dependencies'), list):
+                s._dependencies = list(result['dependencies'])
             if function == 'updateProfile' and args and isinstance(args[0], dict):
                 mirror = {'name': 'profileName', 'role': 'profileRole', 'presence': 'profilePresence', 'photo': 'profilePhoto'}
                 patch = {mirror[k]: (args[0][k] if k == 'photo' else str(args[0][k]).strip()) for k in args[0] if k in mirror}

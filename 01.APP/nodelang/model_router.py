@@ -190,12 +190,14 @@ def composer_chat(body, *, on_delta=None):
     if type(agent) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', agent):
         raise ModelRouteRefused('Choose a named agent.')
     settings = read_router_settings()
+    prefer_free = settings['free_first']
     profile = settings['agents'].get(agent, {})
     route = body.get('model') or profile.get('model') or settings['providerPreferences'].get(agent)
     if not route:
         if agent not in ('BABOOM', resolve_model_route(settings['default_model']).family):
             raise ModelRouteRefused('Choose a model for this agent in Settings before sending.')
-        route = settings['default_model']
+        default_dest = resolve_model_route(settings['default_model'])
+        route = DEFAULT_FREE_ROUTE if prefer_free and not _is_openrouter_free_route(default_dest) else settings['default_model']
     destination = resolve_model_route(route)
     if destination.family == 'openrouter' and not settings['providers']['openrouter']['enabled']:
         raise ModelRouteRefused('OpenRouter is disabled in Settings.')
@@ -204,7 +206,7 @@ def composer_chat(body, *, on_delta=None):
         raise ModelRouteRefused('This agent reached its token cap and is paused.', reason_code='agent_paused')
     free = _is_openrouter_free_route(destination)
     fallbacks = settings['fallback_models']
-    free_only = free and all(_is_openrouter_free_route(resolve_model_route(item)) for item in fallbacks)
+    free_only = prefer_free and free and all(_is_openrouter_free_route(resolve_model_route(item)) for item in fallbacks)
     started = time.monotonic()
     record = dict(id=str(uuid4()), ts=time.time(), agent=agent, model=destination.model,
                   provider=destination.provider, tokens=None, ms=0, outcome='refused')

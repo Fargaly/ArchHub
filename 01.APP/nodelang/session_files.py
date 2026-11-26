@@ -487,9 +487,12 @@ def validate(document):
             raise ValueError('Group members must exist')
         if 'frameMembers' in node and (not isinstance(node['frameMembers'], list) or len(set(node['frameMembers'])) != len(node['frameMembers']) or any(not isinstance(child, str) or child not in nodes or child == node['id'] for child in node['frameMembers'])):
             raise ValueError('Frame members must name existing nodes once.')
-        for flag in ('collapsed', 'bypassed'):
+        for flag in ('collapsed', 'bypassed', 'frozen', 'pinned'):
             if flag in node and type(node[flag]) is not bool:
                 raise ValueError('Node ' + flag + ' must be Boolean')
+        for field in ('color', 'icon'):
+            if field in node and not isinstance(node[field], str):
+                raise ValueError('Node ' + field + ' must be text')
     for group in document['groups']:
         if not isinstance(group,dict) or not isinstance(group.get('id'),str) or not isinstance(group.get('nodes'),list) or any(key not in nodes for key in group['nodes']):
             raise ValueError('Groups must name existing nodes')
@@ -827,6 +830,9 @@ def _session_summary_entry(path, *, resolved_key=None, fast_dir_stamp=None):
     props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
     held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
     raw_props = {'state': props.get('state'),
+                 'pinned': bool(props.get('pinned')),
+                 'nodes': [{'id': n['id']} for n in document.get('nodes', [])
+                           if isinstance(n, dict) and isinstance(n.get('id'), str)],
                  'taskContext': {'project': held.get('project'), 'workspace': held.get('workspace')}}
     if 'project' in props:
         raw_props['project'] = props['project']
@@ -2126,6 +2132,48 @@ class SessionFiles:
                 if selected and Path(selected) == path:
                     _metadata_io(current.unlink)
 
+    def remove_session(self, identity):
+        """Remove a workflow from the user's Sessions directory (or forget an external recent)."""
+        if not isinstance(identity, str) or not identity.strip():
+            raise ValueError('Choose a workflow to remove.')
+        candidates = []
+        known = self.known_paths()
+        for row in load_skills(known):
+            if str(row['path']) == identity or row['skill'].get('id') == identity:
+                candidates.append((Path(row['path']).resolve(), row['skill'].get('id', '')))
+        if not candidates:
+            candidate = local_path(identity)
+            if candidate.exists() and (known is None or str(candidate) in known):
+                doc = read_document(candidate)
+                candidates.append((candidate, doc.get('id', '')))
+        if not candidates:
+            raise ValueError('No such saved workflow.')
+        target, doc_id = candidates[0]
+        try:
+            from .workshop_mailbox import application_history, profile_database
+            if profile_database().is_file():
+                with application_history(read_only=True, existing_only=True) as history:
+                    if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
+                        active = history._db.execute(
+                            "SELECT id FROM workshop_tasks WHERE session_path=? AND status='claimed' AND lease_until>=?",
+                            (str(target), time.time())).fetchone()
+                        if active:
+                            raise ValueError('Stop active agent work on this workflow before removing it.')
+        except ValueError:
+            raise
+        except Exception as error:  # noqa: BLE001
+            logging.getLogger(__name__).debug('Task check skipped during workflow removal: %s', error)
+        if target.parent == self.directory.resolve():
+            with canvas_documents.locked(target):
+                if doc_id and _PORTABLE_ID.fullmatch(doc_id):
+                    run_file = runs_path(target, doc_id)
+                    if run_file.exists() and run_file.parent == target.parent and not run_file.is_symlink():
+                        run_file.unlink(missing_ok=True)
+                if target.exists() and not target.is_symlink():
+                    target.unlink()
+        self.forget_path(str(target))
+        return {'ok': True, 'removed': str(target), 'id': doc_id}
+
     def _write_pointer_metadata(self, target, value):
         with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
             temporary = stream.name
@@ -2346,11 +2394,13 @@ class SessionFiles:
                 if known is not None and str(candidate) not in known:
                     continue
                 try:
-                    base, _, _ = _session_summary_entry(candidate, resolved_key=rkey, fast_dir_stamp=dstamp)
+                    base, raw_props, _ = _session_summary_entry(candidate, resolved_key=rkey, fast_dir_stamp=dstamp)
                 except (OSError, ValueError):
                     continue
                 sessions_out.append({'id': base['id'], 'title': base['title'],
-                                     'path': str(candidate), 'kind': base['kind']})
+                                     'path': str(candidate), 'kind': base['kind'],
+                                     'pinned': bool(raw_props.get('pinned')),
+                                     'nodes': [{'id': n['id']} for n in raw_props.get('nodes', [])]})
             return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory),
                     'sessions':sessions_out}
         if action == 'initial':

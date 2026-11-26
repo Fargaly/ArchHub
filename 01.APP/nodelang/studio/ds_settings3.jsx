@@ -406,7 +406,7 @@
             <div className="sheet-property-control">{live[id]??(owner?<SettingControl row={owner} presentation={spec[3]} unit={spec[3]==='step'?spec[4]:undefined}/>:APP_SETTING_ROWS[id]?<AppSettingControl id={id} label={label}/>:<UpcomingControl spec={spec}/>)}</div>
           </div>;
         })}{visible.length<rows.length&&<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>setExpanded(state=>({...state,[card.id]:true}))},event)}>{rows.length-visible.length} more</Btn>}</>}
-        {extras[card.id]}
+        {extras[card.id]&&<div className="sheet-property-row sheet-card-foot"><span className="sheet-property-copy"/><div className="sheet-property-control">{extras[card.id]}</div></div>}
         {focused?.title===card.title && focused.content}
       </section>;
     });
@@ -735,11 +735,11 @@
     const [,label,,type,options]=spec;
     let control;
     switch(type){
-      case 'seg': control=<span className="sheet-segments">{options.map(option=><span className="sheet-action secondary" aria-disabled="true" key={option}>{option}</span>)}</span>; break;
+      case 'seg': control=<div className="sheet-segments" role="group" aria-label={label}>{options.map(option=><button type="button" disabled key={option} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{}},event)}>{option}</button>)}</div>; break;
       case 'select': control=<select disabled aria-label={label}>{options.map(option=><option key={option}>{option}</option>)}</select>; break;
       case 'step': case 'range': control=<input disabled type="range" aria-label={label}/>; break;
       case 'color': control=<input disabled type="color" aria-label={label}/>; break;
-      case 'bool': control=<input type="checkbox" role="switch" disabled aria-label={label}/>; break;
+      case 'bool': control=<D.Toggle disabled variant="settings" label={label} checked={false} onCheckedChange={()=>{}}/>; break;
       case 'text': control=<input disabled aria-label={label}/>; break;
       default: control=<span className="sheet-action secondary" aria-disabled="true">{options||({gate:'Manage gates',folder:'Choose a folder'}[type])||label}</span>;
     }

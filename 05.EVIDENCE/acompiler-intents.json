@@ -9476,7 +9476,9 @@
         "01.APP/nodelang/workshop_live.py",
         "02.TESTS/tests_replica/test_launcher_tick_cost.py",
         "01.APP/nodelang/conversation_history.py",
-        "01.APP/nodelang/nograph_server.py"
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/session_files.py",
+        "02.TESTS/tests_replica/test_launcher_idle_cost.py"
       ]
     },
     "NOBLOCK": {

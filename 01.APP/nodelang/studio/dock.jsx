@@ -7,9 +7,10 @@
     map: ['Map', 'canvas'],
     insp: ['Inspector', 'settings'],
     people: ['People and agents', 'users'],
+    thread: ['Thread', 'workshop'],
   };
   const CORE = ['workshop', 'library', 'map', 'insp'];
-  const HOME = {workshop: 'left', library: 'left', map: 'left', insp: 'right', people: 'right'};
+  const HOME = {workshop: 'left', library: 'left', map: 'left', insp: 'right', people: 'right', thread: 'right'};
   const SIDES = ['left', 'right'];
   const ALL_SIDES = ['left', 'right', 'bottom'];
   const LEFT = {min: 200, max: 520, base: 268}, RIGHT = {min: 280, max: 480, base: 320}, BOTTOM = {min: 140, max: 480, base: 220};
@@ -258,10 +259,12 @@
 
   window.UI = window.UI || {};
   // The Build preset is the default layout. A layout is named by where its panels sit and whether cmd moved; widths and folds do not rename it.
+  // The Thread comes and goes with its session (Show the thread), so it never renames a layout.
+  const slotsOf = list => (list || []).map(sl => sl.p.filter(id => id !== 'thread')).filter(p => p.length);
   const places = layout => JSON.stringify([
-    ...SIDES.map(side => (layout[side]?.st || []).map(sl => sl.p)),
-    (layout.bottom?.st || []).map(sl => sl.p),
-    (layout.float || []).map(f => f.id),
+    ...SIDES.map(side => slotsOf(layout[side]?.st)),
+    slotsOf(layout.bottom?.st),
+    (layout.float || []).map(f => f.id).filter(id => id !== 'thread'),
   ]);
   const presetName = layout => {
     if (!layout?.cmd) {
@@ -392,7 +395,7 @@
   }
 
   // onSave(layout | null) writes through the Settings owner; the screen that mounts the dock shows its saving and failed states.
-  function Dock({face, rightWidth, onRightWidth, onSave, onLayout, panels, controls, onMapHost, children}) {
+  function Dock({rightWidth, onRightWidth, onSave, onLayout, panels, controls, onMapHost, children}) {
     const {useData} = window.UI, s = useData();
     const record = s.dockLayout?.layout || null;
     const [local, setLocal] = React.useState(() => {
@@ -413,17 +416,29 @@
     }
     const narrow = React.useSyncExternalStore(onResize, () => window.innerWidth < NARROW, () => false);
     const opened = React.useSyncExternalStore(narrowOpen.subscribe, narrowOpen.read, () => false);
-    const kept = React.useMemo(() => local ? (local.layout ? normalize(local.layout, window.innerWidth) : defaultLayout(window.innerWidth)) : normalize(record, window.innerWidth), [local, recordJson]);
+    // A panel this screen does not supply (Home has no Thread) is left out of its layout.
+    // shortcut: a layout change made on such a screen forgets where that panel sat; it returns to its home side when shown again.
+    const absent = panels?.thread ? '' : 'thread';
+    const kept = React.useMemo(() => {
+      const held = local ? (local.layout ? normalize(local.layout, window.innerWidth) : defaultLayout(window.innerWidth)) : normalize(record, window.innerWidth);
+      const gone = absent ? absent.split(',').filter(id => where(held, id)) : [];
+      if (!gone.length) return held;
+      const next = clone(held);
+      for (const id of gone) stripPanel(next, id);
+      delete next.savedChanged;
+      return next;
+    }, [local, recordJson, absent]);
     const current = React.useRef(kept), pending = React.useRef(null);
     if (pending.current === kept) pending.current = null;
     current.current = pending.current || kept;
     const layout = narrow && !opened && !kept.right.c ? {...kept, right: {...kept.right, c: true}} : kept;
 
     const persistChange = (next, keep = true) => {
-      if (next === current.current || !s.dockLayout) return;
+      if (next === current.current) return;
       current.current = pending.current = next;
       setLocal({layout: next});
-      if (keep) {
+      // Before the owner's record has loaded a change shows at once and is not saved (the loaded record then replaces it).
+      if (keep && s.dockLayout) {
         const bag = readExtBag();
         if (hasExtended(next)) writeExtBag({...bag, active: next});
         else if (bag.active) { const copyBag = {...bag}; delete copyBag.active; writeExtBag(copyBag); }
@@ -443,17 +458,8 @@
       onSave(null);
     };
     const reveal = id => {
-      if (narrow && where(current.current, id)?.side === 'right') narrowOpen.set(true);
-      const held = folded.current || [];
-      if (!held.length) { change(show(current.current, id)); return; }
-      const saved = show({...current.current, ...Object.fromEntries(held.map(side => [side, {...current.current[side], c: false}]))}, id);
-      folded.current = held.filter(side => side !== where(saved, id)?.side);
-      change({...saved, ...Object.fromEntries(folded.current.map(side => [side, {...saved[side], c: true}]))}, false);
-      if (s.dockLayout) {
-        const ownerRecord = toCoreOwnerLayout(saved);
-        savedSet.current.add(JSON.stringify(ownerRecord));
-        onSave(ownerRecord);
-      }
+      if (narrow && (where(current.current, id)?.side || HOME[id]) === 'right') narrowOpen.set(true);
+      change(show(current.current, id));
     };
     const fold = side => {
       if (side === 'right' && narrow && !current.current.right.c) narrowOpen.set(!narrowOpen.read());
@@ -463,6 +469,8 @@
     React.useImperativeHandle(controls, () => ({
       show: reveal,
       hide: id => change(hide(current.current, id)),
+      close: id => change(closePanel(current.current, id)),
+      place: (id, side, index, pos) => change(place(current.current, id, side, index, pos)),
       visible: id => visible(layout, id),
       setCmd: cmd => change(setCmd(current.current, cmd)),
       reset,
@@ -510,20 +518,6 @@
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
     }, [s.dockLayout]);
-
-    const folded = React.useRef(null);
-    React.useLayoutEffect(() => {
-      const held = current.current;
-      const set = (sides, c) => React.startTransition(() => change({...held, ...Object.fromEntries(sides.map(side => [side, {...held[side], c}]))}, false));
-      if (face === 'split' && !folded.current) {
-        folded.current = SIDES.filter(side => !held[side].c && held[side].st.length);
-        if (folded.current.length) set(folded.current, true);
-      } else if (face !== 'split' && folded.current) {
-        const sides = folded.current;
-        folded.current = null;
-        if (sides.length) set(sides, false);
-      }
-    }, [face]);
 
     const hosts = React.useRef(null);
     if (!hosts.current) {
@@ -654,7 +648,7 @@
       if (d.kind === 'tab') {
         setDragging('');
         window.requestAnimationFrame(() => { delete d.element.dataset.dragged; });
-        if (d.moved && d.drop && event.type !== 'pointercancel') change(place(current.current, d.id, d.drop.side, d.drop.index, d.drop.pos));
+        if (d.moved && d.drop && event.type === 'pointerup') change(place(current.current, d.id, d.drop.side, d.drop.index, d.drop.pos));
       }
     };
     const nudge = (event, side) => {
@@ -712,7 +706,7 @@
       onKeyDown={event => nudge(event, side)} />;
 
     const allPanels = {...panels, people: panels?.people || <PeopleDockView onShow={panels?.onShowWork} />};
-    return <div ref={root} id="home-context" className={'dockws' + (dragging ? ' dragging' : '') + (layout.focus ? ' focus-mode' : '')} data-dock-workspace="" onPointerMove={move} onPointerUp={end} onPointerCancel={end}
+    return <div ref={root} id="home-context" className={'dockws' + (dragging ? ' dragging' : '') + (layout.focus ? ' focus-mode' : '')} data-dock-workspace="" onPointerMove={move} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}
       style={{'--lw': width('left') + 'px', '--ls': sash('left') + 'px', '--rs': sash('right') + 'px', '--rw': width('right') + 'px', '--bh': bottomH + 'px'}}>
       {dock('left')}{edge('left', 'Resize the left panel', LEFT, layout.left.w)}
       <div className="dcenter">

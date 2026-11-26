@@ -261,6 +261,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           if(await closeInspector.isVisible()) await closeInspector.click();
           const openThread=page.getByRole('button',{name:'Open Thread',exact:true});
           if(!await page.locator('.v22g-thread').isVisible() && await openThread.isVisible()) await openThread.click();
+          // The Thread is a dock panel: its dock eases open like the Inspector's (see the waits above).
+          await page.waitForFunction(()=>document.querySelector('.v22g-thread')?.getBoundingClientRect().width>=280);
           const token = page.locator('.dx-msg-line p').filter({hasText: 'x'.repeat(900)});
           const sizes = await token.evaluate(el => ({client: el.clientWidth, scroll: el.scrollWidth, page: document.documentElement.scrollWidth}));
           assert.ok(sizes.scroll <= sizes.client, JSON.stringify(sizes));

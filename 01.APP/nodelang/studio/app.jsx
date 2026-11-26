@@ -558,6 +558,9 @@
           if (modal) close();
           else if (companion) setCompanion(false);
           else if (!['home','task-file','canvas'].includes(route)) go('home');
+          // A session's canvas goes back to Home on Esc once nothing on it takes the Esc (a selection, a group, Focus mode, a field).
+          else if (route === 'task-file' && !e.defaultPrevented && !e.target?.closest?.('input,textarea,select,[contenteditable="true"],[role="menu"],[role="dialog"]')
+            && !document.querySelector('.dockws.focus-mode, [data-design="group.breadcrumb"], .react-flow__node.selected, .react-flow__edge.selected, .context-menu, .dtab-menu-pop')) go('home');
         }
         if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !modal && ['home', 'canvas', 'task-file'].includes(route)
             && !e.target.isContentEditable && e.target.contentEditable !== 'true'

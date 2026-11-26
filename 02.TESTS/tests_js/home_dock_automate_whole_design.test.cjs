@@ -36,7 +36,7 @@ const bundle = [
   'ds_library.jsx', 'surfaces.jsx', 'context-menus.jsx', 'app.jsx',
 ].map(compileJsx);
 
-async function mountStudioPage(browser, viewport) {
+async function mountStudioPage(browser, viewport, {realCanvas = false, interrupted = false, arabic = false, folded = false} = {}) {
   const page = await browser.newPage({viewport});
   const errors = [];
   page.on('pageerror', err => { errors.push(err.message); console.error('PAGEERROR:', err.stack || err.message); });
@@ -51,7 +51,7 @@ async function mountStudioPage(browser, viewport) {
   await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
   await page.addScriptTag({path: path.join(studio, 'api.js')});
 
-  await page.evaluate(() => {
+  await page.evaluate(({interrupted, arabic, folded}) => {
     const today = new Date().toISOString();
     window.ArchHubCommandRegistry = {
       commands: [
@@ -70,21 +70,22 @@ async function mountStudioPage(browser, viewport) {
     s.providers = [{id: 'claude-code', name: 'Claude Code', signedIn: true, model: 'Sonnet'}];
     s.agents = [{id: 'claude-code', name: 'Claude Code', status: 'idle'}];
     s.desktop = {automationsPaused: false, workflowActivity: {'C:/sessions/echo.archhub': {armed: 1}}};
-    s.dockLayout = {layout: null};
+    s.dockLayout = {layout: folded ? {left: {w: 268, c: true, st: [{p: ['workshop'], a: 'workshop', h: 1.15, c: false}, {p: ['library', 'map'], a: 'library', h: 1, c: false}]}, right: {c: true, st: [{p: ['insp'], a: 'insp', h: 1, c: false}]}} : null};
+    if (arabic) s.settings.push({id: 'Account.App language', value: 'Arabic'}, {id: 'Account.Right-to-left layout', value: 'Auto'});
     s.homeLayout = {width: 300, collapsed: false, resume: '', order: [], hidden: [], map: {}};
     s.sessionListFilters = {home: 'all'};
     s.tasks = [
       {
         id: 't-echo', title: 'Facade wall audit', status: 'IN REVIEW', workspace: 'Tower', project: 'Tower',
         sessionPath: 'C:/sessions/echo.archhub', updated_at: today, queuedMessages: [{id: 'q1'}],
-        members: [{id: 'm1', name: 'Claude Code', live: true}], agents: ['Claude Code'],
+        members: [{id: 'm1', name: 'Claude Code', live: !interrupted}], agents: ['Claude Code'],
         plan: ['Read curtain walls', 'Export wall schedule'], progress: {'Read curtain walls': 'done', 'Export wall schedule': 'awaiting'},
         outputs: [{name: 'wall-schedule.csv', excerpt: '42 curtain panels verified'}], messages: [],
       },
       {
         id: 't-feed', title: 'Structural grid sync', status: 'WIP', workspace: 'Tower', project: 'Tower',
         sessionPath: 'C:/sessions/feed.archhub', updated_at: today,
-        members: [{id: 'm2', name: 'Claude Code', live: true}], agents: ['Claude Code'],
+        members: [{id: 'm2', name: 'Claude Code', live: !interrupted}], agents: ['Claude Code'],
         plan: ['Extract grid lines'], progress: {'Extract grid lines': 'done'},
         outputs: [{name: 'grids.json', excerpt: '12 axes'}], messages: [],
       },
@@ -161,22 +162,22 @@ async function mountStudioPage(browser, viewport) {
       deleteNode: async id => { s.graph = {...s.graph, nodes: s.graph.nodes.filter(n => n.id !== id), revision: (s.graph.revision || 1) + 1}; notify(); return {ok: true}; },
       refreshAgentSurface: async () => null,
     };
-  });
+  }, {interrupted, arabic, folded});
 
   for (let i = 0; i < bundle.length - 1; i++) await page.addScriptTag({content: bundle[i]});
-  await page.evaluate(() => {
+  await page.evaluate(realCanvas => {
     const blank = () => null;
     const baseExec = window.executeAction;
     window.executeAction = (id, context, ...rest) => (id === 'ui.select' || id === 'ui.state') ? context(...rest) : (baseExec ? baseExec(id, context, ...rest) : null);
     Object.assign(window.UI, {
       BaboomSprite: blank,
       ScheduleResponsibility: blank,
-      Canvas: ({preview}) => window.React.createElement('div', {'data-test-canvas': preview ? 'preview' : 'main'}, preview ? 'Preview canvas' : 'Main canvas'),
+      ...(realCanvas ? {} : {Canvas: ({preview}) => window.React.createElement('div', {'data-test-canvas': preview ? 'preview' : 'main'}, preview ? 'Preview canvas' : 'Main canvas')}),
       GraphProperties: window.UI.GraphProperties || (({g}) => window.React.createElement('div', {'data-fixture-properties': true}, g?.name || '')),
       ApprovalCard: window.UI.ApprovalCard || (({id}) => window.React.createElement('div', {'data-approval': id}, 'Pending approval')),
       ResultPreview: window.UI.ResultPreview || (({value}) => window.React.createElement('span', null, String(value ?? ''))),
     });
-  });
+  }, realCanvas);
   await page.addScriptTag({content: bundle.at(-1)});
   return {page, errors};
 }
@@ -336,5 +337,111 @@ test('Canvas toolbar, preview tab pin, split peek Work here, Layout menu/Bottom/
   await page.locator('section.v48-session-inspector').getByLabel('Done when', {exact: true}).waitFor();
 
   assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /Coming soon/i);
+  assert.deepEqual(errors, []);
+});
+
+// Founder 2026-11-26 (P0-A): Home -> Canvas -> Home left Home's centre empty. Every way back must redraw the map with its cards in view.
+async function homeMapDrawn(page, label) {
+  await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor({timeout: 5000});
+  await page.waitForTimeout(120);
+  const box = await page.evaluate(() => {
+    const stage = document.querySelector('[data-home-canvas] .node-canvas')?.getBoundingClientRect();
+    const cards = [...document.querySelectorAll('[data-home-map] [data-design="home.card"]')].map(card => card.getBoundingClientRect());
+    return {stage: stage && {w: stage.width, h: stage.height, l: stage.left, r: stage.right, t: stage.top, b: stage.bottom}, cards: cards.map(c => ({l: c.left, r: c.right, t: c.top, b: c.bottom, w: c.width}))};
+  });
+  if (process.env.HOMETHREAD_SHOTS) await page.screenshot({path: path.join(process.env.HOMETHREAD_SHOTS, label.replace(/\W+/g, '-') + '-' + page.viewportSize().width + '.png')});
+  assert.ok(box.stage && box.stage.w > 200 && box.stage.h > 300, label + ': the map stage has room ' + JSON.stringify(box.stage));
+  assert.ok(box.cards.length >= 2 && box.cards.every(c => c.w > 40 && c.l >= box.stage.l - 1 && c.r <= box.stage.r + 1 && c.t >= box.stage.t - 1 && c.b <= box.stage.b + 1), label + ': every card is drawn inside the map ' + JSON.stringify(box));
+}
+
+for (const [width, height, opts] of [[1920, 1032, {}], [1920, 1032, {interrupted: true}], [944, 968, {}], [944, 968, {interrupted: true}], [900, 970, {arabic: true, folded: true}], [900, 970, {folded: true}], [1920, 1032, {arabic: true, folded: true}]]) test('Home after Canvas redraws its map on every way back at ' + width + 'px ' + JSON.stringify(opts) + ' (rail Home, breadcrumb Home, Esc; via rail Canvas and Open its Canvas)', async t => {
+  const browser = await chromium.launch({headless: true, executablePath: resolveBrowserExecutable()});
+  t.after(() => browser.close());
+  const {page, errors} = await mountStudioPage(browser, {width, height}, {realCanvas: true, ...opts});
+  const railIndex = {Home: 0, Canvas: 1};  // the rail's first two doors, whatever the app language names them
+  const rail = name => page.locator('nav.app-rail > button').nth(railIndex[name]);
+  await homeMapDrawn(page, 'first Home');
+  const ways = {
+    'rail Home': () => rail('Home').click(),
+    'breadcrumb Home': () => page.locator('button.header-page').click(),
+    // Esc first clears what the canvas holds (a selected step), then goes back to Home.
+    'Esc': async () => { for (let i = 0; i < 3 && !(await page.locator('[data-home-page]').count()); i++) { await page.locator('body').press('Escape'); await page.waitForTimeout(80); } },
+  };
+  const openIts = async () => {
+    if (!(await page.locator('[data-design="home1.open"]').count())) await page.locator('[data-home-map] [data-design="home.card"]').first().click();
+    if (!(await page.locator('[data-design="home1.open"]').isVisible())) await page.locator('.dock.right [data-tab="insp"]').click();
+    await page.locator('[data-design="home1.open"]').click();
+  };
+  for (const [enter, open] of [['rail Canvas', () => rail('Canvas').click()], ['Open its Canvas', openIts]]) for (const thread of [false, true]) {
+    for (const [back, leave] of Object.entries(ways)) {
+      await open();
+      await page.locator('.dx-home-root[data-screen="task-file"]').waitFor({timeout: 5000});
+      if (thread !== (await page.locator('[data-design="toolbar.thread"]').getAttribute('aria-pressed') === 'true')) {
+        if (await page.locator('[data-design="toolbar.thread"]').isVisible()) await page.locator('[data-design="toolbar.thread"]').click();
+        else {
+          await page.locator('[data-design="toolbar.layout.menu"]').click();
+          await page.getByRole('menuitem', {name: thread ? 'Show the thread' : 'Hide the thread', exact: true}).click();
+        }
+      }
+      await page.waitForTimeout(150);
+      await leave();
+      await page.locator('[data-home-page]').waitFor({timeout: 5000});
+      await homeMapDrawn(page, enter + (thread ? ' with its Thread' : '') + ' then ' + back + ' ' + JSON.stringify(opts));
+    }
+  }
+  assert.deepEqual(errors, []);
+});
+
+// Founder 2026-11-26 (P0-B): the Thread is one more dock panel: it docks, stacks, tabs, resizes, folds into the same tab strip and closes
+// like the Library or the Inspector; it has no strip of its own, never shrinks to a word column, and no tint stays over it.
+for (const [width, height] of [[1920, 1032], [944, 968]]) test('Thread is a dock panel at ' + width + 'px: shown, folded into the dock strip, moved, resized, closed', async t => {
+  const browser = await chromium.launch({headless: true, executablePath: resolveBrowserExecutable()});
+  t.after(() => browser.close());
+  const {page, errors} = await mountStudioPage(browser, {width, height}, {realCanvas: true});
+  await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor();
+  await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Canvas', exact: true}).click();
+  await page.locator('.dx-home-root[data-screen="task-file"]').waitFor({timeout: 5000});
+  const toggle = async label => { await page.locator('[data-design="toolbar.layout.menu"]').click(); await page.getByRole('menuitem', {name: label, exact: true}).click(); };
+  await toggle('Show the thread');
+  const thread = page.locator('.dock [data-tab="thread"]');
+  await thread.waitFor();
+  const pane = page.locator('.dockws .pnl[data-p="thread"] .v22g-thread');
+  await pane.waitFor();
+  await page.waitForTimeout(300);  // the dock eases its width in (240 ms)
+  const shot = name => process.env.HOMETHREAD_SHOTS && page.screenshot({path: path.join(process.env.HOMETHREAD_SHOTS, 'thread-' + name + '-' + width + '.png')});
+  await shot('docked');
+  // One dock system: no private thread strip, no resizable split column, no peek overlay.
+  assert.equal(await page.locator('[aria-label="Open Thread"].canvas-pane-rail, [data-thread-peek], [aria-label="Resize thread"]').count(), 0);
+  const room = await pane.evaluate(el => ({w: el.getBoundingClientRect().width, line: el.querySelector('.dx-talk')?.getBoundingClientRect().width || 0}));
+  assert.ok(room.w >= 280 && room.line >= 240, 'the thread keeps a readable width: ' + JSON.stringify(room));
+  // Fold the dock that holds it: the Thread becomes a tab in that dock's strip, and the tab opens it again.
+  const side = await thread.evaluate(el => el.closest('.dock').dataset.dock);
+  await page.getByRole('button', {name: 'Fold the ' + side + ' dock to icons', exact: true}).click();
+  await page.locator('.dock.' + side + '.col [data-tab="thread"]').waitFor();
+  await page.waitForTimeout(300);
+  await shot('folded');
+  assert.equal(await page.locator('[data-design="toolbar.thread"]').getAttribute('aria-pressed'), 'true', 'folding keeps the thread shown in the strip');
+  await page.locator('.dock.' + side + '.col [data-tab="thread"]').click();
+  await pane.waitFor();
+  // Its panel menu moves it like any panel.
+  await page.locator('[data-panel-menu="thread"]').click();
+  await page.getByRole('menuitem', {name: 'Move to the left', exact: true}).click();
+  await page.locator('.dock.left [data-tab="thread"]').waitFor();
+  // Resize the left dock with the real pointer; the thread follows the dock width.
+  await page.locator('[data-sash="left"]').dragTo(page.locator('.dockws .dcenter-main'), {sourcePosition: {x: 3, y: 200}, targetPosition: {x: 80, y: 200}});
+  const wide = await pane.evaluate(el => el.getBoundingClientRect().width);
+  assert.ok(wide > room.w - 1 || wide >= 300, 'resizing the dock widens the thread: ' + JSON.stringify({wide, before: room.w}));
+  // A real tab drag shows the drop preview while it moves and leaves no tint once it ends.
+  await page.locator('.dock.left [data-tab="thread"]').dragTo(page.locator('.dockws .dcenter-main'), {targetPosition: {x: 160, y: 200}});
+  assert.equal(await page.locator('.dockws .dzp:not([hidden]), .dghost').count(), 0, 'no drop tint or ghost stays after the drag');
+  // Closing the panel hides the thread; the toolbar follows.
+  await page.locator('[data-panel-menu="thread"]').click();
+  await page.getByRole('menuitem', {name: 'Close panel', exact: true}).click();
+  await page.waitForFunction(() => document.querySelector('[data-design="toolbar.thread"]')?.getAttribute('aria-pressed') === 'false');
+  assert.equal(await page.locator('.dock [data-tab="thread"]').count(), 0);
+  // Back to Home and in again: Home shows no Thread tab; the session shows it again when asked.
+  await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Home', exact: true}).click();
+  await page.locator('[data-home-page]').waitFor();
+  assert.equal(await page.locator('.dock [data-tab="thread"]').count(), 0);
   assert.deepEqual(errors, []);
 });

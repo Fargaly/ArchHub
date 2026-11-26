@@ -1041,7 +1041,7 @@ kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
 .pane-splitter[data-collapsed]{width:1px;min-width:1px}
 .v22g-thread .dx-talk{padding:0}.v22g-thread .dx-msg{margin-top:18px}.v22g-thread .dx-msg-heading{line-height:19px}.v22g-thread .dx-msg-line{position:relative;flex:1}.v22g-thread .dx-msg-actions{position:absolute;right:0;bottom:0;transform:translateY(100%);pointer-events:none}.v22g-thread .dx-msg:hover .dx-msg-actions,.v22g-thread .dx-msg:focus-within .dx-msg-actions{pointer-events:auto}.v22g-thread .dx-msg-line p:not(.dx-delivery){font-size:15px;line-height:1.6;margin:3px 0 0}.v22g-thread [data-design="thread.rules"]{width:100%;text-align:left;font-size:12px;background:var(--color-line-soft);color:var(--v22g-ink2)}
 .v22g-thread [data-design="thread.close"]{height:30px;width:30px;padding:0;background:none;color:var(--v22g-ink2)}
-.v22g-thread .dx-work-scroll>.dx-mid{flex:none;min-height:0}
+.v22g-thread .dx-work-scroll>.dx-mid{flex:none;min-height:0;grid-template-columns:minmax(0,1fr)}
 .v22g-thread .v22g-composer{width:calc(100% - 24px);max-width:none;margin:20px auto 18px;padding:12px!important;grid-template-columns:minmax(0,1fr) auto;flex:none}
 .v22g-thread [data-design="thread.to"]{grid-column:1/-1;height:28px}.v22g-thread [data-design="thread.msg"]{grid-column:1/-1;width:100%;height:46px!important;min-height:46px!important}
 .v22g-thread [data-design="thread.more"]{justify-self:start;width:30px;height:30px;padding:0;justify-content:center;background:var(--color-bg-panel);color:var(--v22g-ink2);font-size:11px}
@@ -1106,7 +1106,6 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .canvas-pane-peek,.v22g-inspector-peek{position:absolute;top:40px;bottom:0;right:48px;width:min(380px,calc(100% - 96px));z-index:30;border:1px solid var(--color-line);background:var(--color-bg-panel);box-shadow:0 8px 28px #0007;min-height:0}
 .canvas-pane-peek[data-side=library]{left:48px;right:auto;width:248px}.canvas-pane-peek>.library-shelf{height:100%;width:100%!important}
 .v22g-inspector-peek>.shared-properties{height:calc(100% - 30px)}
-.v22g-thread[data-thread-peek]{position:fixed;top:88px;bottom:0;right:48px;width:min(380px,calc(100vw - 200px));height:auto;z-index:30;border:1px solid var(--color-line);box-shadow:0 8px 28px #0007}
 .shared-properties{container:inspector / inline-size;min-width:0}.v22g-thread{container:thread / inline-size}
 .dx-tasks-list,.shared-properties-task,.shared-properties-selection,.dx-work-scroll,.settings-sheet main,.docs-layout main{padding-bottom:112px}
 .v22g-strip{container:toolbar / inline-size}.v22g-tabs{overflow:visible;position:relative;align-items:center}.v22g-tab{width:150px;min-width:0;flex:none}.v22g-tab [role=tab]{min-width:0;flex:1}
@@ -1371,7 +1370,6 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 @media (prefers-reduced-motion:reduce){.dockws,.dockws .dslot,.dockws .dzp,.dockws .sash::after{transition:none}}
 /* The Thread peek opens beside the right dock, never over it. */
 /* The thread peek sits left of the right dock and never reaches over the 64 px rail (a narrow window kept Home unclickable). */
-.dockws .v22g-thread[data-thread-peek]{right:calc(var(--rw,0px) + var(--rs,0px));width:min(380px,calc(100vw - var(--rw,0px) - var(--rs,0px) - 72px))}
 /* The composer floats above both docks: centred on the area right of the rail, 620px wide or the window less 444px (design: 1009 -> 254-819, 1280 -> 362-982, 1440 -> 442-1062, 1920 -> 682-1302); 900px is the shell floor. The zoom control rises off it (ds_screens.jsx). */
 .dx-home-root[data-screen="task-file"]{position:relative}
 .dx-home-root[data-screen="task-file"]>.v22g-composer-dock{left:calc((max(100vw,900px) + var(--layout-rail-width)) / 2)!important;width:min(620px,calc(max(100vw,900px) - 444px))!important;min-width:0!important}

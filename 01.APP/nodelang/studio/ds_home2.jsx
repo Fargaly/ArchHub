@@ -622,18 +622,9 @@
     const canvasRef = React.useRef(null);
     const dockRef = React.useRef(null), dockWrites = React.useRef(Promise.resolve()), [mapHost, setMapHost] = React.useState(null);
     const shellRef = React.useRef(null), tabsRef = React.useRef(null), viewsRef = React.useRef(null);
-    const [viewsWidth,setViewsWidth]=React.useState(0),[threadWidth,setThreadWidth]=React.useState(0),[besideShown,setBesideShown]=React.useState(false);
-    const singleCanvas=Boolean(beside)&&viewsWidth-(face==='split'?Math.max(300,threadWidth)+6:0)<646;
+    const [viewsWidth,setViewsWidth]=React.useState(0),[besideShown,setBesideShown]=React.useState(false);
+    const singleCanvas=Boolean(beside)&&viewsWidth<646;
     const [shellWidth, setShellWidth] = React.useState(window.innerWidth - 64), [tabsWidth, setTabsWidth] = React.useState(600);
-    const threadRef = React.useRef(null), [threadRail, setThreadRail] = React.useState(false), [threadPeek, setThreadPeek] = React.useState(false);
-    React.useLayoutEffect(() => {
-      const frame = window.requestAnimationFrame(() => {
-        if (shellWidth < 1180) threadRef.current?.collapse();
-        else threadRef.current?.expand();
-      });
-      setThreadPeek(face==='split'&&shellWidth<1180);
-      return () => window.cancelAnimationFrame(frame);
-    }, [shellWidth < 1180, face]);
     React.useLayoutEffect(() => {
       const observer = new window.ResizeObserver(entries => {
         for (const entry of entries) {
@@ -793,11 +784,28 @@
       focusAsk = {task: target.id, from: target.id === task?.id ? '' : task?.id || ''};   // settled by placeComposer below
     };
     const [layoutName, setLayoutName] = React.useState('Build'), [dockCmd, setDockCmd] = React.useState(undefined);
+    const [threadDocked, setThreadDocked] = React.useState(null), threadWas = React.useRef(null);
     const syncDock = layout => {  // a report only; the effect above mirrors it
       setLibraryShown(window.UI.dockModel.visible(layout, 'library'));
+      setThreadDocked(Boolean(window.UI.dockModel.where(layout, 'thread')));
       setLayoutName(window.UI.dockModel.presetName(layout));  // read from the dock's own layout record, never kept beside it
       setDockCmd(layout.cmd || null);
     };
+    // The Thread is a dock panel like the others. Show the thread puts it in the dock (first time: its own slot at the top of the right dock);
+    // Hide the thread closes that panel. Closing it from the dock hides the thread; moving, stacking, tabbing and folding keep it shown.
+    React.useEffect(() => {
+      const dock = dockRef.current;
+      if (!fileWorkspace || !dock) return;
+      const docked = Boolean(window.UI.dockModel.where(dock.layout(), 'thread'));
+      if (face === 'split' && !docked) { dock.place('thread', 'right', 0, 'above'); dock.show('thread'); }
+      else if (face !== 'split' && docked) dock.close('thread');
+    }, [face, fileWorkspace, Boolean(s.dockLayout)]);
+    React.useEffect(() => {
+      const was = threadWas.current;
+      threadWas.current = threadDocked;
+      if (!fileWorkspace || was === null || threadDocked === null || was === threadDocked) return;
+      if (threadDocked !== (face === 'split')) setFace(threadDocked ? 'split' : 'canvas');
+    }, [threadDocked, fileWorkspace]);
     // Agents working on other tasks right now (the live agent owner); the toolbar pill lists them and opens their task.
     const workingElsewhere = (s.agentGraph?.sessions || []).filter(agent => agent.status === 'working' && agent.task !== task?.id);
     const saveSession = patch => {
@@ -1274,6 +1282,50 @@
       }
       fileKeys(event);
     };
+    // The thread of this session: its own dock panel (dock.jsx 'thread').
+    const threadPane = fileWorkspace ? <div className="dx-main v22g-thread" data-dx="main" data-home-face="split">
+                  <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
+                  <div className="dx-work-scroll">
+                  <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
+                    <div className="dx-stage">
+                    <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
+                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · {statusText(task?.status)}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
+                      {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · did not finish{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
+                      {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
+                      {task?.blocked_by ? <div className="dx-task-notice" role="status"><p>Blocked by {describe(task.blocked_by)}</p>{tasks.some(t => t.id === task.blocked_by) ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.openTaskFile(task.blocked_by, 'workshop'))}>View dependency</button> : null}</div> : null}
+                      {!messages.length && !plan.length && !activity.length && !outputs.length && !scopeValue && !rules.length && !agents.length && !folders && !references && !session && !fileName ? <p className="dx-empty-task" data-dx="empty">Nothing recorded for this task yet.</p> : null}
+                      {messages.map(m => {
+                        const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key || m.who === 'You';
+                        const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
+                        const delivery = ((m.live || []).length ? m.live : m.delivery || []).map(d => [d.state || d.reason, d.agent ? (people.whoIs ? people.whoIs(d.agent).name : d.agent) : ''].filter(Boolean).join(' · ').replace(/_/g, ' ')).filter(Boolean).join(' · ') || String(m.state || '').replace(/_/g, ' ');
+                        const attention = window.UI.deliveryAttention?.(m);
+                        const who = m.sender_key || m.who || sender;
+                        const open = detailId === (m.id || who);
+                        return <article key={m.id} data-design="thread.message" data-pinned={task?.pinnedMessages?.includes(m.id)} className="dx-msg" onContextMenu={e=>{e.preventDefault();u.show('Task message menu',{taskId:task.id,message:m,open:()=>replyToMessage(m)});}}><span className="dx-avatar" style={{background:'var(--color-bg-soft)',color:'var(--color-ink-soft)'}} aria-hidden="true" title={sender}>{own && (!s.profile.name || s.profile.name === 'You') ? 'You' : String(own ? s.profile.name : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><div className="dx-msg-heading"><b>{sender}</b><span>→ {m.to ? (people.whoIs ? people.whoIs(m.to).name : m.to) : own ? ownerOf(task) || 'Agent' : 'You'}</span></div><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><span hidden={!attention} className="dx-delivery-chip" data-delivery-attention={attention || undefined} role="status">{attention}</span>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions" style={{pointerEvents: 'auto'}}><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
+                      })}
+                      {/* Design: a held step of this task is answered inside the thread too: Review shows the step, Ask why asks the agent in the composer. */}
+                      {approvalSteps.map(({card}) => { const step = s.graph.nodes.find(node => node.id === card.nodeId)?.title || card.title;
+                        return <section key={card.id} className="v48-thread-approval" data-design="thread.approval" data-approval={card.id}><span>Needs your approval</span><b>{step}</b>
+                          <p>{card.who ? card.who + ' asked' : 'Asked'}{card.summary ? ' · ' + card.summary : ''}</p>
+                          <div className="flex"><button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => showWork({task, nodeId: card.nodeId, approvalId: card.id}), event)}>Review on the node</button>
+                            <button type="button" className="dx-primary-run" onClick={event => executeAction('ui.select', () => u.act(() => api.approve(card.id)), event)}>Approve</button>
+                            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setText('Why do you need to run ' + step + '?'), event)}>Ask why</button>
+                            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.act(() => api.decline(card.id)), event)}>Reject</button></div></section>; })}
+                    </section>
+                    </div>
+                  </div>
+                  {(activity.length || outputs.length) ? <div className="dx-low">
+                    {outputs.length ? <section className="dx-panel dx-slim" id="dx-outputs" tabIndex={-1} data-dx="outputs" aria-label="Outputs">
+                      <h2>Outputs</h2>
+                      {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
+                    </section> : null}
+                  </div> : null}
+                  </div>
+                  </div>
+                  <div className="dx-task-activity">
+                    <section className="dx-panel" data-dx="activity" aria-label="Activity"><h2>Activity</h2>{activity.length ? activity.map(row => <p key={row.id}>{[statusText(row.status),describe(row.output)].filter(Boolean).join(' · ')}</p>) : <div className="dx-empty-activity"><p>Nothing has run yet.</p><button type="button" className="dx-link" onClick={() => executeAction('projects.ds_screens.Run.15', {api,u})}>Run workflow</button></div>}</section></div>
+                  <p className="dx-foot" data-dx="footer">{footer}</p>
+                </div> : null;
     return <div ref={shellRef} className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} tabIndex={fileWorkspace ? undefined : 0} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={handleHomeKeys}>
       {request === 'waiting' ? <p role="status">{fileWorkspace?'Saving':'Loading sessions…'}</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
@@ -1324,7 +1376,7 @@
               <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => u.go('settings/Agents'), event)}>Install what it needs</button>
               <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => { if (task) openTask(task); else u.go('settings/System graph'); }, event)}>Show those steps</button>
             </div>}
-            <window.UI.Dock face="canvas" rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
+            <window.UI.Dock rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
               panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} onAdd={startSessionWith} />, insp: mapInspector, onShowWork: showWork}}>
               <div className={'dx-col dx-task-column home-map-stage' + ((pickedWireId || hoveredHomeId) ? ' home-wire-focus home-map-focus' : '')}
                 onPointerOver={event => {
@@ -1392,52 +1444,10 @@
                   <button type="button" role="menuitem" onClick={event => executeAction('ui.select', () => { setLayoutMenuOpen(false); u.go('settings/Appearance'); }, event)}><span>UI scale and panel sizes</span></button>
                 </div>}</div><button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
             </div>
-            <window.UI.Dock face={face} rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
-              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane, onShowWork: showWork}}>
+            <window.UI.Dock rightWidth={inspectorWidth} onRightWidth={persistWidth} onSave={saveDock} onLayout={syncDock} controls={dockRef} onMapHost={setMapHost}
+              panels={{workshop: <window.UI.DockWorkshop onShow={showWork} />, library: <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />, insp: propertiesPane, thread: threadPane, onShowWork: showWork}}>
               <div className="dx-col dx-task-column">
-                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={canvasSteps} planned={canvasPlanned} onEditPlan={plan.length && plan.every(step=>typeof step==='string') ? ()=>saveSession({materializePlan:plan}) : undefined} occludedWidth={threadRail&&threadPeek?380:0} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={resetDock} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside" data-peek-pane=""><header className="v22g-peek-head"><span className="v22g-tab-state" aria-hidden="true" style={{background:'var(--color-accent)'}} /><b>{s.tasks.find(row=>row.id===beside)?.title || 'Task'}</b><span className="v22g-peek-hint">Its own file. Click inside to work here</span><span className="fill" /><button type="button" className="dx-quiet" data-peek-work-here="" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>Work here</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>{setThreadRail(size.inPixels<=49);setThreadWidth(size.inPixels);}} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
-                  <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
-                  <div className="dx-work-scroll">
-                  <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
-                    <div className="dx-stage">
-                    <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · {statusText(task?.status)}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setThreadPeek(false);setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
-                      {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · did not finish{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
-                      {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
-                      {task?.blocked_by ? <div className="dx-task-notice" role="status"><p>Blocked by {describe(task.blocked_by)}</p>{tasks.some(t => t.id === task.blocked_by) ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.openTaskFile(task.blocked_by, 'workshop'))}>View dependency</button> : null}</div> : null}
-                      {!messages.length && !plan.length && !activity.length && !outputs.length && !scopeValue && !rules.length && !agents.length && !folders && !references && !session && !fileName ? <p className="dx-empty-task" data-dx="empty">Nothing recorded for this task yet.</p> : null}
-                      {messages.map(m => {
-                        const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key || m.who === 'You';
-                        const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
-                        const delivery = ((m.live || []).length ? m.live : m.delivery || []).map(d => [d.state || d.reason, d.agent ? (people.whoIs ? people.whoIs(d.agent).name : d.agent) : ''].filter(Boolean).join(' · ').replace(/_/g, ' ')).filter(Boolean).join(' · ') || String(m.state || '').replace(/_/g, ' ');
-                        const attention = window.UI.deliveryAttention?.(m);
-                        const who = m.sender_key || m.who || sender;
-                        const open = detailId === (m.id || who);
-                        return <article key={m.id} data-design="thread.message" data-pinned={task?.pinnedMessages?.includes(m.id)} className="dx-msg" onContextMenu={e=>{e.preventDefault();u.show('Task message menu',{taskId:task.id,message:m,open:()=>replyToMessage(m)});}}><span className="dx-avatar" style={{background:'var(--color-bg-soft)',color:'var(--color-ink-soft)'}} aria-hidden="true" title={sender}>{own && (!s.profile.name || s.profile.name === 'You') ? 'You' : String(own ? s.profile.name : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><div className="dx-msg-heading"><b>{sender}</b><span>→ {m.to ? (people.whoIs ? people.whoIs(m.to).name : m.to) : own ? ownerOf(task) || 'Agent' : 'You'}</span></div><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><span hidden={!attention} className="dx-delivery-chip" data-delivery-attention={attention || undefined} role="status">{attention}</span>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions" style={{pointerEvents: 'auto'}}><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
-                      })}
-                      {/* Design: a held step of this task is answered inside the thread too: Review shows the step, Ask why asks the agent in the composer. */}
-                      {approvalSteps.map(({card}) => { const step = s.graph.nodes.find(node => node.id === card.nodeId)?.title || card.title;
-                        return <section key={card.id} className="v48-thread-approval" data-design="thread.approval" data-approval={card.id}><span>Needs your approval</span><b>{step}</b>
-                          <p>{card.who ? card.who + ' asked' : 'Asked'}{card.summary ? ' · ' + card.summary : ''}</p>
-                          <div className="flex"><button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => showWork({task, nodeId: card.nodeId, approvalId: card.id}), event)}>Review on the node</button>
-                            <button type="button" className="dx-primary-run" onClick={event => executeAction('ui.select', () => u.act(() => api.approve(card.id)), event)}>Approve</button>
-                            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setText('Why do you need to run ' + step + '?'), event)}>Ask why</button>
-                            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.act(() => api.decline(card.id)), event)}>Reject</button></div></section>; })}
-                    </section>
-                    </div>
-                  </div>
-                  {(activity.length || outputs.length) ? <div className="dx-low">
-                    {outputs.length ? <section className="dx-panel dx-slim" id="dx-outputs" tabIndex={-1} data-dx="outputs" aria-label="Outputs">
-                      <h2>Outputs</h2>
-                      {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
-                    </section> : null}
-                  </div> : null}
-                  </div>
-                  </div>
-                  <div className="dx-task-activity">
-                    <section className="dx-panel" data-dx="activity" aria-label="Activity"><h2>Activity</h2>{activity.length ? activity.map(row => <p key={row.id}>{[statusText(row.status),describe(row.output)].filter(Boolean).join(' · ')}</p>) : <div className="dx-empty-activity"><p>Nothing has run yet.</p><button type="button" className="dx-link" onClick={() => executeAction('projects.ds_screens.Run.15', {api,u})}>Run workflow</button></div>}</section></div>
-                  <p className="dx-foot" data-dx="footer">{footer}</p>
-                </div></Column></>}</Group></div></div>
+                <div className="dx-surface-body"><div className="v22g-views-frame" ref={viewsRef}>{singleCanvas&&<div className="v22g-canvas-switch" role="group" aria-label="Visible canvas"><button type="button" aria-pressed={!besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(false))}>{task?.title}</button><button type="button" aria-pressed={besideShown} onClick={()=>executeAction('ui.select',()=>setBesideShown(true))}>{s.tasks.find(row=>row.id===beside)?.title}</button></div>}<Group className="v22g-views" orientation="horizontal">{(!singleCanvas||!besideShown)&&<Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector steps={canvasSteps} planned={canvasPlanned} onEditPlan={plan.length && plan.every(step=>typeof step==='string') ? ()=>saveSession({materializePlan:plan}) : undefined} controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} docked mapHost={mapHost} onResetDock={resetDock} /></div></Column>}{beside&&(!singleCanvas||besideShown) && <>{!singleCanvas&&<Separator className="pane-splitter" aria-label="Resize session split" />}<Column id="beside-canvas" minSize={320}><div className="v22g-beside" data-peek-pane=""><header className="v22g-peek-head"><span className="v22g-tab-state" aria-hidden="true" style={{background:'var(--color-accent)'}} /><b>{s.tasks.find(row=>row.id===beside)?.title || 'Task'}</b><span className="v22g-peek-hint">Its own file. Click inside to work here</span><span className="fill" /><button type="button" className="dx-quiet" data-peek-work-here="" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>Work here</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}</Group></div></div>
               </div>
             </window.UI.Dock>
           </div>

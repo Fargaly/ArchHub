@@ -269,6 +269,10 @@ def _run_session(params, feeds, document=None):
     if document is not None:   # the open session resolves 'Account default' to the account's language
         from .settings_owner import agent_reply_language
         held['reply_in'] = agent_reply_language(document, held['reply_in'])
+    # Settings › Projects (standard, templates, location, worksharing, print, CAD, CDE) as this session's project sets
+    # them: a new session in a project takes that project's values (Session > Workspace > Everywhere).
+    from .settings_owner import declared_settings
+    project = declared_settings(document)['Projects']
     return {'value': feeds.get('value', params.get('value', '')), 'agent': feeds.get('agent', ''),
             'profile': feeds.get('profile'), 'rules': feeds.get('rules', []),
             'parameters': {'run_budget': held['run_budget'], 'prefer_no_agent': held['prefer_no_agent'],
@@ -276,7 +280,7 @@ def _run_session(params, feeds, document=None):
                            'read_only_agents': list(held['read_only_agents'] or [])},
             'tools': {'off': list(held['tools_off'] or [])},
             'context': {'brief': held['brief'], 'project_folder': held['project_folder'], 'standard': held['standard']},
-            'project folder': held['project_folder'], 'standard': held['standard']}, 'Session parameters'
+            'project folder': held['project_folder'], 'standard': held['standard'], 'project': project}, 'Session parameters'
 
 
 def _run_you(params, feeds):
@@ -320,7 +324,7 @@ THING_ENGINES = {
                       'in': [_port('value'), _port('agent', 'string'), _port('profile'), _port('rules', 'list')],
                       'out': [_port('value', 'string'), _port('agent', 'string'), _port('profile'), _port('rules', 'list'),
                               _port('parameters'), _port('tools'), _port('context'), _port('project folder', 'file'),
-                              _port('standard', 'string')]},
+                              _port('standard', 'string'), _port('project')]},
     'thing.you': {'pure': True, 'run': _run_you, 'in': [], 'out': [_port('profile')]},
     'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string'), _port('temperature', 'number'), _port('system', 'string')],
                     'out': [_port('text', 'string'), _port('model', 'string')]},

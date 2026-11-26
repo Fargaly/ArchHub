@@ -701,6 +701,10 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert.equal(json(assigned).id,saved.document.id);
    await call('openSession',assigned);assert.equal((await call('getSessionDocument')).id,saved.document.id);
    await call('openSession',source);await call('refreshPreferences');
+   // Opening a file shows its Canvas: come back to Settings › Projects for its controls.
+   await js("document.querySelector('nav button[aria-label=\"Settings\"]').click()");
+   assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);
+   assert.equal(await clickText('Projects'),true);
    await select('Revisions',revision);assert.equal(await until(()=>readControl('Revisions'),v=>v===revision),revision);
    await switchValue(initialCheck);
    const x=(await call('getSessionDocument')).viewport.x+53;
@@ -711,7 +715,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert.equal(await until(async()=>json(source).viewport.x,v=>v===x),x);
    assert.equal(path.normalize(await call('getSessionPath')),path.normalize(source));
    assert.deepEqual(fs.readFileSync(target),targetBytes);
-   return {pass:true,got:{revisionRestored:revision,nameCheckRestored:initialCheck,refusal,assignedRevision:saved.issueRevision,bothFilesPreserved:true,nativeCancel:cancel,autosaveReadBack:true}};
+   return {pass:true,expected_http:['400 /api/session-files'],got:{revisionRestored:revision,nameCheckRestored:initialCheck,refusal,assignedRevision:saved.issueRevision,bothFilesPreserved:true,nativeCancel:cancel,autosaveReadBack:true}};
   }catch(error){failure=error;throw error;}finally{
    await restoreAfter(failure,async()=>{
     if(originalRegister)await register(originalRegister.number,{issuedDestination:originalRegister.issuedDestination||'',namingRegister:originalRegister.namingRegister||'',issuedRegister:originalRegister.issuedRegister||''});

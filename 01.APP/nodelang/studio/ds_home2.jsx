@@ -874,8 +874,11 @@
     const projectChoices = (s.workspaces || []).map(w => ({key: w.id, value: w.id, name: w.name || w.id})).filter(c => c.value);
     const agentChoices = (s.liveAgents || []).map(agent => ({key: agent.handle || agent.agent, handle: agent.handle ? agent.agent : undefined, name: agent.name && agent.name !== agent.agent ? agent.name : agent.agent, gate: agent.gate, breaches: agent.breaches}));
     const openTask = t => u.openTaskFile(t.id);
-    const send = async () => {
-      const body = text.trim();
+    // Meeting notes (moved from the Workshop page): pasted notes go to this thread through the same send as the composer.
+    const [notesOpen, setNotesOpen] = React.useState(false), [notes, setNotes] = React.useState('');
+    const send = async override => {
+      const own = typeof override !== 'string';
+      const body = (own ? text : override).trim();
       if (!body || sendingRef.current) return;
       sendingRef.current = true;
       setSending(true);
@@ -884,16 +887,17 @@
       const turn = recipient === 'session' ? window.UI.sessionTurn(allAgents, body) : window.UI.chatTurn(choices, recipient, body);
       const prompt = turn.prompt + (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(file=>({id:file.id,path:file.path}))) : '');
       const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
-      setText('');
+      if (own) setText('');
       try {
         const result = await u.act(() => api.sendChatTurn({...turn, prompt}, undefined, task && !task.fileOnly ? task.id : undefined));
         if (result != null && turn.agent !== 'BABOOM') setTo(null);   // the thread's chat is now the default (threadDefault)
         if (result == null && turn.resume) setTo(null);               // ended: the default becomes Start again
-        if (result == null) u.setComposerDraft(current => {
+        if (result == null && own) u.setComposerDraft(current => {
           const held = current[draftKey];
           return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
         });
         else {for(const file of files) await api.removeComposerAttachment(file.id);await api.listTasks?.();}
+        return result;
       } finally {
         sendingRef.current = false;
         setSending(false);
@@ -1347,7 +1351,7 @@
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
                     <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · <span data-design="thread.status">{threadStatus}</span>{plan.length ? <span className="prog"> · {plan.filter(step => step && typeof step === 'object' && step.status === 'done').length} of {plan.length} steps</span> : null}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button>
+                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · <span data-design="thread.status">{threadStatus}</span>{plan.length ? <span className="prog"> · {plan.filter(step => step && typeof step === 'object' && step.status === 'done').length} of {plan.length} steps</span> : null}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><button type="button" data-design="thread.meetnotes" className="dx-quiet" aria-expanded={notesOpen} onClick={event=>executeAction('ui.select',()=>setNotesOpen(!notesOpen),event)}>Meeting notes</button>
                       {/* One status, from the run record (design: Interrupted · waiting for an agent, with Continue). */}
                       {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status" data-design="thread.interrupted"><p>Interrupted · waiting for an agent{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" title="Any agent continues on the same canvas and the same thread" onClick={event => executeAction('ui.select', () => continueCard({task: task.id}), event)}>Continue</button></div> : null}
                       {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.show('App health'))}>View active runs</button></div> : null}
@@ -1370,6 +1374,10 @@
                             <button type="button" className="dx-primary-run" onClick={event => executeAction('ui.select', () => u.act(() => api.approve(card.id)), event)}>Approve</button>
                             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setText('Why do you need to run ' + step + '?'), event)}>Ask why</button>
                             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.act(() => api.decline(card.id)), event)}>Reject</button></div></section>; })}
+                      {notesOpen ? <section className="v48-thread-approval" data-design="thread.meetbox"><span>Meeting notes</span>
+                        <textarea dir="auto" aria-label="Meeting notes" rows={4} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Paste meeting notes…" />
+                        <div className="flex"><button type="button" className="dx-primary-run" disabled={!notes.trim() || sending} onClick={event => executeAction('ui.select', async () => { const sent = await send('Meeting notes:\n' + notes); if (sent != null) { setNotes(''); setNotesOpen(false); } }, event)}>Send to the thread</button>
+                          <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setNotesOpen(false), event)}>Cancel</button></div></section> : null}
                     </section>
                     </div>
                   </div>

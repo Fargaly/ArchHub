@@ -729,8 +729,12 @@
   function WorkshopDockView({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
     const [busy, setBusy] = React.useState(''), [shown, setShown] = React.useState(''), acting = React.useRef('');
-    const [query, setQuery] = React.useState('');
-    const all = (s.tasks || []).filter(task => task.status !== 'ARCHIVED');
+    const [query, setQuery] = React.useState(''), [chosenProject, setProject] = React.useState('');
+    // The project room (moved from the Workshop page): work and room messages of one project; work without a project shows in every room.
+    const known = [...new Set((s.tasks || []).map(task => task.project).filter(Boolean))];
+    const project = known.includes(chosenProject) ? chosenProject : (s.tasks || []).find(task => task.id === (u.task || s.focusedTask))?.project || known[0] || '';
+    const inRoom = row => !project || !row.project || row.project === project;
+    const all = (s.tasks || []).filter(task => task.status !== 'ARCHIVED' && inRoom(task));
     const matches = text => !query || String(text || '').toLowerCase().includes(query.toLowerCase());
     const tasks = all.filter(task => matches(task.title + ' ' + task.status));
     // The room: Workshop messages bound to no task, shown while no session is open. An older page asked for under one
@@ -740,9 +744,9 @@
     currentScope.current = roomScope;
     const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
     const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
-    const bound = new Set(all.flatMap(task => [...(task.messages || []), ...(task.agentLog || [])].map(message => message.id)));
+    const bound = new Set((s.tasks || []).flatMap(task => [...(task.messages || []), ...(task.agentLog || [])].map(message => message.id)));
     const room = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
-      .filter(message => !bound.has(message.id) && matches(message.who + ' ' + message.text));
+      .filter(message => !bound.has(message.id) && inRoom(message) && matches(message.who + ' ' + message.text));
     const roomMore = previous.before ? previous.more : s.workshopMessagesMore;
     const roomShown = !(u.route === 'task-file' && u.task);
     const taskOf = card => all.find(task => [card.taskId, card.task_id, card.work, ...(card.taskIds || [])].includes(task.id));
@@ -772,6 +776,7 @@
       await u.act(() => api.runNode(row.id));
     });
     return <div className="wsb" data-dock-workshop="">
+      {known.length > 0 && <select className="field wsroom" aria-label="Project room" value={project} onChange={event => setProject(event.target.value)}>{known.map(name => <option key={name} value={name}>{name}</option>)}</select>}
       <div className="flex wstb"><input className="field" aria-label="Search threads" placeholder="Search threads" value={query} onChange={event => setQuery(event.target.value)} />
         <button type="button" className="button-reset icon-btn" aria-label="Board" title="Board: Planned / WIP / In review / Done" onClick={event => executeAction('ui.select', () => u.show('Workshop board'), event)}><Icon name="arrange" size={15} /></button>
         <button type="button" className="button-reset icon-btn" aria-label="Inbox" title="Inbox: notifications and approvals" onClick={event => executeAction('ui.select', () => u.show('Founder inbox'), event)}><Icon name="bell" size={15} /></button></div>

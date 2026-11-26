@@ -96,3 +96,17 @@ test('The Workshop dock panel room renders the real mailbox projection even with
     }finally{await browser.close();}
   }
 });
+
+test('The Workshop dock panel keeps the project room: one project\'s work and room messages, switchable',()=>{
+  const {JSDOM}=require('jsdom');
+  const data={tasks:[{id:'a',title:'Alpha work',status:'WIP',project:'Alpha'},{id:'b',title:'Beta work',status:'WIP',project:'Beta'}],
+    providers:[],profile:{},graph:{name:'Fixture'},workshopMessages:[{id:'ra',who:'Codex',text:'Alpha room note',project:'Alpha'},{id:'rb',who:'Codex',text:'Beta room note',project:'Beta'}]};
+  const window={UI:{A:{},D:{},useData:()=>data,Av:()=>null,Chip:()=>null,deliveryAttention,TurnUsage:()=>null,AnswerWidget:()=>null,AnswerSources:()=>null},
+    ArchHubAPI:{executeAction:()=>{},getSnapshot:()=>({providers:[]})}};
+  const html=renderToStaticMarkup(React.createElement(loadDock(window),{onShow:()=>{}}));
+  const dom=new JSDOM(html);
+  const picker=dom.window.document.querySelector('select[aria-label="Project room"]');
+  assert.deepEqual([...picker.options].map(o=>o.value),['Alpha','Beta']);
+  assert.match(html,/Alpha work/);assert.match(html,/Alpha room note/);
+  assert.doesNotMatch(html,/Beta work|Beta room note/,'another project\'s work and room stay out of this room');
+});

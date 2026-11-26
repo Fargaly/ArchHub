@@ -24,7 +24,6 @@
     Card,
     Av,
     Heading,
-    Composer,
     Empty
   } = window.UI;
   function Colleagues() {
@@ -73,9 +72,7 @@
                 }
               })(event))}>Make task</Btn></div>)}<Btn sm ghost onClick={event => dispatch("wire.ds_colleagues.6", () => (() => u.show('Meeting notes'))(event))}>Open notes</Btn></Card><div style={{
             height: 20
-          }} /><window.UI.MemoryRules /><div style={{
-            height: 20
-          }} /><Composer /></div></section></div>;
+          }} /><window.UI.MemoryRules /></div></section></div>;
   }
   function MemoryRules() {
     const wire = window.UI.useWireSocial();

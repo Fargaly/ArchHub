@@ -2298,6 +2298,9 @@
   function HomeMap({chart, picked, onPick, onOpen, onOpenProject, onContinue, onReview, onCollapse, mapHost, onRoom, onArrange}) {
     const s = useData(), area = React.useRef(null), [flow, setFlow] = useHomeFlow(chart, picked), [view, setView] = React.useState({zoom: 1, pan: {x: 0, y: 0}}), seen = React.useRef(view), touched = React.useRef(false);
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
+    // The card under a double-click's FIRST press is the one it opens: a list refresh can re-fit the map between the
+    // two presses, and the second press then lands on another card.
+    const pressed = React.useRef(null);
     seen.current = view;
     const fit = () => {
       if (!area.current || !chart.nodes.length) return;
@@ -2347,7 +2350,8 @@
             viewport={{x: view.pan.x, y: view.pan.y, zoom: view.zoom}} onMove={(event, v) => { if (event instanceof window.Event) { touched.current = true; setView({zoom: v.zoom, pan: {x: v.x, y: v.y}}); } }} minZoom={zoomMin} maxZoom={zoomMax}
             onNodesChange={changes => setFlow(nodes => RF.applyNodeChanges(changes.filter(change => change.type === 'dimensions' || change.type === 'position'), nodes))}
             onNodeDragStop={(event, node) => onArrange?.(flow.filter(f => !f.data.n.group).map(f => f.id === node.id ? {...f, position: node.position} : f).sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x).map(f => f.data.n))}
-            onNodeClick={(event, node) => { if (!node.data.n.group) onPick(node.data.n); }} onNodeDoubleClick={(event, node) => { if (!node.data.n.group) onOpen(node.data.n); }} onPaneClick={() => onPick(null)}
+            onNodeClick={(event, node) => { if (node.data.n.group) return; if (!(event.detail > 1 && pressed.current)) pressed.current = node.data.n; onPick(pressed.current); }}
+            onNodeDoubleClick={(event, node) => { const card = pressed.current || node.data.n; if (!card.group) onOpen(card); }} onPaneClick={() => { pressed.current = null; onPick(null); }}
             zoomOnDoubleClick={false} deleteKeyCode={null} proOptions={{hideAttribution: true}} />
         </HomeMapContext.Provider>
         <div data-canvas-overlay="" className="canvas-toolbar" ref={bar} style={rise == null ? undefined : {bottom: rise}}><button type="button" className="button-reset" title="Reset zoom" onClick={event => executeAction('projects.controls.activate', {handler: () => zoomAt(1)}, event)}>{Math.round(view.zoom * 100)}%</button>

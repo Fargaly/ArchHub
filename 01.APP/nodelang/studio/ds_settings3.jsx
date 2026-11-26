@@ -484,7 +484,7 @@
         const provider=program?'':socialProviders[name],record=byName.get(name)||(provider&&{id:provider,name,connected:false}),connected=program?['connected','listening'].includes(record?.state):Boolean(record?.connected);
         const status=record?(program?(record.state||'Status unavailable'):connected?(record.display_name||'Connected'):(record.status||record.blocker||'Not connected')):program?'Not found on this PC':'Not connected';
         // No record: a program the host probe did not find, or an account with no connection yet (Connect lists what can connect).
-        const activate=()=>{if(provider&&!byName.has(name))api.refreshSocialConnections().catch(()=>{});return program?setChosen(chosen===record.id?'':record.id):!record?u.show('Connect'):record.credential?u.show('My secrets'):u.show(connected?'Connection':'Connect',{id:record.id});};
+        const activate=()=>{if(provider&&!byName.has(name))api.refreshSocialConnections().catch(()=>{});return program?setChosen(chosen===record.id?'':record.id):!record?u.show('Connect'):record.credential?u.show('My secrets'):u.show(connected?'Connection':'Connect',{id:record.id,name:record.name});};
         return <button type="button" key={name} className="sheet-connection-tile" disabled={program&&!record} data-connected={connected} aria-label={name+' · '+status} title={specs.find(spec=>spec[1]===name)?.[2]} onClick={event=>executeAction('projects.controls.activate',{handler:activate},event)}>
           <span aria-hidden="true">{name[0]}</span><b>{name}</b><small>{status}</small></button>;
       })}</div>;

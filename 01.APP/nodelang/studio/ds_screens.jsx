@@ -1045,7 +1045,6 @@
     controlsRef,
     steps,
     planned,
-    onEditPlan,
     occludedWidth = 0,
     docked = false,  // the Library, Map and Inspector live in the Canvas dock around this stage
     mapHost = null,
@@ -1195,9 +1194,13 @@
       setViewport(next);
       if (persist) persistView({x:next.pan.x,y:next.pan.y,zoom:next.zoom});
     };
+    const openedScope = React.useRef(null);
     React.useEffect(() => {
       const saved = s.graph.viewport;
       if (shownScope.current === s.graph.scopeKey) return;  // a step Show centred is what he asked to see
+      // Founder 2026-11-26: a session opens fitted to its nodes (design openView), not at the zoom it was last left at;
+      // within the open session, a view he set stays (canvasTouched / persistView).
+      if (openedScope.current !== s.graph.scopeKey) { openedScope.current = s.graph.scopeKey; userViewport.current = false; canvasTouched.current = false; return; }
       userViewport.current = s.graph.viewportSaved === true;
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
     }, [s.graph.scopeKey, embedded, s.graph.viewportSaved, s.graph.viewport?.x, s.graph.viewport?.y, s.graph.viewport?.zoom]);
@@ -2159,7 +2162,7 @@
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionMode={crossing?'partial':'full'} onSelectionEnd={event=>setSelected(boxSelection(flowNodes.map(f=>({id:f.id,x:f.position.x,y:f.position.y,w:f.measured?.width||0,h:f.measured?.height||0})),boxFrom.current.at,toFlow(event),event.clientX<boxFrom.current.x))}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{onEditPlan && <button type="button" className="dx-quiet nodrag" onClick={event=>executeAction("projects.controls.activate",{handler:onEditPlan},event)}>Edit plan on canvas</button>}{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
        {presenceAgent && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-presence nodrag nopan" data-design="canvas.presence" data-state={busyStep.status==='Running'?'working':'waiting'} data-on={presenceStep.id} style={{position:'absolute',left:presenceStep.x,top:presenceStep.y-32}}><window.UI.Av id={presenceAgent} size={18}/><b>{presenceAgent}</b><em>{busyStep.status==='Running'?'working':'needs you'}</em>
          <button type="button" data-design="canvas.follow" data-follow="" aria-pressed={following} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setFollowing(!following);u.setToast(following?'Stopped following.':'Following '+presenceAgent+': the view moves with it. Scroll, click the canvas or press Esc to stop.');}},event)}>{following?'Following · Stop':'Follow'}</button></div></RF.ViewportPortal>}</FlowStage>
     </CanvasContext.Provider>

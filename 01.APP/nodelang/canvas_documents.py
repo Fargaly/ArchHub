@@ -230,8 +230,10 @@ SESSION_PARAMS = (
     {'id': 'run_budget', 'name': 'Run budget', 'type': 'choice', 'options': ['Node budgets', '1 minute', '5 minutes', '15 minutes'],
      'group': 'Parameters', 'value': 'Node budgets'},
     {'id': 'prefer_no_agent', 'name': 'Prefer steps with no agent', 'type': 'bool', 'group': 'Parameters', 'value': True},
-    {'id': 'reply_in', 'name': 'Reply in', 'type': 'choice', 'options': ['English', 'Arabic', 'Both'], 'group': 'Parameters',
-     'value': 'English'},
+    # One owner (founder 2026-11-26): 'Account default' inherits Settings > Account > Agents reply in; a language here
+    # overrides it for this session only (settings_owner.agent_reply_language).
+    {'id': 'reply_in', 'name': 'Reply in', 'type': 'choice', 'options': ['Account default', 'English', 'Arabic', 'Both'],
+     'group': 'Parameters', 'value': 'Account default'},
     {'id': 'tools_off', 'name': 'Tools the agent may not use', 'type': 'list', 'group': 'Tools', 'value': []},
     {'id': 'brief', 'name': 'Brief', 'type': 'text', 'group': 'Context', 'value': ''},
     {'id': 'project_folder', 'name': 'Project folder', 'type': 'folder', 'group': 'Context', 'value': ''},
@@ -264,6 +266,9 @@ def _run_session(params, feeds, document=None):
     from .session_files import resolve_project_folder
     held = {**session_param_values(), **params}
     held['project_folder'] = resolve_project_folder(document, held['project_folder'])
+    if document is not None:   # the open session resolves 'Account default' to the account's language
+        from .settings_owner import agent_reply_language
+        held['reply_in'] = agent_reply_language(document, held['reply_in'])
     return {'value': feeds.get('value', params.get('value', '')), 'agent': feeds.get('agent', ''),
             'profile': feeds.get('profile'), 'rules': feeds.get('rules', []),
             'parameters': {'run_budget': held['run_budget'], 'prefer_no_agent': held['prefer_no_agent'],

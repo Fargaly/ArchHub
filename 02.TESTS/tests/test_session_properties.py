@@ -42,7 +42,8 @@ def test_the_session_engine_puts_each_panel_on_its_socket():
     produced, _display = _run_session({'value': 'Sheet set review', 'workspace': 'Demo Block', 'run_budget': '5 minutes',
                                        'tools_off': ['Bluebeam'], 'brief': 'Issue for tender', 'project_folder': r'C:\\work\\demo',
                                        'read_only_agents': ['Codex']}, {})
-    assert produced['parameters'] == {'run_budget': '5 minutes', 'prefer_no_agent': True, 'reply_in': 'English',
+    # Without an open document the engine passes the session's own choice; 'Account default' inherits Settings.
+    assert produced['parameters'] == {'run_budget': '5 minutes', 'prefer_no_agent': True, 'reply_in': 'Account default',
                                       'workspace': 'Demo Block', 'read_only_agents': ['Codex']}
     assert produced['tools'] == {'off': ['Bluebeam']}
     assert produced['context'] == {'brief': 'Issue for tender', 'project_folder': r'C:\\work\\demo',

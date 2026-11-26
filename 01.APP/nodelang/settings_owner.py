@@ -947,7 +947,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     language_controls = (
         ("App language", "language", ("English", "Arabic")),
         ("Right-to-left layout", "rtl", ("Auto", "Always", "Never")),
-        ("Agents reply in", "replyLang", tuple(next(p["options"] for p in SESSION_PARAMS if p["id"] == "reply_in"))),
+        ("Agents reply in", "replyLang", tuple(o for o in next(p["options"] for p in SESSION_PARAMS if p["id"] == "reply_in") if o != "Account default")),
         ("Presence status", "profilePresence", ("Available", "Busy", "Away")),
     )
     account_rows = []
@@ -1605,11 +1605,14 @@ def preference_scope(document=None):
                            path=SessionFiles().current_path() if document is None else '', document=document)
 
 
-def agent_reply_language(document=None, fallback="English"):
-    """Read the preference for the conversation, independently of the scope being edited."""
+def agent_reply_language(document=None, session_choice="Account default"):
+    """The reply language of a conversation: the session's own choice (its Session node's Reply in) overrides the
+    account default (Settings > Account > Agents reply in, through its scopes); 'Account default' inherits it."""
+    if session_choice in ("English", "Arabic", "Both"):
+        return session_choice
     scope = preference_scope(document)
     level = "Session" if scope.document else "Workspace" if scope.workspace else "User"
-    language = scope.effective(level).get("Account.Agents reply in", fallback)
+    language = scope.effective(level).get("Account.Agents reply in", "English")
     return language if language in ("English", "Arabic", "Both") else "English"
 
 

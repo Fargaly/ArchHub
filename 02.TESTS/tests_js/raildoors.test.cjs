@@ -346,10 +346,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.getByRole('textbox', {name: 'Search everything', exact: true}).fill('Automations');
         await page.getByRole('button', {name: 'Pages', exact: true}).click();
         await page.getByRole('button', {name: 'Automations Pages', exact: true}).click();
-        await page.getByRole('button', {name: 'Repeat recent task', exact: true}).click();
-        await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
-        await page.getByRole('tab', {name:'Recent task',exact:true}).waitFor();
-        assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), 'recent');
+        // Founder 2026-11-26 (one door): the Automations page is Settings > Agents > Automations; the palette opens it there.
+        await page.waitForFunction(() => document.title === 'ArchHub · Settings');
       }
       await nav.getByRole('button', {name: 'Home', exact: true}).click();
       if(mode==='empty') await page.getByRole('heading', {name:'What do you need?',exact:true}).waitFor();

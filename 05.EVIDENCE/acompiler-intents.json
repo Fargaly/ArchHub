@@ -5,6 +5,7 @@
       "source": "Approved whole-design inventory c771 slice (A1 Account popover, rail, avatars; A2 Home bar, map wires, river, wire inspector, customise Home + 1009px Session history clip fix; A3 Canvas toolbar, tabs, peek, nodes, groups, notes, embed, converter, Find node, Handoff map, Run view; A4 Dock presets, bottom/float, Focus mode, Inspector, Session, Automate; A5 Context menus, header, toasts, confirm, approval popover; B:313 prefer_no_agent). Workshop a673112922f34a3ca39189269a59794a and 64fafbe1e17f46a4a792ef8a6cb8a038.",
       "scope": [
         "01.APP/nodelang/agent_composer.py",
+        "01.APP/nodelang/canvas_documents.py",
         "01.APP/nodelang/command_registry.py",
         "01.APP/nodelang/managed_dependencies.py",
         "01.APP/nodelang/nograph_server.py",
@@ -27,6 +28,7 @@
         "01.APP/nodelang/workshop_tasks.py",
         "02.TESTS/tests/test_app_health_activity.py",
         "02.TESTS/tests/test_managed_dependencies_inventory.py",
+        "02.TESTS/tests/test_you_node_live_profile.py",
         "02.TESTS/tests_js/account_rail_header_whole_design.test.cjs",
         "02.TESTS/tests_js/canvas_whole_design.test.cjs",
         "02.TESTS/tests_js/command_registry.test.cjs",

@@ -1699,14 +1699,16 @@ LAUNCH_NODE = {"params": {key[len("launch_"):]: BROKER_NODE["params"][key] for k
                           ("launch_timeout_seconds", "launch_max_timeout_seconds", "launch_poll_seconds")}}
 LAUNCH_PROFILES = ("default",)   # named approved profiles; only the plain start is approved today
 _LAUNCH_EFFECT = {"revit": "revit", "autocad": "acad", "acad": "acad", "max": "max", "3dsmax": "max",
-                  "rhino": "rhino", "blender": "blender"}
+                  "rhino": "rhino", "blender": "blender",
+                  # One "office" host_effects key admits every Office program; an unmapped app is refused by callers.
+                  "excel": "office", "word": "office", "powerpoint": "office", "outlook": "office"}
 _LAUNCH_EXE = {"revit": ("Revit", "Revit.exe"), "acad": ("AutoCAD", "acad.exe"), "max": ("3ds Max", "3dsmax.exe")}
 _LAUNCHING: dict = {}
 _LAUNCH_LOCK = threading.Lock()
 
 
 def launch_effect_host(app) -> str:
-    """The host_effects key a launch of this app is admitted under ('' = no bridged host)."""
+    """The host_effects key a launch of this app is admitted under ('' = unmapped: callers refuse the launch)."""
     return _LAUNCH_EFFECT.get(str(app or "").strip().casefold(), "")
 
 

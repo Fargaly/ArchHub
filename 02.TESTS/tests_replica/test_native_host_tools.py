@@ -524,3 +524,43 @@ def test_launch_is_a_library_effect_node():
     assert card["engine"] == "host.launch" and card["approvalRequired"] is True
     assert is_pure("host.launch") is False
     assert {d["id"] for d in card["paramDefs"]} == {"app", "version", "profile", "timeout_seconds"}
+
+
+@pytest.mark.parametrize("app", ["excel", "word", "powerpoint", "outlook"])
+def test_office_launch_passes_the_office_host_effect(rig, monkeypatch, app):
+    from nodelang.host_brokers import launch_effect_host
+    assert launch_effect_host(app) == "office"
+    with pytest.raises(Exception, match="Local host effect permission is disabled for office"):
+        tool(rig, "host_launch", {"app": app})      # key missing
+    rig.settings.write_text(json.dumps({"host_effects": {"office": False}}))
+    with pytest.raises(Exception, match="Local host effect permission is disabled for office"):
+        tool(rig, "host_launch", {"app": app})      # key false
+    assert rig.calls == []
+    rig.settings.write_text(json.dumps({"host_effects": {"office": True}}))
+    approved(rig, monkeypatch, "host_launch", {"app": app})
+    assert [call[0] for call in rig.calls if call[0] == "host.launch"] == ["host.launch"]
+
+
+def test_unmapped_launch_target_fails_closed(rig):
+    from nodelang.host_brokers import launch_effect_host
+    from nodelang.native_host_tools import HostToolRefused, _dispatch_broker
+    assert launch_effect_host("photoshop") == ""
+    rig.settings.write_text(json.dumps({"host_effects": dict.fromkeys(["photoshop", "office", "revit"], True)}))
+    with pytest.raises(Exception, match="(?i)no host_effects key admits launching"):
+        tool(rig, "host_launch", {"app": "photoshop"})
+    assert rig.calls == []
+    # The reviewer's path: _dispatch_broker never falls through to read() for a launch.
+    from nodelang import hook_decision
+    from nodelang.host_brokers import BROKER_ACTIONS
+    spec = next(row for row in BROKER_ACTIONS if row["op"] == "host.launch")
+    ran = []
+    original = hook_decision.decide
+    hook_decision.decide = lambda event: {"verdict": "allow", "action": "read"}
+    try:
+        with pytest.raises(HostToolRefused, match="(?i)no host_effects key admits launching"):
+            _dispatch_broker(spec, {"app": "photoshop"}, lambda fn: ran.append("read"), lambda host, fn: ran.append(host))
+        _dispatch_broker(spec, {"app": "excel"}, lambda fn: ran.append("read"), lambda host, fn: ran.append(host))
+    finally:
+        hook_decision.decide = original
+    assert ran == ["office"]
+

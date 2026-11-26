@@ -399,6 +399,8 @@ def _dispatch_broker(spec, arguments, read, effect):
     effect_host = spec.get("effect_host") or (launch_effect_host(params.get("app")) if spec["op"] == "host.launch" else "")
     if spec["kind"] == "write" and effect_host:
         return effect(effect_host, run)
+    if spec["op"] == "host.launch":  # fail closed: a launch never runs as a read
+        raise HostToolRefused("No host_effects key admits launching %r; the launch is refused." % params.get("app"))
     return read(run)
 
 

@@ -97,7 +97,8 @@
         "02.TESTS/tests_js/settings_areas_live.cjs",
         "02.TESTS/tests_js/settings_scope.test.cjs",
         "01.APP/nodelang/hook_decision.py",
-        "02.TESTS/tests_js/settings_five_changes.test.cjs"
+        "02.TESTS/tests_js/settings_five_changes.test.cjs",
+        "01.APP/nodelang/workshop_mailbox.py"
       ]
     },
     "WHOLEDESIGN-A8": {

@@ -1653,7 +1653,7 @@
         }, event)}>Message in Workshop</Btn></>;
     } else if (k === 'Connection' || k === 'Connect') {
       const c = s.connections.find(c => c.id === m.id);
-      body = <><h2>{c?.name}</h2><p className="muted">{c?.connected ? 'Connected to your account' : 'Sign in with your browser. Nothing to copy or paste.'}</p><div className="flex"><Btn p onClick={event => executeAction("appShell.Control.83", {
+      body = <><h2>{c?.name || m.name}</h2><p className="muted">{c?.connected ? 'Connected to your account' : m.id === 'whatsapp' ? 'Sign in with Meta in your browser and choose your WhatsApp Business number. Nothing to copy or paste.' : 'Sign in with your browser. Nothing to copy or paste.'}</p><div className="flex"><Btn p onClick={event => executeAction("appShell.Control.83", {
             api,
             m,
             saved

@@ -6,7 +6,12 @@
       "scope": [
         "01.APP/nodelang/agent_composer.py",
         "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/canvas_tools.py",
+        "01.APP/nodelang/cloud_session.py",
         "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/conversation_history.py",
+        "01.APP/nodelang/http_server.py",
+        "01.APP/nodelang/library_engines.py",
         "01.APP/nodelang/managed_dependencies.py",
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/session_files.py",
@@ -58,6 +63,7 @@
         "02.TESTS/tests_js/studio_wsinject.test.cjs",
         "02.TESTS/tests_js/wsadd.test.cjs",
         "02.TESTS/tests_replica/test_command_registry.py",
+        "02.TESTS/tests_replica/test_home_read_no_stall.py",
         "02.TESTS/tests_replica/test_scope_override_reset.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]

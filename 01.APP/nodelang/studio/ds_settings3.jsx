@@ -570,7 +570,7 @@
       ["askTranscribe", "Ask before meeting transcription", "The meeting agent asks the room before it records", "bool", ""],
       ["secrets", "Protected connections", "Keys live in Windows Credential Manager, never in .archhub files or prompts", "list", "Add key"],
       ["auditLog", "What agents did", "Every write, send and approval with its receipt", "action", "Open"],
-      ["retention", "Conversation retention", "Conversations become knowledge, then the transcript is removed", "select", ["20 days", "30 days", "90 days", "Keep"]],
+      ["retention", "Conversation retention", "Conversations become knowledge, then the transcript moves to the archive (still readable)", "select", ["20 days", "30 days", "90 days", "Keep"]],
       ["telemetry", "Send anonymous usage data", "Counts and timings only, never file contents", "bool", ""]
     ] },
     { id:"app", title:"The app", icon:"settings", family:"model", rows:[

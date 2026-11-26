@@ -6,10 +6,12 @@
       "scope": [
         "01.APP/nodelang/agent_composer.py",
         "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/managed_dependencies.py",
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/session_files.py",
         "01.APP/nodelang/settings_owner.py",
         "01.APP/nodelang/studio/access.jsx",
+        "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/app.jsx",
         "01.APP/nodelang/studio/context-menus.jsx",
         "01.APP/nodelang/studio/dependencies.jsx",
@@ -20,8 +22,11 @@
         "01.APP/nodelang/studio/ds_settings3.jsx",
         "01.APP/nodelang/studio/ds_workshop3.jsx",
         "01.APP/nodelang/studio/style.css",
+        "01.APP/nodelang/studio/surfaces.jsx",
         "01.APP/nodelang/studio/ui.jsx",
         "01.APP/nodelang/workshop_tasks.py",
+        "02.TESTS/tests/test_app_health_activity.py",
+        "02.TESTS/tests/test_managed_dependencies_inventory.py",
         "02.TESTS/tests_js/account_rail_header_whole_design.test.cjs",
         "02.TESTS/tests_js/canvas_whole_design.test.cjs",
         "02.TESTS/tests_js/command_registry.test.cjs",
@@ -34,6 +39,7 @@
         "02.TESTS/tests_js/raildoors.test.cjs",
         "02.TESTS/tests_js/settings_design_areas.test.cjs",
         "02.TESTS/tests_replica/test_command_registry.py",
+        "02.TESTS/tests_replica/test_scope_override_reset.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

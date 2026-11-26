@@ -344,3 +344,30 @@ def test_restore_refused_item_is_skipped_and_marked_reconnect(monkeypatch, tmp_p
 
     assert account_sync.pull_and_restore("zz/") == {"zz/": {"uploaded": 0, "pulled": 0, "dropped": 0}}
     assert account_sync.needs_reconnect("zz/") == ["zz/a.json"]
+
+
+def test_connections_answer_within_budget_from_the_last_known_status(monkeypatch):
+    import threading
+    import time
+    from nodelang import account_sync, social_connections
+
+    hang = threading.Event()
+    answers = {"whatsapp": {"state": "saved"}}
+
+    def status(provider):
+        if provider in answers:
+            return answers[provider]
+        hang.wait(5)
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(social_connections.broker, "status", status)
+    monkeypatch.setattr(account_sync, "pull_and_restore", lambda _p: hang.wait(5))
+    monkeypatch.setattr(social_connections.model_router, "list_social_credentials", lambda: {"items": []})
+    monkeypatch.setattr(social_connections, "_LAST", {"linkedin": {"state": "saved"}})
+    started = time.monotonic()
+    rows = {row["provider"]: row for row in social_connections.rows(budget=0.5)}
+    hang.set()
+    assert time.monotonic() - started < 2
+    assert rows["whatsapp"]["state"] == "not_connected" and rows["whatsapp"]["can_connect"]
+    assert rows["linkedin"]["state"] == "not_connected"  # last known status answers for a slow cloud
+    assert rows["x"]["blocker"] == "Couldn't reach ArchHub's servers"

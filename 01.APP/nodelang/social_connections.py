@@ -6,6 +6,9 @@ node use the same browser routes, and only provider-confirmed callbacks enroll.
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from . import cloud_social_oauth as broker
 from . import account_sync, model_router, social_custody
@@ -33,7 +36,7 @@ _STATUS = {"not_connected": "Not connected", "connecting": "Finish signing in in
            "choosing": "Choose the account to connect", "ready": "Saving the connection"}
 
 
-def connection(provider, *, accounts=None, attempt=None):
+def connection(provider, *, accounts=None, attempt=None, config=None):
     provider = _provider(provider)
     row = {"provider": provider, "name": NETWORKS[provider], "state": "not_connected",
            "display_name": "", "blocker": ""}
@@ -61,12 +64,15 @@ def connection(provider, *, accounts=None, attempt=None):
         row.update(state="connecting")
     elif phase == "failed":
         row.update(state="blocked", blocker=current.get("error") or "Provider sign-in failed")
-    config = broker.status(provider)
+    if config is None:
+        config = broker.status(provider)
     row["can_connect"] = config.get("state") in ("saved", "configured", "signin_required")
     blocker = config.get("blocker")
     if not blocker and config.get("state") not in ("saved", "configured", "signin_required"):
         blocker = "ArchHub cloud connection status unavailable"
-    if blocker:
+    if config.get("state") == "unreachable":
+        row.update(state="blocked", blocker=UNREACHABLE["blocker"])
+    elif blocker:
         # The cloud's own app keys are missing: ours to fix, never the user's; the detail stays for Advanced.
         row.update(state="blocked", blocker="Needs setup on ArchHub's side", detail=blocker)
     row["status"] = _STATUS.get(row["state"]) or row.get("blocker") or row.get("display_name") or row["state"]
@@ -77,13 +83,46 @@ def connection(provider, *, accounts=None, attempt=None):
     return row
 
 
-def rows():
+UNREACHABLE = {"state": "unreachable", "blocker": "Couldn't reach ArchHub's servers"}
+_LAST: dict = {}  # last cloud status per network; answers when the cloud is slow
+
+
+def rows(*, budget=3.0):
+    """Every network's row within `budget` seconds: the cloud calls run side by side and a slow cloud
+    answers from the last known status (or "Couldn't reach ArchHub's servers"), never a stalled page."""
+    deadline = time.monotonic() + budget
+    pull = threading.Thread(target=_restore, name="archhub-connections-restore", daemon=True)
+    pull.start()
+    pool = ThreadPoolExecutor(max_workers=len(NETWORKS))
+    calls = {provider: pool.submit(broker.status, provider) for provider in NETWORKS}
+    for provider, call in calls.items():
+        call.add_done_callback(lambda done, provider=provider: _remember(provider, done))
+    pool.shutdown(wait=False)  # late answers finish in the background and refresh _LAST
+    pull.join(max(0.0, deadline - time.monotonic()))
+    wait(calls.values(), timeout=max(0.0, deadline - time.monotonic()))
+    accounts = model_router.list_social_credentials()["items"]
+    configs = {}
+    for provider, call in calls.items():
+        fresh = call.result() if call.done() and call.exception() is None else None
+        if call.done():
+            _remember(provider, call)  # wait() can return before the done-callback ran
+        configs[provider] = (fresh if isinstance(fresh, dict) and fresh.get("state") != "unreachable"
+                             else _LAST.get(provider) or UNREACHABLE)
+    return [connection(provider, accounts=accounts, config=configs[provider]) for provider in NETWORKS]
+
+
+def _remember(provider, call):
+    """A cloud answer, even one after the budget, becomes the last known status of that network."""
+    fresh = call.result() if call.exception() is None else None
+    if isinstance(fresh, dict) and fresh.get("state") != "unreachable":
+        _LAST[provider] = fresh
+
+
+def _restore():
     try:
         account_sync.pull_and_restore("connections/")  # the account's connections, cached on this PC first
     except Exception as missed:  # a read never fails on sync; this PC's cache answers
         logging.getLogger(__name__).warning("connections restore skipped (%s)", type(missed).__name__)
-    accounts = model_router.list_social_credentials()["items"]
-    return [connection(provider, accounts=accounts) for provider in NETWORKS]
 
 
 def start(provider):

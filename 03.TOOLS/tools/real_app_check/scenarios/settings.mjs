@@ -159,7 +159,7 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
  const globalFile=path.join(isolated,'state/settings/settings.json'),workspaceFile=path.join(isolated,'state/settings/workspaces.json');
  const json=p=>JSON.parse(fs.readFileSync(p,'utf8'));
  const owners=()=>[globalFile,workspaceFile,file].map(p=>fs.existsSync(p)?fs.readFileSync(p,'utf8'):null);
- const snapshot=()=>js("(()=>{const s=window.ArchHubAPI.getSnapshot();return {scope:s.settingsScope,destination:s.settingsDestination,theme:s.settings.find(r=>r.id==='Appearance.Theme')?.value,keys:s.keybindings};})()");
+ const snapshot=()=>js("(()=>{const s=window.ArchHubAPI.getSnapshot();return {scope:s.settingsScope,destination:s.settingsDestination,theme:s.settings.find(r=>r.id==='Appearance.Theme')?.value,keys:s.keybindings,writing:s.settingsWritesPending>0};})()");
  const key=async(key,code,virtual,modifiers=0)=>{for(const type of ['rawKeyDown','keyUp'])await cdp('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:virtual,modifiers});};
  // A single change event exercises the installed React selector without intermediate scope writes.
  const select=async(label,value)=>{assert.equal(await until(()=>js(`(()=>{const e=[...document.querySelectorAll('select')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)});return Boolean(e&&!e.disabled&&[...e.options].some(o=>o.value===${JSON.stringify(value)}&&!o.disabled));})()`),Boolean),true);await js(`(()=>{const e=document.querySelector('select[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!e||e.disabled)throw Error('Selector is unavailable');if(e.value===${JSON.stringify(value)})return;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
@@ -193,7 +193,8 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
  async function theme(value){
   const choose=async choice=>{
    await press('[data-setting="Appearance.Theme"] [role="group"] button',choice);
-   const got=await until(snapshot,s=>s?.theme===choice);assert.equal(got.theme,choice);return got;
+   // A row shows the value asked for at once; its owner file holds it once the write answered.
+   const got=await until(snapshot,s=>s?.theme===choice&&!s.writing);assert.equal(got.theme,choice);assert.equal(got.writing,false);return got;
   };
   if((await snapshot()).theme===value)await choose(value==='Dark'?'Light':'Dark');
   return choose(value);
@@ -304,7 +305,8 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   await readPage(async id=>{await window.ArchHubAPI.setNodeParam(id,'value','Light');return true;},binding);
   assert.equal((await until(snapshot,s=>s.theme==='Light')).theme,'Light');assert.equal(json(file).properties.settings['Appearance.Theme'],'Light');
   await theme('System');
-  assert.equal(await js(`window.ArchHubAPI.getSnapshot().graph.nodes.find(n=>n.id===${JSON.stringify(binding)}).params.value`),'System');
+  // The bound node re-solves after its owner answered.
+  assert.equal(await until(()=>js(`window.ArchHubAPI.getSnapshot().graph.nodes.find(n=>n.id===${JSON.stringify(binding)}).params.value`),v=>v==='System'),'System');
   await js('window.ArchHubAPI.saveSession()');
   assert.deepEqual(json(file).nodes.find(n=>n.id===binding).params,{setting:'Appearance.Theme'});
   await js(`window.ArchHubAPI.openSession(${JSON.stringify(file)})`);await js('window.ArchHubAPI.refreshPreferences()');
@@ -411,10 +413,11 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    assert.equal(await js("(()=>{const e=[...document.querySelectorAll('nav button')].find(e=>e.getAttribute('aria-label')==='Settings'||e.textContent.trim()==='Settings');if(!e)throw Error('Settings rail unavailable');e.click();return true;})()"),true);assert.equal(await until(()=>js("Boolean(document.querySelector('nav[aria-label=\"Settings categories\"]'))"),Boolean),true);assert.equal(await clickText('Projects'),true);
    await openProjectForm();
    await fill('Project name','Installed project');await select('Parent workspace',workspaceId);await press('form[aria-label="New project"] button','Create project');
-   const created=await until(()=>js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>w.name==="Installed project")'),Boolean);assert(created?.id);
-   const projectPath=path.join(folder,'Installed project');assert.deepEqual(fs.readdirSync(projectPath),[],'Unrelated customer folders must not inherit the ArchHub tree');
+   // Found by its folder: a reused QA profile can hold other projects with the same name.
+   const projectPath=path.join(folder,'Installed project');
+   const created=await until(()=>js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>window.ArchHubAPI.sessionPathKey(w.folder)===window.ArchHubAPI.sessionPathKey('+JSON.stringify(projectPath)+'))'),Boolean);assert(created?.id);assert.deepEqual(fs.readdirSync(projectPath),[],'Unrelated customer folders must not inherit the ArchHub tree');
    const retry=await call('addWorkspace',[{folder}]);assert.equal(retry.root.root_id,workspaceId,'Re-adding the parent replaced its identity');
-   assert.equal(await js('(()=>{const heading=[...document.querySelectorAll("h3")].find(e=>e.textContent==='+JSON.stringify(path.basename(folder))+');const row=heading?.closest(".spread.row");const open=[...(row?.querySelectorAll("button")||[])].find(e=>e.textContent.trim()==="Open"||e.getAttribute("aria-label")==="Open");if(!open)throw Error("Workspace Open is unavailable");open.click();return true;})()'),true);
+   assert.equal(await js('(()=>{const row=[...document.querySelectorAll(".spread.row")].find(e=>e.querySelector("h3")?.textContent==='+JSON.stringify(path.basename(folder))+'&&e.querySelector("span.muted")?.textContent.startsWith('+JSON.stringify(folder+' ·')+'));const open=[...(row?.querySelectorAll("button")||[])].find(e=>e.textContent.trim()==="Open"||e.getAttribute("aria-label")==="Open");if(!open)throw Error("Workspace Open is unavailable");open.click();return true;})()'),true);
    assert.equal(await until(()=>js('Boolean(document.querySelector("[data-home-page]"))&&window.ArchHubAPI.getSnapshot().activeWorkspace==='+JSON.stringify(workspaceId)),Boolean),true);
    assert.deepEqual(await current(),edited);assert.equal(await dirty(),true);assert.deepEqual(fs.readFileSync(baseline),baselineBytes);
    assert.equal(await js("document.querySelector('button[aria-label=\"Workspace\"]')?.textContent.trim()"),path.basename(folder));
@@ -646,7 +649,8 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    if(!w?.register)throw Error('QA workspace registration unavailable for the naming check');
    return a.updateProjectRegister(w,number,w.register.override,values);
   },workspaceId,number,values);
-  const readControl=label=>js('window.ArchHubAPI.getSnapshot().settings.find(row=>row.label==='+JSON.stringify(label)+')?.value');
+  // A row shows the value asked for at once; read it once its owner answered every write.
+  const readControl=label=>until(()=>js('(()=>{const s=window.ArchHubAPI.getSnapshot();return {writing:s.settingsWritesPending>0,value:s.settings.find(row=>row.label==='+JSON.stringify(label)+')?.value};})()'),v=>!v.writing).then(v=>v.value);
   const toggle='Check names before saving';
   const switchValue=async value=>{
    if(await readControl(toggle)!==value){
@@ -670,7 +674,8 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    }
    await switchValue(!initialCheck);await switchValue(initialCheck);await switchValue(true);
    await call('saveSession');
-   originalRegister=await js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>w.id==='+JSON.stringify(workspaceId)+').register');
+   originalRegister=await js('window.ArchHubAPI.listWorkspaces().then(rows=>rows.find(w=>w.id==='+JSON.stringify(workspaceId)+')?.register)');
+   assert.ok(originalRegister,'The QA workspace register is unavailable');
    const naming='Naming QA.xlsx',containers='Issued QA.xlsx',assigned=path.join(issued,'A01.archhub');
    execFileSync(input.installedPython,['-I','-B','-c',[
     'from pathlib import Path','import sys','from openpyxl import Workbook',
@@ -722,13 +727,14 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
   const root=path.join(folder,projectName), {sessionsFolder:docs}=await call('readSessionsFolder');
   const relative=path.relative(isolated,docs);
   assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative),'Use the isolated QA sessions folder.');
-  const source=path.join(docs,'picker-source.archhub'), target=path.join(docs,'picker-target.archhub');
+  let source=path.join(docs,'picker-source.archhub'), target=path.join(docs,'picker-target.archhub');
   assert.ok(!fs.existsSync(source) && !fs.existsSync(target) && !fs.existsSync(root),'Named-picker fixture already exists.');
   fs.mkdirSync(root);fs.mkdirSync(docs,{recursive:true});
   const ownerBytes=()=>[globalFile,workspaceFile,source,target].map(p=>fs.existsSync(p)?fs.readFileSync(p):null);
   async function saveCanvas(name,where,project){
-   await call('newSession',name);await call('saveSession',where);await call('setSessionModel',where,{project});
-   const saved=json(where);assert.equal(saved.properties.project,project);return saved.id;
+   // Sessions names its files after their title (APPTIDY): follow the file to where it now is.
+   await call('newSession',name);await call('saveSession',where);await call('setSessionModel',await call('getSessionPath'),{project});
+   const at=await call('getSessionPath');const saved=json(at);assert.equal(saved.properties.project,project);return {id:saved.id,at};
   }
   // Both synthetic targets start with Z. A real select type-ahead commits once, without selecting intermediate owners.
   async function pick(label,name){
@@ -775,8 +781,8 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
    await call('addWorkspace',{folder:root});
    registered=await js('window.ArchHubAPI.getSnapshot().workspaces.find(w=>window.ArchHubAPI.sessionPathKey(w.path||w.folder)===window.ArchHubAPI.sessionPathKey('+JSON.stringify(root)+'))');
    assert.equal(registered?.name,projectName);assert.notEqual(registered.id,workspaceId);
-   const targetId=await saveCanvas(sessionTitle,target,workspaceId);
-   const sourceId=await saveCanvas('Source drawing',source,registered.id);
+   const savedTarget=await saveCanvas(sessionTitle,target,workspaceId),targetId=savedTarget.id;target=savedTarget.at;
+   const savedSource=await saveCanvas('Source drawing',source,registered.id),sourceId=savedSource.id;source=savedSource.at;
    assert.notEqual(sourceId,targetId);
    await call('openSession',source);
    assert.equal(await clickText('Home'),true);

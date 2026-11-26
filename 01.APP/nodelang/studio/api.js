@@ -1402,13 +1402,15 @@ api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,
 function setAppearance(id,value,destination=state.settingsDestination){
  const identity=state.profile.id;
  const held=pendingSettings.get(id)||{count:0};pendingSettings.set(id,{value,count:held.count+1});
- publish({settings:withPending(state.settings)});
- const settle=()=>{const now=pendingSettings.get(id);if(now&&--now.count<=0)pendingSettings.delete(id);};
+ publish({settings:withPending(state.settings),settingsWritesPending:pendingSettings.size});
+ const settle=()=>{const now=pendingSettings.get(id);if(now&&--now.count<=0)pendingSettings.delete(id);publish({settingsWritesPending:pendingSettings.size});};
  const admittedEpoch=accountEpoch;const write=appearanceWrites.then(()=>{if(admittedEpoch!==accountEpoch)throw desktopError();if(identity!==state.profile.id)throw Error('Your account changed. Retry this preference edit.');return settingsAction('setAppearance',[id,value],destination);});
  appearanceWrites=write.catch(()=>{});
  // A refused write puts the owner's value back (re-read), never the optimistic one.
  return write.then(result=>{settle();if(!pendingSettings.has(id)&&Array.isArray(result?.appearanceSettings))publish({settings:withPending(state.settings.map(row=>result.appearanceSettings.find(next=>next.id===row.id)||row))});return preferenceChanged(id,result);},
-  async error=>{settle();if(!pendingSettings.has(id))await refreshSettingsControls().catch(()=>{});throw error;});
+  async error=>{settle();if(!pendingSettings.has(id)){await refreshSettingsControls().catch(()=>{});
+   // A stale destination stays stale until the user refreshes it: the re-read restores the value, never the scope.
+   if(error.response?.code==='settings_destination_changed')publish({settingsDestination:null,settingsScopeNotice:error.message});}throw error;});
 }
 function preferenceChanged(id,result){
  const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id||id==='Projects.Working subfolder'&&n.type==='thing.session'&&!n.params?.project_folder||id==='Projects.BCF version'&&n.type==='daily.ifc_check_bcf'&&(n.params?.bcf_version==='From Projects'||Object.hasOwn(n.params||{},'bcf_version')&&!n.params.bcf_version)).map(n=>n.id);
@@ -2299,6 +2301,7 @@ function queueAutosave(){
  const now=currentEditState();keepDraftForRecovery(now.unsaved,now.file);  // every edit refreshes the stored draft
  if(saveConflict||!desktopAdmitted())return;
  clearTimeout(autosaveTimer);autosaveTimer=setTimeout(()=>{
+  autosaveTimer=null;  // only a queued, not yet sent, autosave counts as pending
   saveNow().catch(error=>{saveFailed=true;reportEditState();if(!saveConflict)notice('Autosave failed: '+error.message);});
  },Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));
 }
@@ -2329,7 +2332,8 @@ async function adoptFile(document,path='',navigation=++fileNavigation,recoveredD
  const checked=await sessionRequest('validate',{document});
  if(navigation!==fileNavigation)return {cancelled:true};
  // The untouched startup draft has no file to flush when another workflow opens.
- if(recoveredDraft===null&&sessionDocument&&(sessionPath||localDirty||autosaveTimer!==null))await flushAutosave();
+ // Only unsaved edits are flushed: a clean file needs no write, and a write here would make it the current file again.
+ if(recoveredDraft===null&&sessionDocument&&(localDirty||autosaveTimer!==null))await flushAutosave();
  if(navigation!==fileNavigation)return {cancelled:true};
  if(recoveredDraft!==null){
   if(recoveredDraft!==JSON.stringify(sessionDocument))throw Error('Your draft changed during recovery. Choose again to keep the latest edits.');
@@ -2388,6 +2392,10 @@ api.openSession=async(path,linked=false,linkedParams=null)=>{
   picker.onchange=()=>{const file=picker.files[0];picker.remove();if(file)api.importSession(file).then(resolve,reject);else resolve({cancelled:true});};
   picker.oncancel=()=>{picker.remove();resolve({cancelled:true});};document.body.append(picker);picker.click();
  });
+ // The shown file's pending autosave lands before the open: one landing after it would make the shown file the app's
+ // current file again, so Settings would read and write the previous session.
+ if(sessionDocument&&(localDirty||autosaveTimer!==null))await flushAutosave();
+ await fileWrites.catch(()=>{});
  const navigation=++fileNavigation;
  // The shown document is inert while another file opens; the opened file (or a refusal or cancel) ends it.
  publish({graphOpening:true});
@@ -2881,7 +2889,7 @@ api.listSessionModel=()=>sessionModel('list');
 api.readSessionModel=path=>sessionModel('get',{path}).then(data=>data.session);
 api.setSessionModel=async(path,values)=>{
  const current=path===sessionPath,navigation=fileNavigation;
- if(current){await flushAutosave();if(navigation!==fileNavigation)throw Error('The session changed. Retry the session edit.');}
+ if(current){await flushAutosave();if(navigation!==fileNavigation)throw Error('The session changed. Retry the session edit.');path=sessionPath;}  // the flush may have renamed it in Sessions
  const result=await sessionModel('set',{path,values});
  if(current&&navigation===fileNavigation)await pollFile();
  return result.session;

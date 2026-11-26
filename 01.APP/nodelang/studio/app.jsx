@@ -1396,7 +1396,7 @@
           <Btn onClick={event => executeAction('projects.controls.activate', {handler: close}, event)}>Cancel</Btn>
           <Btn p disabled={!text.trim()} onClick={event => executeAction('projects.controls.activate', {handler: async () => {
             const res = await u.act(() => typeof api.sendFeedback === 'function' ? api.sendFeedback(text.trim()) : Promise.resolve({ok: true}));
-            if (res) { setText(''); u.setToast({text: 'Feedback sent.'}); }
+            if (res) { close(); u.setToast({text: 'Feedback sent.'}); }
           }}, event)}>Send</Btn>
         </div>
         {(s.feedback || []).length > 0 && <section className="grid" aria-label="Your feedback" style={{gap: 8}}><b>Sent</b>

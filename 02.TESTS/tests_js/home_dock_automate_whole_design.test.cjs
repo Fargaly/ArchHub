@@ -36,7 +36,7 @@ const bundle = [
   'ds_library.jsx', 'surfaces.jsx', 'context-menus.jsx', 'app.jsx',
 ].map(compileJsx);
 
-async function mountStudioPage(browser, viewport, {realCanvas = false, interrupted = false, arabic = false, folded = false} = {}) {
+async function mountStudioPage(browser, viewport, {realCanvas = false, interrupted = false, arabic = false, folded = false, beforeMount = null} = {}) {
   const page = await browser.newPage({viewport});
   const errors = [];
   page.on('pageerror', err => { errors.push(err.message); console.error('PAGEERROR:', err.stack || err.message); });
@@ -163,6 +163,7 @@ async function mountStudioPage(browser, viewport, {realCanvas = false, interrupt
       refreshAgentSurface: async () => null,
     };
   }, {interrupted, arabic, folded});
+  if (beforeMount) await page.evaluate(beforeMount);
 
   for (let i = 0; i < bundle.length - 1; i++) await page.addScriptTag({content: bundle[i]});
   await page.evaluate(realCanvas => {
@@ -503,4 +504,188 @@ test('Home keeps its cards over 20 Canvas round trips and while its owners are s
   await page.waitForTimeout(300);
   assert.equal(await page.locator('[data-home-map] [data-design="home.card"]').count(), 0, 'another account starts from nothing');
   assert.deepEqual(errors, []);
+});
+
+test('Slice 1 Home whole-design match ([H1]..[H5]) at 1920x1032 and 944x968', async t => {
+  const browser = await chromium.launch({headless: true, executablePath: resolveBrowserExecutable()});
+  t.after(() => browser.close());
+
+  const seedSlice1 = () => {
+    const s = window.ArchHubAPI.getSnapshot();
+    const echo = s.tasks.find(r => r.id === 't-echo');
+    if (echo) {
+      echo.workflow = [
+        {id: 'start', type: 'thing.session', title: 'Session'},
+        {id: 'fixed-agent', type: 'thing.agent', title: 'Claude Code'},
+        {id: 'fixed-you', type: 'thing.you', title: 'You'},
+        {id: 'fixed-workshop', type: 'thing.workshop', title: 'Workshop'},
+        {id: 'ctx-setting', type: 'thing.setting', title: 'Project units'},
+        {id: 'trig-sched', type: 'trigger.schedule', title: 'Daily 08:00'},
+        {id: 'note-1', type: 'note', title: 'Verify stair rating'},
+        {id: 'grp-1', type: 'group', title: 'Checks group', children: ['step-real-1']},
+        {id: 'param-1', type: 'param.value', title: 'Parameter'},
+        {id: 'step-real-1', type: 'check.standard', title: 'Check curtain wall'},
+        {id: 'step-real-2', type: 'export.pdf', title: 'Export wall PDF'},
+      ];
+      echo.activity = [{id: 'step-real-1', status: 'Done'}];
+    }
+    s.tasks.push({
+      id: 't-echo-sub', title: 'Verify spandrel firestop', parent: 't-echo', status: 'WIP',
+      workspace: 'Tower', project: 'Tower', sessionPath: 'C:/sessions/echo-sub.archhub',
+      updated_at: new Date().toISOString(), members: [{id: 'm3', name: 'Claude Code', live: true}],
+      agents: ['Claude Code'], plan: [], progress: {}, outputs: [], messages: [],
+      workflow: [{id: 't-echo-sub', type: 'param.value', title: 'Verify spandrel firestop'}],
+    });
+  };
+
+  for (const [width, height] of [[1920, 1032], [944, 968]]) {
+    const {page, errors} = await mountStudioPage(browser, {width, height}, {realCanvas: true, beforeMount: seedSlice1});
+    try {
+      await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor({timeout: 5000});
+      await page.locator('[data-home-subtasks]').first().waitFor({timeout: 5000});
+
+      // [H1] Colored .hm-dot indicators & single-row bar + Customise Home strip
+      const h1 = await page.evaluate(() => {
+        const dotInfo = sel => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const cs = window.getComputedStyle(el), r = el.getBoundingClientRect();
+          return {w: Math.round(r.width), h: Math.round(r.height), bg: cs.backgroundColor};
+        };
+        const bar = document.querySelector('.home-map-bar');
+        const btns = [...document.querySelectorAll('.home-map-bar > button')].filter(b => b.getClientRects().length > 0);
+        return {
+          runDot: dotInfo('[data-home-filter="Running"] .hm-dot.run'),
+          waitDot: dotInfo('[data-home-filter="Needs you"] .hm-dot.wait'),
+          armDot: dotInfo('[data-home-pause] .hm-dot.arm'),
+          barOverflow: bar ? bar.scrollWidth > bar.clientWidth + 2 : true,
+          singleRow: btns.every((b, i) => i === 0 || b.getBoundingClientRect().left >= btns[i - 1].getBoundingClientRect().right - 1),
+          histUnclipped: (() => { const h = document.querySelector('[data-home-history]'); return h ? h.scrollWidth <= h.clientWidth + 1 : false; })(),
+        };
+      });
+      assert.deepEqual(h1.runDot, {w: 6, h: 6, bg: 'rgb(217, 119, 87)'}, '[H1] Running dot is 6x6 copper at ' + width);
+      assert.deepEqual(h1.waitDot, {w: 6, h: 6, bg: 'rgb(229, 178, 90)'}, '[H1] Needs you dot is 6x6 warn at ' + width);
+      assert.deepEqual(h1.armDot, {w: 6, h: 6, bg: 'rgb(95, 179, 179)'}, '[H1] Armed dot is 6x6 cyan at ' + width);
+      assert.equal(h1.barOverflow, false, '[H1] Home map bar has zero overflow at ' + width);
+      assert.equal(h1.singleRow, true, '[H1] Home map bar stays single-row at ' + width);
+      assert.equal(h1.histUnclipped, true, '[H1] Session history stays unclipped at ' + width);
+
+      await page.locator('[data-home-customise-btn]').click();
+      const custMetrics = await page.locator('[data-home-customise]').evaluate(el => {
+        const cs = window.getComputedStyle(el);
+        return {padding: cs.padding, borderBottomWidth: cs.borderBottomWidth, flexWrap: cs.flexWrap};
+      });
+      assert.equal(custMetrics.padding, '8px 14px');
+      assert.equal(custMetrics.borderBottomWidth, '1px');
+      assert.equal(custMetrics.flexWrap, 'wrap');
+      await page.locator('[data-home-customise]').getByRole('button', {name: 'Done', exact: true}).click();
+
+      // [H2] .home-card --e1 elevation, non-flush subtask toggle, and accurate step-bar count (2 real steps, 0 on subtask param placeholder)
+      const h2 = await page.evaluate(() => {
+        const echoCard = document.querySelector('[data-home-task="t-echo"]');
+        const subBtn = echoCard?.querySelector('[data-home-subtasks]');
+        const bars = echoCard ? echoCard.querySelectorAll('.home-card-bar i').length : -1;
+        const subCard = document.querySelector('[data-home-task="t-echo-sub"]');
+        const subNow = subCard?.querySelector('.home-card-now')?.textContent?.trim();
+        const cr = echoCard.getBoundingClientRect(), sr = subBtn.getBoundingClientRect();
+        const zoom = echoCard.offsetWidth ? cr.width / echoCard.offsetWidth : 1;
+        return {
+          boxShadow: window.getComputedStyle(echoCard).boxShadow,
+          insetLeftUnscaled: (sr.left - cr.left) / (zoom || 1),
+          bars,
+          barLabel: echoCard.querySelector('.home-card-bar')?.getAttribute('aria-label'),
+          subNow,
+        };
+      });
+      assert.match(h2.boxShadow, /inset/, '[H2] .home-card carries --e1 inset top highlight');
+      assert.ok(h2.insetLeftUnscaled >= 12, '[H2] [data-home-subtasks] aligns with horizontal card padding (not flush): ' + h2.insetLeftUnscaled);
+      assert.equal(h2.bars, 2, '[H2] notes, groups, params, triggers, and fixed context nodes excluded from step bar count');
+      assert.equal(h2.barLabel, '1 of 2 steps done');
+      assert.equal(h2.subNow, 'No steps yet');
+
+      // [H3] Project group frame: left collapse button, neutral tint, and right Open button focusing project
+      const h3 = await page.evaluate(() => {
+        const frame = document.querySelector('[data-home-map] [data-design="group.frame"] .v22g-group-frame');
+        const colBtn = frame.querySelector('[data-design="group.collapse"]');
+        const titleEl = frame.querySelector('[data-design="group.title"]');
+        const openBtn = frame.querySelector('[data-design="group.open"]');
+        const cs = window.getComputedStyle(frame);
+        const cr = colBtn.getBoundingClientRect(), tr = titleEl.getBoundingClientRect(), or = openBtn.getBoundingClientRect();
+        return {
+          bg: cs.backgroundColor,
+          border: cs.borderColor,
+          collapseLeftOfTitle: cr.right <= tr.left + 2,
+          openRightOfTitle: or.left >= tr.right - 2,
+          collapseAria: colBtn.getAttribute('aria-label'),
+        };
+      });
+      assert.equal(h3.collapseLeftOfTitle, true, '[H3] collapse button sits on the left of project title');
+      assert.equal(h3.openRightOfTitle, true, '[H3] Open button sits on the right of project header');
+      assert.equal(h3.collapseAria, 'Collapse Tower');
+      assert.doesNotMatch(h3.bg, /217,\s*119,\s*87/, '[H3] project frame uses neutral tint, not copper accent');
+
+      await page.locator('[data-home-map] [data-project="Tower"] [data-design="group.open"]').evaluate(b => b.click());
+      await page.locator('[data-home-crumb]').filter({hasText: 'Tower'}).waitFor();
+      await page.locator('[data-home-page]').press('Escape');
+      assert.equal(await page.locator('[data-home-crumb]').count(), 0);
+
+      // [H4] Home bottom global composer: <= 620px width, 10px radius, 8px padding, 1px --color-line border
+      const h4 = await page.evaluate(() => {
+        const form = document.querySelector('.home-map-stage .global-composer > form');
+        const stage = document.querySelector('.home-map-stage');
+        const cs = window.getComputedStyle(form), r = form.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+        return {
+          width: Math.round(r.width),
+          borderRadius: cs.borderRadius,
+          padding: cs.padding,
+          borderColor: cs.borderColor,
+          bg: cs.backgroundColor,
+          insideStage: r.left >= sr.left - 1 && r.right <= sr.right + 1,
+        };
+      });
+      assert.ok(h4.width <= 620 && h4.width >= 200, '[H4] Home composer width <= 620px at ' + width + ': ' + h4.width);
+      assert.equal(h4.borderRadius, '10px');
+      assert.equal(h4.padding, '8px');
+      assert.equal(h4.borderColor, 'rgb(38, 38, 46)');
+      assert.equal(h4.bg, 'rgb(21, 21, 26)');
+      assert.equal(h4.insideStage, true, '[H4] Home composer stays inside .home-map-stage without overlapping docks');
+
+      // [H5] Home Inspector .pgroup containers & secondary .btn.sm button hierarchy
+      const openRight = page.getByRole('button', {name: 'Open Inspector', exact: true});
+      if (await openRight.isVisible()) await openRight.click();
+      const insp = page.locator('[data-home-inspector]');
+      await page.evaluate(() => document.querySelector('[data-home-task="t-echo"]')?.click());
+      if (!await insp.isVisible() && await openRight.isVisible()) await openRight.click();
+      await insp.locator('[data-home-outputs].pgroup').waitFor();
+      const h5Session = await insp.evaluate(el => {
+        const pgroups = [...el.querySelectorAll('.pgroup')];
+        const openBtn = el.querySelector('[data-design="home1.open"]');
+        const pinBtn = [...el.querySelectorAll('button.btn.sm')].find(b => /Pin to Home|Unpin/.test(b.textContent));
+        const addSubBtn = el.querySelector('[data-home-subtask-form] button[value="subtask"]');
+        const subInput = el.querySelector('input.field.sm[name="subtask"]');
+        return {
+          pgroupCount: pgroups.length,
+          pgroupRadius: pgroups[0] ? window.getComputedStyle(pgroups[0]).borderRadius : '',
+          hasOpenPrimary: !!openBtn,
+          pinIsSecondarySm: !!pinBtn && Math.round(pinBtn.getBoundingClientRect().height) === 28 && pinBtn.getBoundingClientRect().width < 160,
+          addSubIsSecondarySm: !!addSubBtn && addSubBtn.classList.contains('btn') && addSubBtn.classList.contains('sm'),
+          hasStyledSubInput: !!subInput,
+        };
+      });
+      assert.ok(h5Session.pgroupCount >= 3, '[H5] Session inspector wraps outputs, metadata, and subtask form in .pgroup cards');
+      assert.equal(h5Session.pgroupRadius, '8px');
+      assert.equal(h5Session.hasOpenPrimary, true);
+      assert.equal(h5Session.pinIsSecondarySm, true, '[H5] Pin to Home is a compact secondary .btn.sm button, not full-width copper');
+      assert.equal(h5Session.addSubIsSecondarySm, true);
+      assert.equal(h5Session.hasStyledSubInput, true);
+
+      // Clear selection -> default Map of the work also uses .pgroup containers
+      await page.evaluate(() => document.querySelector('[data-home-map] .react-flow__pane')?.click());
+      if (!await insp.isVisible() && await openRight.isVisible()) await openRight.click();
+      assert.ok(await insp.locator('.pgroup').count() >= 2, '[H5] Map of the work inspector wraps parameters and projects in .pgroup cards');
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  }
 });

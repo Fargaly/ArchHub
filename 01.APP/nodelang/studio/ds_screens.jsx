@@ -2229,8 +2229,8 @@
     const c = React.useContext(HomeMapContext), n = data.n;
     // One handle each side at the card's vertical middle: a wire joins card edge to card edge (this session feeds that one).
     const edges = <><RF.Handle type="target" position={RF.Position.Left} id="in" isConnectable={false} className="home-card-edge" /><RF.Handle type="source" position={RF.Position.Right} id="out" isConnectable={false} className="home-card-edge" /></>;
-    if (n.group && !n.collapsed) return <div data-graph-node={id} data-design="group.frame" data-project={n.title}><div className="v22g-group-frame" style={{width:n.w,height:n.h}}><header className="node-header"><b data-design="group.title">{n.title}</b><span>{n.countText}</span>
-      <button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label={'Collapse ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>−</button></header></div></div>;
+    if (n.group && !n.collapsed) return <div data-graph-node={id} data-design="group.frame" data-project={n.title}><div className="v22g-group-frame" style={{width:n.w,height:n.h}}><header className="node-header"><button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label={'Collapse ' + n.title} title={'Collapse ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>−</button><b data-design="group.title">{n.title}</b><span>{n.countText}</span>
+      {c.onOpenProject && <button type="button" className="dx-link nodrag" data-design="group.open" aria-label={'Open ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onOpenProject(n.title)},event)}>Open</button>}</header></div></div>;
     if (n.group) return <div data-graph-node={id} data-design="group.node" data-project={n.title} className="home-card">{edges}<header className="home-card-head"><span className="home-card-noagent"><window.AHIcon name="group" size={13}/></span>
       <div><b data-design="group.title">{n.title}</b><small>{n.countText}</small></div><button type="button" className="dx-link nodrag" aria-label={'Expand ' + n.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>c.onCollapse(n.title)},event)}>Expand</button></header></div>;
     // A session card is one whole session, never a tool node: who works on it, its state, where it stands, and what it needs from him.
@@ -2252,7 +2252,7 @@
     }, [chart.signature, picked]);
     return [flow, setFlow];
   }
-  function HomeMap({chart, picked, onPick, onOpen, onContinue, onReview, onCollapse, mapHost, onRoom, onArrange}) {
+  function HomeMap({chart, picked, onPick, onOpen, onOpenProject, onContinue, onReview, onCollapse, mapHost, onRoom, onArrange}) {
     const s = useData(), area = React.useRef(null), [flow, setFlow] = useHomeFlow(chart, picked), [view, setView] = React.useState({zoom: 1, pan: {x: 0, y: 0}}), seen = React.useRef(view), touched = React.useRef(false);
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
     seen.current = view;
@@ -2299,7 +2299,7 @@
     return <div className="v22g-canvas home-map-canvas" data-design="canvas.stage" data-home-canvas="">
       <div ref={area} className="node-canvas" tabIndex={0} aria-label="Map of the work" title="Drag to pan · Wheel to zoom · Double-click to fit" style={{position:'absolute',inset:0,'--xy-background-color':'transparent'}}
         onDoubleClick={event => { if (event.target.classList?.contains('react-flow__pane')) fit(); }}>
-        <HomeMapContext.Provider value={{onOpen, onContinue, onReview, onCollapse, onPick, detail: chart.params.card !== 'State only'}}>
+        <HomeMapContext.Provider value={{onOpen, onOpenProject, onContinue, onReview, onCollapse, onPick, detail: chart.params.card !== 'State only'}}>
           <RF.ReactFlow nodes={flow} edges={edges} nodeTypes={homeNodeTypes} edgeTypes={edgeTypes} nodesDraggable nodesConnectable={false} elevateNodesOnSelect={false}
             viewport={{x: view.pan.x, y: view.pan.y, zoom: view.zoom}} onMove={(event, v) => { if (event instanceof window.Event) { touched.current = true; setView({zoom: v.zoom, pan: {x: v.x, y: v.y}}); } }} minZoom={zoomMin} maxZoom={zoomMax}
             onNodesChange={changes => setFlow(nodes => RF.applyNodeChanges(changes.filter(change => change.type === 'dimensions' || change.type === 'position'), nodes))}

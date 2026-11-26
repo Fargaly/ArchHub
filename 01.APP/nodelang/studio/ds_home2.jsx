@@ -239,13 +239,22 @@
   const MAP_STATES = ['Needs you', 'Failed', 'Running', 'Working', 'Armed', 'Paused', 'Planned', 'Idle'];
   const openHistoryView = () => ({map: {filter: 'All', done: 'Show', collapsed: []}, kind: 'all', olderOpen: false});
   const stepTitle = step => typeof step === 'object' && step ? step.title || step.text || step.name || step.what || describe(step) : String(step);
+  const isWorkflowStep = (node, row) => {
+    if (!node || node.fixed || node.kind === 'Session') return false;
+    if (['fixed-agent', 'fixed-you', 'fixed-workshop', 'start'].includes(node.id)) return false;
+    if (node.children?.length) return false;
+    const t = String(node.type || '');
+    if (t === 'note' || t === 'group' || /^thing\.(session|you|agent|setting|workshop)$/.test(t) || t.startsWith('trigger.')) return false;
+    if (t.startsWith('param.')) return Boolean((row?.activity || []).some(item => item && item.id === node.id && item.status));
+    return true;
+  };
   // room: the map's own width over height when known; a narrow room stacks cards and wraps groups so names stay readable.
   // kind: All / Agent sessions / Workflows (the list's filter); olderOpen: the Older section unfolded; order: his own arrangement (task ids).
   const homeMap = ({listed, rows, params, workflowActivity, hidden = [], titleOf, room = null, kind = 'all', olderOpen = false, order = [], focus = '', focusPath = '', history = false, projectScope = ''}) => {
     const p = {...params, collapsed: params.collapsed || []};
     // What a card says comes from the session's own row: its steps and their states, its held run or its failed step.
     const facts = (row, filePlan, members = row?.members || []) => {
-      const work = (row?.workflow || []).filter(node => node.type !== 'thing.session' && !['fixed-agent', 'fixed-you', 'fixed-workshop', 'start'].includes(node.id));
+      const work = (row?.workflow || []).filter(node => isWorkflowStep(node, row));
       const plan = row && Array.isArray(row.plan) && !row.planInferred ? row.plan : filePlan || [];
       const ran = id => String((row?.activity || []).find(item => item.id === id)?.status || '');
       const steps = work.length ? work.map(node => ({title: node.title || node.id, kind: /running/i.test(ran(node.id)) ? 'working' : stepOf(node, {[node.id]: ran(node.id)}).kind}))
@@ -1038,7 +1047,7 @@
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));
     const liveNodes=task?.sessionOpen?s.graph.nodes:[];
-    const work=(task?.workflow||[]).filter(node=>node.type!=='thing.session'&&!['fixed-agent','fixed-you','fixed-workshop','start'].includes(node.id));
+    const work=(task?.workflow||[]).filter(node=>isWorkflowStep(node,task));
     const resumeSteps=(work.length?work:plan.map((step,index)=>({id:stepKeys(step)[0]||String(index),title:describe(step),planStep:step}))).map(step=>{
       const live=liveNodes.find(node=>node.id===step.id), activityRow=activity.find(row=>row.id===step.id);
       const planned=stepOf(step.planStep||step,task?.progress),ran=row=>row&&row.status&&row.status!=='Idle';
@@ -1184,7 +1193,7 @@
     // Coming up from a session (the path's Home, Esc or the rail) its card is the selected one: the same owner record.
     const pickedCard = picked === 'none' ? null : chart.nodes.find(node => !node.group && (picked ? node.id === picked : !!node.task && node.task === focus)) || null, pickedTask = pickedCard && task && task.id === pickedCard.task;
     React.useEffect(() => { if (!fileWorkspace) homeShown = cardTask(pickedCard)?.id || ''; }, [fileWorkspace, pickedCard?.id]);  // what the rail's Canvas opens from Home
-    const resumeView = task ? <section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1 dir="auto" title={task.sessionTitle||task.title}>{task.sessionTitle||task.title}</h1><p>{stepLine}</p><VerifiedWork task={task}/></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
+    const resumeView = task ? <section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1 dir="auto" title={task.sessionTitle||task.title}>{task.sessionTitle||task.title}</h1><p>{stepLine}</p><VerifiedWork task={task}/></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" p sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
                 {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=>repeats(step)&&!step.output&&!approvalSteps.some(row=>row.index===index)?null:<article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-made={step.output?'':undefined} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.output&&<div className="v48-step-preview resume-made"><window.UI.ResultPreview value={step.value??step.preview}/></div>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
                 {approvalSteps.filter(row=>row.index<0).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}
                 {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
@@ -1249,43 +1258,56 @@
       {pickedWire ? <>
         <header className="shared-properties-head"><span className="properties-eyebrow">CONNECTION</span><h2>{pickedWire.label}</h2><p className="muted">{(wireFromCard?.title || pickedWire.from) + ' → ' + (wireToCard?.title || pickedWire.to)}</p></header>
         <div className="shared-properties-task" data-home-wire-inspector="">
-          <div className="dx-fact"><span>From</span><b>{wireFromCard?.title || pickedWire.from}</b></div>
-          <div className="dx-fact"><span>What flows</span><b>{pickedWire.output ? pickedWire.output + ' → ' + pickedWire.input : pickedWire.label}</b></div>
-          <div className="dx-fact"><span>Delivery</span><b>{pickedWire.state === 'waiting' ? 'Waiting' : 'Delivered'}</b></div>
-          <label className="dx-fact"><span>Passes on</span><select aria-label="Passes on" value={wireRuleOverrides[pickedWire.id] || pickedWire.passesOn || 'Only when the source check passed'} onChange={event => { const val = event.target.value; return executeAction('ui.select', () => updateWirePassesOn(pickedWire, val)); }}>{['Only when the source check passed', 'Every time', 'Never (paused)'].map(opt => <option key={opt} value={opt}>{opt}</option>)}</select></label>
-          <div className="dx-preview-actions">
-            {wireFromCard && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => openCard(wireFromCard), event)}>Open the source</button>}
-            {!pickedWire.subtask && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => removeHomeWire(pickedWire), event)}>Remove this connection</button>}
-            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setPickedWireId(''), event)}>Done</button>
+          <div className="pgroup">
+            <div className="dx-fact"><span>From</span><b>{wireFromCard?.title || pickedWire.from}</b></div>
+            <div className="dx-fact"><span>What flows</span><b>{pickedWire.output ? pickedWire.output + ' → ' + pickedWire.input : pickedWire.label}</b></div>
+            <div className="dx-fact"><span>Delivery</span><b>{pickedWire.state === 'waiting' ? 'Waiting' : 'Delivered'}</b></div>
+            <label className="dx-fact"><span>Passes on</span><select aria-label="Passes on" value={wireRuleOverrides[pickedWire.id] || pickedWire.passesOn || 'Only when the source check passed'} onChange={event => { const val = event.target.value; return executeAction('ui.select', () => updateWirePassesOn(pickedWire, val)); }}>{['Only when the source check passed', 'Every time', 'Never (paused)'].map(opt => <option key={opt} value={opt}>{opt}</option>)}</select></label>
+          </div>
+          <div className="home-insp-actions">
+            {wireFromCard && <button type="button" className="btn sm" onClick={event => executeAction('ui.select', () => openCard(wireFromCard), event)}>Open the source</button>}
+            {!pickedWire.subtask && <button type="button" className="btn sm" onClick={event => executeAction('ui.select', () => removeHomeWire(pickedWire), event)}>Remove this connection</button>}
+            <button type="button" className="btn sm" onClick={event => executeAction('ui.select', () => setPickedWireId(''), event)}>Done</button>
           </div>
         </div>
       </> : pickedCard ? <>
         <header className="shared-properties-head"><span className="properties-eyebrow">SESSION</span><h2>{pickedCard.title}</h2><p className="muted">{[pickedCard.state, pickedCard.project, pickedCard.agent || pickedCard.pastAgent || 'No agent yet'].filter(Boolean).join(' · ')}</p></header>
         <div className="shared-properties-task">{pickedTask ? resumeView : <Btn sm p onClick={event => executeAction('ui.select', () => openCard(pickedCard), event)}>Open</Btn>}
-          <section className="v48-made" data-home-outputs="" aria-label="What came out"><h3>What came out</h3>
+          <section className="v48-made pgroup" data-home-outputs="" aria-label="What came out"><h3>What came out</h3>
             {pickedTask && (outputs.length > 0 || resumeSteps.some(st => st.output)) ? <>
               {outputs.map((out, idx) => <div className="dx-fact" key={'out-' + idx}><span>{useLabel(out.name || 'Output ' + (idx + 1))}</span><b>{useLabel(out.excerpt || out.name)}</b></div>)}
               {!outputs.length && resumeSteps.filter(st => st.output).map(st => <div className="dx-fact" key={st.id}><span>{st.title}</span><b>{st.output}</b></div>)}
             </> : <p className="muted">Nothing produced yet.</p>}
           </section>
-          {pickedTask && <div className="dx-preview-actions">
-            <button type="button" className="dx-quiet" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
-            <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
+          {pickedTask && <div className="pgroup">
+            <details className="dx-fact dx-edit-field"><summary><span>Project</span><span className="dx-edit-label">Edit</span><b>{task?.project || ''}</b></summary><select aria-label="Project" key={(task?.id || '') + ':project:' + (task?.workspace || '')} defaultValue={task?.workspace || ''} onChange={e => { if (e.target.value === task?.workspace) return false; return saveSession({project: e.target.value}); }}><option value="">No project</option>{projectChoices.map(c => <option key={c.key} value={c.value}>{c.name}</option>)}</select></details>
+            <div className="dx-fact" aria-label="Task participants"><span>Participants</span><b>{taskMembers.length ? taskMembers.map(member => humanLabel(member.name)).join(' · ') : 'No agent yet'}</b></div>
+            <div className="home-insp-actions">
+              <button type="button" className="btn sm" aria-pressed={!!task.homePinned} onClick={event => executeAction('ui.select', () => u.act(() => api.setTaskSession(task.id, {homePinned: !task.homePinned})), event)}>{task.homePinned ? 'Unpin' : 'Pin to Home'}</button>
+              <button type="button" className="btn sm" onClick={event => executeAction('ui.select', () => hideFromHome(task), event)}>Hide from Home</button>
+            </div>
           </div>}
-          {pickedTask && <><details className="dx-fact dx-edit-field"><summary><span>Project</span><span className="dx-edit-label">Edit</span><b>{task?.project || ''}</b></summary><select aria-label="Project" key={(task?.id || '') + ':project:' + (task?.workspace || '')} defaultValue={task?.workspace || ''} onChange={e => { if (e.target.value === task?.workspace) return false; return saveSession({project: e.target.value}); }}><option value="">No project</option>{projectChoices.map(c => <option key={c.key} value={c.value}>{c.name}</option>)}</select></details><div className="dx-fact" aria-label="Task participants"><span>Participants</span><b>{taskMembers.length ? taskMembers.map(member => humanLabel(member.name)).join(' · ') : 'No agent yet'}</b></div></>}
           {/* Create work on this selected canvas; a subtask also names this task as its parent. */}
-          {pickedTask && <form className="dx-preview-actions" data-home-subtask-form="" onSubmit={event => { event.preventDefault(); const form = event.currentTarget, sibling = event.nativeEvent.submitter?.value === 'task', title = String(new FormData(form).get('subtask') || '').trim();
+          {pickedTask && <form className="pgroup home-subtask-form" data-home-subtask-form="" onSubmit={event => { event.preventDefault(); const form = event.currentTarget, sibling = event.nativeEvent.submitter?.value === 'task', title = String(new FormData(form).get('subtask') || '').trim();
             return title && executeAction('ui.select', () => u.act(async () => { const made = await api.createTask(title, '', task.workspace || '', sibling ? '' : task.id, task.id); form.reset(); u.setToast('Added to ' + (task.sessionTitle || task.title) + '.'); return made; }), event); }}>
-            <input name="subtask" aria-label="New subtask" placeholder="New subtask" maxLength={2000} /><button type="submit" value="subtask" className="dx-quiet">Add subtask</button><button type="submit" value="task" className="dx-quiet">Add task on canvas</button></form>}</div>
+            <span className="eyebrow">Subtasks</span>
+            <input name="subtask" className="field sm" aria-label="New subtask" placeholder="New subtask" maxLength={2000} />
+            <div className="home-insp-actions"><button type="submit" value="subtask" className="btn sm">Add subtask</button><button type="submit" value="task" className="btn sm">Add task on canvas</button></div></form>}</div>
       </> : <>
         <header className="shared-properties-head"><span className="properties-eyebrow">HOME</span><h2>Map of the work</h2><p className="muted">Every value here is a parameter of Home. Change one and the map re-arranges. Select a session for its own properties.</p></header>
         <div className="shared-properties-task">
-          {Object.entries(mapChoices || {}).map(([key, options]) => <label className="dx-fact" key={key}><span>{fieldLabels[key] || key}</span><select aria-label={fieldLabels[key] || key} value={chart.params[key]} onChange={event => { const value = event.target.value; return executeAction('ui.select', () => changeMap({[key]: value})); }}>{options.map(option => <option key={option}>{option}</option>)}</select></label>)}
-          <h3>{chart.params.group === 'Agent' ? 'Agents' : chart.params.group === 'State' ? 'States' : 'Projects'}</h3>
-          {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.countText}</span><span className="flex">{chart.params.group !== 'Agent' && chart.params.group !== 'State' && projectScope !== group.key && <button type="button" className="dx-link" aria-label={'Open project ' + group.key} onClick={event => executeAction('ui.select', () => setProjectScope(group.key), event)}>Open</button>}<button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></span></div>)}
-          {chart.wires.length > 0 && <><h3>Connections</h3>{chart.wires.map(w => <div className="dx-fact" key={w.id}><span>{w.label}</span><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setPickedWireId(w.id), event)}>Inspect</button></div>)}</>}
-          {!history && !!homeLayout.hidden.length && <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
-          {!history && <button type="button" data-design="home1.reset" className="dx-quiet" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>}
+          <div className="pgroup">
+            {Object.entries(mapChoices || {}).map(([key, options]) => <label className="dx-fact" key={key}><span>{fieldLabels[key] || key}</span><select aria-label={fieldLabels[key] || key} value={chart.params[key]} onChange={event => { const value = event.target.value; return executeAction('ui.select', () => changeMap({[key]: value})); }}>{options.map(option => <option key={option}>{option}</option>)}</select></label>)}
+          </div>
+          <div className="pgroup">
+            <h3>{chart.params.group === 'Agent' ? 'Agents' : chart.params.group === 'State' ? 'States' : 'Projects'}</h3>
+            {chart.groups.map(group => <div className="dx-fact" key={group.key}><span>{group.key} · {group.countText}</span><span className="flex">{chart.params.group !== 'Agent' && chart.params.group !== 'State' && projectScope !== group.key && <button type="button" className="dx-link" aria-label={'Open project ' + group.key} onClick={event => executeAction('ui.select', () => setProjectScope(group.key), event)}>Open</button>}<button type="button" className="dx-link" aria-label={(group.collapsed ? 'Expand ' : 'Collapse ') + group.key} onClick={event => executeAction('ui.select', () => toggleGroup(group.key), event)}>{group.collapsed ? 'Expand' : 'Collapse'}</button></span></div>)}
+          </div>
+          {chart.wires.length > 0 && <div className="pgroup"><h3>Connections</h3>{chart.wires.map(w => <div className="dx-fact" key={w.id}><span>{w.label}</span><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setPickedWireId(w.id), event)}>Inspect</button></div>)}</div>}
+          <div className="home-insp-actions">
+            {!history && !!homeLayout.hidden.length && <button type="button" className="btn sm" onClick={event => executeAction('ui.select', () => saveHome({hidden: []}), event)}>Show {homeLayout.hidden.length} hidden</button>}
+            {!history && <button type="button" data-design="home1.reset" className="btn sm" onClick={event => executeAction('ui.select', () => resetHome(), event)}>Reset Home</button>}
+          </div>
         </div>
       </>}
     </aside>;
@@ -1371,9 +1393,9 @@
         {!fileWorkspace ? <div className="dx-workspace home-map" data-dx="workspace" data-home-map="" data-task-face="canvas">
             <div className="v22g-strip"><div className="v22g-toolbar v48-toolbar home-map-bar" role="toolbar" aria-label="Map of the work">
               {projectScope && <span className="home-crumb" data-home-crumb=""><button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => setProjectScope(''), event)}>All projects</button><span aria-hidden="true">›</span><b>{projectScope}</b><kbd>Esc</kbd></span>}
-              {[['Running', chart.running, 'running'], ['Needs you', rows.needsYou, 'need you']].map(([value, count, word]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><b>{count}</b> {word}</button>)}
+              {[['Running', chart.running, 'running', 'run'], ['Needs you', rows.needsYou, 'need you', 'wait']].map(([value, count, word, dot]) => <button type="button" className="dx-quiet" key={value} data-home-filter={value} aria-pressed={chart.params.filter === value} title={chart.params.filter === value ? 'Show every session' : 'Show only these sessions'} onClick={event => executeAction('ui.select', () => changeMap({filter: chart.params.filter === value ? 'All' : value}), event)}><i className={'hm-dot ' + dot} aria-hidden="true" /><b>{count}</b> {word}</button>)}
               <span className="home-bar-stat" data-home-queued=""><b>{queuedCount}</b> queued</span>
-              {(chart.armed > 0 || paused) && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}>{paused ? 'Resume all' : 'Pause all'} · {paused ? chart.paused : chart.armed} automation{(paused ? chart.paused : chart.armed) === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
+              {(chart.armed > 0 || paused) && <button type="button" className="dx-quiet" data-home-pause="" disabled={typeof paused !== 'boolean' || pauseBusy} onClick={event => executeAction('projects.automations.togglePause', {api, u, paused, setBusy: setPauseBusy}, event)}><i className="hm-dot arm" aria-hidden="true" />{paused ? 'Resume all' : 'Pause all'} · {paused ? chart.paused : chart.armed} automation{(paused ? chart.paused : chart.armed) === 1 ? '' : 's'} {paused ? 'paused' : 'armed'}</button>}
               {(s.watching?.watching || []).length > 0 && <button type="button" className="dx-quiet" data-home-watching="" title="Sessions other people share with you, read-only" onClick={event => executeAction('ui.select', () => u.go('settings/Access'), event)}><b>{s.watching.watching.length}</b> shared with you</button>}
               <button type="button" className="dx-quiet" data-home-river-toggle="" aria-pressed={riverMode !== 'Off'} onClick={event => executeAction('ui.select', () => setRiverMode(m => m === 'Off' ? 'Recent' : m === 'Recent' ? 'Live' : 'Off'), event)}>River: {riverMode}</button>
               <button type="button" className="dx-quiet" data-home-floor-toggle="" aria-pressed={floorOpen} onClick={event => executeAction('ui.select', () => setFloorOpen(v => !v), event)}>This PC</button>
@@ -1437,7 +1459,7 @@
                   }
                 }}>
                 {listing.status === 'error' ? <p role="alert">{listing.error} <button type="button" onClick={() => executeAction('ui.select', () => setAttempt(attempt + 1))}>Retry</button></p> : null}
-                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={card => { setPickedWireId(''); return pick(card); }} onOpen={openCard} onContinue={continueCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
+                {mapChoices && chart.nodes.length ? <window.UI.HomeMap onArrange={arrange} onRoom={(w, h) => setRoom(Math.max(.25, Math.round(w / Math.max(1, h) * 4) / 4))} chart={chart} picked={pickedCard?.id || ""} onPick={card => { setPickedWireId(''); return pick(card); }} onOpen={openCard} onOpenProject={name => { if (chart.params.group !== 'Agent' && chart.params.group !== 'State' && projectScope !== name) { setProjectScope(name); return null; } const card = chart.nodes.find(n => !n.group && (n.project === name || n.agent === name || n.state === name)); return card ? openCard(card) : null; }} onContinue={continueCard} onReview={card => u.show('Approve', {id: card.need.approval})} onCollapse={toggleGroup} mapHost={mapHost} />
                   : mapChoices && listing.status === 'loaded' && (request === 'empty' || request === 'loaded') ? <main className="resume-main">{chart.total ? <section className="resume-zero">
                     <h1>{chart.params.filter === 'Running' ? '0 running' : chart.params.filter === 'Needs you' ? '0 need you' : 'No sessions match your filters'}</h1>
                     {!history && chart.available ? <button type="button" onClick={event => executeAction('ui.select', () => u.act(async () => {

@@ -2,6 +2,14 @@
 
 ## Next build
 
+## 20261126-0535-e24eeb4
+
+- Published build 20261126-0535-e24eeb4 (source e24eeb4).
+- Installer SHA-256: `167fc2eb5f5f922c0130483eccf75d662d270260f357d32c8fc4058ce5d911f6`.
+- Built at 2026-11-26T01:35:11Z.
+
+Source: e24eeb42.
+
 ## 20261126-0316-b81aa19
 
 - Published build 20261126-0316-b81aa19 (source b81aa19).

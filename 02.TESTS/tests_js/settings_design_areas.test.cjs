@@ -60,8 +60,8 @@ async function mount(page,profile,extra){
  await page.evaluate(()=>{
   for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
   function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);
-   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));else if(route==='dependencies')setPage(route);},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
-   return React.createElement(window.UI.Ctx.Provider,{value:u},page==='dependencies'?React.createElement(window.UI.Dependencies):page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}));}
+   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
+   return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}));}
   window.ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
  });
 }
@@ -118,10 +118,11 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
       return rect&&rect.bottom>0&&rect.top<window.innerHeight;
     },heading);
    }
+   // Dependencies is a section of Settings › This PC (one door), never a page of its own.
    await page.evaluate(()=>window.goSettings('settings/Dependencies'));
-   await page.locator('[data-screen="dependencies"]').getByRole('button',{name:'Settings',exact:true}).click();
-   await page.locator('[data-screen="settings/System graph"]').waitFor();
+   await page.locator('[data-screen="settings/Dependencies"] section[data-design-section="Dependencies"]').waitFor();
    assert.equal(await nav.locator('[aria-current=page]').getAttribute('aria-label'),'This PC');
+   assert.equal(await page.evaluate(()=>window.lastRoute),'settings/Dependencies','no route leaves Settings');
    // Models and Permissions open Agents' real owners, not Account; an edit reaches that owner.
    await page.evaluate(()=>window.goSettings('settings/Models'));
    await page.locator('[data-screen="settings/Agents"]').waitFor();
@@ -229,10 +230,10 @@ const DESIGN_SECTIONS={
  Projects:['Project register','Units and precision','Office standard','Templates','Location','Revit worksharing','IFC and BCF','Print and PDF','CAD','File naming','CDE folders'],
  Agents:['Your agents','Models','What agents may do','Workshop','Automations','Meetings','BABOOM','Tools in the Library'],
  Connections:['Programs','Accounts','Subscriptions','Tool servers (MCP)','Program options','AI providers','Phone and cloud','Network','Notifications'],
- 'This PC':['Theme and colour','Size and density','Panels','Canvas','Keyboard','Agents on this PC','Workspaces and files','Privacy and keys','The app','System graph']
+ 'This PC':['Theme and colour','Size and density','Panels','Canvas','Keyboard','Agents on this PC','Workspaces and files','Privacy and keys','The app','System graph','Dependencies']
 };
-test('the five Settings pages show all 43 design cards in order with live owners and inert unwired controls',async()=>{
- assert.equal(Object.values(DESIGN_SECTIONS).flat().length,43);
+test('the five Settings pages show all 44 design cards in order with live owners and inert unwired controls',async()=>{
+ assert.equal(Object.values(DESIGN_SECTIONS).flat().length,44);
  const browser=await chromium.launch({headless:true,executablePath:executable()});
  try{
   const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];

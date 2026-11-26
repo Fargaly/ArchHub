@@ -288,7 +288,6 @@ NAVIGATION_ROUTES = {
     "automations": "Automations",
     "docs": "Docs",
     "meetings": "Meetings",
-    "dependencies": "Dependencies",
     "present": "Present",
     "community": "Community",
     "model-review": "Model review",
@@ -300,7 +299,7 @@ NAVIGATION_ROUTES = {
     "routing": "Model routing"
 }
 
-MENU_PAGES = ["meetings","dependencies","home","workshop","canvas","docs","colleagues","brain","watcher","social","xray","model-review","community","present","interface","access","routing","automations","runs","receipts","feedback","system","first-run"]
+MENU_PAGES = ["meetings","home","workshop","canvas","docs","colleagues","brain","watcher","social","xray","model-review","community","present","interface","access","routing","automations","runs","receipts","feedback","system","first-run"]
 
 
 # Existing Studio actions, in their original presentation order. No parameter values live here.

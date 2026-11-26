@@ -473,6 +473,8 @@
     return String(value).slice(0, 60);
   };
   const HIDDEN_VALUE = /(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i;
+  // Use lens: a skill's id and its linked file path are Advanced only (spec §6); Use shows its name and Open.
+  const ADVANCED_ONLY = (n, key) => n.type === 'skill' && ['skill', 'session_file'].includes(String(key).replace(/^param:/, ''));
   const HIDDEN_PARAM = /(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i;
   const LAYOUT = {nodeWidth: parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue('--layout-node-width')) || 256, datasetWidth: 340, inspectorWidth: 320};
   const FIELD_WIDTH = {text: 70, number: 92, integer: 108, point: 112, object: 112, bool: 70, choice: 108, date: 108, file: 112, folder: 112, list: 112};
@@ -806,7 +808,7 @@
       : n.params.agent || 'Pick an agent, or message the thread';
     const approval = (s.approvals || []).find(card=>card.approvalKind==='canvas' && (card.nodeId===n.id && card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.nodeId===n.id && ref.path===api.getSessionPath())) && card.status==='pending');
     if (n.fixed && n.type === 'thing.session') return <SessionCard n={n} s={s} u={u} selected={selected} socket={socket}/>;
-    if (n.agentStep || n.workflowStart && !n.fixed) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
+    if (n.agentStep || n.workflowStart && !n.fixed) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result,
       actions:n.agentWork?<div style={{display:'grid',gap:6}}><span>Goal: {n.params.goal}</span><span>Model: {n.params.model}</span><span>{n.params.detail}</span><button className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forkNode(n.id))},event)}>Fork from here</button></div>:null,
       openResult:()=>u.openTaskFile(n.agentTask,'workshop'),
       inputs:n.workflowStart?[]:n.inputs.filter(p=>p.id==='task').map(p=>({...p,name:'Step'})),outputs:n.outputs.filter(p=>p.id===(n.workflowStart?'value':'result')).map(p=>({...p,name:'Step'}))}}
@@ -821,7 +823,7 @@
       sourceOf = port => { const w = wiresIn.find(x => x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + '.' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); },
       slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
-      shown = (n.parameterSchema || []).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => !n.parameterPresentation?.[p.key]?.hidden).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
+      shown = (n.parameterSchema || []).filter(p => u.advanced || !ADVANCED_ONLY(n, p.key)).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => !n.parameterPresentation?.[p.key]?.hidden).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
         .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))).sort((a,b)=>Number(!!b.userParam)-Number(!!a.userParam)),
       pending = false,
       hasOutput = n.output != null && n.output !== '' && (typeof n.output!=='object' || Object.keys(n.output).length>0 && !('approvalId' in n.output)),
@@ -901,7 +903,7 @@
     const Tag = embedded ? 'section' : 'aside';
     // An expanded group keeps its wires on the members; its own socket reads the wire through the member it stands for.
     const sourceOf = port => { const m = n.inputs.find(p => p.id === port)?.member, w = s.graph.wires.find(x => x.to === n.id && x.toPort === port || m && x.to === m.node && x.toPort === m.port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + ' · ' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); };
-    const params = (n.parameterSchema || []).filter(p => p.editable && !(n.fixed && n.type==='thing.workshop' && ['thread','limit'].includes(p.key))), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
+    const params = (n.parameterSchema || []).filter(p => p.editable && (u.advanced || !ADVANCED_ONLY(n, p.key)) && !(n.fixed && n.type==='thing.workshop' && ['thread','limit'].includes(p.key))), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
     const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
     const defaultColor=headerSetting?.value!==headerSetting?.default ? headerSetting?.value : window.getComputedStyle(document.documentElement).getPropertyValue('--color-bg-panel').trim() || A.bgPanel;
     const cap = {fontSize: 'calc(12px * var(--text-scale,1))', color: SPEC.label, margin: '16px 0 6px'};
@@ -912,13 +914,13 @@
       {n.type==='script.python'&&<ScriptInspector n={n} u={u}/>}
       {n.agentWork?.role==='step' && <StepHistory n={n} u={u} />}
       <div className="node-presentation" style={{display:'grid',gap:8,marginTop:16}}>
-        <label>Label<input aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
+        <label>Label<input dir="auto" aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
         <label>Icon<select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{(api.nodeIcons || []).map(name=><option key={name} value={name}>{name}</option>)}</select></label>
         <label>Colour<span className="node-colour-value"><input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /><span>{n.color || defaultColor}</span></span></label>
       </div>
       <div style={cap}>Inputs</div>
       {children}
-      <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
+      <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id) && (u.advanced || !ADVANCED_ONLY(n, p.id))).map(p => <div key={p.id} style={SLOT}>
         <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) ? <span data-linked-source="">{sourceOf(p.id)}</span> : <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
         {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.label || p.key.replace(/_/g, ' ')}</span>
           {sourceOf('param:' + p.key) || sourceOf(p.key) ? <span data-linked-source="">{sourceOf('param:' + p.key) || sourceOf(p.key)}</span> : n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
@@ -2099,7 +2101,7 @@
    <div ref={attachArea} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" data-run-view={runView ? 'true' : undefined} data-single-pick={selected.length<=1||undefined} data-flow={flowView||undefined} style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         onPointerDownCapture={event=>{stopAutoFrame();if(!event.target.closest?.('.react-flow__node,.v48-presence,[data-follow]'))stopFollow();boxFrom.current={x:event.clientX,at:toFlow(event)};}} onPointerMoveCapture={event=>{if(event.buttons===1)setCrossing(event.clientX<boxFrom.current.x);}} onWheelCapture={()=>{stopAutoFrame();stopFollow();}} onDragStartCapture={stopAutoFrame}
         onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&!findOpen&&!editingNote&&!handoffOpen&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
-        title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
+        aria-description="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
         onDragOver={e => { stopAutoFrame(); e.preventDefault(); }} onDrop={e => {
           e.preventDefault();

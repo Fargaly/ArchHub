@@ -1680,6 +1680,10 @@ def _column(history, project=None, stale_hours=None, *, include_archived=False, 
             return "stale"
         if row["status"] == "done":
             return "DONE"
+        if row["status"] == "open" and row.get("outcome") in ("interrupted", "unknown") and live.get(row["id"]) != "blocked":
+            # The run record settled this task when its lease lapsed; a claim clears it. An older declaration of the
+            # agent that lost it still saying "working" is not a live agent on it (founder 2026-11-26).
+            return "PLANNED"
         if live.get(row["id"]) == "blocked":
             return "IN REVIEW"
         if live.get(row["id"]) == "working" or (row["status"] == "claimed" and not row["lease_expired"]):

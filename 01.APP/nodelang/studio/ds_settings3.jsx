@@ -29,14 +29,6 @@
   "settings.ds_settings3.StorageAction0": "StorageAction0",
   "settings.ds_settings3.StorageAction1": "StorageAction1",
   "settings.ds_settings3.StorageAction2": "StorageAction2",
-  "settings.ds_settings3.SettingsAction0": "SettingsAction0",
-  "settings.ds_settings3.SettingsAction1": "SettingsAction1",
-  "settings.ds_settings3.SettingsAction2": "SettingsAction2",
-  "settings.ds_settings3.SettingsAction3": "SettingsAction3",
-  "settings.ds_settings3.SettingsAction4": "SettingsAction4",
-  "settings.ds_settings3.SettingsAction5": "SettingsAction5",
-  "settings.ds_settings3.SettingsAction6": "SettingsAction6",
-  "settings.ds_settings3.SettingsAction7": "SettingsAction7",
   "settings.ds_settings3.SettingsAction8": "SettingsAction8",
   "settings.ds_settings3.SettingsAction9": "SettingsAction9",
   "settings.ds_settings3.SettingsAction10": "SettingsAction10",
@@ -45,18 +37,7 @@
   "settings.ds_settings3.SettingsAction13": "SettingsAction13",
   "settings.ds_settings3.SettingsAction14": "SettingsAction14",
   "settings.ds_settings3.UpdatesAutoInstall": "UpdatesAutoInstall",
-  "settings.ds_settings3.UpdatesSettingRetry": "UpdatesSettingRetry",
-  "settings.ds_settings3.SettingsAction15": "SettingsAction15",
-  "settings.ds_settings3.SettingsAction16": "SettingsAction16",
-  "settings.ds_settings3.SettingsAction17": "SettingsAction17",
-  "settings.ds_settings3.SettingsAction18": "SettingsAction18",
-  "settings.ds_settings3.SettingsAction19": "SettingsAction19",
-  "settings.ds_settings3.SettingsAction20": "SettingsAction20",
-  "settings.ds_settings3.SettingsAction21": "SettingsAction21",
-  "settings.ds_settings3.SettingsAction22": "SettingsAction22",
-  "settings.ds_settings3.SettingsAction23": "SettingsAction23",
-  "settings.ds_settings3.SettingsAction24": "SettingsAction24",
-  "settings.ds_settings3.SettingsAction25": "SettingsAction25"
+  "settings.ds_settings3.UpdatesSettingRetry": "UpdatesSettingRetry"
 };
   const {
     A,
@@ -66,29 +47,11 @@
     useApp,
     Btn,
     Card,
-    Heading,
     Chip,
     Empty,
     SettingControl,
     Providers
   } = window.UI;
-  const doors = {
-    'Account': 'account',
-    'Connections': 'connections',
-    'BABOOM': 'baboom',
-    'Agents': 'colleagues',
-    'Brain': 'brain',
-    'System graph': 'system',
-    'Workshop': 'workshop',
-    'Library & Mods': 'library',
-    'Automations': 'automations',
-    'Hooks': 'hooks',
-    'Dependencies': 'dependencies',
-    'Privacy': 'privacy',
-    'Appearance': 'appearance',
-    'Updates & About': 'updates',
-    'Advanced': 'system'
-  };
   const sections = [
     {name:'Account', pages:['Account','Privacy'], tabs:['Profile','Privacy']},
     {name:'Connections', pages:['Connections'], tabs:['Connections']},
@@ -570,7 +533,7 @@
     }));
     return [{id:'card.'+card.id,card:card.id,group:card.title,page,area,label:card.title},...fields];
   });
-  const pcAnchors = {Look:'Theme and colour', Privacy:'Workspaces and files', Advanced:'Workspaces and files', System:'Agents on this PC', 'System graph':'Agents on this PC', 'Updates & About':'The app'};
+  const pcAnchors = {Look:'Theme and colour', Privacy:'Workspaces and files', Advanced:'Workspaces and files', System:'Agents on this PC', 'System graph':'Agents on this PC', 'Updates & About':'The app', Dependencies:'Dependencies'};
   const pcOwnerLabels = Object.fromEntries([
     ['theme', 'Theme'],
     ['accent', 'Accent colour'],
@@ -650,22 +613,21 @@
       if(id.startsWith('gate.')){
         const agent=(s.agents||[]).find(a=>a.name===label);
         if(agent?.gate==='live')return <span>Gates on</span>;
-        if(agent?.gate==='missing')return actButton('Manage gates',()=>u.go('dependencies'));
+        if(agent?.gate==='missing')return actButton('Manage gates',()=>u.go('settings/Dependencies'));
       }
       return <UpcomingControl spec={spec}/>;
     }
     const isChangedOwner=row=>row && row.default!==undefined && JSON.stringify(row.value)!==JSON.stringify(row.default);
-    return pcCards.map(card=>{
+    return [...pcCards.map(card=>{
       const visible=card.rows.filter(spec=>!spec[5]||advanced||isChangedOwner(pcOwner(s.settings,spec)));
       return <section key={card.id} data-design-section={card.title} className={'sheet-pc-card sheet-owner-card pc-'+card.id+(card.id==='sysgraph'?' sheet-card-wide':'')}><header className="sheet-card-head"><span className={'sheet-card-icon fam-'+card.family}><window.AHIcon name={card.icon} size={12}/></span><h3>{card.title}</h3></header>
         {visible.map(spec=><div className={'sheet-property-row'+(['theme','themeSet','accent','density','layout'].includes(spec[0])?' sheet-property-visual':'')} data-row={spec[0]} key={spec[0]}><span className="sheet-property-copy">{spec[1]}<small>{spec[2]}</small></span><div className="sheet-property-control">{control(spec)}</div></div>)}
         {visible.length<card.rows.length&&actButton((card.rows.length-visible.length)+' more',()=>setAdvanced(true))}
         {card.id==='app'&&<details open={updatesOpen} onToggle={event=>setUpdatesOpen(event.currentTarget.open)}><summary>Updates &amp; About</summary>{updatesOpen&&<UpdatesPage/>}</details>}
-        {card.id==='pc'&&actButton('Open dependencies',()=>u.go('dependencies'))}
         {additional[card.title]?.length>0&&<details open={advanced||undefined}><summary>More controls</summary>{additional[card.title].map(row=><SettingControl key={row.id} row={row} raw={advanced}/>)}</details>}
         {card.id==='sysgraph'&&<details><summary>Tools &amp; diagnostics</summary>{[['Agents','settings/Agents'],['Router','settings/BABOOM'],['Workshop','workshop'],['Programs','settings/Connections'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','receipts']].map(([title,route])=><Btn sm key={route} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.go(route)},event)}>{title}</Btn>)}</details>}
       </section>;
-    });
+    }), window.UI.DependenciesSection && <window.UI.DependenciesSection key="dependencies"/>];
   }
   const pageLabels = {BABOOM:'Models & BABOOM', Appearance:'Look', Privacy:'Workspaces & privacy', 'System graph':'System'};
   function requestGroups(requests, agents, providers) {
@@ -1003,136 +965,6 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       {load === 'loaded' && <p className="muted">Automatic updates are {autoInstall ? 'on' : 'off'}.</p>}
       <UpdateCard runAction={runAction} autoInstall={load === 'loaded' || load === 'empty' ? autoInstall : undefined} /></>;
   }
-  function AdvancedSettings({
-    page = 'Account',
-    full = false
-  }) {
-    const s = useData(),
-      u = useApp();
-    const [query, setQuery] = React.useState(''),
-      [changed, setChanged] = React.useState(false);
-    const actual = s.pages.includes(page) ? page : sections.find(section=>section.name===page)?.pages[0] || 'Account';
-    const section = sections.find(section=>section.pages.includes(actual));
-    const matched = [...s.settings, ...s.capabilities.map(c => ({
-      id: c.id,
-      page: c.page,
-      label: c.name,
-      group: 'Capabilities',
-      capability: true
-    }))].filter(r => `${r.label} ${r.group} ${r.page}`.toLowerCase().includes(query.toLowerCase()));
-    const visible = s.settings.filter(r => r.page === actual && (!r.advanced || u.advanced || actual === 'Advanced') && (!changed || JSON.stringify(r.value) !== JSON.stringify(r.default)));
-    const groups = [...new Set(visible.map(r => r.group))];
-    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {SettingsAction0: (r, event) => (() => {
-            setQuery('');
-            if (r.capability) {
-              u.show('Capability', {
-                id: r.id
-              });
-              return;
-            }
-            u.go('settings/' + r.page);
-            requestAnimationFrame(() => document.querySelector(`[data-setting="${r.id}"]`)?.scrollIntoView({
-              block: 'center'
-            }));
-          })(event),
-SettingsAction1: (p, event) => (() => u.go('settings/' + p))(event),
-SettingsAction2: (event) => (() => u.go(doors[actual]))(event),
-SettingsAction3: (event) => (() => u.act(() => api.resetPage(actual)))(event),
-SettingsAction4: (event) => (() => u.go('colleagues'))(event),
-SettingsAction5: (event) => (() => u.go('settings/BABOOM'))(event),
-SettingsAction6: (event) => (() => u.go('community'))(event),
-SettingsAction7: (event) => (() => u.go('dependencies'))(event),
-SettingsAction8: (event) => (() => u.show('Update'))(event),
-SettingsAction9: (event) => (() => u.act(api.acknowledgeUpdate))(event),
-SettingsAction10: (event) => (() => u.act(api.checkForUpdates))(event),
-SettingsAction11: (event) => (() => u.show('What’s new'))(event),
-SettingsAction12: (event) => (() => u.go('first-run'))(event),
-SettingsAction13: (event) => (() => u.go('docs'))(event),
-SettingsAction14: (event) => (() => u.go('feedback'))(event),
-SettingsAction15: (event) => (() => u.download('Brain'))(event),
-SettingsAction16: (event) => (() => u.act(api.syncAccount))(event),
-SettingsAction17: (event) => (() => u.go('library'))(event),
-SettingsAction18: (event) => (() => u.go('skills'))(event),
-SettingsAction19: (event) => (() => u.go('home'))(event),
-SettingsAction20: (event) => (() => u.show('Install mod'))(event),
-SettingsAction21: (event) => (() => u.go('receipts'))(event),
-SettingsAction22: (event) => (() => u.download('Receipts'))(event),
-SettingsAction23: (event) => (() => u.go('receipts'))(event),
-SettingsAction24: (event) => (() => u.go('docs'))(event),
-SettingsAction25: () => u.act(api.listAgentsWorking)});
-    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div data-screen={'settings/' + actual} style={{
-      display: 'grid',
-      gridTemplateColumns: full ? 'minmax(0,1fr)' : 'var(--layout-settings-sidebar-width) minmax(0,1fr)',
-      minHeight: 0
-    }}>
-  {!full && <aside className="pane settings-side" style={{
-        padding: '18px 12px'
-      }}><h1 style={{
-          fontSize: 'calc(20px * var(--text-scale,1))',
-          padding: '0 10px 12px'
-        }}>Settings</h1><input aria-label="Find a setting" placeholder="⌕ Find a setting" value={query} onChange={e => setQuery(e.target.value)} style={{
-          width: '100%',
-          height: 34
-        }} /><div className="spread" style={{
-          padding: '12px 6px 8px',
-          fontSize: 'calc(13px * var(--text-scale,1))',
-          color: A.inkSoft
-        }}><span>Show advanced</span><D.Toggle variant="settings" label="Show advanced" checked={u.advanced} onCheckedChange={u.setAdvanced} /></div>
-   {query ? <div className="grid">{matched.map(r => <button key={r.id} className="listbutton" onClick={event => runAction('settings.ds_settings3.SettingsAction0', r, event)}><b>{r.label}</b><p className="muted" style={{
-              fontSize: 'calc(11px * var(--text-scale,1))'
-            }}>{r.page} › {r.group}</p></button>)}{!matched.length && <Empty>No matching setting.</Empty>}</div> : sections.map(group => <button className="listbutton flex settings-section" key={group.name} aria-selected={section===group} onClick={event => runAction('settings.ds_settings3.SettingsAction1', group.pages[0], event)}>{group.name}</button>)}
-  <div className="settings-subpages">{section.pages.map((p,i)=><button className="listbutton" key={p} aria-selected={actual===p} onClick={event=>runAction('settings.ds_settings3.SettingsAction1',p,event)}>{p==='System graph'?'Live wiring':p}</button>)}</div>
-  </aside>}
-  <main className={'page penpot-settings' + (actual === 'Account' ? ' account-settings' : '')} style={{
-        padding: '22px 32px'
-      }}><nav className="settings-tabs" aria-label={section.name}>{section.pages.map((p,i)=><button className="tab-button" aria-current={actual===p?'page':undefined} key={p} onClick={event=>runAction('settings.ds_settings3.SettingsAction1',p,event)}>{section.tabs[i]}</button>)}{actual==='Account'&&<><button className="tab-button" onClick={event=>runAction('settings.ds_settings3.SettingsAction2',event)}>Plan &amp; access</button><button className="tab-button" onClick={event=>runAction('settings.ds_settings3.SettingsAction12',event)}>First run</button></>}{actual==='Appearance'&&<button className="tab-button" onClick={()=>u.go('interface')}>Interface studio</button>}</nav><div className="settings-title"><span className="settings-page-header-icon"><window.AHIcon name={["user", "link", "voice", "users", "brain", "canvas", "workshop", "library", "clock", "shield", "code", "shield", "palette", "update", "settings"][s.pages.indexOf(actual)]} size={21} /></span><Heading title={actual==='System graph'?'Live wiring':actual} sub={{
-          Account: 'Your identity, workspaces and project files.',
-          Connections: 'The programs and accounts your agents can work with.',
-          BABOOM: 'Your companion’s providers, voice, presence and boundaries.',
-          Agents: 'How your agents choose, finish and hand over work.',
-          Brain: 'What your agents remember, and how they learn.',
-          Appearance: 'Make ArchHub comfortable for the way you work.',
-          Advanced: 'Fine control over loading, performance and connection limits.',
-          Privacy: 'Control what stays local and what can leave your workspace.',
-          'Updates & About': 'One update, with your work kept intact.'
-        }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open workflow' : actual === 'BABOOM' ? 'Open BABOOM' : 'Show as node'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset preferences</Btn></Heading></div>
-   {u.advanced && <div className="flex settings-scope" style={{
-          marginBottom: 14
-        }}><label className="flex muted">Scope<select disabled={!s.settingsDestination||s.settingsScopePending} aria-busy={Boolean(s.settingsScopePending)} aria-label="Settings scope" value={s.settingsScope} onChange={e => {const value=e.target.value,destination=s.settingsDestination;return u.act(() => api.setSettingsScope(value,destination));}}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div>}<div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Agents' ? s.agentHealth||'Checking running agents…' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Preferences'}</span></div><div className="flex settings-filter" style={{
-          marginBottom: 14
-        }}><D.Toggle label="Changed only" checked={changed} onCheckedChange={setChanged} /><span className="muted" style={{
-            fontSize: 'calc(12px * var(--text-scale,1))'
-          }}>Changed only</span>{full && <><span className="fill" /><span>Show advanced</span><D.Toggle label="Show advanced" checked={u.advanced} onCheckedChange={u.setAdvanced} /></>}</div>
-   <div className="grid">
-    {actual === 'System graph' && <window.UI.SystemGraph />}
-    {actual === 'Account' && <Account />}<window.UI.CapabilityRows page={actual} />
-    {actual === 'Connections' && <Connections />}
-    {actual === 'Agents' && <RouterSettings />}
-    {actual === 'Hooks' && <Permissions />}
-    {actual === 'BABOOM' && <Providers />}{actual === 'Agents' && <><Card style={{
-            padding: 18
-          }}><div className="spread"><h2>Agents at work</h2><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction4', event)}>Open</Btn></div><p role="status">{s.agentSummary||'Checking running agents…'}</p><p className="muted">{s.agentHealth||'Checking running agents…'}</p><Btn sm onClick={event=>runAction('settings.ds_settings3.SettingsAction25',event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn>{(s.agents||[]).filter(p=>p.kind!=='observation').map(p => <div className="spread row" key={p.id}><span className="flex"><window.UI.Av id={p.id} size={24} /><span><b>{p.name}</b><small className="muted" style={{display:'block'}}>{p.title} · {p.model}</small><small style={{display:'block'}}>{p.task}</small>{p.detail&&<small className="muted" style={{display:'block'}}>{p.detail}</small>}</span></span><Chip c={p.presence === 'working' ? A.ok : p.presence === 'unknown' ? A.warn : A.inkSoft}>{p.status_text||'Idle'}</Chip></div>)}<button className="listbutton flex" onClick={event => runAction('settings.ds_settings3.SettingsAction5', event)}>Manage providers<window.AHIcon name="arrow" size={15} /></button></Card><Providers /></>}
-    {actual === 'Brain' && <><window.UI.MemoryRules /><Btn onClick={event => runAction('settings.ds_settings3.SettingsAction6', event)}>Community</Btn></>}
-    {actual === 'Automations' && <window.UI.Automations embedded />}
-    {actual === 'Dependencies' && <Card style={{
-            padding: 22
-          }}><div className="spread"><div><h2>Managed tools</h2><p className="muted">Versions, health, resources and the features that use each tool.</p></div><Btn p onClick={event => runAction('settings.ds_settings3.SettingsAction7', event)}>Open dependencies</Btn></div><div className="dependency-mini">{s.dependencies.slice(0, 5).map(d => <div className="row spread" key={d.id}><span>{d.name}</span><Chip c={d.state === 'Ready' ? A.ok : A.warn}>{d.state}</Chip></div>)}</div></Card>}
-{actual === 'Updates & About' && <UpdateCard runAction={runAction} />}
-    <div className="settings-grid">{groups.map(group => <Card key={group} style={{
-              padding: '10px 14px 8px'
-            }}><h3 style={{
-                marginBottom: 8,
-                fontSize: 'calc(14.5px * var(--text-scale,1))'
-              }}>{group}</h3>{visible.filter(r => r.group === group).map(r => <SettingControl key={r.id} row={r} raw={u.advanced || actual === 'Advanced'} />)}</Card>)}</div>
-    {actual === 'Account' && <Storage />}
-    {actual === 'Brain' && <div className="flex"><Chip c={A.ok}>{s.brain.length} facts</Chip><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction15', event)}>Export</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction16', event)}>Sync to cloud</Btn></div>}
-    {actual === 'Library & Mods' && <window.UI.HostSkills />}{actual === 'Library & Mods' && <div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction17', event)}>Open Library</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction18', event)}>Open Sessions</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction19', event)}>Open Templates</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction20', event)}>Install from folder</Btn></div>}
-    {actual === 'BABOOM' && <div className="spread"><h3>Receipts · {s.receipts.length} actions</h3><div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction21', event)}>Open receipts</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction22', event)}>Export</Btn></div></div>}
-    {actual === 'Advanced' && <div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction23', event)}>Open log</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction24', event)}>Docs &amp; website</Btn></div>}
-   </div>
-  </main>
- </div></>;
-  }
   const SHEET_ACTIONS = {'settings.sheet.Refresh':'Refresh'};
   function executeAction(...args) {return window.executeAction(...args);}
   // Board r1963: one-line value box; the full value lives in the tooltip.
@@ -1239,28 +1071,10 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       <section aria-label="Fixed"><h3>Fixed</h3><p><kbd>Escape</kbd> Back out</p><p><kbd>Space + drag</kbd> Pan the canvas</p><p><kbd>Wheel</kbd> Zoom at the pointer</p></section>
     </div>;
   }
-  function DependenciesLink() {
-    const u=useApp();
-    const [navigation,setNavigation]=React.useState({status:'waiting'}),[attempt,retry]=React.useReducer(value=>value+1,0);
-    React.useEffect(()=>{
-      if(typeof u.go!=='function'){setNavigation({status:'empty'});return;}
-      let active=true;
-      setNavigation({status:'waiting'});
-      Promise.resolve().then(()=>u.go('dependencies')).then(
-        ()=>{if(active)setNavigation({status:'loaded'});},
-        error=>{if(active)setNavigation({status:'error',message:error.message||String(error)});}
-      );
-      return ()=>{active=false;};
-    },[attempt]);
-    return <>{navigation.status==='waiting'&&<p role="status">Opening Dependencies…</p>}
-      {navigation.status==='empty'&&<p>Dependencies navigation is unavailable.</p>}
-      {navigation.status==='loaded'&&<span className="visually-hidden" role="status">Opened Dependencies.</span>}
-      {navigation.status==='error'&&<div role="alert">{navigation.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:retry},event)}>Retry opening Dependencies</Btn></div>}</>;
-  }
   function Settings(props) {
     const [page,query]=(props.page||'Account').split('?');
     const find=query?new URLSearchParams(query).get('find'):'';
-    return page==='Dependencies'?<DependenciesLink/>:<SettingsSheet {...props} page={page} initialReveal={find}/>;
+    return <SettingsSheet {...props} page={page} initialReveal={find}/>;
   }
   function SettingsSheet({page='Account',full=false,initialReveal=''}) {
     const requestedPage=page,former=formerAreas[page],focusSection=pcAnchors[page]||former?.[1]||'';
@@ -1473,7 +1287,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
       {currentCategory==='Agents'&&<AreaDesignCards area="Agents" focused={focused} bodies={{agents:<><div className="sheet-agents" role="list"><p>One row per agent app. State and model are live; Connect opens Dependencies when an app is not running.</p>{agentNames.map(name=>{
           const agent=reportedAgents.find(row=>row.name===name);
           const state=agent?.status_text||agent?.presence||'Status not reported';
-          return <div key={name} className="sheet-agent-tile" role="listitem"><span className="sheet-agent-mark" aria-hidden="true">{name.slice(0,1)}</span><div><b>{name}</b><small>{agent?.model||'Model not reported'}</small><small>{state}</small></div>{!agent||['stopped','missing'].includes(agent.presence)?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('dependencies')},event)}>Connect</Btn>:<span>{state}</span>}</div>;
+          return <div key={name} className="sheet-agent-tile" role="listitem"><span className="sheet-agent-mark" aria-hidden="true">{name.slice(0,1)}</span><div><b>{name}</b><small>{agent?.model||'Model not reported'}</small><small>{state}</small></div>{!agent||['stopped','missing'].includes(agent.presence)?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Dependencies')},event)}>Connect</Btn>:<span>{state}</span>}</div>;
         })}{sourceNotice('agents','Reading agents…')}{sources.agents?.ready&&!(s.agents||[]).some(agent=>agent.kind!=='observation')&&<p>No agents reported.</p>}</div><p className="sheet-session-summary" role="status">{s.agentSummary||status||'No agent sessions reported.'}</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(api.listAgentsWorking)},event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn></>,tools:<div className="sheet-library-summary"><span>{s.catalogue?.length!=null?s.catalogue.length+' nodes in the Library':'Library catalogue unavailable'}</span><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('library')},event)}>Manage</Btn><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Install mod')},event)}>Import</Btn></div>}} live={{
         model:router?<select aria-label="Default model" value={router.default_model} onChange={event=>act(()=>api.setRouterSettings({default_model:event.target.value})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:sourceNotice('models','Reading models…'),
         preferFree:router?<D.Toggle label="Prefer free models" checked={router.free_first} onCheckedChange={value=>act(()=>api.setRouterSettings({free_first:value})).then(result=>{if(result)setRouter(result);})}/>:sourceNotice('models','Reading models…'),
@@ -1509,5 +1323,4 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
   window.UI.Connections = Connections;
   window.UI.WorkspaceRows = WorkspaceRows;
   window.UI.Storage = Storage;
-  window.UI.settingsDoors = doors;
 })();

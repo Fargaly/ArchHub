@@ -326,7 +326,9 @@
       const opened = await act(() => api.openTaskGraph(id));
       if (!opened || opened.cancelled) return;
       const held = tabsRef.current;
-      const tabs = held.tabs.some(tab => tab.id === id) ? held.tabs : [...held.tabs.filter(tab => tab.kept || tab.id === held.split), {id, kept: false}];
+      const title = String(api.getSnapshot().tasks?.find(row => row.id === id)?.title || '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 300);
+      const named = tab => tab.id === id && title ? {...tab, title} : tab;
+      const tabs = held.tabs.some(tab => tab.id === id) ? held.tabs.map(named) : [...held.tabs.filter(tab => tab.kept || tab.id === held.split), named({id, kept: false})];
       await act(() => saveCanvasTabs({...held, tabs, active: id, split: held.split === id ? '' : held.split}));
       setTask(id);
       setTaskFace(face === 'workshop' ? 'split' : face);
@@ -613,11 +615,10 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
-      dependencies: 'Dependencies',
       privacy: 'Privacy',
       appearance: 'Appearance',
       updates: 'Updates & About'
@@ -760,12 +761,18 @@
     const toastTone = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.tone || '') : '';
     const borderCol = toastTone === 'bad' ? 'var(--color-err, #e6705f)' : toastTone === 'warn' ? 'var(--color-warn, #e5b25a)' : A.line;
     const toastAction = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.action || toast.open) : null;
-    return <div role="alert" data-toast="" data-toast-tone={toastTone || 'info'} data-toast-paused={toastPaused ? 'true' : 'false'} className={'flex app-toast' + (toastTone ? ' tone-' + toastTone : '')} onMouseEnter={() => setToastPaused(true)} onMouseLeave={() => setToastPaused(false)} style={{
+    // The toast sits fully inside the window and above the visible composer, never over it (founder 2026-11-26).
+    // Portalled to <body>: a transformed or contained ancestor must not become its containing block and clip it.
+    const composerTop = Math.min(...[...document.querySelectorAll('[data-design="composer.surface"]')].filter(e => e.offsetParent).map(e => e.getBoundingClientRect().top));
+    const toastBottom = Number.isFinite(composerTop) && composerTop < window.innerHeight ? Math.max(24, window.innerHeight - composerTop + 8) : 24;
+    return window.ReactDOM.createPortal(<div role="alert" data-toast="" data-toast-tone={toastTone || 'info'} data-toast-paused={toastPaused ? 'true' : 'false'} className={'flex app-toast' + (toastTone ? ' tone-' + toastTone : '')} onMouseEnter={() => setToastPaused(true)} onMouseLeave={() => setToastPaused(false)} style={{
         position: 'fixed',
-        bottom: 24,
+        bottom: toastBottom,
         left: '50%',
         transform: 'translateX(-50%)',
-        maxWidth: '70vw',
+        boxSizing: 'border-box',
+        maxWidth: 'min(640px, calc(100vw - 32px))',
+        width: 'max-content',
         pointerEvents: 'auto',
         border: '1px solid ' + borderCol,
         borderRadius: 10,
@@ -785,7 +792,7 @@
         </div>
       </> : <><span>{toast.text || toast}</span>{toastAction && <Btn sm onClick={event => executeAction('ui.select', () => { setToast(''); return toastAction(); }, event)}>{toast.label || 'Open'}</Btn>}<Btn sm ghost onClick={event => executeAction("appShell.Dismiss.17", {
           setToast
-        }, event)}>Dismiss</Btn></>}</div>;
+        }, event)}>Dismiss</Btn></>}</div>, document.body);
   })()}
   {modal && <Dialog key={modal.kind + ':' + (modal.id || '')} modal={modal} close={close} />}
  </Ctx.Provider>;

@@ -365,7 +365,7 @@
           api,
           id,
           u
-        }, event)}>{api.contextLabel(id)} ×</button>)}</div>}<textarea ref={inputRef} data-design="composer.msg" className="composer-input" rows={u.route==='home'?1:2} aria-label="Message" placeholder={composerWidth<420?"Message…":composerWidth<640?"Ask or @ an agent…":placeholder} value={text} onChange={e => {
+        }, event)}>{api.contextLabel(id)} ×</button>)}</div>}<textarea dir="auto" ref={inputRef} data-design="composer.msg" className="composer-input" rows={u.route==='home'?1:2} aria-label="Message" placeholder={composerWidth<420?"Message…":composerWidth<640?"Ask or @ an agent…":placeholder} value={text} onChange={e => {
         setText(e.target.value);
         if (e.target.value.endsWith('@')) setContextOpen(true);
       }} onKeyDown={e => {

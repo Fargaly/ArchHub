@@ -719,7 +719,10 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
         identities = set()
         for tab in tabs:
             # flow: this tab shows the Flow view (one socket in and out per node); a view, no session file changes.
-            if (type(tab) is not dict or set(tab) - {'flow', 'pinned'} != {'id', 'kept'} or
+            # title: the task title when the tab was opened, so a tab names its work even after the task is removed.
+            if (type(tab) is not dict or set(tab) - {'flow', 'pinned', 'title'} != {'id', 'kept'} or
+                    type(tab.get('title', '')) is not str or len(tab.get('title', '')) > 300 or
+                    any(ord(c) < 32 for c in tab.get('title', '')) or
                     type(tab['id']) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', tab['id']) or
                     type(tab['kept']) is not bool or type(tab.get('flow', False)) is not bool or
                     type(tab.get('pinned', False)) is not bool or tab['id'] in identities):

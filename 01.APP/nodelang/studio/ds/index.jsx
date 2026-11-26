@@ -395,7 +395,7 @@
         <div style={{
           minWidth: 0,
           flex: 1
-        }}><div data-node-card-title="" title={typeof title === 'string' ? title : undefined} style={{
+        }}><div data-node-card-title="" dir="auto" title={typeof title === 'string' ? title : undefined} style={{
             fontSize: 13,
             fontWeight: 600,
             whiteSpace: 'nowrap',

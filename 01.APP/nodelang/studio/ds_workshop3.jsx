@@ -244,7 +244,7 @@
     if (sendRef) sendRef.current = send;
     if (docked) return <D.Composer as="form" className="dx-composer v22g-composer v48-composer" data-design="composer.surface" data-expanded={expanded} data-dx="composer" onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setExpanded(false);}} onSubmit={e=>{e.preventDefault();send();}}>
       <span data-design={thread ? 'thread.to' : 'composer.to'}><AgentPicker choices={choices} to={to} setTo={setTo} /></span>
-      <textarea ref={field} data-design={thread ? 'thread.msg' : 'composer.msg'} aria-label="Message" placeholder={'Message '+(choices.find(c=>c.handle===to)?.name || to || 'agents')} rows={1} value={text} onFocus={()=>setExpanded(true)} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} />
+      <textarea dir="auto" ref={field} data-design={thread ? 'thread.msg' : 'composer.msg'} aria-label="Message" placeholder={'Message '+(choices.find(c=>c.handle===to)?.name || to || 'agents')} rows={1} value={text} onFocus={()=>setExpanded(true)} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} />
       <button type="button" className="dx-quiet" data-design={thread ? 'thread.more' : 'composer.attach'} aria-label="Attach" onClick={()=>u.show('Canvas attachments')}>+</button>
       <Btn p type="button" data-design="composer.send" aria-busy={busy} disabled={!text.trim()||busy} onClick={event=>executeAction('ui.select',send,event)}><window.AHIcon name="send" size={13}/>Send</Btn>
     </D.Composer>;
@@ -252,7 +252,7 @@
       <AgentPicker choices={choices} to={to} setTo={setTo} />
       {replyTo && <div className="flex ws-small">Replying to {replyTo.name}<button type="button" className="ws-link" aria-label="Stop replying" onClick={() => executeAction("ui.select", () => setReplyTo(null))}>×</button></div>}
       {files.length > 0 && <div className="flex">{files.map(f => <button type="button" key={f.id} className="ws-link" onClick={() => executeAction("ui.select", () => u.act(() => api.removeComposerAttachment(f.id)))}>{f.name || f.path} ×</button>)}</div>}
-      <textarea ref={field} className="composer-input ws-input" rows={2} aria-label="Message" placeholder="Message this task…" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
+      <textarea dir="auto" ref={field} className="composer-input ws-input" rows={2} aria-label="Message" placeholder="Message this task…" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
       }} />
       <div className="flex ws-tools">

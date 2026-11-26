@@ -764,9 +764,12 @@
       .filter((card, index, all) => all.findIndex(row => (row.input_digest || row.id) === (card.input_digest || card.id)) === index);
     const stepTitle = (task, id) => (task.workflow || []).find(node => node.id === id)?.title || (task.sessionOpen ? s.graph.nodes.find(node => node.id === id)?.title : '') || 'A step';
     const failed = tasks.flatMap(task => (task.activity || []).filter(row => row.status === 'Error').map(row => ({task, row})));
-    const live = (s.agentGraph?.sessions || []).filter(agent => agent.status === 'working');
+    // Only agents working now: a task whose run record says it stopped (interrupted, limit reached) has nobody on it,
+    // whatever an older declaration of its last agent still says (founder 2026-11-26).
+    const stopped = task => Boolean(task && window.UI.taskRowReason(task));
+    const live = (s.agentGraph?.sessions || []).filter(agent => agent.status === 'working' && !stopped(tasks.find(task => task.id === agent.task)));
     const working = [...live.map(agent => ({key: 'live:' + agent.id, name: agent.name, task: tasks.find(task => task.id === agent.task)})),
-      ...tasks.filter(task => task.status === 'WIP' && !live.some(agent => agent.task === task.id)).map(task => ({key: task.id, name: task.owner || (task.agents || [])[0] || 'Agent', task}))];
+      ...tasks.filter(task => task.status === 'WIP' && !stopped(task) && !live.some(agent => agent.task === task.id)).map(task => ({key: task.id, name: task.owner || (task.agents || [])[0] || 'Agent', task}))];
     const run = async (key, action) => {
       if (acting.current) return;
       acting.current = key;

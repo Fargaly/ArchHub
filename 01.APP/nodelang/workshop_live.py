@@ -342,7 +342,15 @@ def live_agents(with_status=False):
     baboom = own_session()
     live = live_ids()
     agents, seen = [], set()
+    from datetime import datetime, timedelta, timezone
+    from .application_update import saved_application_settings
+    from .settings_owner import _application_setting_default
+    hours = saved_application_settings().get('forget_idle_agents_hours') or _application_setting_default('forget_idle_agents_hours')
+    # Settings › This PC › Forget idle agents after: an agent that stopped reporting drops off the list.
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     for row in rows:
+        if str(row.get('updated_at') or cutoff) < cutoff:
+            continue
         app = row.get('runtime') or row.get('app')
         if app in live and row.get('native_session_id') and row['native_session_id'] not in live[app]:
             continue   # its native id is not a session the Workshop's own list returns: a stale row, never addressed

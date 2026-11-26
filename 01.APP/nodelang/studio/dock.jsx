@@ -292,6 +292,10 @@
     read() { if (window.innerWidth >= NARROW) narrowOpen.held = false; return narrowOpen.held; },
     set(value) { if (value === narrowOpen.read()) return; narrowOpen.held = value; narrowOpen.listeners.forEach(notify => notify()); }};
 
+  // Settings > This PC > Panels writes the same one layout the dock does (settings_owner.dock_layout).
+  window.UI.dockModel.current = record => normalize(record, window.innerWidth);
+  window.UI.dockModel.save = next => api.setDockLayout(next);
+
   function PeopleDockView({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
     const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED');

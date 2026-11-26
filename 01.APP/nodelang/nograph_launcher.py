@@ -411,6 +411,14 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     if '--baboom' in sys.argv[1:]:
         QTimer.singleShot(0, lambda: open_launch(sys.argv[1:]))
     seen_open = {"value": in_tray}
+    def prune_old_logs():  # Settings › This PC › Keep logs for / Cache size: once per launch
+        try:
+            from .pc_maintenance import _setting, prune_cache, prune_logs
+            prune_logs(state_dir, _setting(state_dir, 'log_keep_days'))
+            prune_cache(state_dir, _setting(state_dir, 'cache_limit_gb'))
+        except (OSError, ValueError) as refused:
+            print('  logs       : prune skipped (%s)' % refused, flush=True)
+    QTimer.singleShot(60_000, prune_old_logs)
     def consider_update():
         update = server.application_update
         if update is None:

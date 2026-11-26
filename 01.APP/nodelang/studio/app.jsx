@@ -21,6 +21,27 @@
   const routeNames = window.ArchHubRouteNames;
   const modalActions = {'Talk':'startVoiceInput','Timesheet':'settleTimesheet','Import skill':'importHostSkill','Contest decision':'contestDecision','Add comment':'addComment','Change plan':'changePlan','Connector bundle':'inspectConnectorBundle','Notifications':'readNotification'};
   // v22g applyLook: the approved palette's contrast calculation, shared by these controls.
+  // Settings > This PC look rows (archhub-directions applyLook): theme set, panel/canvas/text colours, UI scale, density, wire width.
+  const LOOK_SOCKETS = [['Event socket colour', 'cyan'], ['Number socket colour', 'warn'], ['File socket colour', 'ok'], ['Yes / no socket colour', 'purple']];
+  const THEME_SETS = {Blueprint: {dark: ['#121a26', '#0c121b', '#e4ebf5'], light: ['#f6f9fc', '#eef3f9', '#142033']},
+    Vellum: {dark: ['#171a16', '#10120f', '#e9ebe3'], light: ['#fafaf6', '#f2f3ec', '#1b1d17']}};
+  function applyLook(settings, light) {
+    const row = label => settings.find(r => r.id === 'Appearance.' + label), style = document.documentElement.style;
+    const palette = THEME_SETS[row('Theme set')?.value]?.[light ? 'light' : 'dark'];
+    const pick = (label, i) => { const r = row(label); return r && window.UI.settingOverridden?.(r) ? r.value : palette ? palette[i] : ''; };
+    const rgb = value => value.slice(1).match(/../g).map(part => parseInt(part, 16));
+    const mix = (a, b, k) => '#' + rgb(a).map((value, i) => Math.round(value * (1 - k) + rgb(b)[i] * k).toString(16).padStart(2, '0')).join('');
+    const panel = pick('Panel colour', 0), toward = light ? '#000000' : '#ffffff';
+    const tokens = {'bg-panel': panel, 'bg-canvas': pick('Canvas colour', 1), ink: pick('Text colour', 2),
+      ...(panel ? {bg: mix(panel, '#000000', light ? .02 : .33), 'bg-deep': mix(panel, '#000000', light ? .04 : .5), 'bg-raised': mix(panel, toward, .035),
+        'bg-soft': mix(panel, toward, .045), 'bg-hover': mix(panel, toward, .07)} : {bg: '', 'bg-deep': '', 'bg-raised': '', 'bg-soft': '', 'bg-hover': ''})};
+    for (const [key, value] of Object.entries(tokens)) value ? style.setProperty('--color-' + key, value) : style.removeProperty('--color-' + key);
+    for (const [label, key] of LOOK_SOCKETS) { const r = row(label); r && window.UI.settingOverridden?.(r) ? style.setProperty('--color-' + key, r.value) : style.removeProperty('--color-' + key); }
+    const scale = row('UI scale')?.value || 100;
+    document.body.style.zoom = scale === 100 ? '' : String(scale / 100);
+    document.body.classList.toggle('compact', row('Density')?.value === 'Compact');
+    style.setProperty('--wire-width', (row('Wire width')?.value || 2) + 'px');
+  }
   function canvasColours(light) {
     const style=window.getComputedStyle(document.documentElement), read=key=>style.getPropertyValue('--color-'+key).trim();
     if(!['bg-panel','bg-canvas','accent','accent-hi','accent-press','ink-soft'].every(key=>/^#[0-9a-f]{6}$/i.test(read(key))))return;
@@ -167,6 +188,9 @@
       accentHi: A.accentHi,
       accentPress: A.accentPress
     });
+    // Settings > This PC > Canvas socket colours: the same tokens the sockets and wires read (A.cyan/warn/ok/purple).
+    const originalSockets = React.useRef(Object.fromEntries(LOOK_SOCKETS.map(([, key]) => [key, A[key]])));
+    for (const [label, key] of LOOK_SOCKETS) { const row = s.settings.find(r => r.id === 'Appearance.' + label); A[key] = row && window.UI.settingOverridden(row) ? row.value : originalSockets.current[key]; }
     if (accent === '#d97757') Object.assign(A, originalColours.current);else {
       A.accent = accent;
       A.accentHi = accent;
@@ -174,7 +198,7 @@
     }
     React.useEffect(() => {
       const preference = window.matchMedia('(prefers-color-scheme: dark)');
-      const applyTheme = () => { document.documentElement.dataset.theme = theme === 'System' ? (preference.matches ? 'Dark' : 'Light') : theme; canvasColours(document.documentElement.dataset.theme==='Light'); };
+      const applyTheme = () => { document.documentElement.dataset.theme = theme === 'System' ? (preference.matches ? 'Dark' : 'Light') : theme; applyLook(s.settings, document.documentElement.dataset.theme==='Light'); canvasColours(document.documentElement.dataset.theme==='Light'); };
       applyTheme();
       if (theme === 'System') preference.addEventListener('change', applyTheme);
       document.documentElement.dataset.contrast = String(s.settings.find(r => r.id === 'Appearance.High contrast')?.value);

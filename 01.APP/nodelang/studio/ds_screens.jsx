@@ -1735,6 +1735,7 @@
       return () => window.removeEventListener('keydown', esc, true);
     }, [following]);
     const scopeNodes = React.useMemo(() => new Map(s.graph.nodes.map(n=>[n.id,n])), [s.graph.nodes]);
+    const settingWires = s.settings.find(r => r.id === 'Appearance.Wires')?.value, snapGrid = s.settings.find(r => r.id === 'Appearance.Snap to grid')?.value === true;
     const scopeEnd = (id,port,ports) => {
       if(shownIds.has(id))return {node:id,port};
       const seen=new Set([id]);
@@ -1761,12 +1762,13 @@
       .filter(w => !(foldedOwner(s.graph.nodes.find(n=>n.id===w.from)) && foldedOwner(s.graph.nodes.find(n=>n.id===w.to))))
       .map(w => { const projected={...w}; if(sessionNode)for(const side of ['from','to']){const owner=s.graph.nodes.find(n=>n.id===w[side]);if(foldedOwner(owner)&&owner.id!==sessionNode.id){projected[side]=sessionNode.id;projected[side+'Port']=owner.id+':'+w[side+'Port'];}} return projected; })
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
-        const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
+        // A file's own Wires choice wins; else Settings > This PC > Wires (On hover: only the selected nodes' wires).
+        const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility || {Hidden: 'Hidden', 'On hover': selected.includes(w.from) || selected.includes(w.to) ? 'Visible' : 'Hidden'}[settingWires], portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
         return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: !w.rejected, focusable: !w.rejected, selected: selectedWires.includes(w.id),
           data: {color, inferred:w.inferred||w.enabled===false, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint'||w.enabled===false ? .2 : .9}};
       });
-    }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId, u.canvasTabs?.expanded]);
+    }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId, u.canvasTabs?.expanded, settingWires, settingWires === 'On hover' && selected.join(',')]);
     // Flow view (a view: no file, wire or socket changes): one wire per pair of steps, drawn between the two flow sockets.
     const flowEdges = flowView ? edges.filter((edge,index,all) => ![edge.source,edge.target].some(id => { const end = visible.find(n => n.id === id); return !end || end.fixed || expandedGroup(end); }) && all.findIndex(row => row.source === edge.source && row.target === edge.target) === index)
       .map(edge => ({...edge, sourceHandle: 'flow:out', targetHandle: 'flow:in'})) : edges;
@@ -2162,7 +2164,7 @@
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionMode={crossing?'partial':'full'} onSelectionEnd={event=>setSelected(boxSelection(flowNodes.map(f=>({id:f.id,x:f.position.x,y:f.position.y,w:f.measured?.width||0,h:f.measured?.height||0})),boxFrom.current.at,toFlow(event),event.clientX<boxFrom.current.x))}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
+       snapToGrid={snapGrid} snapGrid={[16, 16]} zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{planned?.length>0 && sessionNode && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-plan-steps" data-plan-projection="" style={{position:'absolute',left:Math.round((sessionNode.x+396)/8)*8,top:Math.round(sessionNode.y/8)*8}}>{planned.map((step,index)=><article key={index} data-plan-step={index+1} data-state={step.kind}><b>{step.title}</b><span>{step.label}</span></article>)}</div></RF.ViewportPortal>}
        {presenceAgent && RF.ViewportPortal && <RF.ViewportPortal><div className="v48-presence nodrag nopan" data-design="canvas.presence" data-state={busyStep.status==='Running'?'working':'waiting'} data-on={presenceStep.id} style={{position:'absolute',left:presenceStep.x,top:presenceStep.y-32}}><window.UI.Av id={presenceAgent} size={18}/><b>{presenceAgent}</b><em>{busyStep.status==='Running'?'working':'needs you'}</em>
          <button type="button" data-design="canvas.follow" data-follow="" aria-pressed={following} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setFollowing(!following);u.setToast(following?'Stopped following.':'Following '+presenceAgent+': the view moves with it. Scroll, click the canvas or press Esc to stop.');}},event)}>{following?'Following · Stop':'Follow'}</button></div></RF.ViewportPortal>}</FlowStage>
     </CanvasContext.Provider>

@@ -70,7 +70,8 @@ def default_update_policy(state_dir=None):
     return {"check_interval_minutes": int(params["update_check_interval_minutes"]),
             "idle_minutes": int(params["update_idle_minutes"]),
             "auto_apply_on_quit": bool(params["update_auto_apply_on_quit"]),
-            "channel": "preview" if params["update_preview_channel"] else "stable"}
+            "channel": "preview" if params["update_preview_channel"] else "stable",
+            "install_when_idle": bool(params["update_install_when_idle"])}
 
 
 def canvas_job_running(owner) -> bool:
@@ -359,6 +360,8 @@ class ApplicationUpdate:
         # Activity first: while he works no connector scan runs and nothing installs (the guard in _auto_allowed
         # scans processes, and its connector-only answer would shorten the update pulse).
         if not closing:
+            if self._policy().get("install_when_idle") is False:  # Settings › Updates: Install when I quit
+                return False
             if user_idle is None:
                 user_idle = self.user_is_idle()
             if not user_idle:

@@ -6,6 +6,7 @@ from .user_paths import state_directory, stamp_test_write
 import inspect
 import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import os
@@ -948,6 +949,8 @@ def appearance_settings(function='readControls', args=(), settings=None):
         'appearanceRowSpacing': {'min': 0, 'max': 16, 'tokenId': 'layout.nodeRowGap'},
         'appearanceNodeRadius': {'min': 0, 'max': 24, 'tokenId': 'node.radius'},
         'appearanceNodeHeader': {'tokenId': 'color.bgPanel'},
+        'appearanceUiScale': {'min': 80, 'max': 140, 'step': 10},
+        'appearanceWireWidth': {'min': 1, 'max': 6},
     }
     appearance = {
         'Appearance.Theme': ('appearanceTheme', 'Theme', 'Dark', ('Dark', 'Light', 'System')),
@@ -961,6 +964,20 @@ def appearance_settings(function='readControls', args=(), settings=None):
         'Appearance.Row spacing': ('appearanceRowSpacing', 'Row spacing', int(design['layout']['nodeRowGap']['$value'].removesuffix('px')), ()),
         'Appearance.Node radius': ('appearanceNodeRadius', 'Node radius', int(design['node']['radius']['$value'].removesuffix('px')), ()),
         'Appearance.Node header colour': ('appearanceNodeHeader', 'Node header colour', tokens['archhub-original']['color']['bgPanel']['$value'], ()),
+        # Settings › This PC look rows (archhub-directions ROWS); app.jsx applies them, the canvas reads snap/wires.
+        'Appearance.Theme set': ('appearanceThemeSet', 'Theme set', 'Forge', ('Forge', 'Blueprint', 'Vellum')),
+        'Appearance.Panel colour': ('appearancePanelColour', 'Panel colour', THEME['bg_panel'], ()),
+        'Appearance.Canvas colour': ('appearanceCanvasColour', 'Canvas colour', THEME['bg_canvas'], ()),
+        'Appearance.Text colour': ('appearanceTextColour', 'Text colour', THEME['ink'], ()),
+        'Appearance.UI scale': ('appearanceUiScale', 'UI scale', 100, ()),
+        'Appearance.Density': ('appearanceDensity', 'Density', 'Comfortable', ('Comfortable', 'Compact')),
+        'Appearance.Snap to grid': ('appearanceSnapGrid', 'Snap to grid', False, ()),
+        'Appearance.Wires': ('appearanceWires', 'Wires', 'Always', ('Always', 'On hover', 'Hidden')),
+        'Appearance.Wire width': ('appearanceWireWidth', 'Wire width', 2, ()),
+        'Appearance.Event socket colour': ('appearanceEventColour', 'Event socket colour', THEME['cyan'], ()),
+        'Appearance.Number socket colour': ('appearanceNumberColour', 'Number socket colour', THEME['warn'], ()),
+        'Appearance.File socket colour': ('appearanceFileColour', 'File socket colour', THEME['ok'], ()),
+        'Appearance.Yes / no socket colour': ('appearanceBooleanColour', 'Yes / no socket colour', THEME['purple'], ()),
     }
     preferences = settings.read()
     if function == 'setAppearance':
@@ -970,7 +987,7 @@ def appearance_settings(function='readControls', args=(), settings=None):
         value = args[1]
         if (choices and value not in choices) or (type(default) is bool and type(value) is not bool):
             raise Refused('Choose a valid value for this Appearance setting.')
-        if key in ('appearanceAccent', 'appearanceNodeHeader') and (not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value)):
+        if isinstance(default, str) and default.startswith('#') and (not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value)):
             raise Refused('Choose a six-digit accent colour.')
         if key == 'appearanceTextScale' and (type(value) is not int or not 75 <= value <= 150):
             raise Refused('Choose a text scale from 75 to 150 percent.')
@@ -1278,7 +1295,47 @@ _APPLICATION_SETTING_SPECS = {
     "update_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "update_preview_channel": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "update_install_when_idle": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "forget_idle_agents_hours": ("number", {"min": 1, "max": 72, "step": 1}),
+    "log_keep_days": ("number", {"min": 1, "max": 90, "step": 1}),
+    "cache_limit_gb": ("number", {"min": 1, "max": 32, "step": 1}),
 }
+
+BACKUP_TARGETS = ('This PC', 'Office server', 'OneDrive', 'Google Drive')
+
+
+def maintenance_settings(function, args, settings, state_dir):
+    """Settings › This PC › The app: where backups go, Back up now and Export diagnostics (pc_maintenance does the work).
+    The choices live in the Settings owner file under 'maintenance'."""
+    from . import pc_maintenance
+    held = settings.read().get('maintenance', {})
+    held = held if isinstance(held, dict) else {}
+    if function == 'setMaintenance':
+        if len(args) != 2 or args[0] not in ('backupTo', 'backupDir'):
+            raise ValueError('Choose Back up to or Backup folder.')
+        key, value = args
+        if key == 'backupTo' and value not in BACKUP_TARGETS:
+            raise ValueError('Choose a listed backup place.')
+        if key == 'backupDir' and (type(value) is not str or len(value) > 4096 or (value and not Path(value).is_dir())):
+            raise ValueError('Choose an existing folder for backups.')
+        held = {**held, key: value}
+        settings.update({'maintenance': held})
+    elif function == 'backUpNow':
+        from .session_files import sessions_directory
+        target = pc_maintenance.backup_destination(held.get('backupTo', 'This PC'), held.get('backupDir') or None,
+                                                   state_dir=state_dir)
+        done = pc_maintenance.back_up_now(state_dir, sessions_directory(), target)
+        held = {**held, 'lastBackup': {'path': done['path'], 'at': datetime.now(timezone.utc).isoformat()}}
+        settings.update({'maintenance': held})
+    elif function == 'exportDiagnostics':
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
+        done = pc_maintenance.export_diagnostics(state_dir, Path(state_dir) / 'Diagnostics' / ('archhub-diagnostics-%s.zip' % stamp))
+        return {'maintenance': {**held, 'diagnostics': done['path']}}
+    elif function != 'readMaintenance':
+        raise ValueError('Use a declared maintenance action.')
+    return {'maintenance': {'backupTo': held.get('backupTo', 'This PC'), 'backupDir': held.get('backupDir', ''),
+                            'defaultBackupDir': str(Path(state_dir) / 'Backups'), 'lastBackup': held.get('lastBackup')}}
+
 
 def _application_setting_default(key: str) -> int:
     from .library_engines import LIBRARY_ITEM_ENGINES

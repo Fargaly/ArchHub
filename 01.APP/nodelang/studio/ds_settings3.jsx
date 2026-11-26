@@ -333,7 +333,8 @@
     wsTick: ['tick_cadence_minutes', 'min', 1, 1, 1440, 1], voiceHold: ['voice_hold_ms', 'ms', 1, 100, 5000, 50],
     toastSecs: ['toast_visible_ms', 's', 1000, 1, 60, 1], updCheck: ['update_check_interval_minutes', 'min', 1, 1, 1440, 1],
     updIdle: ['update_idle_minutes', 'min', 1, 1, 1440, 1], backups: ['backup_count', '', 1, 1, 100, 1],
-    backupLimit: ['backup_budget_bytes', 'GB', 1073741824, 1, 1024, 1], tray: ['keep_running_in_tray'], updChannel: ['update_preview_channel']};
+    backupLimit: ['backup_budget_bytes', 'GB', 1073741824, 1, 1024, 1], tray: ['keep_running_in_tray'], updChannel: ['update_preview_channel'],
+    retireAgents: ['forget_idle_agents_hours', 'h', 1, 1, 72, 1], logKeep: ['log_keep_days', 'days', 1, 1, 90, 1], cacheLimit: ['cache_limit_gb', 'GB', 1, 1, 32, 1]};
   // Projects › Standard version: the open session's Session node 'standard' parameter (one owner: the .archhub file).
   function SessionStandardControl() {
     const s=useData(),u=useApp(),node=(s.graph?.nodes||[]).find(row=>row.fixed&&row.type==='thing.session');
@@ -352,7 +353,7 @@
         error=>{if(current)setLoad({status:'error',saved:{},message:error.message||String(error)});});
       return ()=>{current=false;};
     },[attempt]);
-    const stored=load.saved[key]??s.runtimeParameters?.[key];
+    const stored=load.saved[key]??load.saved._defaults?.[key]??s.runtimeParameters?.[key];
     const save=value=>u.act(()=>api.setApplicationSetting(key,value)).then(saved=>{if(saved)setLoad({status:'loaded',saved});});
     if(load.status==='waiting')return <span role="status">Reading…</span>;
     if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
@@ -605,11 +606,82 @@
     ['reviewShare', 'Review before sharing'],
     ['askTranscribe', 'Ask before meeting transcription'],
     ['retention', 'Conversation retention'],
-    ['tray', 'Keep running in tray']
+    ['tray', 'Keep running in tray'],
+    ['themeSet', 'Theme set'], ['bgPanel', 'Panel colour'], ['bgCanvas', 'Canvas colour'], ['ink', 'Text colour'],
+    ['uiScale', 'UI scale'], ['density', 'Density'], ['snapGrid', 'Snap to grid'], ['wireVis', 'Wires'], ['wire', 'Wire width'],
+    ['cyan', 'Event socket colour'], ['warn', 'Number socket colour'], ['ok', 'File socket colour'], ['purple', 'Yes / no socket colour']
   ]);
   function pcOwner(settings, spec) {
     const label=pcOwnerLabels[spec[0]]||spec[1];
-    return settings.find(row=>row.label===label && (spec[0] in pcOwnerLabels || row.page==='Appearance'));
+    return settings.find(row=>row.id==='Appearance.'+label)||settings.find(row=>row.label===label && (spec[0] in pcOwnerLabels || row.page==='Appearance'));
+  }
+  // Agents on this PC: the runtime each gate row reports on (workshop_live.live_agents 'app').
+  const GATE_APPS={'Claude Code':'claude',Codex:'codex',OpenCode:'opencode','Gemini CLI':'gemini',BABOOM:'baboom',Antigravity:'antigravity'};
+  // Settings > Updates: one choice over the two update owner values (application_update.default_update_policy).
+  const UPDATE_MODES={'Install when idle':[true,true],'Ask me first':[false,true],'Install when I quit':[true,false]};
+  function UpdateModeControl({label,options}) {
+    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',saved:{}}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{
+      let current=true;
+      setLoad(held=>({...held,status:'waiting'}));
+      Promise.resolve().then(()=>api.getApplicationSettings()).then(saved=>{if(current)setLoad({status:saved&&Object.keys(saved).length?'loaded':'empty',saved:saved||{}});},
+        error=>{if(current)setLoad({status:'error',saved:{},message:error.message||String(error)});});
+      return ()=>{current=false;};
+    },[attempt]);
+    if(load.status==='waiting')return <span role="status">Reading…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    // empty: nothing saved yet, so both owner values are the app defaults (install automatically, also when idle).
+    const auto=load.saved.update_auto_apply_on_quit!==false, idle=load.saved.update_install_when_idle!==false;
+    const value=!auto?'Ask me first':idle?'Install when idle':'Install when I quit';
+    const choose=async mode=>{const [a,i]=UPDATE_MODES[mode];await u.act(()=>api.setApplicationSetting('update_auto_apply_on_quit',a));const saved=await u.act(()=>api.setApplicationSetting('update_install_when_idle',i));if(saved)setLoad({status:'loaded',saved});};
+    return <><select aria-label={label} value={value} onChange={event=>choose(event.target.value)}>{options.map(option=><option key={option}>{option}</option>)}</select>{load.status==='empty'&&<small className="muted">App default</small>}{load.status==='loaded'&&<small className="muted">Saved</small>}</>;
+  }
+  // Settings > The app: backup place, folder, Back up now and Diagnostics (settings_owner.maintenance_settings).
+  function MaintenanceControl({id,label,options}) {
+    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',held:null}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{
+      let current=true;
+      setLoad(held=>({...held,status:'waiting'}));
+      Promise.resolve().then(()=>api.readMaintenance()).then(result=>{if(current)setLoad({status:result?.maintenance?'loaded':'empty',held:result?.maintenance||null});},
+        error=>{if(current)setLoad({status:'error',held:null,message:error.message||String(error)});});
+      return ()=>{current=false;};
+    },[attempt]);
+    if(load.status==='waiting')return <span role="status">Reading…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='empty')return <span role="status">The app reported no backup settings. <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    const shown=load.status==='loaded'&&<span className="visually-hidden" role="status">Read from the app</span>;
+    const held=load.held, keep=result=>{if(result?.maintenance)setLoad({status:'loaded',held:{...held,...result.maintenance}});return result;};
+    const save=(key,value)=>u.act(()=>api.setMaintenance(key,value)).then(keep);
+    if(id==='backupTo')return <>{shown}<select aria-label={label} value={held.backupTo} onChange={event=>save('backupTo',event.target.value)}>{options.map(option=><option key={option}>{option}</option>)}</select></>;
+    if(id==='backupDir')return <>{shown}<input aria-label={label} key={held.backupDir} defaultValue={held.backupDir} placeholder={held.defaultBackupDir} onBlur={event=>{const v=event.target.value.trim();if(v!==held.backupDir)save('backupDir',v);}} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur();}}/></>;
+    if(id==='backupNow')return <>{shown}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(api.backUpNow).then(keep).then(r=>{if(r?.maintenance)u.setToast('Backed up to '+r.maintenance.lastBackup.path);})},event)}>Back up now</Btn>{held.lastBackup&&<small className="muted" title={held.lastBackup.path}>Last: {new Date(held.lastBackup.at).toLocaleString()}</small>}</>;
+    return <>{shown}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(api.exportDiagnostics).then(r=>{if(r?.maintenance)u.setToast('Diagnostics saved to '+r.maintenance.diagnostics);})},event)}>Export diagnostics</Btn></>;
+  }
+  // Share the look: the Look rows as one JSON on the clipboard; Paste applies each through its own owner.
+  function LookTransfer() {
+    const s=useData(),u=useApp();
+    const look=()=>Object.fromEntries(s.settings.filter(row=>row.page==='Appearance'&&String(row.id).startsWith('Appearance.')).map(row=>[row.id,row.value]));
+    const copy=async()=>{await navigator.clipboard.writeText(JSON.stringify({format:'archhub.look',version:1,values:look()},null,1));u.setToast('Look copied. Paste it on another PC from Share the look.');};
+    const paste=async()=>{
+      const held=JSON.parse(await navigator.clipboard.readText());
+      if(held?.format!=='archhub.look'||held.version!==1||!held.values||typeof held.values!=='object')throw Error('Copy a look from Share the look first.');
+      const known=new Set(s.settings.map(row=>row.id));
+      for(const [id,value] of Object.entries(held.values))if(known.has(id)&&String(id).startsWith('Appearance.'))await api.setSetting(id,value);
+      u.setToast('Look applied.');
+    };
+    return <span className="flex"><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(copy)},event)}>Copy the look</Btn><Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(paste)},event)}>Paste the look</Btn></span>;
+  }
+  // Panels: the user's one dock layout (settings_owner.dock_layout through dock.jsx), set from here.
+  function DockLayoutControl({id,label,options}) {
+    const s=useData(),u=useApp(),M=window.UI.dockModel;
+    if(!M?.save)return <span role="status">Reading the panel layout…</span>;  // dock.jsx loads with the studio
+    const layout=M.current(s.dockLayout?.layout);
+    const save=next=>u.act(()=>M.save(next));
+    if(id==='layout'){const name=M.presetName(layout).replace(' (changed)','');
+      return <span className="sheet-segments" role="group" aria-label={label}>{options.map(option=><button type="button" key={option} aria-pressed={name===option} onClick={event=>executeAction('projects.controls.activate',{handler:()=>save(M.presetLayout(option,window.innerWidth))},event)}>{option}</button>)}</span>;}
+    const bottom=id==='dockB', range=bottom?M.BOTTOM:M.LEFT, value=bottom?layout.bottom?.h:layout.left.w;
+    if(bottom&&!layout.bottom)return <span className="muted">Drag a panel to the bottom edge to open the bottom panel</span>;
+    return <span className="sheet-stepper"><input type="number" aria-label={label} min={range.min} max={range.max} step={10} key={value} defaultValue={value} onBlur={event=>{const v=event.target.valueAsNumber;if(event.target.validity.valid&&v!==value)save(bottom?M.setBottomHeight(layout,v):M.setLeftWidth(layout,v));}} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur();}}/><span>px</span></span>;
   }
   function UpcomingControl({spec}) {
     const [,label,,type,options]=spec;
@@ -646,7 +718,14 @@
           {isChangedOwner(owner)&&<Btn sm ghost aria-label={'Reset '+label} disabled={scopeDisabled} onClick={event=>executeAction('sharedUI.Reset.21',{api,row:owner,u,destination},event)}>Reset</Btn>}
         </div>;
       }
-      if(owner)return <SettingControl row={owner} raw={advanced}/>;
+      if(owner&&spec[3]==='color'){
+        const choose=color=>u.act(()=>api.setSetting(owner.id,color,destination));
+        return <div className="sheet-accent-swatches" role="group" aria-label={label} data-setting={owner.id}>
+          <label><input type="color" aria-label={'Pick '+label} value={owner.value} disabled={scopeDisabled} onChange={e=>choose(e.target.value)}/><span>{owner.value}</span></label>
+          {isChangedOwner(owner)&&<Btn sm ghost aria-label={'Reset '+label} disabled={scopeDisabled} onClick={event=>executeAction('sharedUI.Reset.21',{api,row:owner,u,destination},event)}>Reset</Btn>}
+        </div>;
+      }
+      if(owner)return <SettingControl row={owner} raw={advanced} presentation={spec[3]==='seg'&&id!=='theme'?'seg':undefined}/>;
       switch(id) {
         case 'shortcuts': return <details open={advanced||undefined} className="sheet-keybindings"><summary>Show all</summary><KeyboardSettings/></details>;
         case 'sessions': return actButton(shortPath(s.sessionsFolder||'Choose a folder'),()=>u.act(api.chooseSessionsFolder),s.sessionsFolder);
@@ -666,11 +745,19 @@
         case 'auditLog': return actButton('Open',()=>u.show('App health'));
         case 'profileIO': return <details><summary>Export or import</summary><PreferencesTransfer/></details>;
         case 'sysgraph': return window.UI.SystemGraph?<window.UI.SystemGraph/>:<UpcomingControl spec={spec}/>;
+        case 'lookIO': return <LookTransfer/>;
+        case 'layout': case 'dockL': case 'dockB': return <DockLayoutControl id={id} label={label} options={options}/>;
+        case 'updMode': return <UpdateModeControl label={label} options={options}/>;
+        case 'backupTo': case 'backupDir': case 'backupNow': case 'diagExport': return <MaintenanceControl id={id} label={label} options={options}/>;
+        case 'telemetry': return <span className="muted">Off · ArchHub sends no usage data</span>;
+        case 'askTranscribe': return <><span className="muted">Always on · transcription starts only after everyone agrees</span>{actButton('Open Meetings',()=>u.go('meetings'))}</>;
       }
       if(id.startsWith('gate.')){
         const agent=(s.agents||[]).find(a=>a.name===label);
         if(agent?.gate==='live')return <span>Gates on</span>;
         if(agent?.gate==='missing')return actButton('Manage gates',()=>u.go('settings/Dependencies'));
+        const live=(s.liveAgents||[]).find(a=>a.app===GATE_APPS[label]||a.name===label);
+        return <><span className="muted">{live?'Running · gates '+(live.governance||'not checked'):'Not running on this PC'}</span>{actButton('Manage gates',()=>u.go('settings/Dependencies'))}</>;
       }
       if(APP_SETTING_ROWS[id])return <AppSettingControl id={id} label={label}/>;
       return <UpcomingControl spec={spec}/>;

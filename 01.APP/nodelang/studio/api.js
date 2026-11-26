@@ -1357,6 +1357,8 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
  api[functionName]=(...args)=>settingsAction(functionName,args);
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
+// Settings › This PC › The app: backup place and folder, Back up now, Export diagnostics (settings_owner.maintenance_settings).
+for(const functionName of ['readMaintenance','setMaintenance','exportDiagnostics'])api[functionName]=(...args)=>settingsAction(functionName,args);
 api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value,destination=state.settingsDestination){
@@ -1379,7 +1381,7 @@ api.readHomeLayout=()=>settingsAction('readHomeLayout');
 api.setHomeLayout=value=>settingsAction('setHomeLayout',[value]);
 api.setDockLayout=(layout,saved)=>settingsAction('setDockLayout',saved===undefined?[layout]:[layout,saved]);  // the user's one dock layout, the same on Home and in every session
 // The Workshop settings the update policy reads (one owner: settings/settings.json); the node parameter edits the same value.
-const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel'];
+const UPDATE_POLICY_KEYS=['update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel','update_install_when_idle'];
 api.getApplicationSettings=()=>settingsAction('readApplicationSettings',[]);
 api.setApplicationSetting=async(key,value)=>{const saved=await settingsAction('setApplicationSetting',[key,value]);await refreshLiveUpdatePolicy();return saved;};
 let settingsScopeRequests=0;

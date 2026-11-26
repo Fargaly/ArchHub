@@ -2553,7 +2553,17 @@ def r_settings_action(s, req):
                 save_application_setting(args[0], args[1], s.state_dir)
             except ValueError as refused:
                 raise Refused(str(refused)) from None
-        return {'ok': True, 'result': saved_application_settings(s.state_dir)}
+        from . import settings_owner as application_defaults
+        # '_defaults': what the app uses for a key nobody saved yet, so a Settings row never shows a blank.
+        defaults = {key: (bool if editor == 'boolean' else int)(application_defaults._application_setting_default(key))
+                    for key, (editor, _bounds) in application_defaults._APPLICATION_SETTING_SPECS.items()}
+        return {'ok': True, 'result': {**saved_application_settings(s.state_dir), '_defaults': defaults}}
+    if function in ('readMaintenance', 'setMaintenance', 'backUpNow', 'exportDiagnostics'):
+        from .settings_owner import maintenance_settings
+        try:
+            return {'ok': True, 'result': maintenance_settings(function, list(args or []), settings, s.state_dir)}
+        except (OSError, ValueError) as refused:
+            raise Refused(str(refused)) from None
     if function in ('readCanvasTabs', 'setCanvasTabs'):
         from .settings_owner import canvas_tabs
         return {'ok': True, 'result': canvas_tabs(function, args, settings)}

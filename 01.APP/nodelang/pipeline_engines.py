@@ -70,7 +70,7 @@ def _local_input_path(path: str, *, label: str) -> str:
 
 
 UPDATE_POLICY_SETTINGS = ("update_check_interval_minutes", "update_idle_minutes", "update_auto_apply_on_quit",
-                          "update_preview_channel")  # read by application_update.default_update_policy
+                          "update_preview_channel", "update_install_when_idle")  # read by application_update.default_update_policy
 
 
 def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -116,6 +116,10 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'update_idle_minutes': params.get('update_idle_minutes'),
             'update_auto_apply_on_quit': params.get('update_auto_apply_on_quit'),
             'update_preview_channel': params.get('update_preview_channel'),
+            'update_install_when_idle': params.get('update_install_when_idle'),
+            'forget_idle_agents_hours': params.get('forget_idle_agents_hours'),
+            'log_keep_days': params.get('log_keep_days'),
+            'cache_limit_gb': params.get('cache_limit_gb'),
         }
         from .application_update import saved_application_settings
         saved = saved_application_settings()

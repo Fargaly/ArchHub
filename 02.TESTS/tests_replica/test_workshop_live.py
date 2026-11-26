@@ -593,3 +593,23 @@ def test_the_composer_reports_queued_as_waiting_and_only_a_refusal_as_failed(mon
     answer = nograph_server._inject('hi', ['cursor', 'claude', 'codex'])['answer'].splitlines()
     assert answer == ['… Cursor · queued for next turn via hook', '✓ Claude · 12 ms', '✗ Codex · session closed']
     assert profiled == ['queued', 'delivered', 'failed: session closed']
+
+
+def test_an_agent_that_stopped_reporting_drops_off_after_the_settings_hours(monkeypatch):
+    # Settings > This PC > Forget idle agents after (application setting forget_idle_agents_hours).
+    from nodelang import workshop_live, workshop_mailbox, application_update
+    declare({'claude/sessionID': 'fresh-1'}, 'Fresh Agent')
+    declare({'threadId': 'quiet-1'}, 'Quiet Agent')
+    real = workshop_mailbox.read_declarations
+
+    def aged(*args, **kwargs):
+        rows = real(*args, **kwargs)
+        for row in rows:
+            if row.get('display_name') == 'Quiet Agent':
+                row['updated_at'] = '2000-01-01T00:00:00+00:00'
+        return rows
+    monkeypatch.setattr(workshop_mailbox, 'read_declarations', aged)
+    monkeypatch.setattr(workshop_live, 'live_ids', lambda: {})
+    monkeypatch.setattr(application_update, 'saved_application_settings', lambda *a: {'forget_idle_agents_hours': 1})
+    names = {a['name'] for a in workshop_live.live_agents()}
+    assert 'Fresh Agent' in names and 'Quiet Agent' not in names

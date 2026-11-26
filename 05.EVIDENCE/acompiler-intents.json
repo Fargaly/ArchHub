@@ -78,7 +78,19 @@
         "02.TESTS/tests_replica/test_workshop_live.py",
         "01.APP/nodelang/pc_maintenance.py",
         "02.TESTS/tests/test_pc_maintenance.py",
-        "02.TESTS/tests/test_settings_this_pc.py"
+        "02.TESTS/tests/test_settings_this_pc.py",
+        "01.APP/nodelang/agent_budget.py",
+        "01.APP/nodelang/baboom_companion_process.py",
+        "01.APP/nodelang/baboom_native_companion.py",
+        "01.APP/nodelang/baboom_persona.py",
+        "01.APP/nodelang/baboom_reactions.py",
+        "01.APP/nodelang/canvas_triggers.py",
+        "01.APP/nodelang/host_exec.py",
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/native_stop_hook.py",
+        "01.APP/nodelang/stem_graph_evaluation.py",
+        "01.APP/nodelang/window_commands.py",
+        "02.TESTS/tests_replica/test_agent_settings_owner.py"
       ]
     },
     "WHOLEDESIGN-A8": {

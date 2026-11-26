@@ -48,16 +48,17 @@
     const s = useData(),
       u = useApp(),
       [runs, setRuns] = React.useState({status: 'waiting', rows: []}),
-      [attempt, setAttempt] = React.useState(0);
+      [attempt, setAttempt] = React.useState(0),
+      lastRun = JSON.stringify(s.graph?.canvasRun || null);  // a finished run re-reads Activity while the dialog is open
     React.useEffect(() => {
       let current = true;
-      setRuns(held => ({...held, status: 'waiting'}));
+      setRuns(held => held.rows.length ? held : {...held, status: 'waiting'});
       api.readHostAvailability?.().catch(() => null);
       api.listAgentsWorking?.().catch(() => null);
       api.recentRuns(60).then(rows => { if (current) setRuns({status: (rows || []).length ? 'loaded' : 'empty', rows: rows || []}); },
         error => { if (current) setRuns({status: 'error', rows: [], message: error.message || String(error)}); });
       return () => { current = false; };
-    }, [attempt]);
+    }, [attempt, lastRun]);
     const agents = (s.agents || []).filter(a => a.kind !== 'observation');
     const ungated = agents.filter(a => a.gate === 'missing').map(a => a.name);
     const live = (s.hosts || []).filter(h => h.state === 'connected' || h.state === 'listening').map(h => h.name || h.id);

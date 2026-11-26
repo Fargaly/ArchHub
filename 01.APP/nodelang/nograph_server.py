@@ -3302,7 +3302,8 @@ def r_session_model(s, req):
         limit = body.get('limit', 60)
         if type(limit) is not int or not 1 <= limit <= 500:
             raise Refused('Choose 1 to 500 runs.')
-        return {'ok': True, 'runs': files.recent_runs(limit)}
+        known = [row['path'] for row in _request_session_files(s, req)._owned()]
+        return {'ok': True, 'runs': files.recent_runs(limit, known_paths=known)}
     path = str(files.local_path(str(body.get('path') or '')))
     if action == 'get':
         return {'ok': True, 'session': _mark_live(files.session_fields(files.read_document(path), path), _live_triggers(s))}

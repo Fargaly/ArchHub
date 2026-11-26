@@ -39,7 +39,7 @@ export default async function run({input, isolatedRoot, out, step, js, clickText
     }, folder, file);
     await click('button[data-design="header.mark"]');
     assert.ok(await clickText('App health', '[role="menuitem"]'));
-    const selector = '[data-screen="receipts"]';
+    const selector = '[data-design="app.health"]';
     assert.ok(await until(() => page(s => !!document.querySelector(s), selector), Boolean));
     const rows = () => page(s => Array.from(document.querySelectorAll(s + ' table:first-of-type tbody tr'), tr => tr.innerText.trim()), selector);
     const before = await rows();
@@ -61,13 +61,14 @@ export default async function run({input, isolatedRoot, out, step, js, clickText
   await step(steps[1], async () => {
     await click('nav button[aria-label="Settings"]');
     await click('nav[aria-label="Settings categories"] button[aria-label="This PC"]');
-    await click('[data-settings-full] button','Open dependencies');
+    // Dependencies is a section of Settings > This PC (no page of its own).
+    await click('[data-design-section="Dependencies"] h3','Dependencies');
     const contents = () => page(() => {
-      const root = document.querySelector('[data-screen="dependencies"]');
-      return root && {ready:Number([...root.querySelectorAll('.dependency-metric')].find(e=>e.querySelector('span.muted')?.textContent==='Ready')?.querySelector('b')?.textContent),
-        names:[...root.querySelectorAll('.package-summary .fill b')].map(e=>e.textContent.trim()).sort()};
+      const root = document.querySelector('[data-design-section="Dependencies"]');
+      return root && {ready:Number([...root.querySelectorAll('.dependency-metric')].find(e=>e.querySelector('small')?.textContent==='Ready')?.querySelector('b')?.textContent),
+        names:[...root.querySelectorAll('.dependency-row .sheet-property-copy b')].map(e=>e.textContent.trim()).sort()};
     });
-    const before = await until(contents, Boolean);
+    const before = await until(contents, v => Number.isFinite(v?.ready), 140, 300);
     assert.ok(before && Number.isFinite(before.ready), 'Dependencies did not show its Ready count');
     await shot('Dependencies before package check');
     let requestId, status, inventory, lookupError;
@@ -93,7 +94,7 @@ export default async function run({input, isolatedRoot, out, step, js, clickText
         inventory = {ready:packages.filter(p=>p.state==='Ready').length, names:packages.map(p=>p.name).sort()};
       } catch(error) { lookupError=error.message; }
     });
-    assert.ok(await clickText('Check all'));
+    await click('[data-design-section="Dependencies"] header button','Check all');
     await until(async () => inventory || lookupError, Boolean, 140, 300);
     if (!inventory) return {not_exercised:lookupError || 'The package inventory did not finish within the readback window',got:{before}};
     const after = await until(contents, v => v?.names.length === inventory.names.length, 20, 150);

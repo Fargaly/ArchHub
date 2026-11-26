@@ -986,7 +986,7 @@ kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
 .app-header .header-workspace{min-width:0;gap:26px;font-weight:500}.app-header .header-icon{width:30px;height:30px}
 .app-header .header-search{width:220px;margin-right:8px;color:var(--v22g-ink3)}
 .app-header .header-new{height:28px;padding:0 10px 0 8px;margin-right:8px;background:var(--v22g-accent-soft);color:var(--v22g-accent-ink);font-size:12.5px;font-weight:600}
-.app-rail{gap:4px!important;background:var(--color-bg)!important;padding:10px 0!important}
+.app-rail{gap:4px!important;background:var(--color-bg)!important;padding:10px 0!important;position:relative;z-index:160}/* above every dialog overlay: the rail always navigates, and navigating closes the dialog */
 .app-rail button:not([aria-label="Your account"]){height:60px!important;width:60px!important;align-content:start!important;padding:5px 0!important;gap:4px!important;font-size:11px!important;font-weight:500!important}
 .app-rail button>span{font-size:11px!important;font-weight:500!important}.app-rail button>span:first-child{height:30px!important;width:36px!important;display:grid;place-items:center}
 .app-rail [aria-label="Your account"]{background:var(--color-user-av)!important;color:var(--color-on-user-av)!important;font-size:11px!important;font-weight:600!important;margin:8px 0 0!important}

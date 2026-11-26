@@ -3291,20 +3291,32 @@ def read_runs(path, limit=200, identity=None):
     return _run_rows(target)[-limit:]
 
 
-def recent_runs(limit=60, directory=None):
-    """App health > Activity: the newest run receipts of every session file (its .runs.jsonl), newest first."""
+def recent_runs(limit=60, directory=None, known_paths=()):
+    """App health > Activity: the newest run receipts of every session file (its .runs.jsonl), newest first.
+
+    Runs sit beside their file, so the folders of every file this account opened or saved are read too."""
     folder = Path(directory) if directory else sessions_directory(_wait_for_locks=False)
-    titles = {}
-    for path, rkey, dstamp in _scandir_archhub(folder):
-        try:
-            base, _, _ = _session_summary_entry(path, resolved_key=rkey, fast_dir_stamp=dstamp)
-        except (OSError, ValueError):
-            continue
-        titles[base['id']] = (base['title'] or path.stem, str(path))
+    folders = list(dict.fromkeys([folder, *(Path(known).parent for known in known_paths)]))
     rows = []
-    for target in folder.glob('*.runs.jsonl'):
-        title, path = titles.get(target.name[:-len('.runs.jsonl')], (target.name[:-len('.runs.jsonl')], ''))
-        rows.extend({**run, 'title': title, 'path': path} for run in _run_rows(target)[-limit:])
+    for each in folders:
+        titles = {}
+        try:
+            scanned = list(_scandir_archhub(each))
+        except (OSError, ValueError):  # a network or missing folder lists no runs
+            continue
+        for path, rkey, dstamp in scanned:
+            try:
+                base, _, _ = _session_summary_entry(path, resolved_key=rkey, fast_dir_stamp=dstamp)
+            except (OSError, ValueError):
+                continue
+            titles[base['id']] = (base['title'] or path.stem, str(path))
+        try:
+            targets = list(each.glob('*.runs.jsonl'))
+        except OSError:
+            continue
+        for target in targets:
+            title, path = titles.get(target.name[:-len('.runs.jsonl')], (target.name[:-len('.runs.jsonl')], ''))
+            rows.extend({**run, 'title': title, 'path': path} for run in _run_rows(target)[-limit:])
     rows.sort(key=lambda row: row.get('end') or row.get('start') or row.get('at') or 0, reverse=True)
     return rows[:limit]
 

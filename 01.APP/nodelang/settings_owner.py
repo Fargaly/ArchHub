@@ -1050,6 +1050,8 @@ AGENT_SETTINGS = (
     ('dailyTokens', 'Daily tokens per agent', 'What agents may do', 'No cap', ('No cap', '50k tokens', '200k tokens', '1M tokens')),
     ('budgetWindow', 'Token budget counts over', 'What agents may do', '24 hours', ('24 hours', '7 days', '30 days')),
     ('driftCheck', 'Watch agent checks for outside changes', 'What agents may do', True, ()),
+    ('questionsDay', 'Questions an agent may ask you a day', 'What agents may do', 50, (0, 50)),
+    ('wsWho', 'Who may message whom', 'Workshop', 'Anyone', ('Anyone', 'Coordinator', 'Only you')),
     ('autoTo', 'Automation messages go to', 'Workshop', 'You', ('You', 'Coordinator', 'BABOOM')),
     ('trigConcurrency', 'If it is still running', 'Automations', 'Skip', ('Skip', 'Queue')),
     ('trigCatchUp', 'Runs missed while closed', 'Automations', 'Skip', ('Skip', 'Run once')),

@@ -62,3 +62,34 @@ def test_a_run_stops_at_its_model_calls_before_any_send(owner):
             route_chat('openrouter/free', [{'role': 'user', 'content': 'hi'}], opener=lambda *a, **k: pytest.fail('sent'))
     finally:
         RUN_CALLS.reset(token)
+
+
+def test_a_run_started_inside_a_run_never_waits_for_its_own_slot(owner, monkeypatch):
+    import threading
+    from nodelang import session_files
+    owner('Running agents at once', 1)
+    calls = []
+
+    def inner(document, **options):
+        calls.append(document)
+        return session_files.run_document('nested') if document == 'outer' else {'ok': True}
+    monkeypatch.setattr(session_files, '_run_document', inner)
+    done = threading.Thread(target=session_files.run_document, args=('outer',), daemon=True)
+    done.start()
+    done.join(10)
+    assert not done.is_alive() and calls == ['outer', 'nested']
+
+
+def test_workshop_rules_refuse_by_setting_and_hold_questions_over_the_cap(owner):
+    from nodelang.workshop_mailbox import _agent_send_rules, application_history
+    identity = {'sender': 'Agent [agent:1:2]', 'sender_key': 'agent:1:2', 'sender_label': 'Agent'}
+    question = {'to': 'ahmed', 'text': 'Which folder do you want?'}
+    assert _agent_send_rules(None, {'to': 'codex', 'text': 'hi'}, identity)['to'] == 'codex'   # default: anyone
+    owner('Who may message whom', 'Coordinator')
+    with pytest.raises(ValueError, match='coordinator'):
+        _agent_send_rules(None, {'to': 'codex', 'text': 'hi'}, identity)
+    assert _agent_send_rules(None, {'to': '717', 'text': 'hi'}, identity)['to'] == '717'
+    owner('Questions an agent may ask you a day', 0)
+    with application_history() as history:
+        held = _agent_send_rules(history, question, identity)
+    assert held['to'] == 'workshop' and held['reply_to'] and held['text'].startswith('Waiting for you')

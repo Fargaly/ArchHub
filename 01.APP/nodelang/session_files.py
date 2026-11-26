@@ -4,6 +4,7 @@ from __future__ import annotations
 from .user_paths import state_directory, test_writer, stamp_test_write, strip_test_write
 
 from collections import Counter
+from contextvars import ContextVar
 import copy
 from functools import lru_cache
 import hashlib
@@ -1766,11 +1767,13 @@ class TriggerWaitingForApproval(ValueError):
 
 _RUNS = threading.Condition()
 _RUNNING = [0]
+_HOLDING = ContextVar('run_slot_held')
 
 
 def run_document(document, **options):
     """Settings › Agents › Running agents at once: above it a new top-level run waits in line; Model calls per run caps it."""
-    if options.get('depth') or options.get('plan_only') or options.get('pure_only'):
+    # A run started from inside a run (a nested or skill run, at any depth) uses its parent's slot: no self-wait.
+    if options.get('depth') or options.get('plan_only') or options.get('pure_only') or _HOLDING.get(None):
         return _run_document(document, **options)
     from .model_router import RUN_CALLS
     from .settings_owner import agent_setting
@@ -1778,9 +1781,11 @@ def run_document(document, **options):
     with _RUNS:
         _RUNS.wait_for(lambda: _RUNNING[0] < agent_setting('maxRuns'))
         _RUNNING[0] += 1
+    held = _HOLDING.set(True)
     try:
         return _run_document(document, **options)
     finally:
+        _HOLDING.reset(held)
         RUN_CALLS.reset(calls)
         with _RUNS:
             _RUNNING[0] -= 1

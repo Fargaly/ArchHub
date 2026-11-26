@@ -2178,6 +2178,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     result = _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
                     target, detail = result["declaration"]["request_id"], {"status":body["status"]}
                 else:
+                    body = _agent_send_rules(selected, body, identity)
                     result = _send(selected, body, identity, resolve_live=True, sender_binding={"session":identity["sender_key"],
                         "runtime":runtime, "native_session_id":next(iter(context.values()), None)})
                     target, detail = result["message_id"], {"to":result["to"], "repeat":result.get("repeat", False)}
@@ -2568,6 +2569,43 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
                 "matched": len(routing["recipients"]),
                 "unresolved": missing,
                 "status": "returned" if missing else "queued for " + target if waiting and not routing["recipients"] else "recorded"}
+
+
+def _asks_founder(text):
+    """The reply detector reads the body; it only answers for agent-addressed messages, so ask it under one."""
+    return _asks_for_reply({"content": "To 717:\n" + text, "evidence": []})
+
+
+def _agent_send_rules(history, body, identity):
+    """Settings › Agents › Workshop for an agent's send: Who may message whom, and Questions an agent may ask you a
+    day. Over the cap a question waits in one daily digest to the founder and the agent decides by his rules."""
+    from .settings_owner import agent_setting
+    parts = {part.strip().lstrip("@").casefold() for part in body["to"].split(",") if part.strip()}
+    founder = bool(parts) and parts <= {"ahmed", "founder", "you"}
+    who = agent_setting("wsWho")
+    if (not founder and not body.get("reply_to") and who != "Anyone"
+            and not (who == "Coordinator" and parts <= {"717", "coordinator"})):
+        raise ValueError("Settings › Agents › Who may message whom is " + who + ": "
+                         + ("send it to the coordinator, who passes it on." if who == "Coordinator"
+                            else "only the founder starts a thread; answer in his threads."))
+    if not founder or not _asks_founder(body["text"]):
+        return body
+    cap = agent_setting("questionsDay")
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    asked = sum(1 for (content,) in history._db.execute(
+        "SELECT content FROM messages WHERE conversation_id=? AND author=? AND created_at>=?",
+        (ROOM, identity["sender"], since))
+        if content.partition("\n")[0].removeprefix("To ").rstrip(":").strip().casefold() in ("ahmed", "founder", "you")
+        and _asks_founder(content.partition("\n")[2]))
+    if asked < cap:
+        return body
+    with history._transaction(write=True):
+        digest = history.append(ROOM, author="Workshop", category=CATEGORY,
+            content="To founder:\n" + identity["sender_label"] + " reached today's " + str(cap) + " questions "
+                    "(Settings › Agents). Its further questions wait under this message; it decides by your rules "
+                    "and reports. No reply needed.",
+            idempotency_key="questions-digest:" + identity["sender_key"] + ":" + since[:10])
+    return {**body, "to": "workshop", "reply_to": digest["id"], "text": "Waiting for you: " + body["text"]}
 
 
 def _recent_mailbox_peers(history, space):

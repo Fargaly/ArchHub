@@ -1527,6 +1527,12 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         scanSkills:<span>Always on</span>,bbDisclose:<span>Always on</span>,drift:<HookDrift/>,
         // BaboomVoiceInput captures with Windows speech (SAPI dictation) in the language Windows is set to.
         sttEngine:<span>Windows speech</span>,sttLang:<span>Windows speech language</span>,
+        // Planned (the Capture/Record work): plain status, no control, nothing saved.
+        agentComputer:<span>Planned: agents get a sandboxed Windows of their own</span>,panes:<span>Planned: BABOOM docks as a pane inside Revit and AutoCAD</span>,
+        gradMinRuns:<span>Planned: a step with the same result every time runs as a script</span>,
+        // No price per model exists in the router: tokens from its own request record, never a made-up amount.
+        budgetRun:router?<span>{(router.requests||[]).reduce((sum,row)=>sum+(Number.isFinite(row.tokens)?row.tokens:0),0).toLocaleString()} tokens in the last {(router.requests||[]).length} model requests. Set a price per model to see money</span>:sourceNotice('models','Reading models…'),
+        budgetCurrency:<span>Set a price per model to see money</span>,
         preferFree:router?<D.Toggle label="Prefer free models" checked={router.free_first} onCheckedChange={value=>act(()=>api.setRouterSettings({free_first:value})).then(result=>{if(result)setRouter(result);})}/>:sourceNotice('models','Reading models…'),
         fallback:router?(router.fallback_models.join(' → ')||'None'):sourceNotice('models','Reading models…'),
         runMode:focusSection==='What agents may do'?<Permissions/>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Run mode</Btn>,

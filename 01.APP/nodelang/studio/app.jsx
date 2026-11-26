@@ -182,6 +182,25 @@
       document.documentElement.lang = arabic ? 'ar' : 'en';
       document.documentElement.dir = direction === 'Always' || (direction === 'Auto' && arabic) ? 'rtl' : 'ltr';
     }, [arabic, direction]);
+    // Settings › Account › Numbers: with ١٢٣ every digit the app shows (labels, answers, times) is Arabic-Indic.
+    // Typed fields, code, shortcuts and the Numbers choice itself keep their digits; 123 puts the shown digits back.
+    const arabicDigits = s.settings.find(row => row.id === 'Account.Numbers')?.value === '١٢٣';
+    React.useEffect(() => {
+      const [from, to] = arabicDigits ? [/[0-9]/g, '٠١٢٣٤٥٦٧٨٩'] : [/[٠-٩]/g, '0123456789'];
+      const shown = text => { const parent = text.parentElement; return parent && !parent.closest('input,textarea,code,pre,kbd,script,style,[contenteditable="true"],[data-setting="Account.Numbers"]'); };
+      const convert = node => {
+        if (node.nodeType === 3) {
+          if (!shown(node)) return;
+          const value = node.nodeValue.replace(from, digit => to[arabicDigits ? digit : digit.charCodeAt(0) - 0x660]);
+          if (value !== node.nodeValue) node.nodeValue = value;
+        } else if (node.nodeType === 1) node.childNodes.forEach(convert);
+      };
+      convert(document.body);
+      if (!arabicDigits) return undefined;
+      const observer = new window.MutationObserver(records => records.forEach(record => record.type === 'characterData' ? convert(record.target) : record.addedNodes.forEach(convert)));
+      observer.observe(document.body, {subtree: true, childList: true, characterData: true});
+      return () => observer.disconnect();
+    }, [arabicDigits]);
     const navLabel = label => window.UI.productLabel(label, s.settings);
     const appearanceKey = JSON.stringify(s.settings.filter(r => String(r.id).startsWith('Appearance.')).map(r => [r.id, r.value]));
     const originalColours = React.useRef({

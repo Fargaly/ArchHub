@@ -559,13 +559,16 @@ def missed_while_closed(params, last, now=None):
     """Catch-up policy run_once: a schedule whose next fire after the last one has already passed."""
     if str(params.get('catch_up') or _default('trigCatchUp')) != 'run_once' or type(last) not in (int, float):
         return False
-    due = last + next_delay(params, datetime.datetime.fromtimestamp(last))
+    from .settings_owner import settings_zone
+    due = last + next_delay(params, datetime.datetime.fromtimestamp(last, settings_zone()))
     return due <= (now or time.time())
 
 
 def next_delay(params, now=None):
-    """Seconds until a schedule fires: every N seconds, or daily at HH:MM."""
-    now = now or datetime.datetime.now()
+    """Seconds until a schedule fires: every N seconds, or daily at HH:MM in Settings › Account › Time zone."""
+    if now is None:
+        from .settings_owner import settings_zone
+        now = datetime.datetime.now(settings_zone())
     every = params.get('every_seconds')
     if every not in (None, '', '0', 0):
         return max(TRIGGER_NODE['params']['min_every_seconds'], float(every))
@@ -573,7 +576,7 @@ def next_delay(params, now=None):
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= now:
         target += datetime.timedelta(days=1)
-    return (target - now).total_seconds()
+    return target.timestamp() - now.timestamp()  # real seconds, also across a daylight-saving change
 
 
 def folder_snapshot(params):

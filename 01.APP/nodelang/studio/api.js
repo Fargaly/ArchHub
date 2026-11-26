@@ -78,6 +78,10 @@ let activeSurface='home', canvasRefresh=null;
 let providerRoster=[], workingAgents=[], agentsChecked=false;
 let controlsGeneration=0, preferenceGeneration=0, notificationGeneration=0;
 let appearanceWrites=Promise.resolve();
+// Settings rows with writes still queued: id -> {value, count}. The row shows the last value asked for until every write
+// for it has answered, so a second quick click starts from the first click's value, not from the value before it.
+const pendingSettings=new Map();
+const withPending=rows=>pendingSettings.size?rows.map(row=>pendingSettings.has(row.id)?{...row,value:pendingSettings.get(row.id).value}:row):rows;
 let composerGeneration=0;
 let updateGeneration=0, updateActionPending=false;
 let updateReadsPending=0, updateReadFailures=0, updateReadAfter=0;
@@ -1358,7 +1362,7 @@ async function settingsAction(functionName, args=[], destination=state.settingsD
  const values={};
  if(Array.isArray(result.appearanceSettings)){
   const ids=new Set(result.appearanceSettings.map(row=>row.id));
-  values.settings=[...state.settings.filter(row=>!ids.has(row.id)),...result.appearanceSettings];
+  values.settings=withPending([...state.settings.filter(row=>!ids.has(row.id)),...result.appearanceSettings]);
   values.libraryPorts=(state.libraryPorts||[]).map(item=>item.setting?{...item,setting:result.appearanceSettings.find(row=>row.id===item.setting.id)||item.setting}:item);
  }
 
@@ -1397,9 +1401,14 @@ api.readDevices=()=>settingsAction('readDevices');
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value,destination=state.settingsDestination){
  const identity=state.profile.id;
+ const held=pendingSettings.get(id)||{count:0};pendingSettings.set(id,{value,count:held.count+1});
+ publish({settings:withPending(state.settings)});
+ const settle=()=>{const now=pendingSettings.get(id);if(now&&--now.count<=0)pendingSettings.delete(id);};
  const admittedEpoch=accountEpoch;const write=appearanceWrites.then(()=>{if(admittedEpoch!==accountEpoch)throw desktopError();if(identity!==state.profile.id)throw Error('Your account changed. Retry this preference edit.');return settingsAction('setAppearance',[id,value],destination);});
  appearanceWrites=write.catch(()=>{});
- return write.then(result=>preferenceChanged(id,result));
+ // A refused write puts the owner's value back (re-read), never the optimistic one.
+ return write.then(result=>{settle();if(!pendingSettings.has(id)&&Array.isArray(result?.appearanceSettings))publish({settings:withPending(state.settings.map(row=>result.appearanceSettings.find(next=>next.id===row.id)||row))});return preferenceChanged(id,result);},
+  async error=>{settle();if(!pendingSettings.has(id))await refreshSettingsControls().catch(()=>{});throw error;});
 }
 function preferenceChanged(id,result){
  const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id||id==='Projects.Working subfolder'&&n.type==='thing.session'&&!n.params?.project_folder||id==='Projects.BCF version'&&n.type==='daily.ifc_check_bcf'&&(n.params?.bcf_version==='From Projects'||Object.hasOwn(n.params||{},'bcf_version')&&!n.params.bcf_version)).map(n=>n.id);

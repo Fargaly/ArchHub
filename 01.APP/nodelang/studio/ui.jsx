@@ -592,6 +592,8 @@
     const u = useApp(), data = useData(), destination = data.settingsDestination;
     const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||row.id.startsWith('Agents.')||row.id.startsWith('Connections.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
     const changed = settingOverridden(row);
+    // A row whose owner service is not built is a plain status, never a control that saves and does nothing.
+    if (row.unavailable) return <span className="muted" role="status" data-setting={row.id}>{row.unavailable}</span>;
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',
         gap: 3
@@ -793,6 +795,11 @@
     };
   }
   window.UI.useWireSocial = useWireSocial;
+  // Settings › Account › Time zone: the zone every date and time the app shows is written in.
+  window.UI.zoned = (options = {}) => {
+    const zone = String(window.ArchHubAPI?.getSnapshot().settings?.find(row => row.id === 'Account.Time zone')?.value || '').split(' ')[0];
+    return zone ? {...options, timeZone: zone} : options;
+  };
 })();
 // WIRE-social end
 // WIRE-settings

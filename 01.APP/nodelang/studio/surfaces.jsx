@@ -68,7 +68,7 @@
       [!!s.agentSummary && !/checking|incomplete/i.test(s.agentHealth || s.agentSummary), 'Agents', s.agentSummary || 'Checking running agents…', null],
       [!!s.profile?.signedIn, 'Account', s.profile?.signedIn ? 'Signed in' : 'Not signed in', s.profile?.signedIn ? null : ['Sign in', go('settings/Account')]]
     ];
-    const when = at => at ? new Date((at > 1e12 ? at : at * 1000)).toLocaleString() : '';
+    const when = at => at ? new Date((at > 1e12 ? at : at * 1000)).toLocaleString([], window.UI.zoned()) : '';
     const activity = [
       ...runs.rows.map(r => ({at: r.end || r.start || r.at || 0, operation: r.title || 'Canvas run', detail: [r.kind === 'manual' ? 'Run' : String(r.kind || '').replace(/^trigger\./, ''), r.error].filter(Boolean).join(' · '), status: r.state || ''})),
       ...(s.notifications || []).map(n => ({at: Date.parse(n.at || n.created_at || '') / 1000 || 0, operation: n.title || 'Notice', detail: n.text || n.body || '', status: n.read ? 'read' : 'new'})),

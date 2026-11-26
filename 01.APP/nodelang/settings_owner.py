@@ -1352,30 +1352,36 @@ def _choices(page, group, label, key, options):
     return _declared(page, group, label, key, 'choice', options[0], options=list(options))
 
 
+# A row whose owner service is not built shows this plain status instead of a control, and refuses a value.
+CLOUD = 'Off: needs the ArchHub cloud service, which does not offer this'
+WATCH = 'Off: needs a program watcher, which ArchHub does not have'
+DRIVER = 'Off: needs a Windows app driver, which ArchHub does not have'
+
+
 # Settings rows the design shows in Account, Connections and Projects whose one owner is settings/settings.json
 # (scoped User > Workspace > Session like every preference). Each is also a Library 'thing.setting' node, and the
 # effective values reach every agent that joins a session (workshop_tasks.handover 'settings').
 DECLARED_ROWS = (
     _choices('Account', 'You', 'Numbers', 'numerals', ('123', '١٢٣')),
     _choices('Account', 'You', 'Time zone', 'timezone', ('Asia/Riyadh (GMT+3)', 'Africa/Cairo (GMT+2)', 'Asia/Dubai (GMT+4)', 'UTC')),
-    _choices('Account', 'Plan & access', 'Office policy', 'policyLock', ('Office defaults, I can change them', 'Office policy, locked by the admin')),
+    _declared('Account', 'Plan & access', 'Office policy', 'policyLock', 'choice', 'Office defaults, I can change them', options=['Office defaults, I can change them', 'Office policy, locked by the admin'], unavailable=CLOUD),
     _choices('Account', 'Plan & access', 'Role for new invites', 'inviteRole', ('Member', 'Admin')),  # the cloud invites as member or admin only,
-    _choices('Account', 'Plan & access', 'Access ends', 'accessEnds', ('Never', '30 days', '90 days', 'When the project ends')),
-    _declared('Account', 'Community', 'Public profile', 'commProfile', 'boolean', False),
-    _declared('Account', 'Community', 'Profile address', 'commHandle', 'text', '', pattern=r'[a-z0-9-]{0,40}'),
-    _declared('Account', 'Community', 'Tell me about installs and comments', 'commNotify', 'boolean', True),
-    _declared('Account', 'Social media', 'Send replies without asking', 'socialAutoSend', 'boolean', False),
-    _choices('Account', 'Social media', 'Inbox digest', 'socialDigest', ('Off', 'Daily', 'Weekly')),
+    _declared('Account', 'Plan & access', 'Access ends', 'accessEnds', 'choice', 'Never', options=['Never', '30 days', '90 days', 'When the project ends'], unavailable=CLOUD),
+    _declared('Account', 'Community', 'Public profile', 'commProfile', 'boolean', False, unavailable=CLOUD),
+    _declared('Account', 'Community', 'Profile address', 'commHandle', 'text', '', pattern=r'[a-z0-9-]{0,40}', unavailable=CLOUD),
+    _declared('Account', 'Community', 'Tell me about installs and comments', 'commNotify', 'boolean', True, unavailable=CLOUD),
+    _declared('Account', 'Social media', 'Send replies without asking', 'socialAutoSend', 'boolean', False, unavailable=CLOUD),
+    _declared('Account', 'Social media', 'Inbox digest', 'socialDigest', 'choice', 'Off', options=['Off', 'Daily', 'Weekly'], unavailable=CLOUD),
     _declared('Account', 'Brain and cloud sync', 'Memories in each request', 'brainContext', 'number', 8, control='range', min=0, max=50),
-    _declared('Account', 'Brain and cloud sync', 'Brain follows your account', 'syncBrain', 'boolean', True),
+    _declared('Account', 'Brain and cloud sync', 'Brain follows your account', 'syncBrain', 'boolean', True, unavailable=CLOUD),
     _declared('Account', 'Brain and cloud sync', 'Settings follow your account', 'syncSettings', 'boolean', True),
-    _choices('Account', 'Brain and cloud sync', 'Sync .archhub files', 'syncFiles', ('Off', 'Office server', 'OneDrive', 'Google Drive')),
-    _declared('Connections', 'Program options', 'Connect when a program opens', 'autoConnect', 'boolean', True),
+    _declared('Account', 'Brain and cloud sync', 'Sync .archhub files', 'syncFiles', 'choice', 'Off', options=['Off', 'Office server', 'OneDrive', 'Google Drive'], unavailable=CLOUD),
+    _declared('Connections', 'Program options', 'Connect when a program opens', 'autoConnect', 'boolean', True, unavailable=WATCH),
     _choices('Connections', 'Program options', 'Revit version', 'revitVer', ('Newest installed', '2026', '2025', '2024', '2023')),
     _choices('Connections', 'Program options', 'AutoCAD version', 'acadVer', ('Newest installed', '2026', '2025', '2024')),
-    _declared('Connections', 'Program options', 'Other Windows apps agents may drive', 'uiaApps', 'text', '', pattern=r'[^\x00-\x1f]{0,400}'),
-    _declared('Connections', 'Phone and cloud', 'Let your cloud agents reach this PC', 'cloudReach', 'boolean', False),
-    _declared('Connections', 'Phone and cloud', 'Publish to ArchHub cloud', 'cloudPublish', 'boolean', False),
+    _declared('Connections', 'Program options', 'Other Windows apps agents may drive', 'uiaApps', 'text', '', pattern=r'[^\x00-\x1f]{0,400}', unavailable=DRIVER),
+    _declared('Connections', 'Phone and cloud', 'Let your cloud agents reach this PC', 'cloudReach', 'boolean', False, unavailable=CLOUD),
+    _declared('Connections', 'Phone and cloud', 'Publish to ArchHub cloud', 'cloudPublish', 'boolean', False, unavailable=CLOUD),
     _declared('Connections', 'Network', 'Proxy', 'proxy', 'text', '', pattern=r'[^\s@]{0,200}'),  # no user:password@ (secrets never in this file)
     _declared('Connections', 'Network', 'Work offline', 'offline', 'boolean', False),
     _declared('Connections', 'Notifications', 'Notify when something needs you', 'notifyNeeds', 'boolean', True),
@@ -1415,6 +1421,8 @@ DECLARED_ROWS = (
 def declared_value(spec, value):
     """A value outside the row's declared type, options, range or pattern is refused, never stored."""
     kind = spec['type']
+    if spec.get('unavailable'):
+        raise ValueError(spec['label'] + ': ' + spec['unavailable'] + '.')
     if kind == 'boolean' and type(value) is bool:
         return value
     if kind == 'choice' and value in spec['options']:
@@ -1488,6 +1496,17 @@ def declared_setting(identity):
         held = {}
     return held.get(spec['storageKey'], spec['default']) if isinstance(held, dict) else spec['default']
 
+
+def settings_zone():
+    """Settings › Account › Time zone as a tzinfo: schedules fire, and shown times read, in it."""
+    label = declared_setting('Account.Time zone')
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(label.split(' ')[0])
+    except Exception:  # a PC without the tz database: the label's own GMT offset
+        from datetime import timedelta
+        offset = re.search(r'GMT([+-]\d+)', label)
+        return timezone(timedelta(hours=int(offset.group(1)))) if offset else timezone.utc
 
 def preference_setting(identity):
     row = next((row for row in preference_settings()['appearanceSettings'] if row['id'] == identity), None)

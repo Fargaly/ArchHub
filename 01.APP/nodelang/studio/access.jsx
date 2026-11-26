@@ -134,7 +134,7 @@ AccessAction4: () => devicesRead.retry()});
     }}>
       <div style={{padding: '6px 10px', borderBottom: '1px solid var(--color-line-soft, #1e1e24)', marginBottom: 2}}>
         <div style={{fontSize: 13, fontWeight: 600, color: 'var(--color-ink, #ece8e0)'}}>{label}</div>
-        <div className="muted" style={{fontSize: 11}}>{localRole} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : 'while you share it'}</div>
+        <div className="muted" style={{fontSize: 11}}>{localRole} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleTimeString([], window.UI.zoned({hour: '2-digit', minute: '2-digit'})) : 'while you share it'}</div>
       </div>
       <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('settings.access.GuestPreview', {grant, sessionLabel, setOpen, u}, event)}>Preview what they see</button>
       <button type="button" role="menuitem" className="listbutton" onClick={event => executeAction('settings.access.GuestStop', {firstName, grant, setOpen, u}, event)}>Stop sharing with {firstName}</button>
@@ -175,7 +175,7 @@ AccessAction4: () => devicesRead.retry()});
       {read.state === 'loaded' && <span className="visually-hidden">Watchers loaded.</span>}
       {read.state !== 'waiting' && watch.capability === false && <p className="muted" role="note">{watch.reason || 'Read-only watcher invitations are unavailable.'}</p>}
       {watch.capability && !active.length && <p className="muted">Nobody is watching. Right-click a session on Home and choose Invite to watch.</p>}
-      {active.map(grant => <div className="team-access-row" key={grant.id}><div className="flex" style={{gap: 10}}><GuestAvatar grant={grant} /><div><b>{grant.grantee}</b><small className="muted" style={{display: 'block'}}>{(grant.session || '').split(/[\\/]/).pop() || 'Session'} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleString() : 'while you share it'}</small></div></div>
+      {active.map(grant => <div className="team-access-row" key={grant.id}><div className="flex" style={{gap: 10}}><GuestAvatar grant={grant} /><div><b>{grant.grantee}</b><small className="muted" style={{display: 'block'}}>{(grant.session || '').split(/[\\/]/).pop() || 'Session'} · {grant.expires ? 'until ' + new Date(grant.expires).toLocaleString([], window.UI.zoned()) : 'while you share it'}</small></div></div>
         <Btn sm aria-label={'Stop ' + grant.grantee + ' watching'} onClick={event => runAction('settings.access.WatchStop', grant, event)}>Stop</Btn></div>)}</Card>;
   }
   function WatchInvite({path, title}) {
@@ -194,7 +194,7 @@ AccessAction4: () => devicesRead.retry()});
   window.UI.WorkspaceRules = WorkspaceRules;
   // The recipient side: sessions shared with me, and a read-only view built only from the cloud projection.
   const WATCHING_ACTIONS = {"settings.access.WatchOpen": "WatchOpen", "settings.access.WatchingRetry": "WatchingRetry"};
-  const when = iso => iso ? new Date(iso).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : '';
+  const when = iso => iso ? new Date(iso).toLocaleString([], window.UI.zoned({dateStyle: 'medium', timeStyle: 'short'})) : '';
   function WatchingShared() {
     const s = useData(), u = useApp(), read = window.UI.useAction();
     React.useEffect(() => { read.run(api.readWatching); }, []);

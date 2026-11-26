@@ -275,7 +275,7 @@
         <span style={{color,fontSize:11,fontWeight:500,background:A.bgSoft,borderRadius:10,padding:'2px 6px',justifySelf:'start',display:'flex',alignItems:'center',gap:4}}><span aria-hidden="true" style={{width:6,height:6,borderRadius:'50%',background:status==='Stopped'?'transparent':color,border:'1px solid '+color}} />{status}</span>
         {n.role==='task' ? <span style={{fontSize:12,color:A.inkSoft}}>{n.path ? n.steps+' steps' : 'No workflow file'}</span> : <>
           <div style={{...textStyle,fontSize:13}}><span style={{fontSize:11,color:A.inkSoft}}>{n.role==='step'?'By':'Task'} </span><span>{n.by || n.taskTitle || 'No task'}</span></div>
-          {message && <div style={{...textStyle,fontSize:12,color:A.inkSoft}} title={message.id+' · '+message.at+' · '+message.text}><time dateTime={message.at} title={at?.toLocaleString()} style={{color:A.inkMuted,fontSize:11}}>{minutes===0?'Just now':minutes+' min ago'} </time>{message.text.split('\n')[0]}</div>}
+          {message && <div style={{...textStyle,fontSize:12,color:A.inkSoft}} title={message.id+' · '+message.at+' · '+message.text}><time dateTime={message.at} title={at?.toLocaleString([], window.UI.zoned())} style={{color:A.inkMuted,fontSize:11}}>{minutes===0?'Just now':minutes+' min ago'} </time>{message.text.split('\n')[0]}</div>}
           {n.result && <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:n.openResult},event)} style={{...textStyle,textAlign:'left',fontSize:12,fontFamily:A.mono,color:A.inkSoft}} title={n.result}>{n.result}</button>}
         </>}
         {n.actions && <div style={{display:'flex',gap:16,fontSize:12,fontWeight:500}}>{n.actions}</div>}

@@ -265,7 +265,7 @@
         bind('menu.item', () => run(() => u.openTaskFile(row.id)), row.title, false))];
     } else if (kind === 'Canvas attachments') {
       groups = [[bind('menu.file', () => {close();u.pickFile();}, null, false),
-        bind('menu.meeting.notes', () => u.show('Attach meeting notes'), null, false)]];
+        bind('menu.meeting.notes', () => {close();if(u.route==='task-file')window.dispatchEvent(new CustomEvent('archhub:meeting-notes'));else u.setToast?.('Open a session to add meeting notes to its thread.');}, null, false)]];
     } else if (kind === 'Task message menu' && message) {
       const task = tasks.find(row=>row.id===taskId), pinned = task?.pinnedMessages?.includes(message.id);
       const referencedNode = nodes.find(row=>row.title && String(message.text).includes(row.title));

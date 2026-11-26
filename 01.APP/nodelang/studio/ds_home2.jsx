@@ -876,6 +876,13 @@
     const openTask = t => u.openTaskFile(t.id);
     // Meeting notes (moved from the Workshop page): pasted notes go to this thread through the same send as the composer.
     const [notesOpen, setNotesOpen] = React.useState(false), [notes, setNotes] = React.useState('');
+    // The composer's + > Meeting notes (design meetbox) opens the box in this session's thread.
+    React.useEffect(() => {
+      if (!fileWorkspace) return undefined;
+      const open = () => { setFace('split'); setNotesOpen(true); };
+      window.addEventListener('archhub:meeting-notes', open);
+      return () => window.removeEventListener('archhub:meeting-notes', open);
+    }, [fileWorkspace]);
     const send = async override => {
       const own = typeof override !== 'string';
       const body = (own ? text : override).trim();
@@ -1351,7 +1358,7 @@
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
                     <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · <span data-design="thread.status">{threadStatus}</span>{plan.length ? <span className="prog"> · {plan.filter(step => step && typeof step === 'object' && step.status === 'done').length} of {plan.length} steps</span> : null}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><button type="button" data-design="thread.meetnotes" className="dx-quiet" aria-expanded={notesOpen} onClick={event=>executeAction('ui.select',()=>setNotesOpen(!notesOpen),event)}>Meeting notes</button>
+                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · <span data-design="thread.status">{threadStatus}</span>{plan.length ? <span className="prog"> · {plan.filter(step => step && typeof step === 'object' && step.status === 'done').length} of {plan.length} steps</span> : null}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node){inspect({nodeId:node.id});dockRef.current?.show('insp');}},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button>
                       {/* One status, from the run record (design: Interrupted · waiting for an agent, with Continue). */}
                       {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status" data-design="thread.interrupted"><p>Interrupted · waiting for an agent{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" title="Any agent continues on the same canvas and the same thread" onClick={event => executeAction('ui.select', () => continueCard({task: task.id}), event)}>Continue</button></div> : null}
                       {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.show('App health'))}>View active runs</button></div> : null}
@@ -1375,8 +1382,10 @@
                             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setText('Why do you need to run ' + step + '?'), event)}>Ask why</button>
                             <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.act(() => api.decline(card.id)), event)}>Reject</button></div></section>; })}
                       {notesOpen ? <section className="v48-thread-approval" data-design="thread.meetbox"><span>Meeting notes</span>
-                        <textarea dir="auto" aria-label="Meeting notes" rows={4} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Paste meeting notes…" />
-                        <div className="flex"><button type="button" className="dx-primary-run" disabled={!notes.trim() || sending} onClick={event => executeAction('ui.select', async () => { const sent = await send('Meeting notes:\n' + notes); if (sent != null) { setNotes(''); setNotesOpen(false); } }, event)}>Send to the thread</button>
+                        <textarea dir="auto" aria-label="Meeting notes" rows={4} maxLength={4000} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Paste meeting notes…" />
+                        <div className="flex"><button type="button" className="dx-primary-run" disabled={!notes.trim() || !task} onClick={event => executeAction('ui.select', () => u.act(async () => { const result = await api.attachMeetingNotes(task.id, notes); if (result) { setNotes(''); setNotesOpen(false); } return result; }), event)}>Send to the thread</button>
+                          <button type="button" className="dx-quiet" disabled={!notes.trim() || sending} onClick={event => executeAction('ui.select', async () => { const sent = await send('Meeting notes:\n' + notes); if (sent != null) { setNotes(''); setNotesOpen(false); } }, event)}>Send to {choices.find(c => c.handle === recipient)?.name || 'the agents'}</button>
+                          <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => u.go('meetings'), event)}>Agent joins a meeting</button>
                           <button type="button" className="dx-quiet" onClick={event => executeAction('ui.select', () => setNotesOpen(false), event)}>Cancel</button></div></section> : null}
                     </section>
                     </div>

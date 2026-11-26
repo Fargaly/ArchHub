@@ -1392,7 +1392,6 @@
             }}>{item.group}</span></button>)}{!items.length && <Empty>No results.</Empty>}</div></>;
     }
     else if (k === 'Rename task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const result=await api.renameTask(m.id,text.trim());if(result)close();return result;})},event)}>Rename</Btn></div></>;
-    else if (k === 'Attach meeting notes') body = <><label className="grid">Meeting notes<textarea aria-label="Meeting notes" rows={8} maxLength={4000} value={text} onChange={e=>setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(async()=>{const result=await api.attachMeetingNotes(u.task,text);if(result)close();return result;})},event)}>Attach to thread</Btn></div></>;
     else if (k === 'Confirm') {
       const detail = m.detail !== undefined ? m.detail : 'Undo brings it back.';
       body = <><p>{m.title}</p>{detail ? <p className="muted">{detail}</p> : null}<div className="flex"><Btn onClick={event => executeAction("appShell.Cancel.31", {

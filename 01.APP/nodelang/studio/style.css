@@ -1770,3 +1770,5 @@ path[data-graph-wire]{stroke-width:var(--wire-width,2px)}
 /* Pages merged into Settings cards (founder 2026-11-26): their content sits in the card, without the page frame. */
 .sheet-embed{border-top:1px solid var(--color-line-soft);margin-top:6px;padding-top:2px;min-width:0}.sheet-embed>summary{cursor:pointer;padding:8px 0;font-weight:600;font-size:calc(13px * var(--text-scale,1))}
 .sheet-embed>.page{padding:var(--space-sm) 0 0;background:none;overflow:visible;min-height:0;height:auto;min-width:0}.sheet-embed>.page .title h1{display:none}.sheet-embed>.page .flex{flex-wrap:wrap}.sheet-embed>.page [style*="grid-template-columns"],.sheet-embed>.page .grid{grid-template-columns:minmax(0,1fr)!important}
+/* The thread's Meeting notes box (design meetbox): its actions wrap inside the thread pane. */
+[data-design="thread.meetbox"]{min-width:0}[data-design="thread.meetbox"] .flex{flex-wrap:wrap}[data-design="thread.meetbox"] textarea{width:100%;box-sizing:border-box;min-width:0}

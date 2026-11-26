@@ -345,7 +345,7 @@ def status(provider: str, *, path: Optional[Path] = None,
     try:
         code, payload = http("GET", f"{base}/oauth/{provider}/status", bearer=token)
     except OSError:  # an unreachable cloud is a status, never a failed Connections read
-        code, payload = None, {}
+        return {"state": "unreachable", "blocker": "Couldn't reach ArchHub's servers"}
     if code != 200 or payload.get("state") != "configured":
         return {"state": payload.get("state", "missing"), "blocker": payload.get("blocker") or "Cloud social OAuth broker unavailable",
                 **({"publish_blocker": payload["publish_blocker"], "review_state": payload.get("review_state", "unverified")}

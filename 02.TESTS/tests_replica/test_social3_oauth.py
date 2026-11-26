@@ -239,4 +239,5 @@ def test_status_of_an_unreachable_cloud_is_a_blocker_not_an_error(monkeypatch):
 
     monkeypatch.setattr(cloud_social_oauth, "_session", lambda _p: ("token", "https://api.archhub.io"))
     row = cloud_social_oauth.status("whatsapp", http=timed_out)
-    assert row["state"] == "missing" and row["blocker"] == "Cloud social OAuth broker unavailable"
+    assert row == {"state": "unreachable", "blocker": "Couldn't reach ArchHub's servers"}
+

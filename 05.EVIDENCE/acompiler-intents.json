@@ -9765,7 +9765,9 @@
     "NG-BROKERS": {
       "source": "Founder NG-BROKERS / NOGRAPH-CONTEXT: every agent reaches existing signed Revit/AutoCAD/Office brokers directly; remove host graph enrollment and startup app calls; local fail-closed effect permission in existing settings.json; no new servers/add-in changes. Isolated source patch only; no live host effects or installed changes.",
       "scope": [
+        "01.APP/nodelang/command_registry.py",
         "01.APP/nodelang/host_brokers.py",
+        "01.APP/nodelang/library_engines.py",
         "01.APP/nodelang/native_agent_mcp.py",
         "01.APP/nodelang/native_host_tools.py",
         "02.TESTS/tests_replica/test_goose_brain.py",

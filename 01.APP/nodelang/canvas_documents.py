@@ -275,8 +275,16 @@ def _run_session(params, feeds, document=None):
 
 
 def _run_you(params, feeds):
-    # The portable document carries a binding, never a copy of account identity.
-    return {'profile': {'owner': 'account', 'scope': 'current'}}, 'Current profile in Settings'
+    """The You node's profile, read live from the account's profile owner (Settings > Account) at every solve and run.
+
+    Spec 3.1 rule 2: a .archhub never stores account identity, so this output is never written into the file
+    (session_files.validate drops a You node's result before every write)."""
+    from .settings_owner import preference_settings
+    rows = {row['id']: row['value'] for row in preference_settings()['appearanceSettings'] if row['id'].startswith('Account.')}
+    profile = {'name': rows.get('Account.Display name', ''), 'role': rows.get('Account.Your role', ''),
+               'language': rows.get('Account.App language', ''), 'reply_in': rows.get('Account.Agents reply in', ''),
+               'presence': rows.get('Account.Presence status', '')}
+    return {'profile': profile}, ' · '.join(value for value in (profile['name'], profile['role']) if value) or 'No profile set in Settings'
 
 
 def _run_setting(params, feeds, document=None):

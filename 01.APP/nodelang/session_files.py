@@ -461,6 +461,9 @@ def validate(document):
         for field in ('portVisibility','parameterPresentation','ports','result'):
             if field in node and not isinstance(node[field],dict):
                 raise ValueError('Node '+field+' must be an object')
+        if node['type'] == 'thing.you':
+            # Spec 3.1 rule 2: the You node's live profile output never enters the file.
+            node.pop('result', None)
         if 'result' in node:
             if not isinstance(node['result'].get('status',''),str) or not isinstance(node['result'].get('error',''),str):
                 raise ValueError('Node result status and error must be text')

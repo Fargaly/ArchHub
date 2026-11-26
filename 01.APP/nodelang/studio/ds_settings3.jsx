@@ -334,6 +334,14 @@
     toastSecs: ['toast_visible_ms', 's', 1000, 1, 60, 1], updCheck: ['update_check_interval_minutes', 'min', 1, 1, 1440, 1],
     updIdle: ['update_idle_minutes', 'min', 1, 1, 1440, 1], backups: ['backup_count', '', 1, 1, 100, 1],
     backupLimit: ['backup_budget_bytes', 'GB', 1073741824, 1, 1024, 1], tray: ['keep_running_in_tray'], updChannel: ['update_preview_channel']};
+  // Projects › Standard version: the open session's Session node 'standard' parameter (one owner: the .archhub file).
+  function SessionStandardControl() {
+    const s=useData(),u=useApp(),node=(s.graph?.nodes||[]).find(row=>row.fixed&&row.type==='thing.session');
+    const def=(node?.parameterSchema||[]).find(row=>row.key==='standard');
+    if(!node||!def)return <span className="muted">Open a session: its Session node holds the standard it follows.</span>;
+    return <select aria-label="Standard version" value={node.params.standard||def.options?.[0]||''} onChange={event=>{const value=event.target.value;return u.act(()=>api.setNodeParam(node.id,'standard',value));}}>
+      {(def.options||[]).map(option=><option key={option}>{option}</option>)}</select>;
+  }
   function AppSettingControl({id,label}) {
     const s=useData(),u=useApp(),[key,unit,factor,min,max,step]=APP_SETTING_ROWS[id];
     const [load,setLoad]=React.useState({status:'waiting',saved:{}}),[attempt,setAttempt]=React.useState(0);
@@ -1352,7 +1360,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       {isPcDesign&&<PcSettingsCards additional={additional} page={currentCategory} advanced={advancedOpen} setAdvanced={setAdvancedOpen}/>}
       {currentCategory==='Projects'&&<AreaDesignCards area="Projects"
         bodies={{register:<ProjectRegister key={registerWorkspace?.id||'office'} workspace={registerWorkspace}/>}}
-        live={{projTpl:s.settings.some(row=>row.page==='Projects'&&row.label==='New project folders')?undefined:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:openNewProject},event)}>Open New project</Btn>}}
+        live={{stdVersion:<SessionStandardControl/>,projTpl:s.settings.some(row=>row.page==='Projects'&&row.label==='New project folders')?undefined:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:openNewProject},event)}>Open New project</Btn>}}
         extras={{cde:<details><summary>Project folders</summary><WorkspaceRows /></details>}}/>}
       </div>{!needle&&<div className="sheet-owner-cards">{sources.controls?.error&&sourceNotice('controls','Reading controls…')}{sources.controls?.ready&&<span className="visually-hidden">Settings loaded.</span>}{rowGroups.map(title=><section className="sheet-owner-card" key={title}><h3>{title}</h3>{currentCategory==='Appearance'&&title!=='Keyboard'&&!visibleRows.some(row=>groupTitle(row)===title)&&<p>{sources.controls?.ready?'No settings reported for this group.':!sources.controls?.error&&'Reading settings…'}</p>}{visibleRows.filter(row=>groupTitle(row)===title).map(row=><SettingControl key={row.id} row={row} raw={advancedOpen} />)}</section>)}{changedOnly&&changedKeys.length>0&&<section className="sheet-owner-card"><h3>Look - Keyboard</h3><KeyboardSettings changedOnly /></section>}{changedOnly&&!visibleRows.length&&!changedKeys.length&&<p>No settings differ from their defaults.</p>}</div>}</div>{!needle&&!changedOnly&&(outline.length>0||currentCategory==='Appearance')&&<aside className="sheet-design-side">{currentCategory==='Appearance'&&<section className="sheet-live-preview" aria-label="Live preview"><h3>Live preview</h3>{s.graph?.nodes?.length && window.UI.Canvas ? <>
         <div className="sheet-preview-stage" inert>

@@ -279,7 +279,7 @@ test('the five Settings pages show all 44 design cards in order with live owners
   await page.getByRole('button',{name:'Open New project',exact:true}).click();
   const folders=page.getByLabel('New project folders',{exact:true});
   await folders.waitFor();
-  assert.equal(await folders.locator('option[value="ISO 19650 CDE tree"]').evaluate(o=>o.disabled),true,'ISO tree limitation stays visible');
+  assert.equal(await folders.locator('option[value="ISO 19650 CDE tree"]').evaluate(o=>o.disabled),false,'the ISO tree is built from Settings › Projects › CDE folders');
   await folders.selectOption('Office project tree');
   await page.getByRole('button',{name:'Choose template folder',exact:true}).waitFor();
   assert.equal(await page.getByLabel('Project name',{exact:true}).count(),1,'registration fields stay separate in the New project form');

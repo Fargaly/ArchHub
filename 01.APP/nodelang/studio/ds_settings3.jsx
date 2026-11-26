@@ -733,7 +733,11 @@
     return <span className="sheet-stepper"><input type="number" aria-label={label} min={range.min} max={range.max} step={10} key={value} defaultValue={value} onBlur={event=>{const v=event.target.valueAsNumber;if(event.target.validity.valid&&v!==value)save(bottom?M.setBottomHeight(layout,v):M.setLeftWidth(layout,v));}} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur();}}/><span>px</span></span>;
   }
   function UpcomingControl({spec}) {
-    const [,label,,type,options]=spec;
+    const s=useData(),u=useApp(),[,label,,type,options]=spec;
+    // No Projects or Look row from the Settings owner means its read has not answered (or failed), not that the row
+    // is unbuilt: say so with Retry instead of marking every row "Coming soon".
+    if(!(s.settings||[]).some(row=>/^(Projects|Appearance)\./.test(row.id)))
+      return <span className="sheet-owner-unread" role="status" data-design="settings.unread">{s.controlErrors?.settings||'Settings not read yet'} <Btn sm aria-label={'Retry reading '+label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.refreshSettingsControls())},event)}>Retry</Btn></span>;
     let control;
     switch(type){
       case 'seg': control=<div className="sheet-segments" role="group" aria-label={label}>{options.map(option=><button type="button" disabled key={option} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{}},event)}>{option}</button>)}</div>; break;

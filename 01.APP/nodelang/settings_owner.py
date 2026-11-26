@@ -1812,15 +1812,21 @@ class PreferenceScope:
 
     def assert_destination(self, expected=None, *, require_available=True):
         expected = self.binding if expected is None else expected
+        everywhere = type(expected) is dict and expected.get('scope') == 'User'
         try:
-            if self.path or self.document is None:
+            if not everywhere and (self.path or self.document is None):
                 from .session_files import SessionFiles
                 active = self._current_path() if self._current_path is not None else SessionFiles().current_path()
                 if (Path(active) if active else None) != (Path(self.path) if self.path else None):
                     raise ValueError('The active session changed. Refresh Settings and choose its scope again.')
             current = PreferenceScope(self.settings, self.workspaces, self.path,
                                       document=None if self.path else self.document)
-            if type(expected) is not dict or expected != current.destination():
+            # Only what the chosen scope writes to must still match: an Everywhere edit does not depend on which
+            # session or project is open, so opening or saving a file never refuses it.
+            keys = ('scope',) if everywhere else ('scope', 'workspace', 'workspaceIdentity') if type(expected) is dict and expected.get(
+                'scope') == 'Workspace' else ('scope', 'workspace', 'session', 'workspaceIdentity')
+            now = current.destination()
+            if type(expected) is not dict or any(expected.get(key) != now[key] for key in keys):
                 raise ValueError('The Settings destination changed. Refresh Settings and choose its scope again.')
             if require_available:
                 current._require(expected['scope'])

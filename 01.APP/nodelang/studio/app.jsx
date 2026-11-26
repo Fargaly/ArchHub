@@ -191,7 +191,10 @@
       const convert = node => {
         if (node.nodeType === 3) {
           if (!shown(node)) return;
-          const value = node.nodeValue.replace(from, digit => to[arabicDigits ? digit : digit.charCodeAt(0) - 0x660]);
+          // Product names and versions (3ds Max, Civil 3D, Revit 2024, A1) are names, not numbers: their digits stay Latin.
+          const value = arabicDigits
+            ? node.nodeValue.replace(/\b(?:Revit|AutoCAD|Civil 3D|3ds Max|Navisworks|Rhino|Archicad|SketchUp|Tekla|Windows|Office|Excel|IFC|BCF|Python)\s+\d+(?:\.\d+)*|\w*[A-Za-z]\w*|\d/g, match => /^\d$/.test(match) ? to[match] : match)
+            : node.nodeValue.replace(from, digit => to[digit.charCodeAt(0) - 0x660]);
           if (value !== node.nodeValue) node.nodeValue = value;
         } else if (node.nodeType === 1) node.childNodes.forEach(convert);
       };

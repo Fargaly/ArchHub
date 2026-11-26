@@ -251,6 +251,10 @@ function project() {
  // A local browser-session lease is transport authority, never account sign-in.
  const profile={...state.profile};
  const graphs=state.graphs.some(g=>g.id===graph.id)?state.graphs.map(g=>g.id===graph.id?{...g,...graph}:g):[...state.graphs,graph];
+ // With a session file open, the file owns the graph and the Settings owner owns the settings rows: a System graph
+ // read (a Settings page running a canvas operation) must not replace them, or Settings rows fall to "Coming soon"
+ // and every write in flight sees "the graph changed".
+ if(sessionDocument)return;
  publish({profile,graph,graphs,settings,canvasPolicy:copy(canvas.interaction_policy||{}),runtimeParameters:copy(canvas.runtime_parameters||{}),catalogue,capabilities:catalogue.map(c=>({...c,nodeKind:c.name,page:'System graph',params:{},defaults:{},enabled:true})),
  docs:[...documentationTutorials(canvas.documentation?.tutorials||[]),...(canvas.documentation?.nodes||[]).map(d=>({id:d.id,category:d.category,title:d.title,summary:d.detail||'',steps:[],route:'canvas'}))],
  sync:'Local session'});
@@ -1358,7 +1362,12 @@ async function settingsAction(functionName, args=[], destination=state.settingsD
   if(Object.keys(missing).length)publish(missing);
   return result;
  }
- if(['readOperations','setGraphWorkspaces','readPreferences','readEffectivePreferences','setAppearance','resetAppearance','setKeybinding','resetKeybindings','setSettingsScope','importPreferences','resetPreferences'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
+ // Another file opened while this ran: the owner already answered (a write landed where it was sent), so its answer
+ // is not shown for the new file; Settings re-reads for the file now open instead of refusing a change that happened.
+ if(['readOperations','setGraphWorkspaces','readPreferences','readEffectivePreferences','setAppearance','resetAppearance','setKeybinding','resetKeybindings','setSettingsScope','importPreferences','resetPreferences'].includes(functionName)&&graph!==state.graph.id){
+  void refreshSettingsControls().catch(error=>publish({controlErrors:{...state.controlErrors,settings:error.message}}));
+  return result;
+ }
  const values={};
  if(Array.isArray(result.appearanceSettings)){
   const ids=new Set(result.appearanceSettings.map(row=>row.id));

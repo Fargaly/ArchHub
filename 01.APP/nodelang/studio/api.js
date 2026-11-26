@@ -1276,6 +1276,8 @@ api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSec
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
 api.readPermissions=()=>settingsAction('readPermissions');
 api.readHookDrift=()=>settingsAction('readHookDrift');
+api.readHostEffects=()=>settingsAction('readHostEffects');
+api.setHostEffect=(key,on)=>settingsAction('setHostEffect',[key,on]);
 api.acceptHookDrift=()=>settingsAction('acceptHookDrift');
 api.hostPrograms=()=>settingsAction('hostPrograms');
 api.hostProgramState=host=>settingsAction('hostProgramState',[host]);

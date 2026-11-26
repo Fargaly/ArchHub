@@ -544,10 +544,10 @@ def test_office_launch_passes_the_office_host_effect(rig, monkeypatch, app):
 def test_unmapped_launch_target_fails_closed(rig):
     from nodelang.host_brokers import launch_effect_host
     from nodelang.native_host_tools import HostToolRefused, _dispatch_broker
-    assert launch_effect_host("photoshop") == ""
-    rig.settings.write_text(json.dumps({"host_effects": dict.fromkeys(["photoshop", "office", "revit"], True)}))
+    assert launch_effect_host("notepad") == ""
+    rig.settings.write_text(json.dumps({"host_effects": dict.fromkeys(["notepad", "office", "revit"], True)}))
     with pytest.raises(Exception, match="(?i)no host_effects key admits launching"):
-        tool(rig, "host_launch", {"app": "photoshop"})
+        tool(rig, "host_launch", {"app": "notepad"})
     assert rig.calls == []
     # The reviewer's path: _dispatch_broker never falls through to read() for a launch.
     from nodelang import hook_decision
@@ -558,7 +558,7 @@ def test_unmapped_launch_target_fails_closed(rig):
     hook_decision.decide = lambda event: {"verdict": "allow", "action": "read"}
     try:
         with pytest.raises(HostToolRefused, match="(?i)no host_effects key admits launching"):
-            _dispatch_broker(spec, {"app": "photoshop"}, lambda fn: ran.append("read"), lambda host, fn: ran.append(host))
+            _dispatch_broker(spec, {"app": "notepad"}, lambda fn: ran.append("read"), lambda host, fn: ran.append(host))
         _dispatch_broker(spec, {"app": "excel"}, lambda fn: ran.append("read"), lambda host, fn: ran.append(host))
     finally:
         hook_decision.decide = original

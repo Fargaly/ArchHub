@@ -1702,6 +1702,16 @@ _LAUNCH_EFFECT = {"revit": "revit", "autocad": "acad", "acad": "acad", "max": "m
                   "rhino": "rhino", "blender": "blender",
                   # One "office" host_effects key admits every Office program; an unmapped app is refused by callers.
                   "excel": "office", "word": "office", "powerpoint": "office", "outlook": "office"}
+# Every other program ArchHub can open (the catalogue) gets its own host_effects key: its id without the year.
+for _id, _name, *_rest in _CATALOGUE:
+    _key = _id.split("-")[0]
+    if _key not in ("revit", "autocad", "max"):
+        _LAUNCH_EFFECT.update({_id: _key, _key: _key, _name.casefold(): _key})
+# Settings › Agents › Programs agents may change: one switch per host_effects key, in this order.
+HOST_EFFECT_PROGRAMS = {"revit": "Revit", "acad": "AutoCAD", "max": "3ds Max", "rhino": "Rhino", "blender": "Blender",
+                        "office": "Office (Excel, Word, PowerPoint, Outlook)",
+                        **{_id.split("-")[0]: _name for _id, _name, *_rest in _CATALOGUE
+                           if _id.split("-")[0] not in ("revit", "autocad", "max")}}
 _LAUNCH_EXE = {"revit": ("Revit", "Revit.exe"), "acad": ("AutoCAD", "acad.exe"), "max": ("3ds Max", "3dsmax.exe")}
 _LAUNCHING: dict = {}
 _LAUNCH_LOCK = threading.Lock()

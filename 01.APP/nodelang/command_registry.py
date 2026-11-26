@@ -205,7 +205,8 @@ def _guard_agent_effects(server, commands):
                 host = launch_effect_host(params.get('app'))
                 if not host:  # fail closed: an unmapped launch target is never admitted
                     raise ToolError('Refused: no host_effects key admits launching %r' % params.get('app'))
-            if host in ('revit', 'acad', 'max', 'rhino', 'blender', 'office'):
+            from .host_brokers import HOST_EFFECT_PROGRAMS
+            if host in HOST_EFFECT_PROGRAMS:  # every program's effects and launches pass its own host_effects switch
                 _allow_effect(host)
             from hashlib import sha256
             import json

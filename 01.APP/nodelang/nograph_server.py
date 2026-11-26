@@ -2648,6 +2648,20 @@ def r_settings_action(s, req):
         return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES),
                                        'ruleModes': list(RULE_MODES), 'ruleViolations': list(RULE_VIOLATIONS),
                                        'ruleCatalogue': WORKSPACE_RULES}}
+    if function in ('readHostEffects', 'setHostEffect'):
+        # Settings › Agents › Programs agents may change: the host_effects switches native_host_tools._allow_effect reads.
+        from .host_brokers import HOST_EFFECT_PROGRAMS
+        from .user_paths import state_directory
+        owner = JsonFile(state_directory() / 'settings.json', {})
+        held = owner.read().get('host_effects')
+        held = dict(held) if isinstance(held, dict) else {}
+        if function == 'setHostEffect':
+            if len(args) != 2 or args[0] not in HOST_EFFECT_PROGRAMS or type(args[1]) is not bool:
+                raise Refused('Choose a listed program and on or off.')
+            held[args[0]] = args[1]
+            owner.update({'host_effects': held})
+        return {'ok': True, 'result': {'hostEffects': [{'key': key, 'name': name, 'on': held.get(key) is True}
+                                                       for key, name in HOST_EFFECT_PROGRAMS.items()]}}
     if function in ('readHookDrift', 'acceptHookDrift'):
         # Settings › Agents › Checks changed outside ArchHub: every agent hook hashed against the approved set.
         from .hook_drift import approve, check, default_state_file

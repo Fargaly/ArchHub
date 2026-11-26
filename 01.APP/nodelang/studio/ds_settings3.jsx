@@ -165,6 +165,7 @@
       ["runMode", "Run mode", "Ask first: every write waits for Approve. Accept edits: writes in your workspace run. Plan only: agents plan, nothing changes", "seg", ["Ask first", "Accept edits", "Plan only"]],
       ["toolRules", "Tool rules", "One tool can follow its own mode, whatever the run mode is", "list", ""],
       ["finishReport", "Agents finish and report", "They close the task and post the result instead of stopping halfway", "bool", ""],
+      ["hostEffects", "Programs agents may change", "Off: agents only read the program; writes and launches there are refused", "list", ""],
       ["agentComputer", "Sandboxed computer for agents", "Off: agents use only the programs and apps listed in Connections", "bool", ""],
       ["scanSkills", "Skills are scanned before install", "Approve, Caution or Reject, from the skill’s own files", "status", ""],
       ["budgetRun", "Budget per run", "A run stops and asks you before it spends more. Shown in your currency; ArchHub never bills you", "range", "", true],
@@ -853,6 +854,17 @@
     if(load.drift.state==='no-baseline')return <span>{load.drift.hooks} checks, none approved yet. {accept('Approve these checks')}</span>;
     return load.status==='loaded'?<div className="sheet-hook-drift">{load.rows.map(([row,how])=><div className="spread" key={row.id+how}><span title={row.source}>{row.event} · {row.command||row.source}</span><small>{how} outside ArchHub</small></div>)}{accept('Accept')}</div>:null;
   }
+  // Settings › Agents › Programs agents may change: settings.json host_effects, one switch per program (read by every
+  // host write and launch, native_host_tools._allow_effect).
+  function HostEffects() {
+    const u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    const show=result=>setLoad(Array.isArray(result?.hostEffects)?{status:result.hostEffects.length?'loaded':'empty',rows:result.hostEffects}:{status:'error',message:'The program switches did not answer.'});
+    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readHostEffects()).then(result=>{if(current)show(result);},failure=>{if(current)setLoad({status:'error',message:failure.message||String(failure)});});return ()=>{current=false;};},[attempt]);
+    if(load.status==='waiting')return <span role="status">Reading…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='empty')return <span>No programs reported.</span>;
+    return load.status==='loaded'?<div className="sheet-host-effects">{load.rows.map(row=><div className="spread" key={row.key} data-host-effect={row.key}><span>{row.name}</span><D.Toggle variant="settings" label={row.name} checked={row.on} onCheckedChange={value=>u.act(()=>api.setHostEffect(row.key,value)).then(show,failure=>setLoad({status:'error',message:failure.message||String(failure)}))}/></div>)}</div>:null;
+  }
   function requestGroups(requests, agents, providers) {
     const groups = new Map();
     for (const row of requests) {
@@ -1524,7 +1536,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         ...Object.fromEntries([['composerModel','Composer','Composer model'],['bbModel','BABOOM','His model']].map(([id,agent,label])=>[id,router?<select aria-label={label} value={router.agents?.[agent]?.model||router.default_model} onChange={event=>act(()=>api.setRouterSettings({agents:{...router.agents,[agent]:{...router.agents?.[agent],model:event.target.value}}})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.agents?.[agent]?.model||router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:sourceNotice('models','Reading models…')])),
         // Status rows: skills are audited from their own files before enable or install (host_skill_owner.request);
         // BABOOM's instructions always say he is an AI assistant (baboom_persona.persona_instructions).
-        scanSkills:<span>Always on</span>,bbDisclose:<span>Always on</span>,drift:<HookDrift/>,
+        scanSkills:<span>Always on</span>,bbDisclose:<span>Always on</span>,drift:<HookDrift/>,hostEffects:<HostEffects/>,
         // BaboomVoiceInput captures with Windows speech (SAPI dictation) in the language Windows is set to.
         sttEngine:<span>Windows speech</span>,sttLang:<span>Windows speech language</span>,
         // Planned (the Capture/Record work): plain status, no control, nothing saved.

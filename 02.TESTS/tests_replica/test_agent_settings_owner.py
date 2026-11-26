@@ -93,3 +93,10 @@ def test_workshop_rules_refuse_by_setting_and_hold_questions_over_the_cap(owner)
     with application_history() as history:
         held = _agent_send_rules(history, question, identity)
     assert held['to'] == 'workshop' and held['reply_to'] and held['text'].startswith('Waiting for you')
+
+
+def test_every_program_archhub_opens_has_its_own_host_effects_switch():
+    from nodelang.host_brokers import HOST_EFFECT_PROGRAMS, launch_effect_host
+    assert {'revit', 'acad', 'max', 'rhino', 'blender', 'office', 'photoshop', 'teams', 'lmstudio'} <= set(HOST_EFFECT_PROGRAMS)
+    assert [launch_effect_host(app) for app in ('Photoshop', 'LM Studio', 'teams', 'excel', 'notepad')] == \
+        ['photoshop', 'lmstudio', 'teams', 'office', '']

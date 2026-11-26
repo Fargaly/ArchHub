@@ -291,3 +291,14 @@ def test_only_the_explicit_410_removed_answer_revokes_and_drops_the_cache(monkey
     except ValueError as refused:
         assert "removed from your ArchHub account" in str(refused)
     assert entries == {}
+
+
+def test_publish_review_never_blocks_connecting_or_reading(monkeypatch):
+    # Founder 2026-11-26: WhatsApp showed "blocked · Meta app review" although connecting his own number needs no review.
+    from nodelang import social_connections
+    monkeypatch.setattr(cloud_social_oauth, "status", lambda provider: {
+        "state": "configured", "review_state": "unverified",
+        "publish_blocker": "Meta app review: whatsapp_business_management, whatsapp_business_messaging approval not verified"})
+    row = social_connections.connection("whatsapp", accounts=[], attempt={"phase": "idle"})
+    assert row["state"] == "not_connected" and row["blocker"] == "" and row["can_connect"] is True
+    assert row["publish_blocker"].startswith("Meta app review")

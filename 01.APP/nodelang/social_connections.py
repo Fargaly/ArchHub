@@ -64,11 +64,8 @@ def connection(provider, *, accounts=None, attempt=None):
         row.update(state="blocked", blocker=blocker)
     row["review_state"] = config.get("review_state", "")
     publish_blocker = config.get("publish_blocker")
+    # App review gates publishing only; connecting and reading stay open.
     row["publish_blocker"] = publish_blocker or ""
-    if publish_blocker and not blocker:
-        row["blocker"] = publish_blocker
-        if row["state"] == "not_connected":
-            row["state"] = "blocked"
     return row
 
 

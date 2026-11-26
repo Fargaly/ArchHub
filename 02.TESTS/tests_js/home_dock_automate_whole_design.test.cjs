@@ -445,3 +445,62 @@ for (const [width, height] of [[1920, 1032], [944, 968]]) test('Thread is a dock
   assert.equal(await page.locator('.dock [data-tab="thread"]').count(), 0);
   assert.deepEqual(errors, []);
 });
+
+// Founder 2026-11-26 (P0-A, verifier repro on 75f10a3): after several Home -> Canvas -> Home trips at 900x970, Arabic, docks folded,
+// Home showed "Loading sessions" and no card while the owner held the task. The verifier's sequence 20 times, then the same trip while
+// the owners stop answering (a busy server): the last known map stays drawn and the stalled read ends as a Retry that works.
+test('Home keeps its cards over 20 Canvas round trips and while its owners are slow (900x970, Arabic, docks folded)', async t => {
+  const browser = await chromium.launch({headless: true, executablePath: resolveBrowserExecutable()});
+  t.after(() => browser.close());
+  const {page, errors} = await mountStudioPage(browser, {width: 900, height: 970}, {realCanvas: true, arabic: true, folded: true});
+  const door = index => page.locator('nav.app-rail > button').nth(index);
+  const cards = async label => {
+    await page.locator('[data-home-page]').waitFor({timeout: 5000});
+    await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor({timeout: 5000});
+    const seen = await page.evaluate(() => ({cards: document.querySelectorAll('[data-home-map] [data-design="home.card"]').length,
+      loading: !!document.querySelector('[data-home-page] > p[role="status"]')}));
+    assert.ok(seen.cards >= 2, label + ': ' + JSON.stringify(seen));
+    return seen;
+  };
+  await cards('first Home');
+  for (let trip = 1; trip <= 20; trip++) {
+    await door(1).click();
+    await page.locator('.dx-home-root[data-screen="task-file"]').waitFor({timeout: 5000});
+    await door(0).click();
+    const seen = await cards('trip ' + trip);
+    await page.waitForFunction(() => !document.querySelector('[data-home-page] > p[role="status"]'), null, {timeout: 5000});
+    assert.equal(seen.cards >= 2, true);
+  }
+  // The owners stop answering: the map drawn from the last reads stays, and the stalled reads end as a Retry.
+  await page.evaluate(() => {
+    window.ArchHubAPI.getSnapshot().runtimeParameters = {...window.ArchHubAPI.getSnapshot().runtimeParameters, home_load_ms: 2000};  // the Home load budget
+    const held = window.ArchHubAPI;
+    window.__answer = {readHomeLayout: held.readHomeLayout, listSessionModel: held.listSessionModel};
+    held.readHomeLayout = () => new Promise(() => {});
+    held.listSessionModel = () => new Promise(() => {});
+  });
+  await door(1).click();
+  await page.locator('.dx-home-root[data-screen="task-file"]').waitFor({timeout: 5000});
+  await door(0).click();
+  await cards('owners not answering');
+  const retry = page.locator('[data-home-page] [role="alert"] button').first();
+  await retry.waitFor({timeout: 12000});
+  await page.evaluate(() => Object.assign(window.ArchHubAPI, window.__answer));
+  await retry.click();
+  await page.waitForFunction(() => !document.querySelector('[data-home-page] > p[role="alert"]'), null, {timeout: 5000});
+  await cards('after Retry');
+  // Another account signs in while the owners are slow: nothing read for the first account is shown to it.
+  await page.evaluate(() => {
+    const api = window.ArchHubAPI, snap = api.getSnapshot();
+    snap.profile = {...snap.profile, id: 'another-account'};
+    api.readHomeLayout = () => new Promise(() => {});
+    api.listSessionModel = () => new Promise(() => {});
+  });
+  await door(1).click();
+  await page.locator('.dx-home-root[data-screen="task-file"]').waitFor({timeout: 5000});
+  await door(0).click();
+  await page.locator('[data-home-page]').waitFor({timeout: 5000});
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('[data-home-map] [data-design="home.card"]').count(), 0, 'another account starts from nothing');
+  assert.deepEqual(errors, []);
+});

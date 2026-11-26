@@ -65,6 +65,26 @@
   // A Workshop card's Show asks for the cursor in that thread's composer. The ask outlives the screen's remount when the
   // thread opens, and ends on the first composer render that shows that thread (focused) or another thread (dropped).
   let focusAsk = null, homeShown = '';
+  // What Home last read from its owners (its layout, the map's choices, the sessions). A remount (back from a Canvas) draws from it at
+  // once and replaces it when the fresh reads answer, so Home is never blank while a read is slow, and a read that never answers
+  // ends as a Retry after a bound instead of leaving "Loading sessions" up.
+  // It belongs to the signed-in account: another account (or none) starts from nothing.
+  const homeHeld = {who: null, homeLayout: null, homeMap: null, listing: null};
+  const heldHome = () => {
+    const snap = api.getSnapshot(), who = [snap.profile?.id || '', snap.desktopAccess?.subject || ''].join('|');
+    if (homeHeld.who !== who) Object.assign(homeHeld, {who, homeLayout: null, homeMap: null, listing: null});
+    return homeHeld;
+  };
+  // Keeps a read's answer only while the account that asked is still the one signed in.
+  const keepHome = (who, patch) => { if (heldHome().who === who) Object.assign(homeHeld, patch); };
+  // The bound is the Home load budget the Workshop node owns (home_load_ms); with no budget the read is left to answer.
+  const bounded = (read, what) => {
+    const ms = Number(api.getSnapshot().runtimeParameters?.home_load_ms ?? window.ARCHHUB_BOOT?.home_load_ms);
+    if (!Number.isSafeInteger(ms) || ms <= 0) return read;
+    let timer;
+    return Promise.race([read, new Promise((_, reject) => { timer = window.setTimeout(() => reject(Error(what + ' did not answer. Retry.')), ms); })])
+      .finally(() => window.clearTimeout(timer));
+  };
   const homeSessionToResume = (listing, selection, tasks = api.getSnapshot().tasks || []) => {
     const owners = new Map(tasks.map(row => [row.id, row]));
     const files = listing.groups.flatMap(group => group.sessions).filter(file => file.task && file.path && file.state !== 'archived' &&
@@ -572,10 +592,10 @@
       read();
       return()=>{live=false;};
     },[beside,s.tasks]);
-    const [homeLayout, setHomeLayout] = React.useState({width:300,collapsed:false,resume:'',order:[],hidden:[]});
+    const [homeLayout, setHomeLayout] = React.useState(() => !fileWorkspace && heldHome().homeLayout || {width:300,collapsed:false,resume:'',order:[],hidden:[]});
     const homeRef = React.useRef(homeLayout), homeWrites = React.useRef(Promise.resolve());
     // The map: the sessions read from their owner, the picked card, and the Home changes Undo and Redo step through.
-    const [listing, setListing] = React.useState({status: 'waiting', groups: null, error: ''}), [attempt, setAttempt] = React.useState(0), [mapChoices, setMapChoices] = React.useState(null);
+    const [listing, setListing] = React.useState(() => !fileWorkspace && heldHome().listing || {status: 'waiting', groups: null, error: ''}), [attempt, setAttempt] = React.useState(0), [mapChoices, setMapChoices] = React.useState(() => fileWorkspace ? null : heldHome().homeMap);
     const [history, setHistory] = React.useState(null);
     const [projectScope, setProjectScope] = React.useState('');
     const [riverMode, setRiverMode] = React.useState('Off');
@@ -594,6 +614,7 @@
     const saveHome = patch => {
       const value = {...homeRef.current,...patch};
       homeRef.current = value; setHomeLayout(value);
+      if (!fileWorkspace) keepHome(heldHome().who, {homeLayout: value});
       const write = homeWrites.current.then(()=>api.setHomeLayout(value));
       homeWrites.current = write.catch(error=>u.setToast(error.message));
       return write;
@@ -602,8 +623,9 @@
       if(fileWorkspace)return undefined;
       let active=true;
       const read=()=>{
-        setRequest('waiting');
-        return api.readHomeLayout().then(result=>{if(active){homeRef.current=result.homeLayout;setHomeLayout(result.homeLayout);setMapChoices(result.homeMap);setRequest(s.tasks?.length?'loaded':'empty');}}).catch(error=>{if(active){setFailure(error.message);setRequest('error');retrySave.current=read;}});
+        const who=heldHome().who;
+        if(!homeHeld.homeMap)setRequest('waiting');  // a held map stays drawn while the fresh read runs
+        return bounded(api.readHomeLayout(),'The Home layout').then(result=>{keepHome(who,{homeLayout:result.homeLayout,homeMap:result.homeMap});if(active){homeRef.current=result.homeLayout;setHomeLayout(result.homeLayout);setMapChoices(result.homeMap);setFailure('');setRequest(api.getSnapshot().tasks?.length?'loaded':'empty');}}).catch(error=>{if(active){setFailure(error.message);setRequest('error');retrySave.current=read;}});
       };
       read();
       return()=>{active=false;};
@@ -1055,7 +1077,8 @@
     React.useEffect(() => {
       if (fileWorkspace) return undefined;
       let live = true;
-      api.listSessionModel().then(result => { if (live) setListing({status: 'loaded', groups: result.groups, recentTask: result.recentTask, error: ''}); })
+      const who = heldHome().who;
+      bounded(api.listSessionModel(), 'The session list').then(result => { const value = {status: 'loaded', groups: result.groups, recentTask: result.recentTask, error: ''}; keepHome(who, {listing: value}); if (live) setListing(value); })
         .catch(error => { if (live) setListing(current => ({...current, status: 'error', error: error.message})); });
       return () => { live = false; };
     }, [fileWorkspace, attempt, sessionsStamp]);

@@ -1533,6 +1533,8 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         // No price per model exists in the router: tokens from its own request record, never a made-up amount.
         budgetRun:router?<span>{(router.requests||[]).reduce((sum,row)=>sum+(Number.isFinite(row.tokens)?row.tokens:0),0).toLocaleString()} tokens in the last {(router.requests||[]).length} model requests. Set a price per model to see money</span>:sourceNotice('models','Reading models…'),
         budgetCurrency:<span>Set a price per model to see money</span>,
+        // Approvals: only you decide an Approve card today (no agent may answer one), and away it waits for you.
+        wsApprove:<span>Only you</span>,awayDelegate:<span>Effects wait for your Approve; agents keep doing other work</span>,
         preferFree:router?<D.Toggle label="Prefer free models" checked={router.free_first} onCheckedChange={value=>act(()=>api.setRouterSettings({free_first:value})).then(result=>{if(result)setRouter(result);})}/>:sourceNotice('models','Reading models…'),
         fallback:router?(router.fallback_models.join(' → ')||'None'):sourceNotice('models','Reading models…'),
         runMode:focusSection==='What agents may do'?<Permissions/>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Run mode</Btn>,

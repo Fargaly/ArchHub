@@ -214,27 +214,26 @@ def test_configured_app_does_not_claim_unverified_publishing_review(client, monk
     assert "publish_blocker" not in client.get("/oauth/instagram/status", headers=headers).json()
 
 
-def test_whatsapp_launch_serves_signed_sdk_coexistence_page_without_credentials(client, monkeypatch):
+def test_whatsapp_launch_redirects_to_meta_dialog_without_sdk_or_credentials(client, monkeypatch):
     _social3_config(monkeypatch)
     token = _token_for("embedded@social3.test")
     started = _social3_start(client, "whatsapp", token).json()
     launch = urllib.parse.urlsplit(started["browser_url"])
     assert launch.path == "/oauth/whatsapp/embedded"
-    page = client.get(launch.path + "?" + launch.query)
-    assert page.status_code == 200
+    page = client.get(launch.path + "?" + launch.query, follow_redirects=False)
+    assert page.status_code == 302
     assert page.headers["cache-control"] == "no-store"
-    html = page.text
-    assert 'src="https://connect.facebook.net/en_US/sdk.js"' in html
-    assert '"appId":"fake-publisher-app"' in html
-    assert '"configId":"fake-coexistence-config"' in html
-    assert "FB.init(" in html and "FB.login(" in html
-    assert "response_type: 'code'" in html and "override_default_response_type: true" in html
-    assert "featureType: 'whatsapp_business_app_onboarding'" in html
-    assert "target.searchParams.set('state', settings.state)" in html
-    assert "target.searchParams.set('code', code)" in html
-    assert '"callback":"https://api.archhub.io/oauth/whatsapp/callback"' in html
-    assert "fake-cloud-secret" not in html and "fake-provider-token" not in html
-    assert "<input" not in html
+    target = urllib.parse.urlsplit(page.headers["location"])
+    assert target.netloc == "www.facebook.com" and target.path.endswith("/dialog/oauth")
+    query = urllib.parse.parse_qs(target.query)
+    assert query["client_id"] == ["fake-publisher-app"]
+    assert query["config_id"] == ["fake-coexistence-config"]
+    assert query["response_type"] == ["code"]
+    assert query["redirect_uri"] == ["https://api.archhub.io/oauth/whatsapp/callback"]
+    assert json.loads(query["extras"][0])["featureType"] == "whatsapp_business_app_onboarding"
+    assert query["state"][0] == urllib.parse.parse_qs(launch.query)["state"][0]
+    assert page.headers["location"] == started["auth_url"]
+    assert "fake-cloud-secret" not in page.headers["location"]
     assert client.get(launch.path, params={"state": "tampered-state"}).status_code == 400
     linkedin = _social3_start(client, "linkedin", token).json()
     wrong_state = urllib.parse.parse_qs(urllib.parse.urlsplit(linkedin["auth_url"]).query)["state"][0]

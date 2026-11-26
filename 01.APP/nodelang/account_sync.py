@@ -211,7 +211,12 @@ def _restore(prefix, hooks, heads, state):
                     held[1], state)
         content = _fetch(path, row["sha256"])
         if content is not None:
-            hooks["cache"](path, content)
+            try:
+                hooks["cache"](path, content)
+            except Exception as refused:  # one unreadable account item never fails the read; it shows as Reconnect
+                _LOG.warning("account item %s not cached on this PC (%s)", path, type(refused).__name__)
+                _NEEDS_RECONNECT.add(path)
+                continue
             state["base"][path] = row["sha256"]
             counts["pulled"] += 1
     return counts

@@ -5,6 +5,8 @@ node use the same browser routes, and only provider-confirmed callbacks enroll.
 """
 from __future__ import annotations
 
+import logging
+
 from . import cloud_social_oauth as broker
 from . import account_sync, model_router, social_custody
 
@@ -76,7 +78,10 @@ def connection(provider, *, accounts=None, attempt=None):
 
 
 def rows():
-    account_sync.pull_and_restore("connections/")  # the account's connections, cached on this PC first
+    try:
+        account_sync.pull_and_restore("connections/")  # the account's connections, cached on this PC first
+    except Exception as missed:  # a read never fails on sync; this PC's cache answers
+        logging.getLogger(__name__).warning("connections restore skipped (%s)", type(missed).__name__)
     accounts = model_router.list_social_credentials()["items"]
     return [connection(provider, accounts=accounts) for provider in NETWORKS]
 

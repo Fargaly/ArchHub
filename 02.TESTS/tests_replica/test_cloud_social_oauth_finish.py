@@ -315,3 +315,32 @@ def test_rows_speak_plainly_and_hide_cloud_key_names(monkeypatch):
     row = social_connections.connection("linkedin", accounts=[], attempt={"phase": "idle"})
     assert row["status"] == row["blocker"] == "Needs setup on ArchHub's side"
     assert row["detail"] == "LinkedIn cloud publisher app secret missing"
+
+
+def test_restore_refused_item_is_skipped_and_marked_reconnect(monkeypatch, tmp_path):
+    import base64, gzip, hashlib
+    from nodelang import account_sync
+    # A connection item this PC refuses to cache never fails the Connections read (gate 400).
+    content = b'{"provider":"meta","display_name":"x"}'
+    sha = hashlib.sha256(content).hexdigest()
+
+    def http(method, url, bearer=None, body=None):
+        if "/manifest" in url:
+            return 200, {"items": [{"logical_path": "zz/a.json", "sha256": sha}]}
+        if "/blob/" in url:
+            return 200, {"content_b64": base64.b64encode(gzip.compress(content)).decode()}
+        return 200, {}
+
+    def refuse(path, data):
+        raise ValueError("invalid_social_credential")
+
+    monkeypatch.setattr(account_sync, "_http", http)
+    monkeypatch.setattr(account_sync, "_access", type("A", (), {"check": lambda self: {"admitted": True}})())
+    monkeypatch.setattr(account_sync._cloud, "_session", lambda _o: ("t", "https://x"))
+    monkeypatch.setattr(account_sync, "_state_path", lambda: tmp_path / "sync-state.json")
+    monkeypatch.setattr(account_sync, "_account", lambda: "qa")
+    monkeypatch.setitem(account_sync._NAMESPACES, "zz/",
+                        {"items": dict, "cache": refuse, "drop": lambda p, m: None, "conflicts": False})
+
+    assert account_sync.pull_and_restore("zz/") == {"zz/": {"uploaded": 0, "pulled": 0, "dropped": 0}}
+    assert account_sync.needs_reconnect("zz/") == ["zz/a.json"]

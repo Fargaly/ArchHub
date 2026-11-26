@@ -490,7 +490,6 @@
     return NAMED_WIDTH[name] || FIELD_WIDTH[field && field.type] || 92;
   };
   const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2};
-  const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
   function ValueWidget({n, p, value, u, onSave}) {
     const [draft, setDraft] = React.useState(null), [focused,setFocused] = React.useState(false), raw = draft ?? value,
@@ -900,35 +899,38 @@
     const params = (n.parameterSchema || []).filter(p => p.editable && (u.advanced || !ADVANCED_ONLY(n, p.key)) && !(n.fixed && n.type==='thing.workshop' && ['thread','limit'].includes(p.key))), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
     const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
     const defaultColor=headerSetting?.value!==headerSetting?.default ? headerSetting?.value : window.getComputedStyle(document.documentElement).getPropertyValue('--color-bg-panel').trim() || A.bgPanel;
-    const cap = {fontSize: 'calc(12px * var(--text-scale,1))', color: SPEC.label, margin: '16px 0 6px'};
+    const [, stateColor] = nodeState(n, false), runnable = !n.fixed && !(n.agentWork?.runnable === false || n.agentWork?.role === 'session'),
+      command = id => (window.ArchHubCommandRegistry?.commands || []).find(row => row.id === id)?.label,
+      runCommand = id => u.act(() => window.UI.nodeCommand(id, n)).then(done => { if (done?.approvalId) u.show('Approve', {id: done.approvalId}); }),
+      inputs = n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id) && (u.advanced || !ADVANCED_ONLY(n, p.id))),
+      ports = [...n.inputs.filter(p => u.advanced || !ADVANCED_ONLY(n, p.id)).map(p => [p, 'in']), ...n.outputs.map(p => [p, 'out'])];
+    // The design's node Inspector (archhub-directions renderInsp): state line, Run, Parameters, Output, Sockets, Fork from here.
     return <Tag className={embedded ? "inspector-content" : "pane inspector"} data-node-inspector={n.id} aria-label="Properties" style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto'}}>
-      {!embedded && <div className="muted" style={{fontSize: 'calc(12px * var(--text-scale,1))'}}>Properties</div>}
+      {!embedded && <span className="insp-eyebrow">{(n.category && n.category !== 'Node' ? n.category : n.kind || 'Step') + ' node'}</span>}
       {!embedded && <h2 style={{margin:'4px 0 0'}}>{n.title}</h2>}
-      <div style={{color: SPEC.label, fontSize: 'calc(12px * var(--text-scale,1))', marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
+      <p className="insp-sub" data-insp-state=""><span style={{color: stateColor}}>● {state}</span>{s.graph.name ? ' · ' + s.graph.name : ''}{!n.fixed && <><br/>{/^trigger\./.test(n.type || '') ? 'Starts the session when it fires. Pause it in Automations.' : n.pure ? 'Pure: re-solves on every edit.' : 'Side effect: waits for Run and your approval.'}</>}</p>
       {n.type==='script.python'&&<ScriptInspector n={n} u={u}/>}
       {n.agentWork?.role==='step' && <StepHistory n={n} u={u} />}
-      <div className="node-presentation" style={{display:'grid',gap:8,marginTop:16}}>
-        <label>Label<input dir="auto" aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
-        <label>Icon<select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{(api.nodeIcons || []).map(name=><option key={name} value={name}>{name}</option>)}</select></label>
-        <label>Colour<span className="node-colour-value"><input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /><span>{n.color || defaultColor}</span></span></label>
-      </div>
-      <div style={cap}>Inputs</div>
+      {runnable && <div className="insp-sact" data-node-commands=""><Btn sm plain className={n.pure !== false ? 'dx-primary-run' : undefined} style={n.pure !== false ? {background: 'var(--v22g-accent-soft)', color: 'var(--v22g-accent-ink)', borderColor: 'transparent', fontWeight: 600} : undefined} data-command="menu.rerun" onClick={event => executeAction('projects.controls.activate', {handler: () => runCommand('menu.rerun')}, event)}>{n.pure === false || n.approvalRequired ? 'Run · needs Approve' : n.status === 'Done' ? command('menu.rerun') || 'Rerun' : 'Run this step'}</Btn></div>}
+      <span className="insp-eyebrow">Parameters</span>
       {children}
-      <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id) && (u.advanced || !ADVANCED_ONLY(n, p.id))).map(p => <div key={p.id} style={SLOT}>
-        <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) ? <span data-linked-source="">{sourceOf(p.id)}</span> : <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
-        {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.label || p.key.replace(/_/g, ' ')}</span>
-          {sourceOf('param:' + p.key) || sourceOf(p.key) ? <span data-linked-source="">{sourceOf('param:' + p.key) || sourceOf(p.key)}</span> : n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
-        {!n.inputs.length && !params.length && <span style={{color: SPEC.label}}>No inputs</span>}</div>
-      <div style={cap}>Output</div>
-      {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}
-      <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
-      <div style={cap}>Runs</div>
-      <NodeRunsList n={n} s={s} />
-      {/* Rerun and Fork, the node menu's own commands (window.UI.nodeCommand): one click from Properties too (Book). */}
-      {!n.fixed && !(n.agentWork?.runnable === false || n.agentWork?.role === 'session') && <div className="flex" data-node-commands="" style={{gap: 6, marginTop: 12}}>
-        {['menu.rerun', 'menu.fork'].map(id => <Btn sm key={id} data-command={id} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => window.UI.nodeCommand(id, n)).then(done => { if (done?.approvalId) u.show('Approve', {id: done.approvalId}); })}, event)}>{(window.ArchHubCommandRegistry?.commands || []).find(row => row.id === id)?.label || (id === 'menu.rerun' ? 'Rerun' : 'Fork')}</Btn>)}
-      </div>}
-    </Tag>;
+      <div className="insp-pgroup">{inputs.map(p => <div key={p.id} className="insp-prow"><span>{p.name}</span>{sourceOf(p.id) ? <b data-linked-source="">{sourceOf(p.id)}</b> : <b className="insp-muted">Not connected</b>}</div>)}
+        {params.map(p => <label key={p.key} className="insp-prow"><span>{p.label || p.key.replace(/_/g, ' ')}</span>
+          {sourceOf('param:' + p.key) || sourceOf(p.key) ? <b data-linked-source="">{sourceOf('param:' + p.key) || sourceOf(p.key)}</b> : n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <b className="insp-muted">unset</b> : <span className="insp-value"><ValueWidget n={n} p={p} value={n.params[p.key]} u={u} /></span>}</label>)}
+        {!inputs.length && !params.length && <div className="insp-prow"><span>No parameters</span></div>}</div>
+      {!n.fixed && <button type="button" className="button-reset insp-link insp-scadd" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Add parameter', {id: n.id})}, event)}><window.AHIcon name="plus" size={12} /> Add parameter</button>}
+      <span className="insp-eyebrow">Output</span>
+      <div className="insp-outbox">{result ? <b>{result}</b> : <span>{n.status === 'Running' ? 'Running' : n.outputs.length ? 'Not run yet' : 'No output'}</span>}<span>{n.outputs.map(p => typeName(p)).join(', ')}</span></div>
+      {ports.length > 0 && <><span className="insp-eyebrow">Sockets</span>{ports.map(([p, side]) => <div key={side + p.id} className="insp-skr" data-socket-row={side}><D.Socket t={p.type} list={p.list} size={10} filled={false} aria-hidden="true" />{p.name}<em>{typeName(p)} · {side}</em></div>)}</>}
+      {/* Label, icon and colour: the card's look, edited here without code (spec 7.8). */}
+      <span className="insp-eyebrow">Look</span>
+      <div className="node-presentation insp-pgroup">
+        <label className="insp-prow"><span>Label</span><input dir="auto" aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
+        <label className="insp-prow"><span>Icon</span><select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{(api.nodeIcons || []).map(name=><option key={name} value={name}>{name}</option>)}</select></label>
+        <label className="insp-prow"><span>Colour</span><span className="node-colour-value"><input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /><span>{n.color || defaultColor}</span></span></label>
+      </div>
+      <span className="insp-eyebrow">Runs</span><NodeRunsList n={n} s={s} />
+      {runnable && <button type="button" className="button-reset insp-link insp-forkl" data-command="menu.fork" onClick={event => executeAction('projects.controls.activate', {handler: () => runCommand('menu.fork')}, event)}>Fork from here: copy this step and the ones after it into a new task</button>}    </Tag>;
   }
   // Connection node: the selected wire's own parameters, in the same Inspector. Tokens from design-tokens.json via AH.
   function WireInspector({wire, s, u, onClose, embedded = false}) {

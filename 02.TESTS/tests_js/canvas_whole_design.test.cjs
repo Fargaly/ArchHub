@@ -435,7 +435,7 @@ test('Canvas whole design + B:313 court', async t => {
   assert.deepEqual(errors, []);
 });
 
-test('Slice 2 Canvas whole-design court ([C1]-[C5]) at 1920x1032 and 944x968', async t => {
+test('Slice 2 + 3 Canvas whole-design court ([C1]-[C5], [I1], [T1]) at 1920x1032 and 944x968', async t => {
   const browser = await chromium.launch({headless: true, executablePath: findBrowserExecutable()});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport: {width: 1920, height: 1032}});
@@ -863,6 +863,42 @@ test('Slice 2 Canvas whole-design court ([C1]-[C5]) at 1920x1032 and 944x968', a
   assert.equal(narrow.singleToolbarRow, true, '944x968 canvas toolbar stays on a single row');
   assert.ok(narrow.tabBottomDelta <= 1.5, '944x968 active tab stays bottom-flush');
   await shoot('944', [['header', 'header.app-header'], ['tabs', '.dx-workspace > .v22g-strip']]);
+
+  // Slice 3: Inspector, node and canvas menus, toasts at 1920x1032.
+  await page.setViewportSize({width: 1920, height: 1032});
+  await page.waitForTimeout(250);
+  await page.locator('[data-graph-node="n-src"] [data-node-card-title]').click();
+  await page.waitForTimeout(300);
+  // [I1] The design's Inspector: four tabs, eyebrow naming the node family, state line, Parameters/Output/Sockets, Fork from here.
+  const props = page.locator('[data-properties-pane]');
+  assert.deepEqual(await props.getByRole('tab').allInnerTexts(), ['This task', 'Session', 'Properties', 'Automate']);
+  assert.equal(await props.getByRole('tab', {name: 'Properties', exact: true}).getAttribute('aria-selected'), 'true');
+  assert.equal(await props.locator('.properties-eyebrow').innerText(), 'GET NODE');
+  const nodeInsp = page.locator('[data-node-inspector="n-src"]');
+  assert.match(await nodeInsp.locator('[data-insp-state]').innerText(), /Done · Sheet set check\s*Pure: re-solves on every edit\./);
+  assert.deepEqual(await nodeInsp.locator('.insp-eyebrow').allInnerTexts(), ['PARAMETERS', 'OUTPUT', 'SOCKETS', 'LOOK', 'RUNS']);
+  assert.deepEqual(await nodeInsp.locator('[data-socket-row]').evaluateAll(rows => rows.map(r => r.querySelector('em').textContent)), ['Text · in', 'Elements[] · out', 'Text · out']);
+  assert.equal(await nodeInsp.getByRole('button', {name: /^Fork from here/}).count(), 1);
+  const tabFit = await props.locator('[role=tablist]').evaluate(el => el.scrollWidth <= el.clientWidth + 1);
+  assert.equal(tabFit, true, 'four Inspector tabs fit the 320px pane');
+  await shoot('1920', [['inspector', '[data-properties-pane]']]);
+  await props.getByRole('tab', {name: 'Session', exact: true}).click();
+  assert.equal(await props.locator('.properties-eyebrow').innerText(), 'SESSION SETTINGS');
+  await shoot('1920', [['inspector-Session', '[data-properties-pane]']]);
+  await props.getByRole('tab', {name: 'This task', exact: true}).click();
+  assert.equal(await props.locator('.properties-eyebrow').innerText(), 'THIS TASK');
+  await shoot('1920', [['inspector-Thistask', '[data-properties-pane]']]);
+
+  // [T1] A raw network failure reaches the person as one plain line; the raw detail stays out unless Advanced is on.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('archhub:notice', {detail: {message: '<urlopen error _ssl.c:1000: The handshake operation timed out>'}})));
+  const toastEl = page.locator('[data-toast]');
+  await toastEl.waitFor();
+  assert.match(await toastEl.innerText(), /^Couldn’t reach ArchHub’s servers, trying again/);
+  assert.doesNotMatch(await toastEl.innerText(), /urlopen|_ssl/);
+  await shoot('1920', [['toast', '[data-toast]']]);
+  await toastEl.getByRole('button', {name: 'Dismiss', exact: true}).click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('archhub:notice', {detail: {message: 'Export saved'}})));
+  assert.equal(await toastEl.locator('span').first().innerText(), 'Export saved', 'ordinary toasts stay as written');
 
   assert.deepEqual(errors, []);
 });

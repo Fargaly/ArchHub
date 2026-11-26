@@ -333,8 +333,8 @@ test('Canvas toolbar, preview tab pin, split peek Work here, Layout menu/Bottom/
   await firstCard.locator('[data-confirm-delete-trigger]').click();
   assert.equal(await autoPanel.locator('[data-trigger-card]').count(), 2);
 
-  // Session tab ([data-design="inspector.task"]) keeps section.v48-session-inspector working
-  await page.locator('[data-design="inspector.task"]').click();
+  // Session tab ([data-design="inspector.tab.session"]) keeps section.v48-session-inspector working
+  await page.locator('[data-design="inspector.tab.session"]').click();
   await page.locator('section.v48-session-inspector').getByLabel('Done when', {exact: true}).waitFor();
 
   assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /Coming soon/i);

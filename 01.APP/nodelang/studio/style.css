@@ -1828,6 +1828,36 @@ path[data-wire-list-gap]{stroke-width:calc(var(--wire-width,2px) * .85)}
 .v48-session-ports .socket[data-port-key*=':out:']{right:auto!important}
 .v48-session-ports .socket[data-port-key*=':in:']{left:auto!important}
 [data-spec="parameter"] input[type=range]{padding:0!important;margin:0!important;height:20px;border:0;background:transparent}
+/* Slice 3 Inspector: the design's node Inspector sections (.eyebrow, .insp .pgroup/.prow, .outbox, .skr, .scadd, .forkl). */
+.insp-eyebrow{display:block;font:600 11px var(--type-family-ui),Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--color-ink-muted);margin:14px 0 6px}
+.insp-sub{margin:6px 0 0;color:var(--color-ink-soft);font-size:12.5px;line-height:1.5}
+.insp-sact{margin:10px 0 0;display:flex;gap:6px}
+.insp-pgroup{border:1px solid var(--color-line);border-radius:6px;padding:0 10px}
+.insp-prow{display:grid;grid-template-columns:minmax(90px,.8fr) minmax(0,1.2fr);gap:8px;align-items:center;min-height:38px;padding:4px 0;border-top:1px solid var(--color-line-soft);color:var(--color-ink-soft);font-size:calc(12.5px * var(--text-scale,1))}
+.insp-prow:first-child{border-top:0}
+.insp-prow>b{font-weight:400;color:var(--color-ink);text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-prow>b.insp-muted{color:var(--color-ink-muted)}
+.insp-value{display:flex;min-width:0}
+.insp-prow :is(input:not([type=color]):not([type=checkbox]):not([type=range]),select){width:100%;min-width:0;height:28px;box-sizing:border-box;padding:0 8px;background:var(--color-bg-soft);border:1px solid var(--color-line);border-radius:5px;color:var(--color-ink);font:inherit;font-size:12.5px}
+.insp-link{color:var(--color-ink-soft);text-decoration:underline;text-decoration-color:var(--color-line);text-underline-offset:3px}
+.insp-link:hover{color:var(--color-ink)}
+.insp-scadd{display:inline-flex;align-items:center;gap:4px;margin-top:8px;font-size:12.5px}
+.insp-outbox{display:flex;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--color-line);border-radius:6px;font-size:12.5px}
+.insp-outbox>b{font-family:var(--type-family-code),monospace;font-weight:500;color:var(--color-ink);min-width:0;overflow-wrap:anywhere}
+.insp-outbox>span{color:var(--color-ink-soft)}
+.insp-skr{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:calc(12.5px * var(--text-scale,1));color:var(--color-ink)}
+.insp-skr em{margin-left:auto;font:400 11px var(--type-family-code),monospace;color:var(--color-ink-muted);font-style:normal}
+.insp-forkl{display:block;margin:10px 0;font-size:12px;text-align:left}
+.shared-properties-head [data-design="inspector.tab"]>button{flex:1 1 auto;min-width:0;padding:0 4px;white-space:nowrap}/* Slice 3 Session settings: the design's bordered .pgroup per section with .prow rows (archhub-directions Session tab). */
+.v48-session-inspector>h3{display:none}.v48-session-inspector{padding-top:10px}
+.v48-session-inspector .sst-group{gap:0;padding:2px 10px 6px;margin:0 0 8px;border:1px solid var(--color-line);border-radius:6px}
+.v48-session-inspector .sst-group:last-child{border-bottom:1px solid var(--color-line)}
+.v48-session-inspector .sst-group>:is(.eyebrow,h4){display:block;margin:8px 0 4px;font:600 11px var(--type-family-ui),Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--color-ink-muted)}
+.v48-session-inspector .sst-row{min-height:38px;padding:4px 0;border-top:1px solid var(--color-line-soft);font-size:calc(12.5px * var(--text-scale,1));color:var(--color-ink-soft)}
+.v48-session-inspector .sst-row>b{font-weight:400;color:var(--color-ink)}
+.v48-session-inspector .sst-group>label.grid{display:grid;grid-template-columns:minmax(90px,.8fr) minmax(0,1.2fr);gap:8px;align-items:center;min-height:38px;padding:4px 0;border-top:1px solid var(--color-line-soft);font-size:calc(12.5px * var(--text-scale,1));color:var(--color-ink-soft)}
+.v48-session-inspector .sst-group>label.grid :is(select,input){width:100%;min-width:0;height:28px;box-sizing:border-box;padding:0 8px;font-size:12.5px;line-height:normal}
+.v48-session-inspector .sst-group>p.muted{margin:6px 0;font-size:12.5px}
 /* Pages merged into Settings cards (founder 2026-11-26): their content sits in the card, without the page frame. */
 .sheet-embed{border-top:1px solid var(--color-line-soft);margin-top:6px;padding-top:2px;min-width:0}.sheet-embed>summary{cursor:pointer;padding:8px 0;font-weight:600;font-size:calc(13px * var(--text-scale,1))}
 .sheet-embed>.page{padding:var(--space-sm) 0 0;background:none;overflow:visible;min-height:0;height:auto;min-width:0}.sheet-embed>.page .title h1{display:none}.sheet-embed>.page .flex{flex-wrap:wrap}.sheet-embed>.page [style*="grid-template-columns"],.sheet-embed>.page .grid{grid-template-columns:minmax(0,1fr)!important}

@@ -823,6 +823,8 @@
     const toastTone = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.tone || '') : '';
     const borderCol = toastTone === 'bad' ? 'var(--color-err, #e6705f)' : toastTone === 'warn' ? 'var(--color-warn, #e5b25a)' : A.line;
     const toastAction = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.action || toast.open) : null;
+    // A raw network failure ("<urlopen error _ssl.c…>", Failed to fetch…) reads as one plain line; the raw detail shows only in Advanced.
+    const rawToast = typeof toast === 'object' && toast ? toast.text : toast, offline = typeof rawToast === 'string' && /urlopen error|_ssl\.c|\[SSL|\[Errno|getaddrinfo|Connection(Refused|Reset|Aborted)?Error|connection (refused|reset|aborted)|timed out|Failed to fetch|NetworkError|ECONNREFUSED|ENOTFOUND|certificate verify failed/i.test(rawToast);
     // The toast sits fully inside the window and above the visible composer (toastBottom), never over it (founder 2026-11-26).
     // Portalled to <body>: a transformed or contained ancestor must not become its containing block and clip it.
     return window.ReactDOM.createPortal(<div role="alert" data-toast="" data-toast-tone={toastTone || 'info'} data-toast-paused={toastPaused ? 'true' : 'false'} className={'flex app-toast' + (toastTone ? ' tone-' + toastTone : '')} onMouseEnter={() => setToastPaused(true)} onMouseLeave={() => setToastPaused(false)} style={{
@@ -850,7 +852,7 @@
           <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>api.resolveSaveConflict(false),event)}>Discard my changes and reload</Btn>
           <Btn sm ghost disabled={s.canvasSaveResolving} onClick={event=>executeAction('ui.select',()=>{api.dismissSaveConflict();setToast('');},event)}>Dismiss</Btn>
         </div>
-      </> : <><span>{toast.text || toast}</span>{toastAction && <Btn sm onClick={event => executeAction('ui.select', () => { setToast(''); return toastAction(); }, event)}>{toast.label || 'Open'}</Btn>}<Btn sm ghost onClick={event => executeAction("appShell.Dismiss.17", {
+      </> : <><span>{offline ? 'Couldn\u2019t reach ArchHub\u2019s servers, trying again' : rawToast}</span>{offline && advanced && <code data-toast-detail="" style={{fontSize: 11, color: A.inkSoft, overflowWrap: 'anywhere'}}>{rawToast}</code>}{toastAction && <Btn sm onClick={event => executeAction('ui.select', () => { setToast(''); return toastAction(); }, event)}>{toast.label || 'Open'}</Btn>}<Btn sm ghost onClick={event => executeAction("appShell.Dismiss.17", {
           setToast
         }, event)}>Dismiss</Btn></>}</div>, document.body);
   })()}

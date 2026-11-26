@@ -132,7 +132,7 @@ async function main() {
     const fold = page.getByRole('button', {name: 'Open Inspector', exact: true}).first();
     if (await fold.isVisible()) await fold.click();
     mode.session = 'fail';
-    await page.locator('[data-design="inspector.task"]').first().click();
+    await page.locator('[data-design="inspector.tab.session"]').first().click();
     const group = page.locator('section.v48-session-inspector');
     await page.evaluate(() => window.ArchHubAPI.setNodeParam('start', 'reply_in', 'Both'));  // a new revision: a new read
     await seen(out.session, group.getByRole('alert').filter({hasText: 'The session could not be read.'}), 'error');

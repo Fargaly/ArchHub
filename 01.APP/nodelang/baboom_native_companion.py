@@ -147,6 +147,7 @@ _FOREGROUND_PROCESS_LABELS = {
     "firefox.exe": "Browser",
     "msedge.exe": "Browser",
     "powerpnt.exe": "PowerPoint",
+    "ms-teams.exe": "Teams",
     "revit.exe": "Revit",
     "rhino.exe": "Rhino",
     "3dsmax.exe": "3ds Max",
@@ -938,6 +939,7 @@ def create_baboom_native_companion_window(
             # What the page shows (follow_app): how many rows need him, his panel open; then how he is drawn now.
             self._needs, self._listening, self._look, self._phase = 0, False, None, None
             self._dnd, self._moments, self._composer_listening = False, True, False
+            self._dnd_asked, self._dnd_when = False, ''  # Settings › Agents › BABOOM › Do not disturb
             self._page_reduced_motion = False
             self._running_step: dict[str, Any] | None = None
             self._work_area: Rect | None = None
@@ -1195,9 +1197,17 @@ def create_baboom_native_companion_window(
             if not self._animation_timer.isActive():
                 self._animation_timer.start()
 
+        def _quiet_now(self):
+            """Do not disturb: asked by the page, or the program in front is a meeting (Teams) or Revit / AutoCAD."""
+            front = {'In meetings': {'Teams'}, 'While I work in Revit or CAD': {'Revit', 'AutoCAD'}}.get(self._dnd_when)
+            return self._dnd_asked or bool(front and foreground_application_windows() in front)
+
         def _check_reactions(self):
             if self._dismissed or self._stopped or self._dragged:
                 return
+            if self._dnd_when and self._quiet_now() != self._dnd:
+                self._dnd = not self._dnd
+                self.refresh()
             from .baboom_reactions import REACTION_NODE, latest_soon
             reaction = latest_soon()  # never read files on the GUI thread
             state = reaction.state if reaction is not None else 'idle'
@@ -1704,7 +1714,8 @@ def create_baboom_native_companion_window(
                     self._surface_key = next_key
                     self._surface_at = time.monotonic()
                     self._walk_until = 0.0
-                self._dnd = bool(step.get("dnd"))
+                self._dnd_asked, self._dnd_when = bool(step.get("dnd")), str(step.get("dnd_when") or "")
+                self._dnd = self._quiet_now()
                 self._moments = step.get("moments") is not False
                 self._page_reduced_motion = bool(step.get("reduced_motion"))
                 self._composer_listening = bool(step.get("composer_listening"))

@@ -263,7 +263,12 @@ class SettingsOwner:
     def routerSettings(self, *, refresh_catalogue=False):
         from .model_router import request_profiles
         from .model_catalogue import cached_free_routes
-        return {**read_router_settings(), **cached_free_routes(refresh=refresh_catalogue), 'requests': request_profiles()}
+        routes = cached_free_routes(refresh=refresh_catalogue)
+        if agent_setting('localModels'):  # Settings › Agents › Run local models: Ollama / LM Studio join every model choice
+            from urllib.request import urlopen as opener
+            from .model_catalogue import local_models
+            routes = {**routes, 'models': [*routes['models'], *(row['route'] for row in local_models(opener=opener, timeout=AGENT_PROBE['params']['local_models_seconds']))]}
+        return {**read_router_settings(), **routes, 'requests': request_profiles()}
 
     def setRouterSettings(self, changes):
         if type(changes) is not dict:
@@ -1030,11 +1035,92 @@ def project_subfolder(value):
     return value
 
 
+# Settings › Agents: one plain owner (settings.json) for each row; the code that does the work reads it with
+# agent_setting(). (design id, label, card, default, choices or (min, max)); every row is also a Setting node.
+AGENT_SETTINGS = (
+    ('effort', 'Effort', 'Models', 'Medium', ('Low', 'Medium', 'High')),
+    ('switchOnLimit', 'Switch when a model hits its limit', 'Models', True, ()),
+    ('localModels', 'Run local models', 'Models', False, ()),
+    ('finishReport', 'Agents finish and report', 'What agents may do', True, ()),
+    ('runSecs', 'Time per run', 'What agents may do', 600, (10, 600)),
+    ('elemLimit', 'Elements one write may change', 'What agents may do', 150, (10, 1000)),
+    ('runCalls', 'Model calls per run', 'What agents may do', 20, (1, 20)),
+    ('maxRuns', 'Running agents at once', 'What agents may do', 6, (1, 6)),
+    ('loopCap', 'Loop rounds', 'What agents may do', 1000, (10, 1000)),
+    ('dailyTokens', 'Daily tokens per agent', 'What agents may do', 'No cap', ('No cap', '50k tokens', '200k tokens', '1M tokens')),
+    ('budgetWindow', 'Token budget counts over', 'What agents may do', '24 hours', ('24 hours', '7 days', '30 days')),
+    ('driftCheck', 'Watch agent checks for outside changes', 'What agents may do', True, ()),
+    ('autoTo', 'Automation messages go to', 'Workshop', 'You', ('You', 'Coordinator', 'BABOOM')),
+    ('trigConcurrency', 'If it is still running', 'Automations', 'Skip', ('Skip', 'Queue')),
+    ('trigCatchUp', 'Runs missed while closed', 'Automations', 'Skip', ('Skip', 'Run once')),
+    ('meetJoin', 'Joins meetings', 'Meetings', 'Ask me each time', ('Ask me each time', 'Meetings I organise', 'All my Teams meetings')),
+    ('meetName', 'Name in the meeting', 'Meetings', 'BABOOM', ''),
+    ('meetLang', 'Meeting language', 'Meetings', 'Arabic and English', ('Arabic and English', 'English', 'Arabic')),
+    ('meetAnswer', 'Meeting agent speaks', 'Meetings', 'Only when asked', ('Only when asked', 'When it knows the answer')),
+    ('meetSilence', 'Waits for a pause of', 'Meetings', 800, (400, 2000)),
+    ('bbStart', 'Start with ArchHub', 'BABOOM', True, ()),
+    ('bbShowsAs', 'Shows as', 'BABOOM', 'Screen', ('Screen', 'Tray', 'Hidden')),
+    ('bbPresence', 'Presence', 'BABOOM', 'Normal', ('Hidden', 'Quiet', 'Normal', 'Lively')),
+    ('bbDnd', 'Do not disturb', 'BABOOM', 'Off', ('Off', 'In meetings', 'While I work in Revit or CAD', 'Always')),
+    ('bbPersona', 'Persona', 'BABOOM', '', ''),
+    ('bbSpeech', 'Speaks at most', 'BABOOM', 6, (0, 6)),
+    ('bbVoice', 'Voice', 'BABOOM', True, ()),
+    ('moments', 'Reactions', 'BABOOM', True, ()),
+    ('bbThrottle', 'Quiet between reactions', 'BABOOM', 10, (0, 60)),
+)
+
+
+# Declared parameter: how long Settings waits for Ollama / LM Studio to list local models.
+AGENT_PROBE = {'id': 'settings.agents.probe', 'params': {'local_models_seconds': 1.0}}
+
+
+def agent_setting(key, settings=None, environment=None):
+    """The saved Settings › Agents value (or its default) for the code that does that work."""
+    spec = next(row for row in AGENT_SETTINGS if row[0] == key)
+    if settings is None:
+        try:  # state_directory() is profile_directory(); kept import-light for the agent hooks that read it
+            held = json.loads((state_directory(environment) / 'settings' / 'settings.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            held = {}
+    else:
+        held = settings.read()
+    value = held.get('agents.' + key, spec[3]) if type(held) is dict else spec[3]
+    return value if type(value) is type(spec[3]) else spec[3]
+
+
+def _agent_rows(function, args, settings):
+    rows = []
+    for key, label, card, default, limits in AGENT_SETTINGS:
+        identity, storage = 'Agents.' + label, 'agents.' + key
+        if args and args[0] == identity and function in ('setAppearance', 'resetAppearance'):
+            if function == 'resetAppearance':
+                settings.update({}, remove=[storage])
+            else:
+                value = args[1]
+                if (type(value) is not type(default) or type(default) is str and (
+                        (limits and value not in limits) or
+                        (not limits and (len(value) > 400 or any(ord(c) < 32 for c in value)))) or
+                        type(default) is int and not limits[0] <= value <= limits[1]):
+                    raise ValueError('Choose a valid value for ' + label + '.')
+                settings.update({storage: value})
+            function, args = 'readControls', ()
+        row = {'id': identity, 'storageKey': storage, 'page': 'Agents', 'group': card, 'label': label, 'default': default,
+               'type': 'boolean' if type(default) is bool else 'number' if type(default) is int else 'choice' if limits else 'text',
+               'value': agent_setting(key, settings)}
+        if type(default) is int:
+            row.update(control='range', min=limits[0], max=limits[1])
+        elif limits:
+            row['options'] = list(limits)
+        rows.append(row)
+    return function, args, rows
+
+
 def preference_settings(function='readControls', args=(), settings=None):
     from .canvas_documents import SESSION_PARAMS
     from .nograph_server import JsonFile
     from .session_files import profile_directory
     settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    function, args, agent_rows = _agent_rows(function, args, settings)
     language_controls = (
         ("App language", "language", ("English", "Arabic")),
         ("Right-to-left layout", "rtl", ("Auto", "Always", "Never")),
@@ -1243,7 +1329,7 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows]}
+    return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows, *agent_rows]}
 
 
 def preference_setting(identity):

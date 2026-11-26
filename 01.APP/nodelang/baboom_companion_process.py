@@ -336,6 +336,12 @@ def _follow_home(window, where):
                       [rect(b) for b in where['screens'] if b], *where.get('more', ()), **where.get('fields', {}))
 
 
+def on_screen():
+    """Settings › Agents › BABOOM: Shows as Screen and a presence other than Hidden put him on screen."""
+    from .settings_owner import agent_setting
+    return agent_setting('bbShowsAs') == 'Screen' and agent_setting('bbPresence') != 'Hidden'
+
+
 def main():
     from PyQt6.QtCore import QObject, pyqtSignal
     from PyQt6.QtWidgets import QApplication
@@ -378,6 +384,10 @@ def main():
         for command in reply.get('commands') or ():
             if command == 'settings':
                 window.refresh()   # the pinned setting was forgotten above; this redraw reads it again
+                if not on_screen():
+                    window.hide()
+                elif not window._stopped and not window.isVisible():
+                    window.show()
             if command == 'open' and not window._stopped:
                 window.start_projection()
                 window._open_interaction()
@@ -401,7 +411,8 @@ def main():
             if reply.get('closed'):
                 return
     threading.Thread(target=wait_for_home, name='baboom-home', daemon=True).start()
-    window.show()
+    if on_screen():  # Tray waits for Open (tray or a second launch); Hidden stays out of sight
+        window.show()
     window.start_projection()
     host.start()
     code = app.exec()

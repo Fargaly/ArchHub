@@ -20,7 +20,7 @@ _EVENTS = {'UserPromptSubmit': 'thinking', 'beforeSubmitPrompt': 'thinking', 'ta
            'PermissionRequest': 'waiting', 'Stop': 'success', 'stop': 'success', 'task_complete': 'success',
            'StopFailure': 'error', 'PostToolUseFailure': 'error', 'failure': 'error', 'turn_aborted': 'error'}
 _LOG = logging.getLogger(__name__)
-REACTION_NODE = {'id': 'baboom.reactions', 'params': {'sqlite_seconds': .05, 'cooldown_seconds': 10,
+REACTION_NODE = {'id': 'baboom.reactions', 'params': {'sqlite_seconds': .05,
                                                    'poll_ms': 100, 'idle_poll_ms': 500, 'active_seconds': 10}}
 
 
@@ -60,6 +60,12 @@ def emit(payload, vendor, *, verdict='', environment=None, event_id='', now=None
     session = payload.get('session_id') or payload.get('sessionId')
     if not kind or not isinstance(session, str) or not session:
         return False
+    from .settings_owner import agent_setting
+    # Settings › Agents › BABOOM: Reactions off, or a Hidden or Quiet presence, keeps him still; Lively halves the quiet.
+    presence = agent_setting('bbPresence', environment=environment)
+    if not agent_setting('moments', environment=environment) or presence in ('Hidden', 'Quiet'):
+        return False
+    cooldown = agent_setting('bbThrottle', environment=environment) / (2 if presence == 'Lively' else 1)
     vendor = {'claude-code': 'claude', 'codex-cli': 'codex', 'gemini-cli': 'gemini'}.get(vendor, vendor)
     actor = hashlib.sha256((vendor + ':' + session).encode()).hexdigest()
     path = state_directory(environment) / 'workshop' / 'messages.sqlite3'
@@ -74,7 +80,7 @@ def emit(payload, vendor, *, verdict='', environment=None, event_id='', now=None
                 value = json.loads(detail)
                 if event_id and value.get('event_id') == event_id:
                     return False
-                if value.get('reaction') == kind and now - datetime.fromisoformat(at).timestamp() < REACTION_NODE['params']['cooldown_seconds']:
+                if value.get('reaction') == kind and now - datetime.fromisoformat(at).timestamp() < cooldown:
                     return False
             record_activity(SimpleNamespace(_db=db), actor, 'baboom.reaction', reaction=kind, event_id=event_id)
         return True

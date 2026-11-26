@@ -149,6 +149,7 @@ class WindowCommands(QObject):
             "surface": str(detail.get("surface") or "")[:64],
             "task": str(detail.get("task") or "")[:128],
             "dnd": detail.get("dnd") is True,
+            "dnd_when": str(detail.get("dndWhen") or "")[:40],
             "moments": detail.get("moments") is not False,
             "reduced_motion": detail.get("reduceMotion") is True,
             "composer_listening": detail.get("composerListening") is True,
@@ -415,8 +416,9 @@ COMPANION_BRIDGE = """
    const area = workAreaEl(), ar = area ? area.getBoundingClientRect() : null;
    const surface = document.querySelector(".settings-sheet") ? "settings" : (document.querySelector("[data-screen]")?.getAttribute("data-screen") || data?.desktopView?.route || "");
    const settings = data?.settings || [];
-   const dnd = data?.companion?.dnd === true || settings.find(r => /do not disturb/i.test(r.id || r.label || ""))?.value === true;
-   const momentsRow = settings.find(r => /moments/i.test(r.id || r.label || ""));
+   const dnd = data?.companion?.dnd === true || settings.find(r => /do not disturb/i.test(r.id || r.label || ""))?.value === true || settings.find(r => r.id === "Agents.Do not disturb")?.value === "Always";
+   const momentsRow = settings.find(r => r.id === "Agents.Reactions" || /moments/i.test(r.id || r.label || ""));
+   const dndWhen = String(settings.find(r => r.id === "Agents.Do not disturb")?.value || "");
    const moments = momentsRow ? momentsRow.value !== false : data?.companion?.moments !== false;
    const active = document.activeElement;
    const rec = active?.closest?.("[data-design='composer.surface']")?.querySelector?.(".recipient-name")?.textContent?.trim();
@@ -426,6 +428,7 @@ COMPANION_BRIDGE = """
     surface,
     task: String(data?.desktopView?.task || ""),
     dnd,
+    dndWhen,
     moments,
     reduceMotion: document.documentElement.dataset.reducedMotion === "true",
     composerListening,

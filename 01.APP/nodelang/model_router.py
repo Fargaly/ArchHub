@@ -192,7 +192,9 @@ def composer_chat(body, *, on_delta=None):
     settings = read_router_settings()
     prefer_free = settings['free_first']
     profile = settings['agents'].get(agent, {})
-    route = body.get('model') or profile.get('model') or settings['providerPreferences'].get(agent)
+    # Settings › Agents › Composer model: the Home composer (no agent named) writes the plan with it.
+    route = (body.get('model') or ('agent' not in body and settings['agents'].get('Composer', {}).get('model'))
+             or profile.get('model') or settings['providerPreferences'].get(agent))
     if not route:
         if agent not in ('BABOOM', resolve_model_route(settings['default_model']).family):
             raise ModelRouteRefused('Choose a model for this agent in Settings before sending.')
@@ -205,7 +207,10 @@ def composer_chat(body, *, on_delta=None):
     if paused(agent):
         raise ModelRouteRefused('This agent reached its token cap and is paused.', reason_code='agent_paused')
     free = _is_openrouter_free_route(destination)
-    fallbacks = settings['fallback_models']
+    from .settings_owner import agent_setting
+    # Settings › Agents: "Switch when a model hits its limit" off keeps the chosen model; Effort goes to OpenRouter.
+    fallbacks = settings['fallback_models'] if agent_setting('switchOnLimit') else []
+    effort = agent_setting('effort').lower() if destination.family == 'openrouter' else None
     free_only = prefer_free and free and all(_is_openrouter_free_route(resolve_model_route(item)) for item in fallbacks)
     started = time.monotonic()
     record = dict(id=str(uuid4()), ts=time.time(), agent=agent, model=destination.model,
@@ -220,7 +225,7 @@ def composer_chat(body, *, on_delta=None):
             'You are BABOOM, the ArchHub assistant. Answer the message. Do not claim tools or changes ran.'},
             {'role': 'user', 'content': prompt.strip()}],
             free_only=free_only, environ=env, secrets_loader=credential,
-            fallback_routes=fallbacks,
+            fallback_routes=fallbacks, reasoning_effort=effort,
             on_delta=on_delta if free else None,
             # A canvas Model node may wire a typed generation value for this one call; router.json stays the default.
             response_byte_limit=_FREE_CHAT_TRACE_BYTES, **{**settings['generation'],
@@ -2534,6 +2539,8 @@ def _local_cli_refusal_uncertain(refused: ModelRouteRefused) -> bool:
 
 
 _PROVIDER_SETUP_SECONDS = ContextVar("router_provider_setup_seconds", default=None)
+# Settings › Agents › Model calls per run: [calls made, cap] for the workflow run on this thread (session_files.run_document).
+RUN_CALLS = ContextVar("router_run_calls", default=None)
 
 
 @contextmanager
@@ -2863,6 +2870,11 @@ def route_chat(
     response_byte_limit opts into bounded body reads and complete-response
     checks. It does not turn timeout into an absolute elapsed-time deadline.
     """
+    counted = RUN_CALLS.get()
+    if counted is not None:
+        if counted[0] >= counted[1]:
+            raise ModelRouteRefused("This run reached its %d model calls (Settings › Agents › Model calls per run)." % counted[1])
+        counted[0] += 1
     tool_rows = _checked_tools(tools)
     tool_turn = bool(tool_rows)
     if type(free_only) is not bool:

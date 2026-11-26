@@ -238,6 +238,8 @@ def host_exec(params, feeds=None, *, node=None, continuation=None):
         seconds = _limit_seconds(time_limit)
         limits = (_whole(element_limit, "the element limit"), _whole(sheet_limit, "the sheet limit"),
                   _whole(min_free_bytes, "the free memory"), _whole(max_hidden_core, "the background limit"))
+        from .settings_owner import agent_setting  # Settings › Agents › Elements one write may change caps every node
+        limits = (min(limits[0], agent_setting("elemLimit")), *limits[1:])
         if continuation:
             from .session_files import begin_attempt
             begin_attempt(continuation, node, effective, wired)

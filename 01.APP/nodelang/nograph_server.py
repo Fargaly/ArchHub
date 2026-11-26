@@ -2490,7 +2490,11 @@ def r_settings_action(s, req):
             if function in ('setAppearance', 'resetAppearance'):
                 if len(args) != (2 if function == 'setAppearance' else 1) or args[0] not in scope_owner.keys:
                     raise ValueError('Choose a supported Appearance setting.')
-                return {'ok': True, 'result': scope_owner.change({args[0]: args[1] if function == 'setAppearance' else None})}
+                changed = scope_owner.change({args[0]: args[1] if function == 'setAppearance' else None})
+                if args[0].startswith('Agents.'):
+                    from .baboom_companion_process import settings_changed as companion_reread
+                    companion_reread()  # BABOOM's own process re-reads Shows as and Presence now
+                return {'ok': True, 'result': changed}
             if function == 'setKeybinding':
                 if len(args) != 2 or 'Keyboard.' + str(args[0]) not in scope_owner.keyboard:
                     raise ValueError('Choose a registered keyboard action and its shortcut.')
@@ -2622,6 +2626,15 @@ def r_settings_action(s, req):
         return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES),
                                        'ruleModes': list(RULE_MODES), 'ruleViolations': list(RULE_VIOLATIONS),
                                        'ruleCatalogue': WORKSPACE_RULES}}
+    if function in ('readHookDrift', 'acceptHookDrift'):
+        # Settings › Agents › Checks changed outside ArchHub: every agent hook hashed against the approved set.
+        from .hook_drift import approve, check, default_state_file
+        from .settings_owner import agent_setting
+        if not agent_setting('driftCheck', settings):
+            return {'ok': True, 'result': {'hookDrift': {'state': 'off', 'added': [], 'removed': [], 'changed': []}}}
+        if function == 'acceptHookDrift':
+            approve(Path.home(), default_state_file(), codex_home=os.environ.get('CODEX_HOME'))
+        return {'ok': True, 'result': {'hookDrift': check(Path.home(), default_state_file(), codex_home=os.environ.get('CODEX_HOME'))}}
     if function == 'setCompanionState':
         written = companion.write({**companion.read(), **(args[0] if args else {})})
         from .baboom_companion_process import settings_changed

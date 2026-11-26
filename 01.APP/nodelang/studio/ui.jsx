@@ -583,7 +583,7 @@
     raw = false
   }) {
     const u = useApp(), data = useData(), destination = data.settingsDestination;
-    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
+    const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||row.id.startsWith('Agents.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
     const changed = settingOverridden(row);
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',

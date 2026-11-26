@@ -284,6 +284,9 @@ def local_idle_stop_decision(payload, vendor):
     """Transcript-only idle guard: ending on a question/offer is still live work."""
     if payload.get('stop_hook_active') is True:
         return None
+    from .settings_owner import agent_setting
+    if not agent_setting('finishReport'):  # Settings › Agents › Agents finish and report: off lets an agent stop halfway
+        return None
     path = payload.get('transcript_path')
     if type(path) is not str or not Path(path).is_file():
         return None

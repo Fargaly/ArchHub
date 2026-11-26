@@ -177,7 +177,7 @@
       ["loopCap", "Loop rounds", "A loop stops here even if its list is not done", "range", "", true],
       ["gradMinRuns", "Runs before a step can become a script", "Same result this many times, then it may run without a model", "range", "", true],
       ["driftCheck", "Watch agent checks for outside changes", "Each agent runs a check before and after it works. If someone changes one outside ArchHub, it shows below", "bool", ""],
-      ["drift", "Checks changed outside ArchHub", "Accept keeps the change; Revert puts back the check you approved", "list", ""],
+      ["drift", "Checks changed outside ArchHub", "Accept keeps the change as the check you approve", "list", ""],
     ]},
     {area:"Agents", id:"workshop", title:"Workshop", icon:"workshop", family:"agent", wide:false, rows:[
       ["wsWho", "Who may message whom", "Agents message each other directly, only through the coordinator, or only you start a thread", "seg", ["Anyone", "Coordinator", "Only you"]],
@@ -197,7 +197,7 @@
       ["meetName", "Name in the meeting", "What other people see", "text", ""],
       ["meetLang", "Meeting language", "Minutes go to Notion in this language", "select", ["Arabic and English", "English", "Arabic"]],
       ["meetAnswer", "Meeting agent speaks", "In meetings it joins for you", "select", ["Only when asked", "When it knows the answer"]],
-      ["meetSilence", "Waits for a pause of", "Before it starts speaking", "range", ""],
+      ["meetSilence", "Waits for a pause of", "Milliseconds before it starts speaking", "range", ""],
     ]},
     {area:"Agents", id:"baboom", title:"BABOOM", icon:"voice", family:"effect", wide:false, rows:[
       ["bbStart", "Start with ArchHub", "He is there when the app opens", "bool", ""],
@@ -210,8 +210,8 @@
       ["bbModel", "His model", "The model BABOOM answers with", "select", []],
       ["bbSpeech", "Speaks at most", "Spoken lines per hour; text always works", "range", ""],
       ["bbVoice", "Voice", "Talk to him and hear him answer", "bool", ""],
-      ["sttEngine", "Speech recognition", "The local Egyptian model keeps your voice on this PC", "select", ["Windows speech", "Local Egyptian model (QwenCleo)"]],
-      ["sttLang", "He listens for", "Mixed Egyptian Arabic and English works", "select", ["Egyptian Arabic and English", "English", "Arabic"]],
+      ["sttEngine", "Speech recognition", "Windows speech on this PC; the local Egyptian model is not installed", "status", ""],
+      ["sttLang", "He listens for", "The language Windows speech is set to on this PC", "status", ""],
       ["voiceHold", "Hold to talk after", "How long you hold before he listens", "range", ""],
       ["moments", "Reactions", "He casts, presents and waves as work moves. Off keeps him still", "bool", ""],
       ["bbThrottle", "Quiet between reactions", "He waits this long before reacting again", "range", ""],
@@ -775,6 +775,22 @@
     }), window.UI.DependenciesSection && <window.UI.DependenciesSection key="dependencies"/>];
   }
   const pageLabels = {BABOOM:'Models & BABOOM', Appearance:'Look', Privacy:'Workspaces & privacy', 'System graph':'System'};
+  // Settings › Agents › Checks changed outside ArchHub: every agent hook hashed against the set you approved (hook_drift).
+  function HookDrift() {
+    const s=useData(),u=useApp(),watching=s.settings.find(row=>row.id==='Agents.Watch agent checks for outside changes')?.value;
+    const [load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    const show=result=>{const drift=result?.hookDrift;
+      const rows=drift?[...drift.added.map(row=>[row,'added']),...drift.changed.map(row=>[row,'changed']),...drift.removed.map(row=>[row,'removed'])]:[];
+      setLoad(!drift?{status:'error',message:'The hook check did not answer.'}:{status:rows.length||drift.state==='no-baseline'?'loaded':'empty',drift,rows});};
+    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readHookDrift()).then(result=>{if(current)show(result);},failure=>{if(current)setLoad({status:'error',message:failure.message||String(failure)});});return ()=>{current=false;};},[watching,attempt]);
+    const accept=label=><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.acceptHookDrift()).then(show,failure=>setLoad({status:'error',message:failure.message||String(failure)}))},event)}>{label}</Btn>;
+    if(load.status==='waiting')return <span role="status">Reading…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.drift.state==='off')return <span className="muted">Off. Turn on Watch agent checks to see changes here.</span>;
+    if(load.status==='empty')return <span>No check changed since you approved them.</span>;
+    if(load.drift.state==='no-baseline')return <span>{load.drift.hooks} checks, none approved yet. {accept('Approve these checks')}</span>;
+    return load.status==='loaded'?<div className="sheet-hook-drift">{load.rows.map(([row,how])=><div className="spread" key={row.id+how}><span title={row.source}>{row.event} · {row.command||row.source}</span><small>{how} outside ArchHub</small></div>)}{accept('Accept')}</div>:null;
+  }
   function requestGroups(requests, agents, providers) {
     const groups = new Map();
     for (const row of requests) {
@@ -1437,6 +1453,13 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         model:router?<select aria-label="Default model" value={router.default_model} onChange={event=>act(()=>api.setRouterSettings({default_model:event.target.value})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:sourceNotice('models','Reading models…'),
         // Longest reply, Creativity and Sampling breadth: the model router's generation values (router.json).
         ...Object.fromEntries([['maxTokens','max_tokens',1,32000,50],['temperature','temperature',0,2,0.1],['topP','top_p',0,1,0.05]].map(([id,key,min,max,step])=>[id,router?.generation?<input type="number" aria-label={{maxTokens:'Longest reply',temperature:'Creativity',topP:'Sampling breadth'}[id]} min={min} max={max} step={step} key={router.generation[key]} defaultValue={router.generation[key]} onBlur={event=>{const value=key==='max_tokens'?Math.round(event.target.valueAsNumber):event.target.valueAsNumber;if(event.target.value===''||!event.target.validity.valid||value===router.generation[key])return;act(()=>api.setRouterSettings({generation:{...router.generation,[key]:value}})).then(result=>{if(result)setRouter(result);});}} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur();}}/>:sourceNotice('models','Reading models…')])),
+        // Composer model and His model: the router's per-agent profiles (router.json), read by composer_chat and BABOOM's turn.
+        ...Object.fromEntries([['composerModel','Composer','Composer model'],['bbModel','BABOOM','His model']].map(([id,agent,label])=>[id,router?<select aria-label={label} value={router.agents?.[agent]?.model||router.default_model} onChange={event=>act(()=>api.setRouterSettings({agents:{...router.agents,[agent]:{...router.agents?.[agent],model:event.target.value}}})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.agents?.[agent]?.model||router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:sourceNotice('models','Reading models…')])),
+        // Status rows: skills are audited from their own files before enable or install (host_skill_owner.request);
+        // BABOOM's instructions always say he is an AI assistant (baboom_persona.persona_instructions).
+        scanSkills:<span>Always on</span>,bbDisclose:<span>Always on</span>,drift:<HookDrift/>,
+        // BaboomVoiceInput captures with Windows speech (SAPI dictation) in the language Windows is set to.
+        sttEngine:<span>Windows speech</span>,sttLang:<span>Windows speech language</span>,
         preferFree:router?<D.Toggle label="Prefer free models" checked={router.free_first} onCheckedChange={value=>act(()=>api.setRouterSettings({free_first:value})).then(result=>{if(result)setRouter(result);})}/>:sourceNotice('models','Reading models…'),
         fallback:router?(router.fallback_models.join(' → ')||'None'):sourceNotice('models','Reading models…'),
         runMode:focusSection==='What agents may do'?<Permissions/>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Run mode</Btn>,

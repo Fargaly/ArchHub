@@ -15,7 +15,7 @@ import time
 
 # Node parameters: the cap is a parameter; None means no cap. ``caps`` overrides it per agent key
 # (composer agent name, or "<runtime>:<native session id>" for a native session).
-BUDGET_NODE = {'id': 'agent.budget', 'params': {'window_seconds': 86400, 'token_cap': None, 'caps': {},
+BUDGET_NODE = {'id': 'agent.budget', 'params': {'token_cap': None, 'caps': {},
                                                        'busy_timeout_seconds': 2}}
 SCHEMA = ('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, ts REAL, agent TEXT, model TEXT, '
           'provider TEXT, tokens INTEGER, ms INTEGER, outcome TEXT)')
@@ -35,16 +35,28 @@ def connect():
     return db
 
 
+# Settings › Agents › Daily tokens per agent and Token budget counts over: the defaults when the node sets none.
+_DAILY_TOKENS = {'No cap': None, '50k tokens': 50000, '200k tokens': 200000, '1M tokens': 1000000}
+_WINDOWS = {'24 hours': 86400, '7 days': 604800, '30 days': 2592000}
+
+
 def cap_for(agent, cap=None):
+    from .settings_owner import agent_setting
     params = BUDGET_NODE['params']
-    return cap if cap is not None else params['caps'].get(agent, params['token_cap'])
+    token_cap = params['token_cap'] if params['token_cap'] is not None else _DAILY_TOKENS[agent_setting('dailyTokens')]
+    return cap if cap is not None else params['caps'].get(agent, token_cap)
+
+
+def window_seconds():
+    from .settings_owner import agent_setting
+    return _WINDOWS[agent_setting('budgetWindow')]
 
 
 def used(agent, *, now=None):
     now = time.time() if now is None else now
     with closing(connect()) as db, db:
         return db.execute('SELECT coalesce(sum(tokens),0) FROM requests WHERE agent=? AND ts>=?',
-                          (agent, now - BUDGET_NODE['params']['window_seconds'])).fetchone()[0]
+                          (agent, now - window_seconds())).fetchone()[0]
 
 
 def paused(agent, cap=None, *, now=None):

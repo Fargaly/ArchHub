@@ -341,7 +341,7 @@ class TriggerService:
             if timer is not None and expected is not None:
                 expected.update(params=dict(params), generation=self.generations[key])
             if key in self.running:
-                queue = str(params.get('concurrency') or 'skip') == 'queue'
+                queue = str(params.get('concurrency') or _default('trigConcurrency')) == 'queue'
                 pending = self.queued.get(key)
                 if queue and (pending is None or len(pending) < TRIGGER_NODE['params']['queue_cap']):
                     self.queued.setdefault(key, deque()).append((kind, expected,
@@ -472,7 +472,9 @@ class TriggerService:
         from .workshop_live import send_as_founder
         from .workshop_mailbox import call
         path, node_id = key
-        to = str((trigger.get('params') or {}).get('to') or TRIGGER_NODE['params']['workshop_to'])
+        from .settings_owner import agent_setting  # Settings › Agents › Automation messages go to
+        to = str((trigger.get('params') or {}).get('to') or {'Coordinator': 'coordinator', 'BABOOM': 'baboom'}.get(
+            agent_setting('autoTo'), TRIGGER_NODE['params']['workshop_to']))
         text = 'Routine %s (%s) fired, %s: %s' % (trigger.get('title') or node_id, Path(path).stem, reason, outcome)
         handles = [part.strip().lstrip('@').casefold() for part in to.split(',') if part.strip()]
         pushed = None
@@ -547,9 +549,15 @@ def _off(value):
     return switched_off(value)
 
 
+def _default(key):
+    """Settings › Agents › Automations: the policy a trigger node follows when it sets none ('skip' / 'queue' / 'run_once')."""
+    from .settings_owner import agent_setting
+    return agent_setting(key).lower().replace(' ', '_')
+
+
 def missed_while_closed(params, last, now=None):
     """Catch-up policy run_once: a schedule whose next fire after the last one has already passed."""
-    if str(params.get('catch_up') or 'skip') != 'run_once' or type(last) not in (int, float):
+    if str(params.get('catch_up') or _default('trigCatchUp')) != 'run_once' or type(last) not in (int, float):
         return False
     due = last + next_delay(params, datetime.datetime.fromtimestamp(last))
     return due <= (now or time.time())

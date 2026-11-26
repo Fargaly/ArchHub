@@ -544,8 +544,12 @@ api.supportsAction=(name,mode)=>boundAction(name,mode)&&
  (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
 window.addEventListener('archhub:capabilities',()=>publish());
 let voiceCapture=null;
+// Settings › Agents › BABOOM: the saved value of one row (settings.json, read with the other Settings rows).
+const agentValue=label=>state.settings.find(row=>row.id==='Agents.'+label)?.value;
+const spokenAt=[];
 api.startVoiceInput=async(options={})=>{
  if(!api.supportsAction('startVoiceInput'))throw Error('Open the desktop Studio to use Windows speech input.');
+ if(agentValue('Voice')===false)throw Error('Voice is off in Settings › Agents › BABOOM.');
  if(voiceCapture)throw Error('Finish the current voice capture first.');
  const capture={};voiceCapture=capture;
  const listen=async()=>{
@@ -565,6 +569,10 @@ api.stopVoiceInput=()=>{
 api.speak=text=>{
  if(!api.supportsAction('speak'))throw Error('Speech output is unavailable in this window.');
  if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Choose 1–32000 characters to read aloud.');
+ // Voice off, Do not disturb Always, or Speaks at most N lines an hour reached: he answers in text only (the caller shows it).
+ const hour=Date.now()-3600000;while(spokenAt.length&&spokenAt[0]<hour)spokenAt.shift();
+ if(agentValue('Voice')===false||agentValue('Do not disturb')==='Always'||spokenAt.length>=(agentValue('Speaks at most')??Infinity))return Promise.resolve({ok:false});
+ spokenAt.push(Date.now());
  return new Promise((resolve,reject)=>{
   const utterance=new window.SpeechSynthesisUtterance(text);
   utterance.onend=()=>resolve({ok:true});
@@ -616,7 +624,7 @@ Object.assign(api,{
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId,false);},
  async setSetting(id,value,destination=state.settingsDestination){
-  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey)))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
+  if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||id.startsWith('Agents.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey)))&&state.settings.some(row=>row.id===id))return setAppearance(id,value,destination);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -624,7 +632,7 @@ Object.assign(api,{
   }
   return nodeProperty(row.owner,row.key,value);
  },
- async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey))))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
+ async resetSetting(id,destination=state.settingsDestination){if(window.ARCHHUB_BOOT?.nograph&&(id.startsWith('Appearance.')||id.startsWith('Projects.')||id.startsWith('Agents.')||(id.startsWith('Account.') && state.settings.some(row=>row.id===id && row.storageKey))))return settingsAction('resetAppearance',[id],destination).then(result=>preferenceChanged(id,result));const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default,destination):unavailable('resetSetting','Backend default unavailable');},
  async resetPage(page){for(const row of state.settings.filter(r=>r.page===page&&(r.id!=='Appearance.Zoom percentage'||r.default!==undefined))) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
  setNodeParam:nodeProperty,
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
@@ -1144,19 +1152,21 @@ api.proposeSocialDraft=async id=>{
 };
 api.prepareTutorial=values=>socialWork('Prepare a tutorial recording, captions and private upload for review through the existing video and social tools. Report actual artifacts; do not claim completion before recording.\n'+JSON.stringify(values));
 api.readYoutubeData=(source,operation)=>socialWork('Read YouTube '+operation+' from the actual connected YouTube source and return source-attributed data. Source: '+source);
+// Settings › Agents › Meetings: which meetings he joins, his name, language, when he speaks and the pause he waits for.
+const meetingRules=()=>'\nMeeting settings: '+JSON.stringify(Object.fromEntries(state.settings.filter(row=>row.id.startsWith('Agents.')&&row.group==='Meetings').map(row=>[row.label,row.value])));
 api.joinMeeting=async()=>{
  const m=state.meeting;if(!m.calendarId||!m.platform||!m.agent)throw Error('Choose a calendar meeting, program and connected agent.');
- return socialWork('Join the selected meeting using the connected meeting program. Report the actual join result; no invented presence.\n'+JSON.stringify(m),{provider:m.agent});
+ return socialWork('Join the selected meeting using the connected meeting program. Report the actual join result; no invented presence.\n'+JSON.stringify(m)+meetingRules(),{provider:m.agent});
 };
 api.startMeetingTranscript=()=>{
  if(!state.meeting.consent)throw Error('Record everyone’s transcript consent first.');
- return socialWork('Start the consented transcript for this selected meeting using its actual capture source. Return attributed transcript turns and capture status.\n'+JSON.stringify(state.meeting),{provider:state.meeting.agent});
+ return socialWork('Start the consented transcript for this selected meeting using its actual capture source. Return attributed transcript turns and capture status.\n'+JSON.stringify(state.meeting)+meetingRules(),{provider:state.meeting.agent});
 };
 api.stopMeetingTranscript=()=>socialWork('Stop actual transcript capture for this selected meeting and confirm capture stopped.\n'+JSON.stringify(state.meeting),{provider:state.meeting.agent});
 api.readMeetingTranscript=()=>socialOperation('get_state').then(data=>data.meeting.transcript);
 api.proposeMeetingSummary=()=>{
  if(!state.meeting.transcript.length)throw Error('Read a captured transcript before preparing a summary.');
- return socialWork('Prepare a source-backed meeting summary for the existing approval owner. Do not send it without approval.\n'+JSON.stringify(state.meeting));
+ return socialWork('Prepare a source-backed meeting summary for the existing approval owner. Do not send it without approval.\n'+JSON.stringify(state.meeting)+meetingRules());
 };
 const exportBeforeSocial=api.exportData;
 api.exportData=async(name,id)=>{
@@ -1245,6 +1255,8 @@ api.setAgentProfile=async(id,values)=>{const current=await api.refreshRouter();r
 api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
 api.readPermissions=()=>settingsAction('readPermissions');
+api.readHookDrift=()=>settingsAction('readHookDrift');
+api.acceptHookDrift=()=>settingsAction('acceptHookDrift');
 api.hostPrograms=()=>settingsAction('hostPrograms');
 api.hostProgramState=host=>settingsAction('hostProgramState',[host]);
 api.connectorActions=connector=>settingsAction('connectorActions',[connector]);

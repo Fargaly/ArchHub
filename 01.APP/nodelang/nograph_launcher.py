@@ -212,6 +212,9 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         if start(Path(state_dir), Path(__file__).resolve().parents[1], server.public_url,
                  require_access=server.require_desktop_access) is None:
             return
+        from .settings_owner import agent_setting
+        if not agent_setting('bbStart'):  # Settings › Agents › BABOOM › Start with ArchHub is off: no companion window
+            return
         try:
             # The companion window runs in its own process (founder: "why isn't it running outside the program?"):
             # nothing it draws, reads or waits on can slow or freeze this window. The app keeps the brain.

@@ -798,7 +798,10 @@ def _run_engine(
             pending[root] = "input items is not wired"
             return None
         items = _as_list(feeds["items"])
-        display[root] = "%d items" % len(items)
+        from .settings_owner import agent_setting
+        cap = agent_setting("loopCap")  # Settings › Agents › Loop rounds: a loop stops here even if its list is not done
+        display[root] = "%d items" % len(items) if len(items) <= cap else "%d of %d items (Loop rounds)" % (cap, len(items))
+        items = items[:cap]
         return {"each": items[0] if items else None, "results": items}
     if engine == "control.switch":
         if "value" not in feeds:

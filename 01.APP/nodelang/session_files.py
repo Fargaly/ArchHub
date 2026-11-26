@@ -1764,7 +1764,30 @@ class TriggerWaitingForApproval(ValueError):
     pass
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None, trigger_admission=None, pure_only=False):
+_RUNS = threading.Condition()
+_RUNNING = [0]
+
+
+def run_document(document, **options):
+    """Settings › Agents › Running agents at once: above it a new top-level run waits in line; Model calls per run caps it."""
+    if options.get('depth') or options.get('plan_only') or options.get('pure_only'):
+        return _run_document(document, **options)
+    from .model_router import RUN_CALLS
+    from .settings_owner import agent_setting
+    calls = RUN_CALLS.set([0, agent_setting('runCalls')])
+    with _RUNS:
+        _RUNS.wait_for(lambda: _RUNNING[0] < agent_setting('maxRuns'))
+        _RUNNING[0] += 1
+    try:
+        return _run_document(document, **options)
+    finally:
+        RUN_CALLS.reset(calls)
+        with _RUNS:
+            _RUNNING[0] -= 1
+            _RUNS.notify_all()
+
+
+def _run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, budget_s=None, _resume=None, _each=None, _source=None, _parent=None, trigger_admission=None, pure_only=False):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
     from .host_exec import UnconfirmedHostRun
@@ -1823,6 +1846,9 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         budget_s = canvas_documents.session_run_budget(document)
     if budget_s is None:
         budget_s = sum((nodes[key].get('budget') or {}).get('seconds', canvas_documents.BUDGET_DEFAULT['seconds']) for key in order)
+        if depth == 0:  # Settings › Agents › Time per run: the ceiling when the session sets no Run budget
+            from .settings_owner import agent_setting
+            budget_s = min(budget_s, agent_setting('runSecs'))
     if type(budget_s) not in (int, float) or budget_s < 0:
         raise ValueError('Run budget must be non-negative seconds')
     deadline = time.monotonic() + budget_s

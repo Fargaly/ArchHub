@@ -15,6 +15,8 @@ def create_http_server(address, handler, *, threaded=False):
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
     """Ignore ordinary client disconnects while preserving unexpected errors."""
 
+    daemon_threads = True
+
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
         if isinstance(error, (BrokenPipeError, ConnectionAbortedError,

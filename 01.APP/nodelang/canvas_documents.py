@@ -718,9 +718,9 @@ def _stamp(document, before, by, op):
     return document
 
 
-def read(path):
+def read(path, *, shared=False):
     from .session_files import read_document
-    return read_document(path)
+    return read_document(path, shared=shared)
 
 
 def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_record=False):

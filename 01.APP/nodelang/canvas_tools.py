@@ -27,15 +27,26 @@ def _path(path):
 
 
 def _summary(document, solved=None):
-    nodes = [{'id': n['id'], 'type': n['type'], 'title': n.get('title', ''), 'params': n['params'],
-              'position': n['position'], 'status': (n.get('result') or {}).get('status', 'Idle'),
+    nodes = [{'id': n['id'], 'type': n['type'], 'title': n.get('title', ''), 'params': dict(n['params']),
+              'position': dict(n['position']), 'status': (n.get('result') or {}).get('status', 'Idle'),
               'stale': (n.get('result') or {}).get('status') == 'Out of date',
               'output': (n.get('result') or {}).get('output', {}), 'error': (n.get('result') or {}).get('error', '')}
              for n in document['nodes']]
+    import copy
+    from .library_engines import LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION, library_item_ports
     from .session_files import catalogue
     # Only a node without stored ports (older canvases) needs the Library's card for its sockets.
-    legacy = any(source.get('item') and not source.get('ports') for source in document['nodes'])
-    ports = {item['id']: item['ports'] for item in catalogue()} if legacy else {}
+    missing_items = {source['item'] for source in document['nodes'] if source.get('item') and not source.get('ports')}
+    ports = {}
+    if missing_items:
+        titles = {item: title for _cat, rows in LIBRARY_PRESENTATION for item, title, _sub in rows}
+        for item_id in missing_items:
+            wiring = LIBRARY_ITEM_ENGINES.get(item_id)
+            if wiring is not None:
+                ports[item_id] = (copy.deepcopy(wiring['ports']) if wiring.get('ports')
+                                  else library_item_ports(item_id, wiring['engine'], titles.get(item_id, '')))
+        if missing_items - set(ports):
+            ports.update({item['id']: item['ports'] for item in catalogue() if item['id'] in missing_items})
     from .node_params import bound_value, ports as node_ports, PARAM_ENGINE
     for node, source in zip(nodes, document['nodes']):
         if source.get('workshopTask'):
@@ -94,7 +105,7 @@ def register_canvas_tools(server):
             if not verdict["admitted"]:
                 raise DesktopAccessRefused(verdict["state"])
             signer = verdict["_sign_resume_pointer"]
-        return {'files': SessionFiles(sign_resume_pointer=signer).open_files()}
+        return {'files': SessionFiles(sign_resume_pointer=signer, _read_only=True).open_files()}
 
     @server.tool(name='canvas.new')
     def canvas_new(path: str, ctx: Context, title: str = '') -> dict:
@@ -107,12 +118,12 @@ def register_canvas_tools(server):
     @server.tool(name='canvas.open')
     def canvas_open(path: str) -> dict:
         """Read an .archhub file for the agent. This does not change the file the founder has open."""
-        return _summary(docs.read(_path(path)))
+        return _summary(docs.read(_path(path), shared=True))
 
     @server.tool(name='canvas.read')
     def canvas_read(path: str) -> dict:
         """Read an .archhub file: nodes (sockets, params, outputs, stale flags), wires and last edits."""
-        return _summary(docs.read(_path(path)))
+        return _summary(docs.read(_path(path), shared=True))
 
     @server.tool(name='canvas.add_node')
     def canvas_add_node(path: str, type: str, ctx: Context, params: dict | None = None, x: float = 0, y: float = 0,

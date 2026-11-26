@@ -74,12 +74,29 @@ def not_available(what):
             'error': what + ' is unavailable in this release.'}
 
 
+_JSON_LOCKS = {}
+_JSON_LOCKS_GUARD = threading.Lock()
+_SHARED_METADATA_NAMES = frozenset(('settings.json', 'workspaces.json', 'current.json', 'recent.json', 'folder-move.json'))
+
+
+def _json_file_lock(path: Path):
+    from .session_files import _METADATA_LOCK
+    if path.name in _SHARED_METADATA_NAMES:
+        return _METADATA_LOCK
+    key = os.path.normcase(os.path.abspath(str(path)))
+    with _JSON_LOCKS_GUARD:
+        lock = _JSON_LOCKS.get(key)
+        if lock is None:
+            lock = _JSON_LOCKS[key] = threading.RLock()
+        return lock
+
+
 class JsonFile:
     """One settings owner = one small JSON file, replaced atomically."""
 
     def __init__(self, path, default):
-        from .session_files import _METADATA_LOCK
-        self.path, self.default, self.lock = Path(path), default, _METADATA_LOCK
+        target = Path(path)
+        self.path, self.default, self.lock = target, default, _json_file_lock(target)
 
     def read(self):
         from .user_paths import strip_test_write
@@ -598,9 +615,12 @@ class NoGraphServer:
     def _handler(self):
         owner = self
 
+        from .library_engines import LIBRARY_ITEM_ENGINES
+
         class Handler(BaseHTTPRequestHandler):
             protocol_version = 'HTTP/1.1'
             disable_nagle_algorithm = True
+            timeout = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['account_http_ms'] / 1000
 
             def log_message(self, *_args):
                 return
@@ -654,6 +674,7 @@ class NoGraphServer:
 
             def dispatch(self, method):
                 self._body_read = False
+                self.connection.settimeout(self.timeout)
                 parsed = urlparse(self.path)
                 path = parsed.path
                 try:
@@ -762,6 +783,12 @@ class NoGraphServer:
                     self.send_json(400, {'ok': False, 'error': str(error) or type(error).__name__})
                 except Exception as error:  # noqa: BLE001 - every owner failure is an answer, never a dropped socket
                     self.send_json(500, {'ok': False, 'error': '%s: %s' % (type(error).__name__, error)})
+                finally:
+                    if not getattr(self, 'close_connection', False):
+                        try:
+                            self.connection.settimeout(None)
+                        except OSError:
+                            pass
 
         return Handler
 
@@ -781,13 +808,13 @@ class NoGraphServer:
                 headers.append(('Set-Cookie', '%s=%s; HttpOnly; SameSite=Strict; Path=/' % (COOKIE, self._cookie_token)))
             if not known:
                 raise Refused('desktop bootstrap is required', 403)
-            from .library_engines import LIBRARY_ITEM_ENGINES
             from .settings_owner import dock_layout
+            runtime_params = _runtime_parameters(self.state_dir)
             raw = raw.replace(b'/*__ARCHHUB_BOOT__*/ null', json.dumps({
                 'token': self.browser_session_token, 'csrf': self.browser_csrf_token,
                 'first_run': self.studio_first_run is True,
                 'mouse_double_click_ms': _mouse_double_click_ms(),
-                'home_load_ms': LIBRARY_ITEM_ENGINES['tool_workshop']['params'].get('home_load_ms', 3000),
+                'home_load_ms': runtime_params['home_load_ms'],
                 # The dock is drawn from his one saved layout at the first frame: no default layout shows first.
                 'dock_layout': (None if self.desktop_access is not None
                                 else dock_layout(settings=self.files['settings'])['dockLayout']),
@@ -832,6 +859,7 @@ class NoGraphServer:
         body = handler.body()
         self.ensure_current_desktop_access(admission)
         halted = self.admit_chat()
+        handler.connection.settimeout(None)
 
         def cancelled():
             return halted() or (admission is not None and admission["_epoch"] != self._desktop_epoch)
@@ -1209,6 +1237,13 @@ SYSTEM_OWNERS = (
 )
 
 
+def _runtime_parameters(state_dir):
+    from .application_update import saved_application_settings
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    defaults = {k: v for k, v in LIBRARY_ITEM_ENGINES['tool_workshop']['params'].items() if k != 'tool'}
+    return {**defaults, **saved_application_settings(state_dir)}
+
+
 def r_canvas(s, req):
     ids = {owner[0].split(':')[1]: owner[0] for owner in SYSTEM_OWNERS}
     nodes = [{'id': root, 'label': label, 'kind': 'Owner', 'category': group, 'group': group, 'application': True,
@@ -1222,7 +1257,8 @@ def r_canvas(s, req):
     from .community_owner import bindings
     return {'ok': True, 'revision': 0, 'root': 'app:system', 'canvas_root': 'app:system', 'graph_id': 'app:system',
             'scope': {'current': 'app:system', 'current_label': 'System graph'}, 'nodes': nodes, 'wires': wires,
-            'catalog': [], 'interaction_projection': {'bindings': bindings()}, 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
+            'catalog': [], 'runtime_parameters': _runtime_parameters(s.state_dir),
+            'interaction_projection': {'bindings': bindings()}, 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
 
 
 def r_canvas_op(s, req):
@@ -1493,8 +1529,10 @@ def r_providers(s, req):
 
 # -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --
 def _declarations():
-    from .workshop_mailbox import application_history, read_declarations
-    with application_history(read_only=True) as history:
+    from .workshop_mailbox import application_history, profile_database, read_declarations
+    if not profile_database().is_file():
+        return []
+    with application_history(read_only=True, existing_only=True) as history:
         return read_declarations(history._db)   # current rows: all its caller keeps
 
 
@@ -2087,12 +2125,18 @@ def _has_transcript(runtime, native_id):
 
 def r_agents_canvas(s, req):
     """A read-only System view of the existing roster, task bindings and Workshop messages."""
-    from .workshop_mailbox import application_history, read_declarations, ROOM
+    from .workshop_mailbox import application_history, profile_database, read_declarations, ROOM
     from .workshop_tasks import rows, _declared_id
     from .session_files import read_document
     roster = _list_agents()
     sessions, tasks, wires = [], {}, []
-    with application_history(read_only=True) as history:
+    if not profile_database().is_file():
+        for runtime in roster:
+            if runtime.get('evidence') == 'process':
+                sessions.append({'id': 'runtime:' + runtime['id'], 'name': runtime['name'], 'vendor': runtime['runtime'],
+                                 'status': runtime['presence'], 'task': None, 'taskTitle': '', 'message': None})
+        return {'ok': True, 'agents': roster, 'sessions': sessions, 'tasks': [], 'wires': []}
+    with application_history(read_only=True, existing_only=True) as history:
         declarations = [r for r in read_declarations(history._db) if r.get('current')]
         held = {r['id']: r for r in rows(history, settle=False)}
         for row in declarations:

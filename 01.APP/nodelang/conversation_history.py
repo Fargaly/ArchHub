@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -116,6 +117,10 @@ def validate_message_fields(conversation_id, *, author, content, category="note"
                 idempotency_key=idempotency_key)
 
 
+_VERIFIED_STORES = {}
+_VERIFIED_STORES_LOCK = threading.Lock()
+
+
 class ConversationHistoryStore(ConversationPageProtection):
     def __init__(self, path, *, instance_id, create=True, busy_timeout_seconds=2.0,
                  retention_clock=None, connection=None):
@@ -166,28 +171,51 @@ class ConversationHistoryStore(ConversationPageProtection):
             # every Studio read) behind one write lock: "database is locked" on the Workshop store.
             fresh = create and self._db.execute(
                 "SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").fetchone() is None
+            db_file = listed[2] if listed is not None and listed[2] else None
+            db_stat = None
+            if not fresh and db_file:
+                try:
+                    st = os.stat(db_file)
+                    db_stat = (os.path.normcase(os.path.abspath(db_file)), st.st_ino, st.st_ctime_ns)
+                except OSError:
+                    db_stat = None
             with self._transaction(write=fresh):
-                objects = self._schema_objects()
                 app_id = self._db.execute("PRAGMA application_id").fetchone()[0]
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
-                if create and not objects and app_id == 0 and version == 0:
-                    self._initialize()
-                elif app_id != _APP_ID or version not in (_VERSION, _RETENTION_VERSION, PAGE_PROTECTION_VERSION):
-                    raise ValueError("not a supported conversation history database")
-                identity = self._db.execute("SELECT instance_id FROM history_identity WHERE singleton=1").fetchone()
-                if identity is None or identity[0] != self.instance_id:
-                    raise ValueError("conversation database instance mismatch")
-                if version in (_RETENTION_VERSION, PAGE_PROTECTION_VERSION):
-                    self._validate_retention_source_schema(version)
-                    self._db.execute("SELECT " + ",".join(_RETENTION_FIELDS) +
-                                     " FROM conversation_retention LIMIT 0")
-                    self._db.execute("SELECT conversation_id,sequence,message_digest,idempotency_digest "
-                                     "FROM message_tombstones LIMIT 0")
-                if version == PAGE_PROTECTION_VERSION:
-                    validate_page_schema(self._db)
-                elif self._db.execute("SELECT 1 FROM sqlite_master WHERE name IN "
-                        "('conversation_pages','conversation_page_tracking','conversation_pages_protected') LIMIT 1").fetchone():
-                    raise ValueError('page protection objects have an older schema version')
+                schema_ver = self._db.execute("PRAGMA schema_version").fetchone()[0] if db_stat is not None else None
+                if db_stat is not None:
+                    identity = self._db.execute("SELECT instance_id FROM history_identity WHERE singleton=1").fetchone()
+                    stamp = (*db_stat, app_id, version, schema_ver, identity[0] if identity else None)
+                    with _VERIFIED_STORES_LOCK:
+                        already_verified = _VERIFIED_STORES.get(db_stat[0]) == stamp
+                else:
+                    already_verified = False
+                if not already_verified:
+                    objects = self._schema_objects()
+                    if create and not objects and app_id == 0 and version == 0:
+                        self._initialize()
+                    elif app_id != _APP_ID or version not in (_VERSION, _RETENTION_VERSION, PAGE_PROTECTION_VERSION):
+                        raise ValueError("not a supported conversation history database")
+                    identity = self._db.execute("SELECT instance_id FROM history_identity WHERE singleton=1").fetchone()
+                    if identity is None or identity[0] != self.instance_id:
+                        raise ValueError("conversation database instance mismatch")
+                    if version in (_RETENTION_VERSION, PAGE_PROTECTION_VERSION):
+                        self._validate_retention_source_schema(version)
+                        self._db.execute("SELECT " + ",".join(_RETENTION_FIELDS) +
+                                         " FROM conversation_retention LIMIT 0")
+                        self._db.execute("SELECT conversation_id,sequence,message_digest,idempotency_digest "
+                                         "FROM message_tombstones LIMIT 0")
+                    if version == PAGE_PROTECTION_VERSION:
+                        validate_page_schema(self._db)
+                    elif self._db.execute("SELECT 1 FROM sqlite_master WHERE name IN "
+                            "('conversation_pages','conversation_page_tracking','conversation_pages_protected') LIMIT 1").fetchone():
+                        raise ValueError('page protection objects have an older schema version')
+                    if db_stat is not None and not fresh:
+                        post_ver = self._db.execute("PRAGMA schema_version").fetchone()[0]
+                        with _VERIFIED_STORES_LOCK:
+                            if len(_VERIFIED_STORES) >= 64 and db_stat[0] not in _VERIFIED_STORES:
+                                _VERIFIED_STORES.pop(next(iter(_VERIFIED_STORES)))
+                            _VERIFIED_STORES[db_stat[0]] = (*db_stat, app_id, version, post_ver, self.instance_id)
         except BaseException:
             if not self._embedded:
                 self._db.close()

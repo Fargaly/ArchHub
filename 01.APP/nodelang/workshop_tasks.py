@@ -1123,11 +1123,11 @@ def retire_declared_sessions(history):
     return retired
 
 
-def record_step(history, task, owner, label, title, status, result="", request=""):
+def record_step(history, task, owner, label, title, status, result="", request="", *, settle=True):
     """Project the existing declaration/completion into its task file, without executing it."""
     from . import canvas_documents
     from .workshop_mailbox import latest_agent_message
-    row = get(history, task)
+    row = next(iter(rows(history, task, settle=settle)), None)
     path = row.get('session_path')
     if not path:
         path = _start_session(task, row['title'], purpose=row.get('purpose') or '', generation=row['created_at'])
@@ -1264,6 +1264,7 @@ _SESSION_CONTEXTS = {}
 _CONTEXTS_VERSION = 2   # stamps carry the file id since version 2
 _CONTEXTS_LOADED = set()
 _CONTEXTS_DIRTY = {'value': False}
+_CONTEXTS_LOCK = threading.RLock()
 
 
 def _contexts_file():
@@ -1324,9 +1325,10 @@ def _load_session_contexts():
     a missing, unreadable or older cache file only means the files are read once."""
     import logging
     path = _contexts_file()
-    if str(path) in _CONTEXTS_LOADED:
-        return
-    _CONTEXTS_LOADED.add(str(path))
+    with _CONTEXTS_LOCK:
+        if str(path) in _CONTEXTS_LOADED:
+            return
+        _CONTEXTS_LOADED.add(str(path))
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
         if not isinstance(data, dict) or data.get('version') != _CONTEXTS_VERSION or not isinstance(data.get('rows'), list):
@@ -1344,25 +1346,38 @@ def _load_session_contexts():
     except (OSError, ValueError, TypeError) as unusable:
         logging.getLogger(__name__).debug('Session context file %s not used: %s', path, unusable)
         return
-    for key, held in loaded.items():
-        _SESSION_CONTEXTS.setdefault(key, held)
+    with _CONTEXTS_LOCK:
+        for key, held in loaded.items():
+            _SESSION_CONTEXTS.setdefault(key, held)
 
 
 def _save_session_contexts():
     import logging
-    if not _CONTEXTS_DIRTY['value']:
-        return
-    path = _contexts_file()
-    temporary = path.with_name(path.name + '.tmp')
-    rows = [[file, task, list(stamp), context, choice] for (file, task), (stamp, context, choice) in _SESSION_CONTEXTS.items()]
+    from pathlib import Path
+    import tempfile
+    with _CONTEXTS_LOCK:
+        if not _CONTEXTS_DIRTY['value']:
+            return
+        path = _contexts_file()
+        rows_out = [[file, task, list(stamp), context, choice]
+                    for (file, task), (stamp, context, choice) in _SESSION_CONTEXTS.items()]
+        _CONTEXTS_DIRTY['value'] = False
+    temporary = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(json.dumps({'version': _CONTEXTS_VERSION, 'rows': rows}), encoding='utf-8')
+        fd, name = tempfile.mkstemp(dir=path.parent, prefix='.session-contexts-', suffix='.tmp')
+        temporary = name
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump({'version': _CONTEXTS_VERSION, 'rows': rows_out}, stream)
         os.replace(temporary, path)
-        _CONTEXTS_DIRTY['value'] = False
     except (OSError, TypeError, ValueError) as unsaved:
+        with _CONTEXTS_LOCK:
+            _CONTEXTS_DIRTY['value'] = True
         # The contexts stay in memory; the next start reads the files once.
         logging.getLogger(__name__).debug('Session context file %s not saved: %s', path, unsaved)
+    finally:
+        if temporary:
+            Path(temporary).unlink(missing_ok=True)
 
 
 def _session_context(path, *, roots=None, task_row=None, documents=None, fresh=False):
@@ -1381,10 +1396,10 @@ def _session_context(path, *, roots=None, task_row=None, documents=None, fresh=F
         # Only a context read once the file had been still for 2 s is kept: a file may change again within one tick.
         settled = time.time() - stat.st_mtime >= 2
         cache_key = (path, (task_row or {}).get('id'))
-        held = _SESSION_CONTEXTS.get(cache_key)
-        if fresh:
-            _SESSION_CONTEXTS.pop(cache_key, None)
-            held = None
+        with _CONTEXTS_LOCK:
+            held = None if fresh else _SESSION_CONTEXTS.get(cache_key)
+            if fresh:
+                _SESSION_CONTEXTS.pop(cache_key, None)
         if held and held[0] == stamp and settled:
             context, choice = copy.deepcopy(held[1:])
         else:
@@ -1392,7 +1407,7 @@ def _session_context(path, *, roots=None, task_row=None, documents=None, fresh=F
             # .archhub (24 tasks re-read it 18 times). Nothing is reused across lists.
             parsed = documents.get(path) if documents is not None else None
             if parsed is None or parsed[0] != stamp:
-                parsed = (stamp, read_document(path))
+                parsed = (stamp, read_document(path, shared=True))
                 if documents is not None:
                     documents[path] = parsed
             document = copy.deepcopy(parsed[1])
@@ -1414,16 +1429,18 @@ def _session_context(path, *, roots=None, task_row=None, documents=None, fresh=F
                 context['anchorTitle'] = anchor['title']
             context['sessionTitle'] = anchor['title'] if anchor else document['title']
             context['fileMessages'] = _file_messages(document, (task_row or {}).get('id'))
-            if settled:
-                _SESSION_CONTEXTS[cache_key] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
-                _CONTEXTS_DIRTY['value'] = True
-            else:
-                _SESSION_CONTEXTS.pop(cache_key, None)
+            with _CONTEXTS_LOCK:
+                if settled:
+                    _SESSION_CONTEXTS[cache_key] = (stamp, copy.deepcopy(context), copy.deepcopy(choice))
+                    _CONTEXTS_DIRTY['value'] = True
+                else:
+                    _SESSION_CONTEXTS.pop(cache_key, None)
         project = _project_of(choice, roots, task_row)
         context.update(project=project['label'], workspace=project['id'])
         return context
     except (OSError, ValueError, KeyError, TypeError):
-        _SESSION_CONTEXTS.pop((path, (task_row or {}).get('id')), None)
+        with _CONTEXTS_LOCK:
+            _SESSION_CONTEXTS.pop((path, (task_row or {}).get('id')), None)
         return {}
 
 
@@ -1797,24 +1814,28 @@ def fold_declarations(history, declarations):
 
 def refresh_steps(path):
     """The existing head/read poll reconciles native calls that arrive after declare()."""
-    from .workshop_mailbox import application_history
-    with application_history() as history:
+    from .session_files import read_document, task_context
+    document = read_document(path, shared=True)
+    step_nodes = [node for node in document['nodes'] if node.get('params', {}).get('workshop_step')]
+    if not step_nodes:
+        return
+    from .workshop_mailbox import application_history, profile_database
+    if not profile_database().is_file():
+        return
+    with application_history(read_only=True, existing_only=True) as history:
         bound = {r['id'] for r in rows(history, settle=False) if r.get('session_path') == str(path)}
         if not bound:
             return
-        from .session_files import read_document, task_context
-        document = read_document(path)
-        for node in document['nodes']:
-            if node.get('params', {}).get('workshop_step'):
-                p = node['params']
-                task = node.get('workshopTask', document['properties']['taskContext']['task'])
-                if task not in bound:
-                    continue
-                try:
-                    task_context(document, task)
-                except ValueError:
-                    continue  # its task card was removed; Undo may bring it back
-                record_step(history, task, p['session'], p['agent'], None, p['status'], p.get('result', ''))
+        for node in step_nodes:
+            p = node['params']
+            task = node.get('workshopTask', document['properties'].get('taskContext', {}).get('task'))
+            if task not in bound:
+                continue
+            try:
+                task_context(document, task)
+            except ValueError:
+                continue  # its task card was removed; Undo may bring it back
+            record_step(history, task, p['session'], p['agent'], None, p['status'], p.get('result', ''), settle=False)
 
 
 def set_status(history, task, status, revision=None):

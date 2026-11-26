@@ -223,35 +223,43 @@ class DesktopAccess:
         return not held.get("refused_at") and (
             expires is None or type(expires) in (int, float) and expires > time.time())
 
-    def _verify(self, base, bearer):
+    def _verify_with_source(self, base, bearer):
         key = hashlib.sha256((base + "|" + bearer).encode()).digest()
         with self._lock:
             seen = self._verified.get(key)
             if seen is not None and self._clock() - seen[0] < self._fresh:
-                return 200, seen[1]
+                return 200, seen[1], True
             pending = self._in_flight.get(key)
             leader = pending is None
             if leader:
                 pending = self._in_flight[key] = Future()
         if not leader:
-            return pending.result()
+            code, account = pending.result()
+            return code, account, False
+        result = None, None
         try:
-            result = (self._fetch or _cloud_get)(base + ME_PATH, bearer)
-        except Exception:
-            result = None, None  # private transport details never enter a refusal
+            try:
+                result = (self._fetch or _cloud_get)(base + ME_PATH, bearer)
+            except Exception:
+                result = None, None  # private transport details never enter a refusal
+            now = self._clock()
+            with self._lock:
+                if result[0] == 200:
+                    self._verified = {key: (now, result[1])}  # one account at a time; a new token drops the old one
+                elif result[0] not in (401, 403) and key in self._verified and now - self._verified[key][0] <= self._grace:
+                    result = 200, self._verified[key][1]
+                elif result[0] in (401, 403):
+                    self._verified.pop(key, None)
         finally:
             with self._lock:
                 self._in_flight.pop(key, None)
-        now = self._clock()
-        with self._lock:
-            if result[0] == 200:
-                self._verified = {key: (now, result[1])}  # one account at a time; a new token drops the old one
-            elif result[0] not in (401, 403) and key in self._verified and now - self._verified[key][0] <= self._grace:
-                result = 200, self._verified[key][1]
-            elif result[0] in (401, 403):
-                self._verified.pop(key, None)
-        pending.set_result(result)
-        return result
+            if not pending.done():
+                pending.set_result(result)
+        return result[0], result[1], False
+
+    def _verify(self, base, bearer):
+        code, account, _ = self._verify_with_source(base, bearer)
+        return code, account
 
     def check(self, *, expected_bearer=None, bind_resume=False):
         from .cloud_signin import desktop_resume_key, read_cloud_session
@@ -265,7 +273,7 @@ class DesktopAccess:
             if not self._usable(held) or (expected_bearer is not None and bearer != expected_bearer):
                 return self._verdict("session_invalid")
             base = _pinned_base(held)
-            code, account = self._verify(base, bearer)
+            code, account, from_cache = self._verify_with_source(base, bearer)
             if code in (401, 403):
                 return self._verdict("session_invalid")
             if code != 200 or not isinstance(account, dict):
@@ -277,9 +285,10 @@ class DesktopAccess:
             subject, email = str(subject).strip(), email.strip().casefold()
             key = desktop_resume_key(path) if bind_resume else None
             # Signout/rotation during the network call invalidates that response.
-            current = read_cloud_session(path)
-            if current.get("token") != bearer or not self._usable(current) or _pinned_base(current) != base:
-                return self._verdict("session_invalid")
+            if not from_cache:
+                current = read_cloud_session(path)
+                if current.get("token") != bearer or not self._usable(current) or _pinned_base(current) != base:
+                    return self._verdict("session_invalid")
         except (OSError, ValueError, TypeError):
             return self._verdict("unavailable")
 

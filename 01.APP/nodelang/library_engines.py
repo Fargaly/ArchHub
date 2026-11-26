@@ -1226,7 +1226,7 @@ LIBRARY_ITEM_ENGINES.update({
                                  "preflight_database_ms": 1000,
                                  "broker_start_ms": 60000,
                                  "assistant_setup_ms": 10000,
-                                 "home_load_ms": 290000,
+                                 "home_load_ms": 5000,
                                  "refusal_poll_ms": 200,
                                  "quit_watchdog_ms": 3000,
                                  "account_http_ms": 25000,
@@ -2894,7 +2894,11 @@ def _complete_library(groups):
         for loaded in _sf.load_skills():
             add(_skill_entry(loaded, items))
     else:
-        for path in sorted(sessions_directory().glob('*.archhub')):
+        skill_dir = (sessions_directory(_wait_for_locks=False)
+                     if getattr(sessions_directory, '__module__', '') == 'nodelang.session_files'
+                     else sessions_directory())
+        shared_doc = getattr(read_document, '__module__', '') == 'nodelang.session_files'
+        for path in sorted(skill_dir.glob('*.archhub')):
             key, mark = str(path), _file_stamp(path)
             present.add(key)
             held = _SKILL_CARDS.get(key)
@@ -2903,7 +2907,7 @@ def _complete_library(groups):
                 reused.add(id(entry))
             else:
                 try:
-                    skill = read_document(path)
+                    skill = read_document(path, shared=True) if shared_doc else read_document(path)
                 except (OSError, ValueError) as unreadable:
                     _LOG.debug("saved session %s left out of the Library: %s", path, unreadable)
                     _SKILL_CARDS.pop(key, None)

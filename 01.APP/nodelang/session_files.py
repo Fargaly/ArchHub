@@ -546,6 +546,8 @@ def local_path(path):
 # each read still rebuilds a detached document, and node purity is the engine's answer now.
 _DOCUMENTS = {}
 _DOCUMENTS_LIMIT, _DOCUMENT_CACHE_BYTES, _SHARED_DOCUMENT_BYTES = 512, 64 << 20, 1 << 20
+_SESSION_FIELDS_CACHE = {}
+_DOCUMENTS_LOCK = threading.Lock()
 
 
 def _stamp(status):
@@ -556,14 +558,19 @@ def read_document(path, *, shared=False):
     """shared: a read-only caller (it changes nothing in the document and ignores node 'pure') gets the one parsed
     copy kept for this unchanged file instead of a rebuilt one."""
     target = local_path(str(path))
-    held = _DOCUMENTS.get(str(target))
+    key = str(target)
+    with _DOCUMENTS_LOCK:
+        held = _DOCUMENTS.get(key)
     if held is not None and held[0] == _stamp(_metadata_io(os.stat, target)):
         if shared:
             if held[2] is not None:
                 return held[2]
             document = _without_test_writer(marshal.loads(held[1]))
             if len(held[1]) <= _SHARED_DOCUMENT_BYTES:   # a large file's objects are not held in memory between reads
-                held[2] = document
+                with _DOCUMENTS_LOCK:
+                    if held[2] is None:
+                        held[2] = document
+                    return held[2]
             return document
         document = marshal.loads(held[1])
         for node in document['nodes']:
@@ -581,10 +588,13 @@ def read_document(path, *, shared=False):
     # racy-clean rule), so a kept stamp always means unchanged bytes.
     if time.time_ns() - status.st_mtime_ns > 2_000_000_000:
         kept = marshal.dumps(document)
-        if (len(_DOCUMENTS) >= _DOCUMENTS_LIMIT
-                or sum(len(row[1]) for row in _DOCUMENTS.values()) + len(kept) > _DOCUMENT_CACHE_BYTES):
-            _DOCUMENTS.clear()   # shortcut: refilled by the next reads; memory stays bounded by the limits
-        _DOCUMENTS[str(target)] = [_stamp(status), kept, None]
+        if len(kept) <= _DOCUMENT_CACHE_BYTES:
+            with _DOCUMENTS_LOCK:
+                _DOCUMENTS.pop(key, None)
+                if (len(_DOCUMENTS) >= _DOCUMENTS_LIMIT
+                        or sum(len(row[1]) for row in _DOCUMENTS.values()) + len(kept) > _DOCUMENT_CACHE_BYTES):
+                    _DOCUMENTS.clear()   # shortcut: refilled by the next reads; memory stays bounded by the limits
+                _DOCUMENTS[key] = [_stamp(status), kept, None]
     return _without_test_writer(document)
 
 
@@ -686,6 +696,9 @@ def write_document(path, document):
             stream.flush()
             os.fsync(stream.fileno())
         _metadata_io(os.replace, temporary, target)
+        with _DOCUMENTS_LOCK:
+            _DOCUMENTS.pop(str(target), None)
+            _SESSION_FIELDS_CACHE.pop(str(target), None)
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
@@ -750,7 +763,7 @@ def catalogue():
 def load_skills(paths=None):
     """Saved Canvas sessions, read by the Library and reusable-node engine."""
     found = []
-    for path in sorted(sessions_directory().glob('*.archhub')):
+    for path in sorted(sessions_directory(_wait_for_locks=False).glob('*.archhub')):
         if paths is not None and str(path) not in paths:
             continue
         try:
@@ -761,22 +774,122 @@ def load_skills(paths=None):
     return found
 
 
+def _dir_stamp(status):
+    return status.st_size, status.st_mtime_ns
+
+
+def _scandir_archhub(folder):
+    """Yield (path, resolved_key, dir_stamp_or_None) for *.archhub in folder using one directory scan."""
+    folder = Path(folder)
+    if str(folder).startswith(('\\\\', '//')) or str(folder).upper().startswith(('FILE:', 'SMB:', '\\\\?')) or not folder.is_absolute():
+        raise ValueError('Choose an absolute local sessions folder')
+    resolved_folder = folder.resolve()
+    if str(resolved_folder).startswith(('\\\\', '//')):
+        raise ValueError('Choose an absolute local sessions folder')
+    items = []
+    try:
+        with os.scandir(folder) as it:
+            for entry in it:
+                if not entry.name.lower().endswith('.archhub'):
+                    continue
+                child = folder / entry.name
+                try:
+                    if entry.is_symlink():
+                        items.append((child, None, None))
+                    elif entry.is_file(follow_symlinks=False):
+                        st = entry.stat(follow_symlinks=False)
+                        items.append((child, str(resolved_folder / entry.name), _dir_stamp(st)))
+                except OSError:
+                    continue
+    except FileNotFoundError:
+        return []
+    items.sort(key=lambda item: item[0])
+    return items
+
+
+def _session_summary_entry(path, *, resolved_key=None, fast_dir_stamp=None):
+    """Stamp-verified (base_fields, raw_props, updated) for one .archhub file; avoids re-materializing full graphs."""
+    if resolved_key is not None and fast_dir_stamp is not None:
+        with _DOCUMENTS_LOCK:
+            cached = _SESSION_FIELDS_CACHE.get(resolved_key)
+        if cached is not None and cached[1] == fast_dir_stamp:
+            return cached[2], cached[3], cached[4]
+    target = local_path(str(path))
+    key = str(target)
+    status = _metadata_io(os.stat, target)
+    stamp = _stamp(status)
+    d_stamp = _dir_stamp(status)
+    with _DOCUMENTS_LOCK:
+        cached = _SESSION_FIELDS_CACHE.get(key)
+    if cached is not None and cached[0] == stamp:
+        return cached[2], cached[3], cached[4]
+    document = read_document(target, shared=True)
+    props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
+    held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
+    raw_props = {'state': props.get('state'),
+                 'taskContext': {'project': held.get('project'), 'workspace': held.get('workspace')}}
+    if 'project' in props:
+        raw_props['project'] = props['project']
+    base = session_fields(document, target, roots={}, task_row=None)
+    updated = (props.get('history') or [{}])[-1].get('at', '')
+    if time.time_ns() - status.st_mtime_ns > 2_000_000_000:
+        with _DOCUMENTS_LOCK:
+            if len(_SESSION_FIELDS_CACHE) >= _DOCUMENTS_LIMIT and key not in _SESSION_FIELDS_CACHE:
+                _SESSION_FIELDS_CACHE.pop(next(iter(_SESSION_FIELDS_CACHE)))
+            _SESSION_FIELDS_CACHE[key] = (stamp, d_stamp, base, raw_props, updated)
+    return base, raw_props, updated
+
+
+def _find_skill_path(identity, directory):
+    if not identity:
+        return Path(directory) / 'missing.archhub'
+    for path, rkey, dstamp in _scandir_archhub(sessions_directory(_wait_for_locks=False)):
+        try:
+            base, _, _ = _session_summary_entry(path, resolved_key=rkey, fast_dir_stamp=dstamp)
+        except (OSError, ValueError):
+            continue
+        if base['id'] == identity:
+            return path
+    return Path(directory) / 'missing.archhub'
+
+
 def skill_template_rows(paths=None):
     """Each saved skill as the Library template row. id is skill:<document id>."""
-    return [{'id': 'skill:' + row['skill']['id'], 'title': row['skill']['title'], 'path': str(row['path'])}
-            for row in load_skills(paths)]
+    rows_out = []
+    for path, rkey, dstamp in _scandir_archhub(sessions_directory(_wait_for_locks=False)):
+        if paths is not None and str(path) not in paths:
+            continue
+        try:
+            base, _, _ = _session_summary_entry(path, resolved_key=rkey, fast_dir_stamp=dstamp)
+        except (OSError, ValueError):
+            continue
+        rows_out.append({'id': 'skill:' + base['id'], 'title': base['title'], 'path': str(path)})
+    return rows_out
 
 
 def profile_directory():
     return state_directory()
 
 
-def sessions_directory():
-    recover_session_move()
+def _lock_poll_timeout():
+    return float(canvas_documents.DOCUMENT_NODE['params']['lock_poll_seconds'])
+
+
+def sessions_directory(*, _wait_for_locks=True):
+    recover_session_move(_wait_for_locks=_wait_for_locks)
     owner = _folder_move_owner()
-    with canvas_documents.locked(owner.path):
-        _restore_folder_move(owner)
-        return _selected_sessions_directory()
+    if owner.path.exists():
+        try:
+            lock_ctx = (canvas_documents.locked(owner.path) if _wait_for_locks
+                        else canvas_documents.locked(owner.path, timeout=_lock_poll_timeout()))
+            with lock_ctx:
+                _restore_folder_move(owner, _wait_for_locks=_wait_for_locks)
+                return _selected_sessions_directory()
+        except TimeoutError as error:
+            if _wait_for_locks:
+                raise
+            logging.getLogger(__name__).debug('Folder recovery deferred while another editor holds lock: %s', error)
+    return _selected_sessions_directory()
 
 
 def _default_sessions_directory():
@@ -809,11 +922,16 @@ def _selected_sessions_directory():
     return path
 
 
-def document_path(directory, document):
-    """Readable Windows filename, without overwriting another session of the same title."""
-    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', document['title']).strip(' .')[:160] or 'Untitled'
+def _clean_session_stem(title_text):
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', title_text).strip(' .')[:160] or 'Untitled'
     if title.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *('COM%d' % n for n in range(1, 10)), *('LPT%d' % n for n in range(1, 10))}:
         title = '_' + title
+    return title
+
+
+def document_path(directory, document):
+    """Readable Windows filename, without overwriting another session of the same title."""
+    title = _clean_session_stem(document['title'])
     path, index = Path(directory) / (title + '.archhub'), 2
     while path.exists():
         try:
@@ -831,36 +949,49 @@ def _folder_move_owner():
     return JsonFile(profile_directory() / 'data/sessions/folder-move.json', {})
 
 
-def _restore_folder_move(owner):
+def _restore_folder_move(owner, *, _wait_for_locks=True):
     """An interrupted folder change rolls back before any reader selects a folder."""
     if not owner.path.exists():
         return
+    from contextlib import ExitStack
     from .nograph_server import JsonFile
     from .quiet_update import _cleanup_plain
     import shutil
     pending = owner.read()
+    pairs = []
     for row in reversed(pending['moves']):
         old, new = local_path(row['old']), local_path(row['new'])
         if old == new or not _cleanup_plain(old) or not _cleanup_plain(new):
             raise ValueError('Folder recovery requires distinct plain session paths')
-        with canvas_documents.locked(old), canvas_documents.locked(new):
-            if new.exists():
-                if old.exists():
-                    if old.read_bytes() != new.read_bytes():
-                        raise OSError('Folder recovery conflict; both sessions retained')
-                    if not row['duplicate']:
-                        new.unlink()
-                elif row['duplicate']:
-                    with new.open('rb') as source, old.open('xb') as target:
-                        shutil.copyfileobj(source, target)
-                else:
-                    try:
-                        new.rename(old)
-                    except OSError as error:
-                        import errno
-                        if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
-                            raise
-                        _copy_session_across_volumes(new, old)
+        pairs.append((row, old, new))
+    poll_s = _lock_poll_timeout()
+    with ExitStack() as locks:
+        if not _wait_for_locks:
+            for _row, old, new in pairs:
+                locks.enter_context(canvas_documents.locked(old, timeout=poll_s))
+                locks.enter_context(canvas_documents.locked(new, timeout=poll_s))
+        for row, old, new in pairs:
+            with (ExitStack() if not _wait_for_locks
+                  else canvas_documents.locked(old)) as _l1, (
+                  ExitStack() if not _wait_for_locks
+                  else canvas_documents.locked(new)) as _l2:
+                if new.exists():
+                    if old.exists():
+                        if old.read_bytes() != new.read_bytes():
+                            raise OSError('Folder recovery conflict; both sessions retained')
+                        if not row['duplicate']:
+                            new.unlink()
+                    elif row['duplicate']:
+                        with new.open('rb') as source, old.open('xb') as target:
+                            shutil.copyfileobj(source, target)
+                    else:
+                        try:
+                            new.rename(old)
+                        except OSError as error:
+                            import errno
+                            if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
+                                raise
+                            _copy_session_across_volumes(new, old)
     with _METADATA_LOCK:
         for snapshot in pending['metadata']:
             path = profile_directory() / snapshot['path']
@@ -926,14 +1057,23 @@ def _relocate_pointers(state_dir, moved):
                 owner.write(value)
 
 
-def recover_session_move():
+def recover_session_move(*, _wait_for_locks=True):
     from .nograph_server import JsonFile
     owner = JsonFile(profile_directory() / 'data/sessions/file-move.json', {})
-    with canvas_documents.locked(owner.path):
-        _recover_session_move(owner)
+    if not owner.path.exists():
+        return
+    try:
+        lock_ctx = (canvas_documents.locked(owner.path) if _wait_for_locks
+                    else canvas_documents.locked(owner.path, timeout=_lock_poll_timeout()))
+        with lock_ctx:
+            _recover_session_move(owner, _wait_for_locks=_wait_for_locks)
+    except TimeoutError as error:
+        if _wait_for_locks:
+            raise
+        logging.getLogger(__name__).debug('Session move recovery deferred while another editor holds lock: %s', error)
 
 
-def _recover_session_move(owner):
+def _recover_session_move(owner, *, _wait_for_locks=True):
     from .workshop_tasks import relocate_sessions
     if not owner.path.exists():
         return
@@ -942,7 +1082,10 @@ def _recover_session_move(owner):
     from .quiet_update import _cleanup_plain
     if not _cleanup_plain(local_path(old)) or not _cleanup_plain(local_path(new)):
         raise ValueError('Session recovery requires plain local document paths')
-    with canvas_documents.locked(old), canvas_documents.locked(new):
+    poll_s = _lock_poll_timeout()
+    old_lock = canvas_documents.locked(old) if _wait_for_locks else canvas_documents.locked(old, timeout=poll_s)
+    new_lock = canvas_documents.locked(new) if _wait_for_locks else canvas_documents.locked(new, timeout=poll_s)
+    with old_lock, new_lock:
         for current, other in ((old, new), (new, old)):
             try:
                 if read_document(current)['id'] == pending['id']:
@@ -1910,9 +2053,10 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
 
 class SessionFiles:
     """Files are data; recent paths and crash recovery remain local to the profile."""
-    def __init__(self, directory=None, *, sign_resume_pointer=None):
+    def __init__(self, directory=None, *, sign_resume_pointer=None, _resolved_directory=None, _read_only=False):
         self.sign_resume_pointer = sign_resume_pointer
-        self.directory = Path(directory) if directory else sessions_directory()
+        self.directory = (Path(directory) if directory
+                          else (_resolved_directory or sessions_directory(_wait_for_locks=not _read_only)))
         self.directory.mkdir(parents=True, exist_ok=True)
         self.metadata = Path(directory) if directory else profile_directory() / 'data' / 'sessions'
         self.metadata.mkdir(parents=True, exist_ok=True)
@@ -1934,18 +2078,24 @@ class SessionFiles:
     def _owned(self):
         """Every file this account opened or saved, newest first (signed pointers; no cap: the Library lists them all)."""
         target = self.metadata/'recent.json'
-        with _METADATA_LOCK, canvas_documents.locked(target):
-            owned = []
-            changed = False
+        with _METADATA_LOCK:
             rows = self._recent()
-            for row in rows:
-                if self._upgrade_resume_pointer(row):
-                    changed = True
-                if self._owns_resume_pointer(row):
-                    owned.append({key: value for key, value in row.items() if key != 'desktop_resume'})
-            if changed:
-                self._write_pointer_metadata(target, rows)
-            return owned
+            if self.sign_resume_pointer is not None and any(self._legacy_resume_parts(row) for row in rows):
+                try:
+                    with canvas_documents.locked(target, timeout=_lock_poll_timeout()):
+                        rows = self._recent()
+                        changed = False
+                        for row in rows:
+                            if self._upgrade_resume_pointer(row):
+                                changed = True
+                        if changed:
+                            self._write_pointer_metadata(target, rows)
+                except TimeoutError:
+                    rows = [dict(row) for row in rows]
+                    for row in rows:
+                        self._upgrade_resume_pointer(row)
+            return [{key: value for key, value in row.items() if key != 'desktop_resume'}
+                    for row in rows if self._owns_resume_pointer(row)]
 
     def known_paths(self):
         return None if self.sign_resume_pointer is None else {row['path'] for row in self._owned()}
@@ -1998,10 +2148,14 @@ class SessionFiles:
         with _METADATA_LOCK:
             held = self._load_resume_pointer(current)
             if self.sign_resume_pointer is not None and self._legacy_resume_parts(held):
-                with canvas_documents.locked(current):
-                    held = self._load_resume_pointer(current)
-                    if self._upgrade_resume_pointer(held):
-                        self._write_pointer_metadata(current, held)
+                try:
+                    with canvas_documents.locked(current, timeout=_lock_poll_timeout()):
+                        held = self._load_resume_pointer(current)
+                        if self._upgrade_resume_pointer(held):
+                            self._write_pointer_metadata(current, held)
+                except TimeoutError:
+                    held = dict(held)
+                    self._upgrade_resume_pointer(held)
             return held
 
     def _sign_pointer(self, pointer):
@@ -2046,25 +2200,38 @@ class SessionFiles:
 
     def current_path(self):
         """The file the founder has open. Every reader asks here; none of them writes this choice."""
-        for row in self.open_files():
-            if row.get('open_in_app') and isinstance(row.get('path'), str):
-                return row['path']
+        with _METADATA_LOCK:
+            held = self._read_current()
+            if held and self._owns_resume_pointer(held):
+                path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
+                if isinstance(path, str):
+                    return path
         return ''
 
     def open_files(self):
         """The file the app has open now (agents edit the same file), then recent files."""
         with _METADATA_LOCK:
-            rows = []
             held = self._read_current()
-            if held and self._owns_resume_pointer(held):
-                path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
-                rows.append({'path':path,'open_in_app':True})
-            rows += [{'path':r['path'],'open_in_app':False,'title':r.get('title','')} for r in self.recent() if r['path'] not in {x['path'] for x in rows}]
-            return rows
+            current_open = (held.get('path') or str(self.directory/(held['id']+'.archhub'))
+                            if held and self._owns_resume_pointer(held) else '')
+            recent = self.recent()
+        rows = []
+        if current_open:
+            title = next((r.get('title', '') for r in recent if r['path'] == current_open and r.get('title')), '')
+            try:
+                base, _, _ = _session_summary_entry(current_open)
+                title = base['title']
+            except (OSError, ValueError) as error:
+                logging.getLogger(__name__).debug('Open session summary unavailable: %s', error)
+            rows.append({'path': current_open, 'open_in_app': True, 'title': title})
+        seen = {x['path'] for x in rows}
+        rows += [{'path': r['path'], 'open_in_app': False, 'title': r.get('title', '')}
+                 for r in recent if r['path'] not in seen]
+        return rows
 
     def _load_resume_pointer(self, path):
         try:
-            held = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+            held = json.loads(_metadata_io(path.read_text, encoding='utf-8')) if path.exists() else {}
             return {} if self.sign_resume_pointer is not None and not isinstance(held, dict) else held
         except (OSError, ValueError):
             if self.sign_resume_pointer is None:
@@ -2173,9 +2340,19 @@ class SessionFiles:
             from .enforce import guard_effect
             invoke = invoke or guard_effect
         if action == 'catalogue':
+            known = self.known_paths()
+            sessions_out = []
+            for candidate, rkey, dstamp in _scandir_archhub(self.directory):
+                if known is not None and str(candidate) not in known:
+                    continue
+                try:
+                    base, _, _ = _session_summary_entry(candidate, resolved_key=rkey, fast_dir_stamp=dstamp)
+                except (OSError, ValueError):
+                    continue
+                sessions_out.append({'id': base['id'], 'title': base['title'],
+                                     'path': str(candidate), 'kind': base['kind']})
             return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory),
-                    'sessions':[{'id':row['skill']['id'], 'title':row['skill']['title'], 'path':str(row['path']),
-                                 'kind':document_kind(row['skill'])} for row in load_skills(self.known_paths())]}
+                    'sessions':sessions_out}
         if action == 'initial':
             import sys
             launch = next((a for a in sys.argv[1:] if str(a).lower().endswith('.archhub')), None)
@@ -2236,11 +2413,17 @@ class SessionFiles:
                 base = int(body.get('base_revision', canvas_documents.revision(document)))
                 merged = commit_ui(path, document, base, expect_existing=bool(body.get('path')))
                 # APPTIDY owns names only in Sessions; external filenames belong to the user.
-                renamed = move_session(path, Path(path).parent) if Path(path).parent == self.directory.resolve() else path
+                parent_dir = Path(path).parent
+                if parent_dir == self.directory.resolve():
+                    expected_first = parent_dir / (_clean_session_stem(merged['title']) + '.archhub')
+                    needs_move = Path(path) != expected_first and document_path(parent_dir, merged).resolve() != Path(path).resolve()
+                    renamed = move_session(path, parent_dir) if needs_move else path
+                else:
+                    renamed = path
                 if renamed != path:
                     _relocate_pointers(profile_directory(), [(path, renamed)])
                     path = renamed
-                    canvas_documents.remember(path, merged)
+                canvas_documents.remember(path, merged)
                 self._current(document['id'], path)
                 return {'ok':True,'path':path,'document':merged,'revision':merged.get('properties',{}).get('revision',0)}
             path = body.get('path')
@@ -2346,8 +2529,11 @@ class SessionFiles:
                     written.append(change.get('key'))
             return {**solve(document, list(body.get('changed') or []), invoke=invoke, stopped=stopped, path=body.get('path')), 'written': written}
         if action in ('head', 'read'):
-            path = local_path(body.get('path')) if body.get('path') else next((row['path'] for row in load_skills() if row['skill']['id'] == body.get('id')), self.directory/'missing.archhub')
-            if not re.fullmatch(r'[A-Za-z0-9_-]{0,128}', str(body.get('id',''))) or not path.exists():
+            ident = str(body.get('id', ''))
+            if not re.fullmatch(r'[A-Za-z0-9_-]{0,128}', ident):
+                return {'ok':True,'revision':-1}
+            path = local_path(body.get('path')) if body.get('path') else _find_skill_path(ident, self.directory)
+            if not path.exists():
                 return {'ok':True,'revision':-1}
             from .workshop_tasks import refresh_steps
             refresh_steps(path)
@@ -2770,7 +2956,7 @@ def _link_source(document, path, link):
         held = None
     if held and held['id'] == link['source']['id']:
         return candidate, held
-    for folder in {Path(path).parent, sessions_directory()}:
+    for folder in {Path(path).parent, sessions_directory(_wait_for_locks=False)}:
         for other in folder.glob('*.archhub'):
             try:
                 found = read_document(other)
@@ -2915,31 +3101,48 @@ def list_sessions(directory=None, *, active_paths=()):
     roots = _registered_roots()
     tasks = {}
     try:
-        from .workshop_mailbox import application_history
-        with application_history(read_only=True) as history:
-            for row in rows(history, settle=False):
-                path = row.get('session_path')
-                if isinstance(path, str) and path:
-                    tasks[Path(path)] = row
+        from .workshop_mailbox import application_history, profile_database
+        if profile_database().is_file():
+            with application_history(read_only=True, existing_only=True) as history:
+                for row in rows(history, settle=False):
+                    path = row.get('session_path')
+                    if isinstance(path, str) and path:
+                        tasks[Path(path)] = row
     except Exception as error:  # noqa: BLE001 - no Workshop database yet: files still list, without members
         logging.getLogger(__name__).debug('Session list without task rows: %s', error)
     groups = {}
     resumable = {}
-    paths = set((Path(directory) if directory else sessions_directory()).glob('*.archhub'))
-    paths.update(Path(path) for path in active_paths)
-    for path in sorted(paths):
+    folder = Path(directory) if directory else sessions_directory(_wait_for_locks=False)
+    scanned = {path: (rkey, dstamp) for path, rkey, dstamp in _scandir_archhub(folder)}
+    for extra in active_paths:
+        scanned.setdefault(Path(extra), (None, None))
+    for path in sorted(scanned):
+        rkey, dstamp = scanned[path]
         try:
-            document = read_document(path)
+            base, raw_props, updated_at = _session_summary_entry(path, resolved_key=rkey, fast_dir_stamp=dstamp)
         except (OSError, ValueError):
             continue
         row = tasks.get(path)
-        fields = session_fields(document, path, roots=roots, task_row=row)
-        fields['members'] = member_presence((row or {}).get('members') or [])
+        state = _state_of(raw_props, row)
+        pinned = base['pinned']
+        fields = {
+            **base,
+            'path': str(path),
+            'project': _project_of(raw_props, roots, row),
+            'state': state,
+            'onHome': pinned or state == 'open',
+            'doneCheck': copy.deepcopy(base['doneCheck']) if base['doneCheck'] is not None else None,
+            'automation': copy.deepcopy(base['automation']),
+            'settings': dict(base['settings']),
+            'inputLinks': copy.deepcopy(base['inputLinks']),
+            'context': copy.deepcopy(base['context']),
+            'members': member_presence((row or {}).get('members') or []),
+            'updated': updated_at,
+        }
         if not isinstance(fields['task'], str) or not fields['task'].strip():
             fields['task'] = (row or {}).get('id', '')
         if fields['task'] and fields['state'] != 'archived' and not (row or {}).get('archived'):
             resumable[path] = fields['task']
-        fields['updated'] = (document.get('properties', {}).get('history') or [{}])[-1].get('at', '')
         project = fields['project'] if fields['project']['label'] else {'id': '', 'label': ''}
         group = groups.setdefault((project['id'], project['label']), {'project': project, 'sessions': []})
         group['sessions'].append(fields)
@@ -2947,7 +3150,7 @@ def list_sessions(directory=None, *, active_paths=()):
     recent_task = None
     if resumable:
         try:
-            for entry in SessionFiles(directory).recent():
+            for entry in SessionFiles(directory, _resolved_directory=folder, _read_only=True).recent():
                 if isinstance(entry, dict) and isinstance(entry.get('path'), str):
                     recent_task = resumable.get(Path(entry['path']))
                     if recent_task:
@@ -3009,14 +3212,14 @@ def read_runs(path, limit=200, identity=None):
 
 def recent_runs(limit=60, directory=None):
     """App health > Activity: the newest run receipts of every session file (its .runs.jsonl), newest first."""
-    folder = Path(directory) if directory else sessions_directory()
+    folder = Path(directory) if directory else sessions_directory(_wait_for_locks=False)
     titles = {}
-    for path in folder.glob('*.archhub'):
+    for path, rkey, dstamp in _scandir_archhub(folder):
         try:
-            document = read_document(path)
+            base, _, _ = _session_summary_entry(path, resolved_key=rkey, fast_dir_stamp=dstamp)
         except (OSError, ValueError):
             continue
-        titles[document['id']] = (document.get('title') or path.stem, str(path))
+        titles[base['id']] = (base['title'] or path.stem, str(path))
     rows = []
     for target in folder.glob('*.runs.jsonl'):
         title, path = titles.get(target.name[:-len('.runs.jsonl')], (target.name[:-len('.runs.jsonl')], ''))

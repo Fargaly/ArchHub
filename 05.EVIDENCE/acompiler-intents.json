@@ -101,7 +101,13 @@
         "02.TESTS/tests_js/settings_five_changes.test.cjs",
         "01.APP/nodelang/workshop_mailbox.py",
         "01.APP/nodelang/host_brokers.py",
-        "02.TESTS/tests_replica/test_native_host_tools.py"
+        "02.TESTS/tests_replica/test_native_host_tools.py",
+        "01.APP/nodelang/clean_revit_adapter.py",
+        "01.APP/nodelang/nodeslib_v2_engines.py",
+        "01.APP/nodelang/workspace_roots_catalogue.py",
+        "02.TESTS/tests_replica/test_host_verbs_folded.py",
+        "02.TESTS/tests/test_settings_wired_rows_live.py",
+        "02.TESTS/tests_js/settings_wired_rows_live.cjs"
       ]
     },
     "WHOLEDESIGN-A8": {

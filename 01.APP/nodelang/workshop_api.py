@@ -49,9 +49,25 @@ def _control(options, states):
     return {"request":control["request"], "state":state, "reason":delivery.get("reason")}
 
 
-def _message_identity(author, declared, subject_root):
-    row = next((item for item in declared
-                if author.endswith(" [" + item["session"] + "]")), None)
+def _first_by_session(declared):
+    """Each session's first row, as the scan in _message_identity finds it; built once per listing."""
+    first = {}
+    for at, item in enumerate(declared):
+        first.setdefault(item["session"], (at, item))
+    return first
+
+
+def _message_identity(author, declared, subject_root, first=None):
+    if first is None:
+        first = _first_by_session(declared)
+    # The first row whose session closes the author, " [session]": every " [" of the author is a candidate start.
+    found, start = [], author.find(" [") if author.endswith("]") else -1
+    while start != -1:
+        hit = first.get(author[start + 2:-1])
+        if hit is not None:
+            found.append(hit)
+        start = author.find(" [", start + 1)
+    row = min(found, key=lambda hit: hit[0])[1] if found else None
     if row is None:
         return {"who": "You" if author == subject_root else author, "author": author,
                 "sender_key": author, "viewer_key": subject_root}
@@ -129,7 +145,7 @@ class WorkshopAPI:
             raise ValueError("Workshop message cursor is invalid")
         from .workshop_mailbox import application_history, read_declarations
         with application_history() as history:
-            declared = read_declarations(history._db, include_archived=True)
+            declared = read_declarations(history._db, include_archived=True, shared=True)
             with history._transaction():
                 rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
                     "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
@@ -141,7 +157,8 @@ class WorkshopAPI:
                 shown = [row for row in rows if visible(row)]
                 states = {row["id"]: message_delivery(history, row, viewer=viewer, visible_reply=visible) for row in shown}
         from .workshop_mailbox import _routing
-        messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
+        first = _first_by_session(declared)
+        messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root, first), "text":row["content"],
             "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
             "project": (_routing(row) or {}).get("project") or "",
             **states[row["id"]]}

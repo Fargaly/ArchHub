@@ -1629,7 +1629,7 @@ def maintain_tasks(history, paused=None):
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         from .workshop_mailbox import read_declarations
         _ensure(history)
-        declarations = read_declarations(history._db, include_archived=True)
+        declarations = read_declarations(history._db, include_archived=True, shared=True)
         paused_sessions = set()
         if paused:
             owners = {r[0] for r in history._db.execute(
@@ -1656,7 +1656,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False, s
 def _column(history, project=None, stale_hours=None, *, include_archived=False, settle=True, documents=None):
     from .workshop_mailbox import read_declarations
     hours = TASKS_NODE["params"]["stale_hours"] if stale_hours is None else stale_hours
-    declarations = read_declarations(history._db, include_archived=True)
+    declarations = read_declarations(history._db, include_archived=True, shared=True)
     if settle:
         fold_declarations(history, declarations)
     live = {}

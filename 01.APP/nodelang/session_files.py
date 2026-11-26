@@ -10,6 +10,7 @@ import hashlib
 from hmac import compare_digest
 import json
 import logging
+import marshal
 import math
 import os
 from pathlib import Path
@@ -536,14 +537,43 @@ def local_path(path):
     return resolved
 
 
+# Resolved path -> (file stamp, validated document as marshal bytes). A file whose stamp (id, size, mtime) is
+# unchanged is not read, parsed or validated again (installed launcher re-read every skill and schedule file on every
+# poll, 2026-11-26); each read still rebuilds a detached document, and node purity is the engine's answer now.
+_DOCUMENTS = {}
+_DOCUMENTS_LIMIT, _DOCUMENT_CACHE_BYTES = 512, 1 << 20
+
+
+def _stamp(status):
+    return status.st_ino, status.st_size, status.st_mtime_ns
+
+
 def read_document(path):
     target = local_path(str(path))
+    held = _DOCUMENTS.get(str(target))
+    if held is not None and held[0] == _stamp(_metadata_io(os.stat, target)):
+        document = marshal.loads(held[1])
+        for node in document['nodes']:
+            if 'pure' in node:   # as validate's check_contract sets it: engines and linked skills can change
+                node['pure'] = canvas_documents.is_pure(node.get('type'), node.get('params'))
+        return _without_test_writer(document)
     with _metadata_io(target.open, 'rb') as stream:
+        status = os.fstat(stream.fileno())
         # read(n) allocates n bytes up front: size the read by the file (still bounded) so a list stays fast.
-        raw = stream.read(min(os.fstat(stream.fileno()).st_size, MAX_BYTES) + 1)
+        raw = stream.read(min(status.st_size, MAX_BYTES) + 1)
     if len(raw) > MAX_BYTES:
         raise ValueError('Session exceeds 8 MiB')
     document = validate(json.loads(raw.decode('utf-8-sig')))
+    # A file changed in the last 2 s may change again inside one timestamp tick at the same size: not kept (git's
+    # racy-clean rule), so a kept stamp always means unchanged bytes.
+    if len(raw) <= _DOCUMENT_CACHE_BYTES and time.time_ns() - status.st_mtime_ns > 2_000_000_000:
+        if len(_DOCUMENTS) >= _DOCUMENTS_LIMIT:
+            _DOCUMENTS.clear()   # shortcut: refilled by the next reads; memory stays bounded by the limit
+        _DOCUMENTS[str(target)] = (_stamp(status), marshal.dumps(document))
+    return _without_test_writer(document)
+
+
+def _without_test_writer(document):
     properties = document.get('properties', {}) if isinstance(document, dict) else {}
     writer = properties.get('_test_writer') if isinstance(properties, dict) else None
     if isinstance(writer, dict) and writer.get('test_run_id'):

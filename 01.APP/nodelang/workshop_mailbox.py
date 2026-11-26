@@ -1532,7 +1532,7 @@ class WorkshopInjection:
                 latest = []
         waiting_rows = []
         if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_waiting'").fetchone():
-            waiting_rows = history._db.execute("SELECT m.* FROM messages m JOIN workshop_waiting w ON m.id=w.message_id "
+            waiting_rows = history._db.execute("SELECT m.* FROM workshop_waiting w CROSS JOIN messages m ON m.id=w.message_id "
                 "WHERE m.conversation_id=? ORDER BY m.sequence LIMIT 2000", (ROOM,)).fetchall()
         latest += waiting_rows
         waiting_ids = {row["id"] for row in waiting_rows}
@@ -1558,7 +1558,7 @@ class WorkshopInjection:
                 self._cursor = rows[-1]["sequence"]
             return
         # Process liveness probes must not keep SQLite readers blocking a sender's COMMIT.
-        declarations = _Known(read_declarations(history._db, include_archived=True))   # names indexed once per tick
+        declarations = _Known(read_declarations(history._db, include_archived=True, shared=True))   # names indexed once per tick
         declared = max(["", *(row.get("updated_at", "") for row in declarations)])
         self._waiting_roster, self._progress = roster, False
         if len(self._replies_done) > 10000:
@@ -1779,8 +1779,14 @@ _META = ("pid", "created_at", "native_session_id", "native_process", "runtime", 
          "updated_at", "session")
 
 
+_LAST_ENTRIES = (None, None)   # the newest read's record texts and entries: an unchanged table is not re-indexed
+
+
 def _entries(texts):
-    global _BUILT
+    global _BUILT, _LAST_ENTRIES
+    last = _LAST_ENTRIES
+    if last[0] is texts:
+        return last[1]
     cache, built = _BUILT, {}
     for text in texts:
         entry = cache.get(text)
@@ -1790,7 +1796,9 @@ def _entries(texts):
             entry = (marshal.dumps(row), {field: row[field] for field in _META if field in row})
         built[text] = entry
     _BUILT = built   # only the rows of the newest read are kept: the cache never outgrows the table
-    return [built[text] for text in texts]
+    entries = [built[text] for text in texts]
+    _LAST_ENTRIES = (texts, entries)
+    return entries
 
 
 # A one-row counter that triggers bump in the writer's own transaction, whichever process or build writes; a reader
@@ -1837,15 +1845,28 @@ def _identities(connection, records=None):
     return [] if records is None else [meta for _blob, meta in _entries(records)]
 
 
-def read_declarations(connection, *, include_archived=False, records=None, session=None):
+# The newest shared full read: (record texts, liveness, rows). Rows handed to shared readers, never rebuilt while the
+# table and every row's liveness are unchanged (installed launcher: 6000 rows rebuilt per tick, 2026-11-26).
+_SHARED = (None, None, None)
+
+
+def read_declarations(connection, *, include_archived=False, records=None, session=None, shared=False):
     """records: the table's raw record texts, kept by a caller per commit (F419); liveness is read fresh.
     session: only that session's rows (archived too when include_archived). Only the rows returned and the rows of
-    their roles are rebuilt: a live-only read no longer rebuilds the ~5700 rows of dead processes."""
+    their roles are rebuilt: a live-only read no longer rebuilds the ~5700 rows of dead processes.
+    shared: a read-only caller (it never changes a row or anything nested in one) of the full archived list gets the
+    rows of the last identical read; the list itself is always new."""
+    global _SHARED
     records = _records(connection, records)
     if records is None:
         return []
     entries = _entries(records)
     alive = [_session_alive(meta) for _blob, meta in entries]
+    shared = shared and include_archived and session is None
+    if shared:
+        held = _SHARED
+        if held[0] is records and held[1] == alive:
+            return list(held[2])
     current = [meta["status"] != "done" and live for (_blob, meta), live in zip(entries, alive)]
     wanted = ([meta.get("session") == session for _blob, meta in entries] if session is not None
               else [True] * len(entries) if include_archived else current)
@@ -1872,7 +1893,11 @@ def read_declarations(connection, *, include_archived=False, records=None, sessi
             # Role and human names follow their owner; exact session identities never do.
             holder.setdefault("aliases", []).extend(alias for alias in _aliases({}, row)
                 if not _exact_session_alias(alias, row))
-    return [row for at, row in built.items() if wanted[at] and (include_archived or row["current"])]
+    result = [row for at, row in built.items() if wanted[at] and (include_archived or row["current"])]
+    if shared:
+        _SHARED = (records, alive, result)
+        return list(result)
+    return result
 
 
 def _inherited_work(history, root, lineage):

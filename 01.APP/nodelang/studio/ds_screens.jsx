@@ -58,9 +58,13 @@
   const typeColor = t => ({
     elements: A.accent,
     text: A.inkSoft,
+    string: A.inkSoft,
     number: A.warn,
+    integer: A.warn,
     boolean: A.purple,
+    bool: A.purple,
     file: A.ok,
+    folder: A.ok,
     event: A.cyan,
     any: A.inkSoft,
     view: A.cyan
@@ -97,11 +101,11 @@
     : /running|updating/i.test(n.status) ? ['Updating…', A.cyan]
     : /retried/i.test(n.status) ? ['Retried', A.ok]
     : /done|ran/i.test(n.status) ? ['Done', A.ok] : ['Not run', A.inkSoft];
-  // Spec Wire/*: compatible cyan, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2).
-  const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===w.to) || {}, false)[0]) ? A.warn : A.cyan;
+  // Spec Wire/*: typed socket colour, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2, list hollow cable).
+  const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===(w.origTo || w.to)) || {}, false)[0]) ? A.warn : typeColor(w.type);
   // DESIGNSYS-050 4.9 Wire: ONE stroke for the Canvas (FlowWire) and the System graph (GraphWires); Penpot Wire/Compatible, wire.strokeWidth 2.
-  function WirePath({id, state, d, color, dash, opacity, route}) {
-    return <path data-graph-wire={id} data-wire-state={state} data-wire-route={route || 'Bezier'} d={d} stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray={dash} opacity={opacity} fill="none" />;
+  function WirePath({id, state, d, color, dash, opacity, route, list}) {
+    return <path data-graph-wire={id} data-wire-state={state} data-wire-route={route || 'Bezier'} data-wire-list={list ? 'true' : undefined} d={d} stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray={dash} opacity={opacity} fill="none" />;
   }
   function GraphWires({paths,visibility='Visible',nodes=[]}) {
     return <>{paths.map(({w,a,b})=>{
@@ -509,8 +513,8 @@
     if (p.options?.length && p.options.length<=4) return <span className="v48-choice-widget" role="group" aria-label={label}>{p.options.map(option=><button type="button" className="button-reset nodrag" key={option} aria-pressed={shown===option} onClick={event=>executeAction('projects.controls.activate',{handler:()=>save(option)},event)}>{option}</button>)}</span>;
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
     const unbounded = ['min', 'max'].includes(p.key) && (shown == null || shown === '');
-    return <input className="nodrag" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
-      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 'calc(13px * var(--text-scale,1))'}}
+    return <input className="nodrag v48-value-input" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
+      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown}
       onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
   }
   function StepHistory({n,u}) {
@@ -530,7 +534,7 @@
     const p = n.parameterSchema?.find(x => x.key === 'value') || {key: 'value', type: 'number', editable: true}, unset = typeof n.params.value !== 'number',
       value = unset ? NaN : n.params.value, max = p.max ?? (unset || Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? Math.min(0, unset ? 0 : value), step = p.step ?? (max <= 2 ? .05 : 1),
       out = n.outputs[0], save = v => Number.isFinite(v) ? u.act(() => api.setNodeParam(n.id, 'value', Math.min(p.max ?? Infinity, Math.max(p.min ?? -Infinity, v)))) : undefined;
-    return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 80, outline: selected ? '1.5px solid ' + A.accent : 'none', outlineOffset: 2}}>
+    return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 88, minHeight: 88, outline: selected ? '1.5px solid ' + A.accent : 'none', outlineOffset: 2}}>
       <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, color: SPEC.typed}}>#  {n.title}</div>
       {!n.pure && <span data-node-pure="false" title="Side effect: waits for Run" style={{position: 'absolute', right: 10, top: 9, color: A.inkSoft}}><window.AHIcon name="clock" size={12} /><span>Effect</span></span>}
       <div style={{position: 'absolute', left: 12, top: 32, right: 12, display: 'flex', alignItems: 'center', gap: 6, color: SPEC.typed}}>
@@ -540,7 +544,7 @@
         <button type="button" className="button-reset nodrag" aria-label={'Increase ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) + step)}, event)}>▶</button>
       </div>
       <input className="nodrag" type="range" aria-label={n.title + ' slider'} min={min} max={max} step={step} value={unset ? min : value}
-        onChange={e => save(e.target.valueAsNumber)} style={{position: 'absolute', left: 12, right: 12, top: 58, width: 156, accentColor: SPEC.typed}} />
+        onChange={e => save(e.target.valueAsNumber)} style={{position: 'absolute', left: 12, right: 12, top: 58, width: 156, height: 20, margin: 0, padding: 0, accentColor: SPEC.typed}} />
       {out && <span style={edgeSocket('out', 34)}>{socket(out, 'out')}</span>}
     </div>;
   }
@@ -673,7 +677,10 @@
         <button type="button" className="button-reset nodrag v48-session-pins" data-design="session.pins" aria-expanded={expanded} aria-label={'On every canvas · ' + (expanded ? 'Collapse' : 'Expand')} title={expanded ? 'Fold the profile, thread and agent into this card' : 'Show the profile, thread and agent as their own cards'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs, expanded: !expanded}))},event)}><window.AHIcon name={expanded ? 'minus' : 'plus'} size={12}/></button></header>
       <div className="v48-session-body"><div><span>Task</span><b>{task?.title || s.graph.name}</b></div><div><span>Runs</span><b>{n.params.model || sessionAgents.find(row=>row.params.model)?.params.model || agent?.params.model || live?.model || 'No active agent'}</b></div>{messages.length > 0 && <p>{messages.at(-1).text}</p>}<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button></div>
       {/* The session's own outputs are always there to wire from (the design's task socket); its inputs show when wired. */}
-      {((n.outputs || []).length > 0 || usedPorts(n, 'in').length > 0) && <div className="v48-session-ports">{['in','out'].map(side => (side === 'out' ? (n.outputs || []).filter(p => !panelPorts.has(p.id)) : usedPorts(n,side)).map(p => <span key={side+p.id} data-side={side}>{panelSocket(n,p,side)}{p.id === 'value' ? 'task' : p.name}</span>))}</div>}
+      {(((n.outputs || []).some(p => !panelPorts.has(p.id))) || usedPorts(n, 'in').length > 0) && <div className="v48-session-ports" data-port-band="">{['in', 'out'].map(side => {
+        const ports = side === 'out' ? (n.outputs || []).filter(p => !panelPorts.has(p.id)) : usedPorts(n, side);
+        return <div key={side} className={'v48-session-port-col ' + side} data-port-col={side}>{ports.map(p => <div key={side + p.id} className={'v48-session-port-row ' + side} data-side={side}><span className="v48-session-port-handle">{panelSocket(n, p, side)}</span><span className="v48-session-port-name">{p.id === 'value' ? 'task' : p.name}</span></div>)}</div>;
+      })}</div>}
       <div className="v48-session-panels">{panels.filter(([,,,owner]) => !expanded || !owner?.fixed || owner === n).map(([label, icon, summary, owner]) => <section key={label} className="v48-session-panel">
         <button type="button" data-design={'session.panel.' + label.toLowerCase()} className="button-reset nodrag v48-session-panel-head" aria-expanded={label === 'Thread' ? undefined : !!open[label]} onClick={event=>executeAction('projects.controls.activate',{handler:()=>label === 'Thread' ? u.setTaskFace(u.taskFace === 'split' ? 'canvas' : 'split') : setOpen(v => ({...v,[label]:!v[label]}))},event)}>
           {label==='Agent'?<window.UI.Av id={name} size={22}/>:<span className="v48-panel-tile"><window.AHIcon name={icon} size={12}/></span>}<b>{label}</b><em>{summary}</em><span>{open[label] ? '⌄' : '→'}</span>
@@ -833,7 +840,7 @@
       if (result?.approvalId) u.show('Approve', {id: result.approvalId});
     };
     return <D.Node className="v22g-node" data-pinned-card={pinned || undefined} data-embed-node={isEmbed || undefined} data-design={!n.fixed ? 'node.' + (n.status==='Running'?'running':n.status==='Done'?'done':/approval/i.test(n.status)?'waiting':/error|fail/i.test(n.status)?'failed':'pending') : undefined} data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      w={n.fixed ? 300 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 280} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : (n.category && n.category!=='Node' ? n.category : n.kind) + ' · ' + (n.pure ? 'Runs by itself' : 'Waits for you')}
+      w={n.fixed ? 300 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 300} stacked={isEmbed} dashed={Boolean(n.frozen)} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : (n.category && n.category!=='Node' ? n.category : n.kind) + ' · ' + (n.pure ? 'Runs by itself' : 'Waits for you')}
       glyph={n.fixed && ['thing.agent','thing.session'].includes(n.type) ? <window.UI.Av id={n.params.agent || task?.agents?.[0] || ''} size={20}/> : <window.AHIcon name={n.icon || (n.type==='thing.you' ? 'user' : n.type==='thing.workshop' ? 'workshop' : familyIcon)} size={12}/>} gc={n.fixed ? A.purple : familyColor}
       selected={selected} headerProps={{className:'node-header','data-custom-header':headerColor?true:undefined,style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
       style={{fontSize:'calc(13px * var(--text-scale,1))',borderRadius:'var(--node-radius,6px)',minHeight:pending?160:undefined}}
@@ -855,9 +862,9 @@
           const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())) : port.name,
             type = param ? ((['min', 'max', 'step'].includes(param.key) || param.type === 'number' || ['number', 'integer'].includes(param.dataType)) ? 'number' : (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : 'string'))) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
-            style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(64px,.8fr) minmax(0,1.3fr) 16px', minHeight:30, gap: 6, padding: '2px 0', alignItems: 'center'}}>
+            style={{position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(64px,.8fr) minmax(0,1.3fr) 16px', minHeight: 30, gap: 6, padding: '2px 0', alignItems: 'center', boxSizing: 'border-box'}}>
             {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}
-            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
+            <span style={{minWidth: 0}}><span className="v48-plabel" style={{display: 'block', fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
               <span data-row-type="" style={{display: 'none', color: SPEC.label}}>{type}</span></span>
             <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
               {from ? <span data-linked-source="" style={{color: SPEC.label}} title={from}>{from}</span>
@@ -982,10 +989,14 @@
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
-    const d = wirePath({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route);
+    const a = {x: sourceX - 11, y: sourceY}, b = {x: targetX + 11, y: targetY};
+    const d = wirePath(a, b, data.route);
+    const labelX = (a.x + b.x) / 2, labelY = (a.y + b.y) / 2;
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
-      <WirePath id={id} state={data.state} route={data.route} d={d} color={data.color} dash={data.inferred?'6 4':undefined} opacity={data.opacity} />
-      <path className="react-flow__edge-interaction" d={wireBand({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route)} fill="transparent" stroke="none" style={{pointerEvents: 'fill'}} aria-label={data.label || 'Inspect wire ' + id}>{data.label && <title>{data.label}</title>}</path>
+      <WirePath id={id} state={data.state} route={data.route} list={data.list} d={d} color={data.color} dash={data.inferred?'6 4':undefined} opacity={data.opacity} />
+      {data.list && <path data-wire-list-gap={id} className="wire-list-gap" d={d} stroke="var(--color-bg-canvas)" strokeWidth="1.7" strokeLinecap="round" strokeDasharray={data.inferred?'6 4':undefined} opacity={data.opacity} fill="none" style={{pointerEvents: 'none'}} />}
+      {Boolean(data.rule) && <rect className="rule" data-wire-rule={data.rule} x={labelX - 5} y={labelY - 5} width="10" height="10" rx="1.5" transform={`rotate(45 ${labelX} ${labelY})`} fill={A.bgRaised} stroke={A.warn} strokeWidth="1.5" style={{pointerEvents: 'none'}}><title>{'Rule: ' + data.rule}</title></rect>}
+      <path className="react-flow__edge-interaction" d={wireBand(a, b, data.route)} fill="transparent" stroke="none" style={{pointerEvents: 'fill'}} aria-label={data.label || 'Inspect wire ' + id}>{data.label && <title>{data.label}</title>}</path>
     </>;
   }
   // A card redraws when its data or selection changes; a drag frame only moves it (the engine sets its transform).
@@ -1342,8 +1353,8 @@
           picked = boxes.find(b=>b.id===selected.at(-1)), center = {x:(left+right-w)/2,y:(top+bottom-h)/2};
         const clear = c=>!occupied.some(b=>c.x<b.x+b.w+16 && c.x+w+16>b.x && c.y<b.y+b.h+16 && c.y+h+16>b.y);
         const free = c=>c.x>=left && c.y>=top && c.x+w<=right && c.y+h<=bottom && clear(c);
-        let point = [made,picked && {x:picked.x+Math.max(280,picked.w+36),y:picked.y},center].find(c=>c&&free(c));
-        // Search obstacle edges lazily; keep the STUDIOFIX 280px adjacent offset.
+        let point = [made,picked && {x:picked.x+Math.max(300,picked.w+36),y:picked.y},center].find(c=>c&&free(c));
+        // Search obstacle edges lazily; keep the STUDIOFIX 300px adjacent offset.
         const xs = new Set([left,center.x,right-w]), ys = new Set([top,center.y,bottom-h]);
         for (const b of occupied) { xs.add(b.x+b.w+16); xs.add(b.x-w-16); ys.add(b.y+b.h+16); ys.add(b.y-h-16); }
         if (!point) outer: for (const y of ys) for (const x of xs) if (free({x,y})) { point={x,y};break outer; }
@@ -1364,7 +1375,7 @@
     React.useLayoutEffect(() => {
       if (!active || requestState !== 'loaded' || !area.current) return;
       const positions = {}, points = new Map(), prior = layout.scope === scope ? layout.positions : {},
-        minX = Math.min(...sourceNodes.map(n => n.x), 0), rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310);
+        minX = Math.min(...sourceNodes.map(n => n.x), 0), rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 336);
       for (const n of sourceNodes) {
         const point = JSON.stringify([n.x,n.y]);points.set(point,(points.get(point)||0)+1);
       }
@@ -1373,7 +1384,7 @@
       const boxes = sourceNodes.map(n => {
         const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y, size = measured.get(n.id);
         return {id:n.id,x:unchanged ? previous.x : n.x,y:unchanged ? previous.y : n.y,sourceX:n.x,sourceY:n.y,
-          w:(size?.width || (n.fixed ? 300 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 280)) + (isGroup(n) ? 10 : 0),
+          w:(size?.width || (n.fixed ? 300 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 300)) + (isGroup(n) ? 10 : 0),
           h:(size?.height || 160) + (isGroup(n) ? 10 : 0),
           stacked:points.get(JSON.stringify([n.x,n.y])) > 1};
       }), occupied = boxes.filter(box => !box.stacked);
@@ -1643,9 +1654,26 @@
           e.stopPropagation();
           u.show('Port menu', {...ownerSocket(n.id,p.id), anchor: {x: e.clientX, y: e.clientY}});
         }}>{(() => {
-          const wired = side === 'out' || s.graph.wires.some(w => (w.memberTo?.node ?? w.to) === n.id && (w.memberTo?.port ?? w.toPort) === p.id || w.to === n.id && w.toPort === p.id);
+          const pid = String(p.id || ''), colonIdx = pid.indexOf(':');
+          const delegatedNode = colonIdx > 0 && !pid.startsWith('param:') && !pid.startsWith('field:') ? pid.slice(0, colonIdx) : null;
+          const delegatedPort = delegatedNode ? pid.slice(colonIdx + 1) : null;
+          const wired = side === 'out'
+            ? s.graph.wires.some(w => {
+                const wf = w.from?.node ?? w.from, wfp = w.from?.socket ?? w.fromPort ?? 'out';
+                const mf = w.memberFrom?.node ?? wf, mfp = w.memberFrom?.port ?? wfp;
+                return (wf === n.id && wfp === pid) || (mf === n.id && mfp === pid)
+                  || Boolean(p.member && mf === p.member.node && mfp === p.member.port)
+                  || Boolean(delegatedNode && wf === delegatedNode && wfp === delegatedPort);
+              })
+            : s.graph.wires.some(w => {
+                const wt = w.to?.node ?? w.to, wtp = w.to?.socket ?? w.toPort ?? 'in';
+                const mt = w.memberTo?.node ?? wt, mtp = w.memberTo?.port ?? wtp;
+                return (wt === n.id && wtp === pid) || (mt === n.id && mtp === pid)
+                  || Boolean(p.member && mt === p.member.node && mtp === p.member.port)
+                  || Boolean(delegatedNode && wt === delegatedNode && wtp === delegatedPort);
+              });
           // Shape is structure (spec 2): a single value keeps the design's dot; an event is a triangle, a list a diamond.
-          return p.type === 'event' || p.list ? <D.Socket t={p.type} list={p.list} size={8} filled={wired} aria-hidden="true" /> : <span data-socket-dot="" data-wired={wired || undefined} />;
+          return p.type === 'event' || p.list ? <D.Socket t={p.type} list={p.list} size={10} filled={wired} aria-hidden="true" /> : <span data-socket-dot="" data-wired={wired || undefined} />;
         })()}</RF.Handle>;
     };
     const renderNode = (n, isSelected) => {
@@ -1677,7 +1705,7 @@
             if (wasNew) return u.act(() => api.deleteSelection([n.id], []));
             return {ok: true};
           };
-          return <div className="v22g-note node-header nodrag" data-note-node={n.id} data-note-editor={n.id} style={{background: n.color || undefined, display: 'grid', gap: 6, minWidth: 210}} onPointerDown={e => e.stopPropagation()}>
+          return <div className="v22g-note node-header nodrag" data-note-node={n.id} data-note-editor={n.id} style={{background: n.color || undefined}} onPointerDown={e => e.stopPropagation()}>
             <textarea aria-label="Note" data-design="field.note" className="nodrag nowheel" autoFocus rows={3} value={editingNote.text} onChange={e => setEditingNote(cur => cur ? {...cur, text: e.target.value} : cur)}
               onKeyDown={e => {
                 if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); void cancelInlineNote(); }
@@ -1690,10 +1718,11 @@
             </div>
           </div>;
         }
-        return <div className="v22g-note node-header" data-note-node={n.id} style={{background: n.color || undefined, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8}}
+        return <div className="v22g-note node-header" data-note-node={n.id} style={{background: n.color || undefined}}
           onDoubleClick={e => { e.stopPropagation(); if (!runView) setEditingNote({id: n.id, text: n.params.text || ''}); }}>
-          <span>{n.params.text || n.title}</span>
-          {!runView && <button type="button" className="button-reset nodrag" aria-label="Edit note" style={{fontSize: 11, color: A.inkSoft}} onClick={event => executeAction('projects.controls.activate', {handler: () => setEditingNote({id: n.id, text: n.params.text || ''})}, event)}>Edit</button>}
+          {/* The design's .notebody: the note text itself is the edit target (data-act="noteedit"). */}
+          {runView ? <span className="v22g-note-body">{n.params.text || n.title}</span>
+            : <button type="button" className="button-reset nodrag v22g-note-body" aria-label="Edit note" title="Edit note" onClick={event => executeAction('projects.controls.activate', {handler: () => setEditingNote({id: n.id, text: n.params.text || ''})}, event)}>{n.params.text || n.title}</button>}
         </div>;
       }
       const cardNode = runView && n.id in (runView.results || {}) ? {...n, status: runView.status === 'Failed' ? 'Error' : 'Done', output: runView.results[n.id]} : n;
@@ -1754,18 +1783,30 @@
     // Wires are rebuilt only when the graph, scope or wire selection changes, not on every drag or pan frame.
     const edges = React.useMemo(() => {
     const scopedWires = s.graph.wires.map(wire=>{
-      const from=scopeEnd(wire.memberFrom?.node??wire.from,wire.memberFrom?.port??wire.fromPort,'outputs');
-      const to=scopeEnd(wire.memberTo?.node??wire.to,wire.memberTo?.port??wire.toPort,'inputs');
-      return {...wire,from:from.node,fromPort:from.port,to:to.node,toPort:to.port};
+      const origFrom=wire.memberFrom?.node??wire.from, origFromPort=wire.memberFrom?.port??wire.fromPort;
+      const origTo=wire.memberTo?.node??wire.to, origToPort=wire.memberTo?.port??wire.toPort;
+      const from=scopeEnd(origFrom,origFromPort,'outputs');
+      const to=scopeEnd(origTo,origToPort,'inputs');
+      return {...wire,origFrom,origFromPort,origTo,origToPort,from:from.node,fromPort:from.port,to:to.node,toPort:to.port};
     }).filter(wire=>wire.from!==wire.to);
     return (rejected ? [...scopedWires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : scopedWires)
       .filter(w => !(foldedOwner(s.graph.nodes.find(n=>n.id===w.from)) && foldedOwner(s.graph.nodes.find(n=>n.id===w.to))))
       .map(w => { const projected={...w}; if(sessionNode)for(const side of ['from','to']){const owner=s.graph.nodes.find(n=>n.id===w[side]);if(foldedOwner(owner)&&owner.id!==sessionNode.id){projected[side]=sessionNode.id;projected[side+'Port']=owner.id+':'+w[side+'Port'];}} return projected; })
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
         // A file's own Wires choice wins; else Settings > This PC > Wires (On hover: only the selected nodes' wires).
-        const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility || {Hidden: 'Hidden', 'On hover': selected.includes(w.from) || selected.includes(w.to) ? 'Visible' : 'Hidden'}[settingWires], portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
+        const srcNode = scopeNodes.get(w.origFrom || w.from) || scopeNodes.get(w.from);
+        const dstNode = scopeNodes.get(w.origTo || w.to) || scopeNodes.get(w.to);
+        const outPort = srcNode?.outputs?.find(p => p.id === (w.origFromPort || w.fromPort) || p.id === w.fromPort)
+          || scopeNodes.get(w.from)?.outputs?.find(p => p.id === w.fromPort);
+        const inPort = dstNode?.inputs?.find(p => p.id === (w.origToPort || w.toPort) || p.id === w.toPort)
+          || scopeNodes.get(w.to)?.inputs?.find(p => p.id === w.toPort);
+        const resolvedType = outPort?.type || w.type || inPort?.type;
+        const isList = Boolean(outPort?.list || outPort?.structure === 'list' || w.list || w.structure === 'list');
+        const ruleText = String(w.rule ?? w.condition ?? '').trim();
+        const affected = !w.rejected && /^(Updating|Out of date)/.test(nodeState(dstNode || {}, false)[0]);
+        const color = w.rejected ? A.err : wireColor({...w, type: resolvedType}, s.graph.nodes), shown = s.graph.wireVisibility || {Hidden: 'Hidden', 'On hover': selected.includes(w.from) || selected.includes(w.to) ? 'Visible' : 'Hidden'}[settingWires], portVisibility = srcNode?.portVisibility?.[w.origFromPort || w.fromPort] ?? s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
         return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: !w.rejected, focusable: !w.rejected, selected: selectedWires.includes(w.id),
-          data: {color, inferred:w.inferred||w.enabled===false, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
+          data: {color, list: isList, rule: ruleText, inferred:w.inferred||w.enabled===false, route: w.route, state: w.rejected ? 'rejected' : affected ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint'||w.enabled===false ? .2 : .9}};
       });
     }, [s.graph, layout, parent, rejected, selectedWires.join(','), wireId, u.canvasTabs?.expanded, settingWires, settingWires === 'On hover' && selected.join(',')]);

@@ -96,7 +96,7 @@
     return <div className="social-layout" data-screen="social"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
       {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
-      {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
+      {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.social.retry",wire.retry)}>Retry</Btn></div>}
     </section><aside className="pane social-side"><div className="flex"><Icon name="workshop" /><h2>Social media</h2></div><button className="office-chip" onClick={event => dispatch("wire.social.1", () => (() => {
           setTab('Office page');
@@ -108,7 +108,7 @@
               id: c.id
             }) : wire.call(() => api.setConnection(c?.id || provider, {
               connected: true
-            })))(event))}><Icon name={c?.connected ? 'more' : 'plus'} size={14} /></button>{c && <small role="status">{c.state}{c.blocker ? ' · '+c.blocker : ''}</small>}{c?.state==='choosing' && <div role="group" aria-label={'Choose '+name+' account'}>{(c.accounts||[]).map(account=><Btn sm key={account.id} onClick={()=>dispatch('wire.social.account',()=>wire.call(()=>api.finishSocialConnection(provider,account.id)))}>{account.name||account.id}</Btn>)}</div>}</div>;
+            })))(event))}><Icon name={c?.connected ? 'more' : 'plus'} size={14} /></button>{c && <small role="status">{c.status||c.state}</small>}{c?.state==='choosing' && <div role="group" aria-label={'Choose '+name+' account'}>{(c.accounts||[]).map(account=><Btn sm key={account.id} onClick={()=>dispatch('wire.social.account',()=>wire.call(()=>api.finishSocialConnection(provider,account.id)))}>{account.name||account.id}</Btn>)}</div>}</div>;
         })}<div className="social-side-bottom"><span className="status-dot" /> Your review comes before sending<button className="listbutton flex" onClick={event => dispatch("wire.social.6", () => (async () => {
             await wire.call(() => api.addNode('Social media'));
             u.go('canvas');

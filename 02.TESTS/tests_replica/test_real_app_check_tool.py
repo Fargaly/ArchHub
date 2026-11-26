@@ -43,6 +43,21 @@ GUARDS = json.dumps((TOOL / "guards.mjs").resolve().as_uri())
 
 # (2) A step passes only on an explicit pass: true and only expected HTTP refusals. ----------------
 
+def test_timed_out_qa_outage_is_cleared_without_touching_account_state(tmp_path):
+    rig = _rig()
+    state = tmp_path / "isolated-outage-test"
+    state.mkdir()
+    account = state / "account.json"
+    account.write_text('{"profile":"qa"}', encoding="utf-8")
+    switches = {"account-outage.active", "account-outage.observed", "account-browser-launch.observe", "account-browser-launch.count"}
+    for name in switches:
+        (state / name).touch()
+    assert set(rig.clear_account_test_flags(state)) == switches
+    assert list(state.iterdir()) == [account]
+    assert account.read_text(encoding="utf-8") == '{"profile":"qa"}'
+    assert rig.clear_account_test_flags(state) == []
+
+
 def test_a_step_passes_only_on_pass_true_with_no_unexpected_http_error():
     result = _node(
         "import {stepVerdict} from %s;"

@@ -86,7 +86,12 @@ const observe = m => {
 for (const method of ['Network.requestWillBeSent', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed']) session.on(method, params => observe({method, params}));
 const cdp = async (method, params = {}) => ({result: await session.send(method, params)});
 const js = async expression => {
-  const r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  let r;
+  try {
+    r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  } catch (error) {
+    throw new Error(error.message, {cause:error});
+  }
   if (r.result?.exceptionDetails) throw new Error((r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text || 'page error').slice(0, 300));
   return r.result?.result?.value;
 };
@@ -119,22 +124,40 @@ const clickText = async (text, selector = 'button,[role=button],[role=tab],a') =
 };
 const native = async request => { console.log('NATIVE ' + JSON.stringify(request)); return JSON.parse((await lines.next()).value); };
 const step = async (asked, fn) => {
-  const before = failed.length, beforeFile = fileFailures.length; let returned = null;
+  const before = failed.length, beforeFile = fileFailures.length; let returned = null, where;
   try { returned = await fn(); }
-  catch (error) { returned = { pass: false, why: String(error.message || error).slice(0, 300) }; }
+  catch (error) {
+    returned = { pass: false, why: String(error.message || error).slice(0, 300) };
+    where = String(error.stack || '').split('\n').map(line => line.match(/\/scenarios\/([\w.-]+\.mjs:\d+:\d+)/)?.[1]).filter(Boolean).slice(0, 3);
+  }
   await sleep(700);
   const httpErrors = failed.slice(before);
+  let frame = null, captureError;
+  try { frame = await shot(asked); }
+  catch (error) {
+    captureError = String(error.message || error).slice(0, 200);
+    if (stepVerdict(returned, httpErrors).result === 'PASS') returned = {...returned, not_exercised:'Native screenshot unavailable: ' + captureError};
+  }
   const verdict = stepVerdict(returned, httpErrors);
   const row = { label: setup.label, asked, result: verdict.result, did: verdict.did, got: returned?.got ?? null,
     http_errors: httpErrors, session_file_errors: fileFailures.slice(beforeFile),
-    expected_http: returned?.expected_http ?? [], shot: await shot(asked) };
+    expected_http: returned?.expected_http ?? [], shot: frame, ...(captureError ? {capture_error:captureError} : {}), ...(where?.length ? {where} : {}) };
   results.push(row);
+  fs.writeFileSync(path.join(out, 'steps.json'), JSON.stringify(results, null, 1));
   console.log('STEP ' + JSON.stringify(row));
   return row;
 };
 
-const ctx = { on: session.on, input: setup.input, label: setup.label, out, cdp, js, sleep, until, rectOf, mouse, clickText, native, step, shot };
+const ctx = { on: session.on, input: setup.input, label: setup.label, out, isolatedRoot:setup.isolated_root, cdp, js, sleep, until, rectOf, mouse, clickText, native, step, shot };
 try {
+  if(setup.qa_email){
+    const admitted=await until(async()=>{
+      try{return await js('(()=>{const a=window.ArchHubAPI?.getSnapshot()?.desktopAccess;return !!a?.admitted&&[a.email,a.subject].includes('+JSON.stringify(setup.qa_email)+');})()');}
+      catch(error){if(/execution context was destroyed|cannot find context/i.test(error.message))return false;throw error;}
+    },Boolean,80,300);
+    if(!admitted)throw Error('The app did not admit the previous synthetic QA identity');
+    ctx.input={...ctx.input,qaEmail:setup.qa_email};
+  }
   const scenario = await import(pathToFileURL(process.argv[2]).href);
   // Every scenario declares the steps it will run; real_app_check.py fails the run unless exactly
   // these ran, in this order, and the probe reached DONE and exited 0.

@@ -489,7 +489,8 @@ def native_folder_action(request):
             handles.append(handle)
         return True
     user.EnumDesktopWindows.argtypes = (w.HANDLE, callback, w.LPARAM)
-    deadline = time.monotonic() + (5 if cancel_save else 0)
+    # Both native dialogs are created asynchronously after the Studio click.
+    deadline = time.monotonic() + 5
     while True:
         user.EnumDesktopWindows(desktop, callback(visit), 0)
         if handles or time.monotonic() >= deadline:
@@ -547,7 +548,7 @@ def reopen_rig_window(desktop, state, pid):
     return {"requested": True}
 
 
-def window_frame(desktop: HiddenDesktop) -> dict:
+def window_frame(desktop: HiddenDesktop, client_size=None) -> dict:
     """The rig's own ArchHub window as Windows holds it: maximised or not, and its client size in physical pixels."""
     user, ours, found = desktop.u32, set(desktop.job.pids()), []
     callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
@@ -565,8 +566,23 @@ def window_frame(desktop: HiddenDesktop) -> dict:
     user.SetThreadDpiAwarenessContext.argtypes, user.SetThreadDpiAwarenessContext.restype = (w.HANDLE,), w.HANDLE
     previous = user.SetThreadDpiAwarenessContext(w.HANDLE(-4))  # per monitor: physical pixels, as the page reports them
     try:
+        hwnd = w.HWND(found[0])
         client = w.RECT()
-        user.GetClientRect(w.HWND(found[0]), ctypes.byref(client))
+        if client_size is not None:
+            if not (isinstance(client_size, list) and len(client_size) == 2 and
+                    all(type(value) is int and 320 <= value <= 4096 for value in client_size)):
+                return {'error': 'Invalid QA window size'}
+            if user.IsZoomed(hwnd):
+                user.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE, on the job-owned private desktop
+            outer = w.RECT()
+            if not user.GetWindowRect(hwnd, ctypes.byref(outer)) or not user.GetClientRect(hwnd, ctypes.byref(client)):
+                return {'error': 'Could not measure the QA window frame'}
+            width = client_size[0] + outer.right - outer.left - client.right
+            height = client_size[1] + outer.bottom - outer.top - client.bottom
+            if not user.SetWindowPos(hwnd, None, 0, 0, width, height, 0x0016):  # no move, z-order or activation
+                return {'error': 'Could not resize the QA window'}
+        if not user.GetClientRect(hwnd, ctypes.byref(client)):
+            return {'error': 'Could not read back the QA window'}
         return {'zoomed': bool(user.IsZoomed(w.HWND(found[0]))), 'visible': bool(user.IsWindowVisible(w.HWND(found[0]))),
                 'client': [client.right - client.left, client.bottom - client.top]}
     finally:
@@ -579,7 +595,11 @@ def pick_folder(desktop: HiddenDesktop, python: str, title: str, folder: str, ev
     request.write_text(json.dumps({'kind': kind, 'title': title, 'folder': folder, 'desktop': desktop.name,
                                   'pids': desktop.job.pids()}), encoding='utf-8')
     command = subprocess.list2cmdline([python, str(HERE / 'real_app_check.py'), '--native-folder', str(request)])
-    return json_tail(desktop.run(command, 30, env=env, cwd=str(evidence)))
+    raw = desktop.run(command, 30, env=env, cwd=str(evidence))
+    try:
+        return json_tail(raw)
+    except ValueError:
+        return {'closed': False, 'error': 'The hidden native dialog worker returned no readable receipt.'}
 
 
 
@@ -623,6 +643,40 @@ def wait_for_studio_target(cdp: int, owner_endpoint: str, deadline: float) -> fl
     return None
 
 
+def clear_account_test_flags(state: Path) -> list[str]:
+    """The probe can time out before its simulated outage or launcher observation ends."""
+    removed = []
+    for name in ("account-outage.active", "account-outage.observed", "account-browser-launch.observe", "account-browser-launch.count"):
+        try:
+            (state / name).unlink()
+        except FileNotFoundError:
+            continue
+        removed.append(name)
+    return removed
+
+
+def prior_qa_profile(evidence: Path, out: Path, installed: Path):
+    """Reuse only a completed synthetic QA run's own profile. Its screenshots stay in the prior report."""
+    evidence = evidence.resolve(strict=True)
+    if evidence.parent != out.parent or evidence == out:
+        raise ValueError("A prior QA report in the same proof folder is required")
+    report = json.loads((evidence / "report.json").read_text(encoding="utf-8"))
+    root = Path(report["isolated_root"]).resolve(strict=True)
+    if root.parent != evidence or not root.name.startswith("run-") or report.get("label") != INSTALLED_LABEL:
+        raise ValueError("The selected profile did not belong to an isolated installed run")
+    if Path(report["installed"]).resolve() != installed or not report.get("studio_open"):
+        raise ValueError("The prior report must have opened this installed app")
+    for name in ("state", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP"):
+        if (root / name).resolve(strict=True).parent != root:
+            raise ValueError("Isolated QA directories must remain inside their run")
+    email = (evidence / "qa-owner-ready.txt").read_text(encoding="utf-8-sig").strip().lower()
+    rows = json.loads((evidence / "steps.json").read_text(encoding="utf-8"))
+    if not (email.startswith("qa+") and email.endswith("@archhub-cockpit-test.com")
+            and any(row.get("result") == "PASS" and (row.get("got") or {}).get("verifiedAccount") is True for row in rows)):
+        raise ValueError("The previous run lacks an admitted synthetic account receipt")
+    return root, email
+
+
 def main(argv=None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -631,7 +685,11 @@ def main(argv=None) -> int:
         request = Path(arguments[1])
         if request.stat().st_size > 65536:
             raise ValueError('Native request exceeds its bound')
-        print(json.dumps(native_folder_action(json.loads(request.read_text(encoding='utf-8')))))
+        try:
+            result = native_folder_action(json.loads(request.read_text(encoding='utf-8')))
+        except Exception as exc:
+            result = {'closed': False, 'error': f'{type(exc).__name__}: {str(exc)[:240]}'}
+        print(json.dumps(result), flush=True)
         return 0
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scenario", type=Path)
@@ -639,6 +697,7 @@ def main(argv=None) -> int:
     parser.add_argument("--app", type=Path, default=Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
     parser.add_argument("--overlay", type=Path)
     parser.add_argument("--input", type=Path, help="JSON handed to the scenario as ctx.input")
+    parser.add_argument("--reuse-qa-profile", type=Path, help="Prior installed QA report whose synthetic Windows profile is reused in place")
     parser.add_argument("--winapp", default=os.environ.get("ARCHHUB_WINAPP", DEFAULT_WINAPP))
     parser.add_argument("--boot-seconds", type=int, default=600)
     parser.add_argument("--probe-seconds", type=int, default=1200)
@@ -648,6 +707,8 @@ def main(argv=None) -> int:
         parser.error("--verify-warm-close is a native installed-only check")
     if not args.verify_warm_close and args.scenario is None:
         parser.error("--scenario is required for the Studio check")
+    if args.reuse_qa_profile and (args.verify_warm_close or args.overlay):
+        parser.error("Reusing QA sign-in is for installed Studio scenarios only")
 
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
@@ -657,7 +718,8 @@ def main(argv=None) -> int:
     installed = args.app.resolve()
     python = installed / ".venv" / "Scripts" / "python.exe"
     report = {"installed": str(installed), "installed_code_before": tree_digest(installed)}
-    job = desktop = probe = None
+    job = desktop = probe = profile_lease = qa_state = None
+    qa_email = None
     failures, lines, timed_out, exit_code = [], [], False, None
     warm_trace, readbacks, warm_close_check, recent_writer = None, {}, None, None
     native_commands = []
@@ -665,7 +727,17 @@ def main(argv=None) -> int:
         report["native_f38"] = True
     try:
         job = RunJob()
-        run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=out))
+        if args.reuse_qa_profile:
+            import msvcrt
+            run_dir, qa_email = prior_qa_profile(args.reuse_qa_profile, out, installed)
+            profile_lease = (run_dir / "qa-profile.lock").open("a+b")
+            profile_lease.seek(0)
+            msvcrt.locking(profile_lease.fileno(), msvcrt.LK_NBLCK, 1)
+            report["prior_qa_report"] = str(args.reuse_qa_profile.resolve())
+        else:
+            run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=out))
+        qa_state = run_dir / "state"
+        report["stale_account_test_flags_cleared"] = clear_account_test_flags(qa_state)
         app, label, laid = stage_app(installed, args.overlay.resolve() if args.overlay else None, run_dir)
         for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "claude-config", "state"):
             (run_dir / name).mkdir(parents=True, exist_ok=True)
@@ -722,7 +794,8 @@ def main(argv=None) -> int:
                                   'build': (installed / 'BUILD_ID').read_text(encoding='utf-8').strip()}
             if args.scenario.name in ('settings.mjs', 'settings_right_click.mjs'):
                 scenario_input = {**(scenario_input or {}), 'installedPython': str(python)}
-            probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input}) + "\n")
+            probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input,
+                                          "isolated_root": str(run_dir), "qa_email": qa_email}) + "\n")
             probe.stdin.flush()
             natives, sink = [], queue.Queue()
             report["native"] = natives
@@ -748,7 +821,7 @@ def main(argv=None) -> int:
                     elif request.get("kind") == "cancel-save":
                         answer = pick_folder(desktop, str(python), request["title"], "", out, env, kind="cancel-save")
                     elif request.get("kind") == "window-frame":
-                        answer = window_frame(desktop)
+                        answer = window_frame(desktop, request.get("client"))
                     elif request.get("kind") == "reopen-rig-window":
                         answer = reopen_rig_window(desktop, run_dir / "state", owner["listener_pid"])
                     else:
@@ -784,6 +857,13 @@ def main(argv=None) -> int:
             job.close()                      # ends the app, the probe and any helper, by Job, not by PID
         if desktop is not None:
             desktop.close()
+        if qa_state is not None:
+            try:
+                report["account_test_flags_cleared_on_exit"] = clear_account_test_flags(qa_state)
+            except OSError as cleanup_error:
+                failures.append("FAIL: could not restore the isolated QA account connection: " + str(cleanup_error))
+        if profile_lease is not None:
+            profile_lease.close()
         report["probe"], report["probe_exit_code"], report["probe_timed_out"] = lines, exit_code, timed_out
         result = finalize_report(report, out, installed, failures)
     return result

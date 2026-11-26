@@ -1755,3 +1755,6 @@ body.compact .sheet-action{height:28px;min-height:28px;padding:0 10px}
 body.compact .sheet-segments button{height:28px}
 /* Settings > This PC > Wire width: one stroke for every canvas wire (CSS wins over the path's width attribute). */
 path[data-graph-wire]{stroke-width:var(--wire-width,2px)}
+/* Pages merged into Settings cards (founder 2026-11-26): their content sits in the card, without the page frame. */
+.sheet-embed{border-top:1px solid var(--color-line-soft);margin-top:6px;padding-top:2px;min-width:0}.sheet-embed>summary{cursor:pointer;padding:8px 0;font-weight:600;font-size:calc(13px * var(--text-scale,1))}
+.sheet-embed>.page{padding:var(--space-sm) 0 0;background:none;overflow:visible;min-height:0;height:auto;min-width:0}.sheet-embed>.page .title h1{display:none}.sheet-embed>.page .flex{flex-wrap:wrap}.sheet-embed>.page [style*="grid-template-columns"],.sheet-embed>.page .grid{grid-template-columns:minmax(0,1fr)!important}

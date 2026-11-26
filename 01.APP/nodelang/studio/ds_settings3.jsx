@@ -72,7 +72,9 @@
     Connections:'Connections', 'This PC':'Look, Appearance, System, Advanced, Updates & About'
   };
   // Former page names stay valid links: [the page that holds them now, the section to scroll to].
-  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Connections','Accounts'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced']};
+  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Connections','Accounts'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced'],
+    // Pages merged into Settings (founder 2026-11-26): each opens at the card that now holds it.
+    Meetings:['Agents','Meetings'], 'Model review':['Agents','Models'], Watcher:['Agents','Automations'], 'X-RAY':['Agents','Tools in the Library'], 'Interface studio':['Appearance']};
   // Display metadata from the Settings design. Values and writes belong to the settings owners.
   const areaCardSpecs = [
     {area:"Projects", id:"register", title:"Project register", icon:"docs", family:"model", wide:false, rows:[
@@ -591,7 +593,7 @@
     }));
     return [{id:'card.'+card.id,card:card.id,group:card.title,page,area,label:card.title},...fields];
   });
-  const pcAnchors = {Look:'Theme and colour', Privacy:'Workspaces and files', Advanced:'Workspaces and files', System:'Agents on this PC', 'System graph':'Agents on this PC', 'Updates & About':'The app', Dependencies:'Dependencies'};
+  const pcAnchors = {Look:'Theme and colour', Privacy:'Workspaces and files', Advanced:'Workspaces and files', System:'Agents on this PC', 'System graph':'Agents on this PC', 'Updates & About':'The app', Dependencies:'Dependencies', 'Interface studio':'Theme and colour'};
   const pcOwnerLabels = Object.fromEntries([
     ['theme', 'Theme'],
     ['accent', 'Accent colour'],
@@ -697,7 +699,12 @@
     }
     return <window.UI.Soon label={label}>{control}</window.UI.Soon>;
   }
-  function PcSettingsCards({page,advanced,setAdvanced,additional}) {
+  // A page merged into its Settings card (founder 2026-11-26): its content mounts only while the card section is open.
+  function MovedPage({title,open,owner:Owner}) {
+    const [shown,setShown]=React.useState(Boolean(open));
+    return <details className="sheet-embed" open={shown||undefined} onToggle={event=>setShown(event.currentTarget.open)}><summary>{title}</summary>{shown&&<Owner/>}</details>;
+  }
+  function PcSettingsCards({page,advanced,setAdvanced,additional,requested}) {
     const s=useData(),u=useApp();
     const workspace=(s.workspaces||[]).find(w=>w.id===s.activeWorkspace);
     const policy=s.workspacePolicies?.[workspace?.id]||workspace||{};
@@ -768,6 +775,7 @@
       return <section key={card.id} data-design-section={card.title} className={'sheet-pc-card sheet-owner-card pc-'+card.id+(card.id==='sysgraph'?' sheet-card-wide':'')}><header className="sheet-card-head"><span className={'sheet-card-icon fam-'+card.family}><window.AHIcon name={card.icon} size={12}/></span><h3>{card.title}</h3></header>
         {visible.map(spec=><div className={'sheet-property-row'+(['theme','themeSet','accent','density','layout'].includes(spec[0])?' sheet-property-visual':'')} data-row={spec[0]} key={spec[0]}><span className="sheet-property-copy">{spec[1]}<small>{spec[2]}</small></span><div className="sheet-property-control">{control(spec)}</div></div>)}
         {visible.length<card.rows.length&&actButton((card.rows.length-visible.length)+' more',()=>setAdvanced(true))}
+        {card.id==='theme'&&window.UI.InterfaceStudio&&<MovedPage title="Interface studio" open={requested==='Interface studio'||undefined} owner={window.UI.InterfaceStudio}/>}
         {card.id==='app'&&<details open={updatesOpen} onToggle={event=>setUpdatesOpen(event.currentTarget.open)}><summary>Updates &amp; About</summary>{updatesOpen&&<UpdatesPage/>}</details>}
         {additional[card.title]?.length>0&&<details open={advanced||undefined}><summary>More controls</summary>{additional[card.title].map(row=><SettingControl key={row.id} row={row} raw={advanced}/>)}</details>}
         {card.id==='sysgraph'&&<details><summary>Tools &amp; diagnostics</summary>{[['Agents','settings/Agents'],['Router','settings/BABOOM'],['Thread','workshop'],['Programs','settings/Connections'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','App health']].map(([title,route])=><Btn sm key={route} onClick={event=>executeAction('projects.controls.activate',{handler:()=>route==='App health'?u.show(route):u.go(route)},event)}>{title}</Btn>)}</details>}
@@ -1466,9 +1474,11 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         toolRules:focusSection==='What agents may do'?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>content.current?.querySelector('[aria-label="Tool name or pattern"]')?.focus()},event)}>Edit tool rules</Btn>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Tool rules</Btn>,
         bbPinned:<D.Toggle variant="settings" label="Pin in place" checked={!!s.companion?.pinned} onCheckedChange={value=>act(()=>api.setCompanionState({pinned:value}))}/>,
         finishReport:preference('Finish and report')||undefined,wsRelease:preference('Stale claim after idle minutes')||undefined,wsArchive:preference('Archive after idle days')||undefined
-      }} extras={{models:window.UI.Routing&&<details open={focusSection==='Models'||undefined}><summary>Routing, providers and free sources</summary><window.UI.Routing/></details>,perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>,meet:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('meetings')},event)}>Open Meetings</Btn>,auto:requestedPage==='Automations'||!window.UI.Automations?null:<details><summary>Schedules and triggers</summary><window.UI.Automations embedded/></details>}}/>}
+      }} extras={{models:<>{window.UI.Routing&&<details open={focusSection==='Models'&&requestedPage!=='Model review'||undefined}><summary>Routing, providers and free sources</summary><window.UI.Routing/></details>}{window.UI.ModelReview&&<MovedPage title="Model review" open={requestedPage==='Model review'||undefined} owner={window.UI.ModelReview}/>}</>,perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>,meet:window.UI.Meetings&&<MovedPage title="Meetings" open={requestedPage==='Meetings'||undefined} owner={window.UI.Meetings}/>,
+        auto:<>{requestedPage==='Automations'||!window.UI.Automations?null:<details><summary>Schedules and triggers</summary><window.UI.Automations embedded/></details>}{window.UI.Watcher&&<MovedPage title="Watcher" open={requestedPage==='Watcher'||undefined} owner={window.UI.Watcher}/>}</>,
+        tools:window.UI.Xray&&<MovedPage title="X-RAY" open={requestedPage==='X-RAY'||undefined} owner={window.UI.Xray}/>}}/>}
 
-      {isPcDesign&&<PcSettingsCards additional={additional} page={currentCategory} advanced={advancedOpen} setAdvanced={setAdvancedOpen}/>}
+      {isPcDesign&&<PcSettingsCards additional={additional} requested={requestedPage} page={currentCategory} advanced={advancedOpen} setAdvanced={setAdvancedOpen}/>}
       {currentCategory==='Projects'&&<AreaDesignCards area="Projects"
         bodies={{register:<ProjectRegister key={registerWorkspace?.id||'office'} workspace={registerWorkspace}/>}}
         live={{stdVersion:<SessionStandardControl/>,projTpl:s.settings.some(row=>row.page==='Projects'&&row.label==='New project folders')?undefined:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:openNewProject},event)}>Open New project</Btn>}}

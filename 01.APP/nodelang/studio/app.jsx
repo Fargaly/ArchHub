@@ -84,7 +84,8 @@
     return <App key={opened.current} desktopAccess={access}/>;
   }
   // Pages merged into Home, Canvas, Settings and Docs (founder 2026-11-26): a saved view that still names one opens Home.
-  const RETIRED_ROUTES = ['workshop'];
+  const MOVED_PAGES = {meetings: 'Meetings', 'model-review': 'Model review', watcher: 'Watcher', xray: 'X-RAY', interface: 'Interface studio'};
+  const RETIRED_ROUTES = ['workshop', ...Object.keys(MOVED_PAGES)];
   function App({desktopAccess}) {
     const s = useData();
     const restoredView=api.readDesktopView?.()||{};
@@ -253,6 +254,7 @@
     const go = async (r, taskId = '') => {
       const visit = ++navigation.current;
       if (r === 'system') r = 'settings/System graph';
+      if (MOVED_PAGES[r]) r = 'settings/' + MOVED_PAGES[r];  // the page now sits in its Settings card
       if (r === 'baboom') {
         setCompanion(true);
         setModal(null);
@@ -656,7 +658,7 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'xray' ? <window.UI.Xray /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'community' ? <window.UI.Community /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',

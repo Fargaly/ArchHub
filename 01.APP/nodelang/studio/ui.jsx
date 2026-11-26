@@ -558,6 +558,25 @@
   function matchesShortcut(id,event) {
     return !api.getSnapshot().keyboardPending && !event.isComposing && !event.repeat && !!shortcutFor(id) && shortcutFor(id)===shortcutFromEvent(event);
   }
+  // A row is changed here when this Settings scope holds its own value (scopeOwned, from the scope owner); a row
+  // without scopes is changed when it differs from its default. Reset removes the own value to inherit the parent.
+  const settingOverridden = row => typeof row.scopeOwned === 'boolean' ? row.scopeOwned : row.default !== undefined && JSON.stringify(row.value) !== JSON.stringify(row.default);
+  // Account › Photo: the picture itself with Change (the account popover's crop dialog) and Reset, never its data text.
+  function PhotoControl({value}) {
+    const u = useApp(), profile = useData().profile || {}, input = React.useRef(null);
+    const pick = file => {
+      if (!file || !String(file.type || '').startsWith('image/')) return;
+      const reader = new window.FileReader();
+      reader.onload = () => u.show('Crop your photo', {src: String(reader.result || ''), prevPhoto: value});
+      reader.readAsDataURL(file);
+    };
+    return <span className="photo-control" data-design="settings.photo">
+      {value ? <img src={value} alt="Your photo" width={40} height={40} /> : <span className="photo-empty" aria-label="No photo">{profileInitials(profile)}</span>}
+      <input ref={input} type="file" accept="image/*" hidden aria-label="Choose a photo" onChange={event => { pick(event.target.files?.[0]); event.target.value = ''; }} />
+      <Btn sm onClick={event => executeAction('projects.controls.activate', {handler: () => input.current?.click()}, event)}>Change</Btn>
+      {value && <Btn sm ghost aria-label="Reset Photo" onClick={event => executeAction('projects.controls.activate', {handler: () => u.saveProfileFields({photo: ''})}, event)}>Reset</Btn>}
+    </span>;
+  }
   function SettingControl({
     row,
     presentation, unit,
@@ -565,7 +584,7 @@
   }) {
     const u = useApp(), data = useData(), destination = data.settingsDestination;
     const disabled = (row.id.startsWith('Appearance.')||row.id.startsWith('Projects.')||(row.id.startsWith('Account.') && row.storageKey)) && (!destination||data.settingsScopePending);
-    const changed = row.default !== undefined && JSON.stringify(row.value) !== JSON.stringify(row.default);
+    const changed = settingOverridden(row);
     return <div className="setting-row" data-setting={row.id}><label htmlFor={'setting-' + row.id} style={{
         display: 'grid',
         gap: 3
@@ -581,7 +600,7 @@
         }, event)} onKeyDown={e => {
           if (e.key === 'Enter') u.openSystem(row.page);
         }} />}
-  {presentation==='seg' && row.options ? <div className="sheet-segments" role="group" aria-label={row.label}>{row.options.map(option=><button type="button" key={option} aria-pressed={option===row.value} disabled={disabled||Boolean(row.disabledOptions?.[option])} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,option,destination))},event)}>{productLabel(option,data.settings)}</button>)}</div> :
+  {row.id === 'Account.Photo' ? <PhotoControl value={row.value} /> : presentation==='seg' && row.options ? <div className="sheet-segments" role="group" aria-label={row.label}>{row.options.map(option=><button type="button" key={option} aria-pressed={option===row.value} disabled={disabled||Boolean(row.disabledOptions?.[option])} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,option,destination))},event)}>{productLabel(option,data.settings)}</button>)}</div> :
    presentation==='step' && row.type==='number' ? <span className="sheet-stepper">
      <button type="button" disabled={disabled||row.value<=row.min} aria-label={'Decrease '+row.label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setSetting(row.id,Number(row.value)-1,destination))},event)}>−</button>
      <input id={'setting-'+row.id} aria-label={row.label} type="number" disabled={disabled} min={row.min} max={row.max} step="1" value={row.value} onChange={event=>{
@@ -604,7 +623,7 @@
       </button>)}
     </div>
   ) : row.options ? <select disabled={disabled} id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}}>{row.options.map(v => <option key={v} value={v} disabled={Boolean(row.disabledOptions?.[v])} title={row.disabledOptions?.[v]}>{productLabel(v,data.settings)}</option>)}</select> : row.type === 'number' ? <span className="sheet-stepper"><button disabled={disabled} type="button" className="sheet-step" aria-label={'Decrease ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) - 1, destination))}, event)}>−</button><input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type="number" value={row.value} onChange={e => {const value=Number(e.target.value);return u.act(() => api.setSetting(row.id, value, destination));}} /><button disabled={disabled} type="button" className="sheet-step" aria-label={'Increase ' + row.label} onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.setSetting(row.id, Number(row.value || 0) + 1, destination))}, event)}>+</button></span> : <input disabled={disabled} id={'setting-' + row.id} aria-label={row.label} type={row.type === 'color' ? 'color' : 'text'} value={row.value} onChange={e => {const value=e.target.value;return u.act(() => api.setSetting(row.id, value, destination));}} />}
-  {changed && <button disabled={disabled} className="reset" aria-label={'Reset ' + row.label} onClick={event => executeAction("sharedUI.Reset.21", {
+  {changed && row.id !== 'Account.Photo' && <button disabled={disabled} className="reset" aria-label={'Reset ' + row.label} onClick={event => executeAction("sharedUI.Reset.21", {
           api,
           row,
           u,
@@ -695,7 +714,9 @@
     Table,
     Composer,
     ApprovalCard,
-    SettingControl
+    SettingControl,
+    PhotoControl,
+    settingOverridden
   };
 })();
 

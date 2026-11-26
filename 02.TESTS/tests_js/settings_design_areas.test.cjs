@@ -320,7 +320,7 @@ test('Look uses the five design families and passes the actual workflow to the e
  const plain=({children})=>React.createElement('div',null,children);
  const window={UI:{A:{},D:{},productLabel:label=>label,api:{supportsAction:()=>false},useData:()=>data,useApp:()=>({}),useRegisteredActions:()=>({}),RegisteredActionStatus:()=>null,
   Btn:plain,Card:plain,Empty:plain,Heading:plain,Chip:plain,Providers:plain,Soon:plain,Ctx:React.createContext(null),
-  SettingControl:({row})=>React.createElement('div',{'data-setting':row.id},row.label),
+  SettingControl:({row})=>React.createElement('div',{'data-setting':row.id},row.label),settingOverridden:row=>row.default!==undefined&&JSON.stringify(row.value)!==JSON.stringify(row.default),
   Canvas:props=>{calls.push(props);return React.createElement('div',{'data-preview':props.preview.id});}},AHIcon:()=>null};
  vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio,'ds_settings3.jsx'),'utf8'),{loader:'jsx'}).code,{window,React});
  const html=renderToStaticMarkup(React.createElement(window.UI.Settings,{page:'Appearance'}));

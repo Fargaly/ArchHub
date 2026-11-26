@@ -462,7 +462,7 @@ test('Home row, Home project, Home background, Message, and Tray menus match who
   });
   assert.deepEqual(await page.evaluate(() => window.readMenuGroups()), [
     ['Install the update'],
-    ['Open Home', 'Send feedback', 'Open thread', 'Check for updates', 'Receipts', 'BABOOM', 'Stop everything'],
+    ['Open Home', 'Send feedback', 'Open thread', 'Check for updates', 'App health', 'BABOOM', 'Stop everything'],
     ['Hide', 'Quit ArchHub']
   ]);
   await page.getByRole('button', {name: 'Check for updates', exact: true}).click();

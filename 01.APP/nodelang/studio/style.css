@@ -1726,7 +1726,7 @@ html[dir="rtl"] .react-flow { direction: ltr; }
 .ast.s-err{color:var(--color-err)}
 .ast.s-warn{color:var(--color-warn)}
 /* Founder 2026-11-26: user text (Arabic or English) reads in its own direction, isolated from the LTR chrome around it. */
-:is(input:not([type]),input[type=text],input[type=search],textarea,[contenteditable=true],[data-node-card-title],[data-node-card-subtitle],.v22g-tab>button[role=tab],.shared-properties-head h2,.resume-heading h1,.v22g-thread-head p,.dx-thread-row>b,.wsl b,.wsl em,.wst em,.resume-thread span,.dx-task-title){unicode-bidi:plaintext}
+:is(input:not([type]),input[type=text],input[type=search],textarea,[contenteditable=true],[data-node-card-title],[data-node-card-subtitle],.v22g-tab>button[role=tab],.shared-properties-head h2,.resume-heading h1,.v22g-thread-head p,.dx-thread-row>b,.wsl b,.wsl em,.wst em,.resume-thread span,.dx-task-title,.composer-answer p,.prose p,.prose li,.v48-session-body b,.v48-session-body p,[data-design="home.card"] :is(b,p,span)){unicode-bidi:plaintext}
 /* The session title keeps the designed size and two lines; the avatars move under it, never squeeze it. */
 .resume-heading{flex-wrap:wrap;row-gap:8px}.resume-heading>div:first-child{flex:1 1 240px}
 .resume-heading h1{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:normal;word-break:normal}
@@ -1734,3 +1734,5 @@ html[dir="rtl"] .react-flow { direction: ltr; }
 .v22g-tab-removed{color:var(--color-warn)}
 .dependencies-section .sheet-card-head .ds-btn{margin-left:auto}.dependencies-section .dependency-metrics{display:flex;flex-wrap:wrap;gap:24px;margin:8px 0 12px}.dependencies-section .dependency-metric{display:grid;grid-template-columns:auto auto;align-items:baseline;gap:2px 8px}.dependencies-section .dependency-metric small{grid-column:1/-1;color:var(--color-ink-soft)}
 .dependency-filter{gap:6px;flex-wrap:wrap;margin-bottom:8px}.dependency-filter input{flex:1 1 200px;min-width:0}.dependency-row .sheet-property-copy{text-align:left}.dependency-row .sheet-property-control{display:flex;gap:6px;align-items:center}.dependencies-section .package-detail{padding:12px 0 0;position:static}
+.app-health{display:grid;gap:12px;width:min(640px,calc(100vw - 180px));max-width:100%}.app-health .diag{display:grid;gap:6px}.app-health .drow{display:grid;grid-template-columns:16px 110px minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px}.app-health .f-ok{color:var(--color-ok)}.app-health .f-warn{color:var(--color-warn)}.app-health h3{margin:8px 0 0;font-size:13px}.app-health table{display:block;max-height:min(360px,40vh);overflow:auto}
+.photo-control{display:flex;align-items:center;gap:8px}.photo-control img,.photo-control .photo-empty{width:40px;height:40px;border-radius:50%;object-fit:cover;flex:none}.photo-control .photo-empty{display:grid;place-items:center;background:var(--color-bg-soft);color:var(--color-ink-soft);font-size:13px}

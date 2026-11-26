@@ -471,7 +471,7 @@
           bind('menu.tray.feedback', () => { close(); u.go('feedback'); }, null, false),
           bind('menu.tray.thread', openThread, null, false),
           bind('menu.tray.check.updates', () => run(() => api.checkForUpdates()), null, false),
-          bind('menu.tray.receipts', () => { close(); u.go('receipts'); }, null, false),
+          bind('menu.tray.receipts', () => { close(); u.show('App health'); }, null, false),
           bind('menu.baboom', () => { close(); u.go('baboom'); }, null, false),
           bind('menu.stop.everything', () => run(api.stopEverything), null, false)],
         [bind('menu.hide', () => run(() => api.windowAction('hide')), null, false),
@@ -479,7 +479,7 @@
       ];
     } else {
       const names = Object.fromEntries(window.ArchHubCommandRegistry.commands.filter(c => c.menuPage).sort((a,b)=>a.menu_order-b.menu_order).map(c => [c.action.route, c.label]));
-      groups = [Object.keys(names).map(route => bind('page.' + route, () => u.go(route))), [bind('menu.settings', () => u.go('settings/Account'), null, false)]];
+      groups = [[...Object.keys(names).map(route => bind('page.' + route, () => u.go(route))), bind('menu.tray.receipts', () => u.show('App health'), null, false)], [bind('menu.settings', () => u.go('settings/Account'), null, false)]];
     }
     if(more&&kind==='Node menu'&&n&&!n.params?.session_file){
       groups=[

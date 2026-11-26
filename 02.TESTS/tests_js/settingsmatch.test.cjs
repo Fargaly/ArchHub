@@ -117,9 +117,11 @@ test('SETTINGSMATCH: Account sheet matches the board at 900-1920 and the compose
         for (const id of ['account','name','email']) {
           assert.ok((await accountCard.locator('[data-row="'+id+'"] .sheet-property-copy small').innerText()).trim());
         }
-        const planned = accountCard.locator('[data-row=photo] [data-soon]');
-        assert.equal(await planned.getAttribute('aria-disabled'), 'true');
-        assert.equal(await planned.locator('[inert]').count(), 1);
+        // Photo is built (founder 2026-11-26): the picture or initials with Change, never its data text and never Coming soon.
+        const photo = accountCard.locator('[data-row=photo] [data-design="settings.photo"]');
+        await photo.getByRole('button', {name: 'Change', exact: true}).waitFor();
+        assert.equal(await accountCard.locator('[data-row=photo] [data-soon]').count(), 0);
+        assert.ok(!(await photo.innerText()).includes('data:image'));
         // 7. A subtitle under the heading.
         assert.ok((await page.locator('.sheet-page-heading p').innerText()).trim().length > 0);
         // 8. The header shows at most one short phrase on Settings.

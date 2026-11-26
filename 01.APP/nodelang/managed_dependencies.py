@@ -37,12 +37,18 @@ class ManagedDependencies:
             raise ValueError('npm refused the operation. Open dependency logs, resolve the reported package error and retry: ' + result.stderr[-1500:])
         return result.stdout
 
-    def check(self):
-        data = json.loads(self.run(['ls', '--global', '--depth=0', '--json']))
+    def _inventory(self):
+        """npm's global root and what npm installed there. A profile where npm never installed a global package has
+        no global folder yet; `npm ls --global` refuses that with ENOENT, but it simply means nothing is installed."""
         root = Path(self.run(['root', '--global']).strip())
         if not root.is_absolute():
             raise ValueError('npm returned an invalid installation root. Repair Node.js and check again.')
-        installed = data.get('dependencies', {})
+        if not root.is_dir():
+            return root, {}
+        return root, json.loads(self.run(['ls', '--global', '--depth=0', '--json'])).get('dependencies', {})
+
+    def check(self):
+        root, installed = self._inventory()
         rows = []
         try:
             import psutil
@@ -60,7 +66,9 @@ class ManagedDependencies:
             latest = json.loads(self.run(['view', package, 'version', '--json']))
             found = self.find(executable)
             version = held.get('version')
-            state = 'Not installed' if not found else 'Needs repair' if not version else 'Ready' if version == latest else 'Update ready'
+            # A tool its own installer put on PATH is Ready (npm does not own it); npm holding a package whose
+            # executable is gone is the one case Repair can fix.
+            state = ('Needs repair' if version else 'Not installed') if not found else 'Ready' if not version or version == latest else 'Update ready'
             ram = None if processes is None else sum(m.rss for cmd, m in processes if m and any(package.casefold() in arg.replace('\\', '/').casefold() for arg in cmd)) / 1048576
             rows.append({'id': id, 'name': name, 'group': 'Agents', 'version': version or ('External installation' if found else ''),
                          'availableVersion': latest, 'diskMb': round(disk / 1048576, 1), 'ramMb': ram,
@@ -74,8 +82,8 @@ class ManagedDependencies:
             raise ValueError('Choose a listed dependency and a supported operation.')
         if action != 'Check':
             # Only npm-owned installations can be changed here; never remove vendor/native installs.
-            inventory = json.loads(self.run(['ls', '--global', '--depth=0', '--json']))
-            if action in ('Remove', 'Repair', 'Update') and PACKAGES[id] not in inventory.get('dependencies', {}):
+            _root, inventory = self._inventory()
+            if action in ('Remove', 'Repair', 'Update') and PACKAGES[id] not in inventory:
                 raise ValueError('This tool is managed by its native installer. Use that installer, then Check again.')
             command = ['uninstall' if action == 'Remove' else 'install', '--global', PACKAGES[id] + ('' if action == 'Remove' else '@latest')]
             if action == 'Repair':

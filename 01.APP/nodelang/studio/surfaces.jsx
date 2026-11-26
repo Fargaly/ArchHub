@@ -46,13 +46,53 @@
         }}>{['Manual', 'Schedule', 'File changed', 'Host event', 'Approval granted', 'Webhook'].map(t => <Btn key={t} sm onClick={event => executeAction("projects.surfaces.AsyncConstNAwaitU.3", {api,t,u}, event)}>{t}</Btn>)}</div></Card></div>;
     return embedded ? body : <main className="page" data-screen="automations"><Heading title="Automations" sub="Repeat work as a node, with the same approval point" />{body}</main>;
   }
-  function Receipts() {
+  // ArchHub menu › App health (design: archhub-directions diagDialog; "Logs & receipts" lives here, never a page).
+  // Checks from their owners, and Activity from the run receipts beside every session file, notifications and the update.
+  function AppHealth({close}) {
     const s = useData(),
-      u = useApp();
-    return <main className="page" data-screen="receipts"><Heading title="Logs & receipts" sub="Every action in this session"><Btn sm onClick={event => executeAction("projects.surfaces.Export.4", {u}, event)}>Export</Btn><Btn sm onClick={event => executeAction("projects.surfaces.UndoLastAction.5", {api,u}, event)}>Undo last action</Btn></Heading><Card><Table rows={[...(s.connectionNotice ? [{operation: 'Connection notice', detail: s.connectionNotice, status: 'notice'}] : []), ...s.receipts]} columns={['operation', 'detail', 'status']} /></Card>{s.archives.map(a => <Card key={a.id} style={{
-        padding: 20,
-        marginTop: 15
-      }}><h2>Archived activity</h2><Table rows={a.receipts || a.rows || []} columns={['operation', 'detail', 'status']} /></Card>)}</main>;
+      u = useApp(),
+      [runs, setRuns] = React.useState({status: 'waiting', rows: []}),
+      [attempt, setAttempt] = React.useState(0);
+    React.useEffect(() => {
+      let current = true;
+      setRuns(held => ({...held, status: 'waiting'}));
+      api.readHostAvailability?.().catch(() => null);
+      api.listAgentsWorking?.().catch(() => null);
+      api.recentRuns(60).then(rows => { if (current) setRuns({status: (rows || []).length ? 'loaded' : 'empty', rows: rows || []}); },
+        error => { if (current) setRuns({status: 'error', rows: [], message: error.message || String(error)}); });
+      return () => { current = false; };
+    }, [attempt]);
+    const agents = (s.agents || []).filter(a => a.kind !== 'observation');
+    const ungated = agents.filter(a => a.gate === 'missing').map(a => a.name);
+    const live = (s.hosts || []).filter(h => h.state === 'connected' || h.state === 'listening').map(h => h.name || h.id);
+    const go = route => () => { close(); return u.go(route); };
+    const checks = [
+      [!ungated.length, 'Agent gates', ungated.length ? ungated.join(', ') + ' has no Stop gate' : agents.length + ' agents gated', ungated.length ? ['Install gates', go('settings/Agents')] : null],
+      [live.length > 0, 'Programs', live.length ? live.join(', ') + ' connected' : s.hostError || 'No program connected', live.length ? null : ['Programs', go('settings/Connections')]],
+      [!!s.agentSummary && !/checking|incomplete/i.test(s.agentHealth || s.agentSummary), 'Agents', s.agentSummary || 'Checking running agents…', null],
+      [!!s.profile?.signedIn, 'Account', s.profile?.signedIn ? 'Signed in' : 'Not signed in', s.profile?.signedIn ? null : ['Sign in', go('settings/Account')]]
+    ];
+    const when = at => at ? new Date((at > 1e12 ? at : at * 1000)).toLocaleString() : '';
+    const activity = [
+      ...runs.rows.map(r => ({at: r.end || r.start || r.at || 0, operation: r.title || 'Canvas run', detail: [r.kind === 'manual' ? 'Run' : String(r.kind || '').replace(/^trigger\./, ''), r.error].filter(Boolean).join(' · '), status: r.state || ''})),
+      ...(s.notifications || []).map(n => ({at: Date.parse(n.at || n.created_at || '') / 1000 || 0, operation: n.title || 'Notice', detail: n.text || n.body || '', status: n.read ? 'read' : 'new'})),
+      ...(s.update?.updatedTo ? [{at: 0, operation: 'Update installed', detail: s.update.updatedTo, status: 'done'}] : [])
+    ].sort((a, b) => b.at - a.at).map(row => ({...row, when: when(row.at)}));
+    const undoName = String(s.graph?.undoLabel || s.undoLabel || '').trim();
+    const report = checks.map(([ok, name, what]) => (ok ? 'OK ' : 'FIX ') + name + ': ' + what).join('\n');
+    return <div className="app-health" data-design="app.health">
+      <div className="diag">{checks.map(([ok, name, what, act]) => <div className="drow" key={name}><span className={ok ? 'f-ok' : 'f-warn'} aria-label={ok ? 'Healthy' : 'Needs a fix'}>{ok ? '✓' : '!'}</span><b>{name}</b><span>{what}</span>{act && <Btn sm onClick={event => executeAction('ui.select', act[1], event)}>{act[0]}</Btn>}</div>)}</div>
+      <h3>Activity</h3>
+      {runs.status === 'waiting' && <p role="status">Reading run receipts…</p>}
+      {runs.status === 'error' && <div role="alert"><p>{runs.message}</p><Btn sm onClick={event => executeAction('ui.select', () => setAttempt(value => value + 1), event)}>Retry</Btn></div>}
+      {runs.status === 'empty' && (activity.length ? <Table rows={activity.slice(0, 60)} columns={['when', 'operation', 'detail', 'status']} /> : <p className="muted">No runs, notices or updates recorded on this PC yet.</p>)}
+      {runs.status === 'loaded' && <Table rows={activity.slice(0, 60)} columns={['when', 'operation', 'detail', 'status']} />}
+      <div className="flex">
+        <Btn sm onClick={event => executeAction('ui.select', () => navigator.clipboard?.writeText(report).then(() => u.setToast('Report copied.')), event)}>Copy report</Btn>
+        <Btn sm disabled={!activity.length} onClick={event => executeAction('ui.select', () => u.download('Receipts', activity), event)}>Export</Btn>
+        <Btn sm disabled={!undoName} title={undoName ? 'Undo ' + undoName : 'Nothing to undo'} onClick={event => executeAction('ui.select', () => u.act(api.undo), event)}>{undoName ? 'Undo ' + undoName : 'Nothing to undo'}</Btn>
+      </div>
+    </div>;
   }
   function Runs() {
     const s = useData(),
@@ -97,7 +137,7 @@
   }
   Object.assign(window.UI, {
     Automations,
-    Receipts,
+    AppHealth,
     Runs,
     Feedback,
     Watcher
@@ -120,14 +160,6 @@ function projectssurfacesjsxAsyncConstNAwaitU3({api,t,u}, event) {
               u.go('canvas');
             }
           };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxExport4({u}, event) {
-  const handler = () => u.download('Receipts');
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxUndoLastAction5({api,u}, event) {
-  const handler = () => u.act(api.undo);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectssurfacesjsxOpen6({r,u}, event) {
@@ -182,8 +214,6 @@ const PROJECT_ACTIONS = {
   "projects.surfaces.AddSchedule.1": "projectssurfacesjsxAddSchedule1",
   "projects.surfaces.Reset.2": "projectssurfacesjsxReset2",
   "projects.surfaces.AsyncConstNAwaitU.3": "projectssurfacesjsxAsyncConstNAwaitU3",
-  "projects.surfaces.Export.4": "projectssurfacesjsxExport4",
-  "projects.surfaces.UndoLastAction.5": "projectssurfacesjsxUndoLastAction5",
   "projects.surfaces.Open.6": "projectssurfacesjsxOpen6",
   "projects.surfaces.Retry.7": "projectssurfacesjsxRetry7",
   "projects.surfaces.Retry.8": "projectssurfacesjsxRetry8",
@@ -191,5 +221,5 @@ const PROJECT_ACTIONS = {
   "projects.surfaces.CheckResponse.10": "projectssurfacesjsxCheckResponse10",
   "projects.surfaces.ViewUpdate.11": "projectssurfacesjsxViewUpdate11"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsOpenTaskCanvas,projectsToggleAutomationPause,projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3,projectssurfacesjsxExport4,projectssurfacesjsxUndoLastAction5,projectssurfacesjsxOpen6,projectssurfacesjsxRetry7,projectssurfacesjsxRetry8,projectssurfacesjsxSendFeedback9,projectssurfacesjsxCheckResponse10,projectssurfacesjsxViewUpdate11});
+window.registerActions(PROJECT_ACTIONS, {projectsOpenTaskCanvas,projectsToggleAutomationPause,projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3,projectssurfacesjsxOpen6,projectssurfacesjsxRetry7,projectssurfacesjsxRetry8,projectssurfacesjsxSendFeedback9,projectssurfacesjsxCheckResponse10,projectssurfacesjsxViewUpdate11});
 })();

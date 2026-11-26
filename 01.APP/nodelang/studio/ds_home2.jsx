@@ -192,8 +192,9 @@
     ];
     // One row per piece of work: a further live agent on it is an avatar on that row, never a second row.
     for(const agent of (s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working')){
+      // A row whose run record says it stopped (interrupted, limit reached) has nobody working on it now.
       const row=sessionRows.find(row=>row.id===agent.task);
-      if(row){
+      if(row&&!window.UI.taskRowReason(row)){
         row.workingNow=true;
         const members=[...(row.members||[])];
         const idx=members.findIndex(member=>member.id===agent.id||(member.roots||[]).includes(agent.id)||!member.id&&member.name===agent.name);
@@ -439,7 +440,7 @@
         <div className="flex">{onOpenPeople && <button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => onOpenPeople(), event)}>+ Add an agent</button>}<button type="button" className="dx-link" onClick={event => executeAction('ui.select', () => u.go('settings/Agents'), event)}>People and agents…</button></div>
       </div>
       <div className="sst-group"><h4>Inputs from other sessions</h4>
-        {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span>{link.source.path}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
+        {links.length ? links.map(link => <p key={link.source.id + link.output} className="v48-session-param"><span title={u.advanced ? link.source.path : undefined}>{u.advanced ? link.source.path : String(link.source.title || link.source.path || '').split(/[\\/]/).pop().replace(/\.archhub$/i, '')}<em>{link.output}</em></span><b>{link.state === 'ready' ? 'Ready' : link.state === 'failed' ? 'Failed' : link.state === 'waiting' ? 'Waiting' : 'Source missing'}</b></p>) : <p className="muted">No input links. Wire another session's output into this one to make one.</p>}
       </div>
       <div className="sst-group"><span className="eyebrow">How it runs</span>
         {budget && window.UI.ValueWidget && <label className="grid">Run budget<window.UI.ValueWidget n={session} p={budget} value={session.params.run_budget} u={u}/></label>}

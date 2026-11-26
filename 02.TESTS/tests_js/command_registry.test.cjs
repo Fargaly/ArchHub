@@ -122,7 +122,8 @@ test('every existing menu item preserves its state and owner action calls alongs
     ['Unbypass','Stop bypassing'],
     ['Fork','Fork from here'],
     ['Open ArchHub','Open Home'],
-    ['Quit','Quit ArchHub']
+    ['Quit','Quit ArchHub'],
+    ['Logs & receipts','App health']  // the page became the design's ArchHub menu > App health dialog
   ]);
   const movedToNodeMore=new Set(['Colour','Save as node type']);
   let mapped=0;
@@ -155,6 +156,8 @@ test('every existing menu item preserves its state and owner action calls alongs
       await oldBtn.props.onClick({});await newBtn.props.onClick({});
       // #372: Rerun / Run this step runs the node again (runNode(id, true)); Open Home navigates to home; every other control keeps its exact owner call.
       const expected=targetLabel==='Open Home'?[['close'],['u.go','home']]
+        // Founder 2026-11-26 (one door): Dependencies opens its Settings section; Logs & receipts is the App health dialog.
+        :rawLabel==='Dependencies'?[['u.go','settings/Dependencies']]:rawLabel==='Logs & receipts'?[['u.show','App health']]
         :plain(old.calls).map(call=>rawLabel==='Rerun'&&call[0]==='api.runNode'?[...call,true]
           :rawLabel==='Make a task from this'&&call[0]==='api.createTask'?['api.createTask',call[1],'','','','task']:call);
       assert.deepEqual(plain(activeRig.calls),expected,fixture.kind+' '+targetLabel);

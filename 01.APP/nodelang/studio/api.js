@@ -1336,7 +1336,7 @@ async function settingsAction(functionName, args=[], destination=state.settingsD
  }
  if(result.workspacePolicies)values.workspaces=state.workspaces.map(row=>({...row,...result.workspacePolicies[row.id]}));
  if(result.workspaceIds)values.graph={...state.graph,workspaceIds:result.workspaceIds};
- if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...(values.profile||state.profile),...settingsProfile};}
+ if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan','role','photo','presence'].includes(key)))};values.profile={...(values.profile||state.profile),...settingsProfile};}
  const shownSettings=state.settings;
  publish(values);
  if(sessionWrite)await pollFile();
@@ -1601,7 +1601,7 @@ Object.assign(api,{
    if(node?.result?.status!=='Done'||!Array.isArray(node.result.output?.issues))throw Error('Run the selected check before exporting issues.');
    return {name:'Issues.json',type:'application/json',content:JSON.stringify(node.result.output.issues,null,2)};
   }
-  if(name==='Receipts')return {name:'Receipts.json',type:'application/json',content:JSON.stringify(state.receipts,null,2)};
+  if(name==='Receipts')return {name:'App-health-activity.json',type:'application/json',content:JSON.stringify(Array.isArray(id)?id:[],null,2)};
   return projectExport(name,id);
  },
  
@@ -1789,6 +1789,14 @@ api.enterSession=async id=>{
  const opened=await api.openSession(resolved.path,true);
  if(!opened?.cancelled){sessionBreadcrumbs.push(parent);publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});}
  return opened;
+};
+// An embed card's linked session: read and update through the session-files owner with this window's session and
+// CSRF headers (a bare fetch is refused 403, so every card read "Could not check linked session").
+api.resolveLinkedSession=params=>sessionRequest('resolve-session',{params});
+api.updateEmbeddedSession=async id=>{
+ const result=await sessionRequest('update-session',{document:sessionDocument,node:id});
+ if(result?.document&&sessionPath)await sessionRequest('save',{path:sessionPath,document:result.document});
+ return result;
 };
 api.leaveSession=async()=>{
  const parent=sessionBreadcrumbs.at(-1);if(!parent)return;
@@ -2773,6 +2781,8 @@ api.setSessionModel=async(path,values)=>{
 };
 api.sessionInputLinks=path=>sessionModel('links',{path}).then(data=>data.links);
 api.sessionRuns=(path,limit=200)=>sessionModel('runs',{path,limit}).then(data=>data.runs);
+// App health › Activity: every session's newest run receipts (the run history beside each file).
+api.recentRuns=(limit=60)=>sessionModel('activity',{limit}).then(data=>data.runs);
 api.sessionSetting=(path,id)=>sessionModel('setting',{path,id});
 api.approveSessionRun=(path,run)=>sessionModel('approve-run',{path,run}).then(data=>data.outcome);
 // SESSION MODEL end

@@ -3004,6 +3004,24 @@ def read_runs(path, limit=200, identity=None):
     return _run_rows(target)[-limit:]
 
 
+def recent_runs(limit=60, directory=None):
+    """App health > Activity: the newest run receipts of every session file (its .runs.jsonl), newest first."""
+    folder = Path(directory) if directory else sessions_directory()
+    titles = {}
+    for path in folder.glob('*.archhub'):
+        try:
+            document = read_document(path)
+        except (OSError, ValueError):
+            continue
+        titles[document['id']] = (document.get('title') or path.stem, str(path))
+    rows = []
+    for target in folder.glob('*.runs.jsonl'):
+        title, path = titles.get(target.name[:-len('.runs.jsonl')], (target.name[:-len('.runs.jsonl')], ''))
+        rows.extend({**run, 'title': title, 'path': path} for run in _run_rows(target)[-limit:])
+    rows.sort(key=lambda row: row.get('end') or row.get('start') or row.get('at') or 0, reverse=True)
+    return rows[:limit]
+
+
 def _run_rows(target):
     try:
         lines = target.read_text(encoding='utf-8').splitlines()

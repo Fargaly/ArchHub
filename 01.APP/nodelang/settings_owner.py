@@ -1469,12 +1469,19 @@ class PreferenceScope:
                                   document=None if self.path else self.document)
         self.document, self.workspace, self.context_workspace = current.document, current.workspace, current.context_workspace
         scope = scope or getattr(self, 'view_scope', None) or self.selected()
-        values = self._project(self.effective(scope))
+        maps = self.maps()
+        values = self._project(self.effective(scope, maps))
         keyboard = keyboard_settings(settings=self.settings if scope == 'User' else values)
         self.binding = self.destination()
         shown = self.binding['scope']
         notice = '' if self.selected() == shown else 'This scope is unavailable. Showing Everywhere values; choose an available scope before editing.'
-        return {**preference_settings(settings=values), **keyboard,
+        preferences = preference_settings(settings=values)
+        # scopeOwned: this scope holds its own value (an override), so Reset shows and removes it to inherit the
+        # parent's value, even when that own value equals the factory default.
+        own = maps.get(scope, {})
+        preferences['appearanceSettings'] = [{**row, 'scopeOwned': row['id'] in own} if row.get('id') in self.keys else row
+                                             for row in preferences['appearanceSettings']]
+        return {**preferences, **keyboard,
                 'settingsScope': shown, 'settingsDestination': dict(self.binding), 'settingsScopeNotice': notice, 'activeWorkspace': self.settings.read().get('activeWorkspace', self.workspace),
                 'settingsScopes': {'Workspace': bool(self.workspace), 'Session': bool(self.document)}}
 

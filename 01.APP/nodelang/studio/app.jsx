@@ -503,6 +503,21 @@
     React.useEffect(() => {
       setToastPaused(false);
     }, [toast]);
+    // The toast sits above the visible bottom composer, measured after layout (a composer mounted with this render
+    // counts) and again on resize; a composer in the upper half of the window (a docked thread's) is not under it.
+    const [toastBottom, setToastBottom] = React.useState(24);
+    React.useLayoutEffect(() => {
+      if (!toast && !s.canvasSaveConflict) return undefined;
+      const measure = () => {
+        const tops = [...document.querySelectorAll('[data-design="composer.surface"]')].filter(e => e.offsetParent)
+          .map(e => e.getBoundingClientRect()).filter(r => r.top < window.innerHeight && r.bottom > window.innerHeight / 2).map(r => r.top);
+        setToastBottom(tops.length ? Math.max(24, window.innerHeight - Math.min(...tops) + 8) : 24);
+      };
+      measure();
+      const frame = requestAnimationFrame(measure);
+      window.addEventListener('resize', measure);
+      return () => { cancelAnimationFrame(frame); window.removeEventListener('resize', measure); };
+    }, [toast, s.canvasSaveConflict, route, taskFace]);
     React.useEffect(() => {
       const duration = timing('toast_visible_ms');
       if (!toast || toastPaused || duration === null) return;
@@ -615,7 +630,7 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -658,9 +673,9 @@
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
           }, event)}>{navLabel((route.startsWith("settings/") ? "Settings" : route === "task-file" ? "Home" : routeNames[route]) || route.split('/').at(-1))}</button>{route === "task-file" && <><span className="muted">›</span><span className="header-page header-here" title="This session">{s.tasks.find(t => t.id === task)?.title || s.graph.name}</span></>}<span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{route.startsWith("settings/") ? <span className="header-phrase">{(pending => agentLoad.status === 'error' ? <span role="alert" className="header-error"><span className="header-error-text" title={agentLoad.message}>{agentLoad.message}</span><Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>
-            : s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" title={s.connectionNotice} onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice</button>
+            : s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" title={s.connectionNotice} onClick={event => executeAction("appShell.Receipts.16", {show}, event)}>1 notice</button>
             : pending ? <button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go}, event)}>{pending + ' wait for you'}</button>
-            : <span>{s.profile.signedIn ? 'Signed in' : 'Local session'}</span>)(window.UI.homeRows(s, s.homeLayout).needsYou)}</span> : <>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : s.connectionNotice ? <span>{s.connectionNotice}</span> : null}
+            : <span>{s.profile.signedIn ? 'Signed in' : 'Local session'}</span>)(window.UI.homeRows(s, s.homeLayout).needsYou)}</span> : <>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {show}, event)}>1 notice · see Receipts</button> : s.connectionNotice ? <span>{s.connectionNotice}</span> : null}
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
           {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
@@ -670,7 +685,7 @@
             }, event)}><span data-design="status.on-this-pc">On this PC · {(() => { const ready = (s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening'); const liveCount = window.UI.homeRows(s, s.homeLayout).running || (s.liveAgents||[]).filter(a=>a.status==='working').length; return (ready.length ? ready.length + ' ready (' + ready.map(h=>h.name).join(', ') + ')' : (s.hostsProbing?'checking programs…':'no program connected')) + ' · ' + liveCount + ' live ' + (liveCount === 1 ? 'agent' : 'agents'); })()}</span></button>{(rows => [['Running', rows.running, 'running', 'Nothing running', s.agentSummary], ['Needs you', rows.needsYou, 'need you', 'Nothing needs you', 'Sessions that wait for you']].map(([filter, count, word, none, title]) => <button key={filter} data-design={'header.' + word.replace(' ', '-')} className="button-reset muted" title={title + ' · show them on Home'} onClick={event => executeAction("appShell.RunningWaitForYou.14", {act, api, go, filter}, event)}>{count ? count + ' ' + word : none}</button>))(window.UI.homeRows(s, s.homeLayout))}<button data-design="header.agents" className="button-reset muted" title={(s.agentSummary || 'Checking running agents…') + ' · open Agents on this PC'} onClick={event => executeAction('ui.select', () => go('agents'), event)}>Agents on this PC</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
           }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
-            go
+            show
           }, event)}>Receipts</button></>}</div><button data-design="header.search" className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search all…</span><kbd>Ctrl K</kbd></button>{/* One update state at a time: while the status read is being retried the header says so; "Update failed" is the updater's own answer. */}{(s.update.available || s.update.state==='failed' && s.connectionNotice !== 'Checking for updates…') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
@@ -750,7 +765,7 @@
   {!s.canvasSaveConflict && s.orphanDrafts?.length > 0 && <div role="alert" style={{position: 'fixed', top: 100, left: '50%',
         transform: 'translateX(-50%)', maxWidth: '70vw', border: '1px solid ' + A.line, borderRadius: 10, background: '#24242b',
         padding: '12px 18px', zIndex: 201, boxShadow: '0 8px 30px #0008', display: 'grid', gap: 8}}>
-      <span>Unsaved changes from a closed ArchHub window in {s.orphanDrafts[0].file || 'an unsaved canvas'}. Updates wait until you choose.</span>
+      <span>Unsaved changes from a closed ArchHub window in {s.orphanDrafts[0].file ? (advanced ? s.orphanDrafts[0].file : String(s.orphanDrafts[0].file).split(/[\\/]/).pop().replace(/\.archhub$/i, '')) : 'an unsaved canvas'}. Updates wait until you choose.</span>
       {s.orphanDraftError && <span>{s.orphanDraftError}</span>}
       <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
         <Btn sm onClick={event => executeAction('ui.select', () => api.resolveOrphanDraft(s.orphanDrafts[0].view, true), event)}>Keep those changes as a copy</Btn>
@@ -761,10 +776,8 @@
     const toastTone = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.tone || '') : '';
     const borderCol = toastTone === 'bad' ? 'var(--color-err, #e6705f)' : toastTone === 'warn' ? 'var(--color-warn, #e5b25a)' : A.line;
     const toastAction = !s.canvasSaveConflict && typeof toast === 'object' ? (toast.action || toast.open) : null;
-    // The toast sits fully inside the window and above the visible composer, never over it (founder 2026-11-26).
+    // The toast sits fully inside the window and above the visible composer (toastBottom), never over it (founder 2026-11-26).
     // Portalled to <body>: a transformed or contained ancestor must not become its containing block and clip it.
-    const composerTop = Math.min(...[...document.querySelectorAll('[data-design="composer.surface"]')].filter(e => e.offsetParent).map(e => e.getBoundingClientRect().top));
-    const toastBottom = Number.isFinite(composerTop) && composerTop < window.innerHeight ? Math.max(24, window.innerHeight - composerTop + 8) : 24;
     return window.ReactDOM.createPortal(<div role="alert" data-toast="" data-toast-tone={toastTone || 'info'} data-toast-paused={toastPaused ? 'true' : 'false'} className={'flex app-toast' + (toastTone ? ' tone-' + toastTone : '')} onMouseEnter={() => setToastPaused(true)} onMouseLeave={() => setToastPaused(false)} style={{
         position: 'fixed',
         bottom: toastBottom,
@@ -1105,7 +1118,7 @@
       const entries = [
         ['All pages…', () => u.show('Search')],
         ['How everything connects', () => u.go('system')],
-        ['App health', () => u.go('receipts')],
+        ['App health', () => u.show('App health')],
         ['Community', () => u.go('community')],
         ['Social media', () => u.go('social')],
         ['Docs', () => u.go('docs')],
@@ -1646,7 +1659,7 @@
         m,
         text,
         u
-      }, event)}>Review change</Btn></>;else if (k === 'Tool check') body = <><p>Check each managed tool from its Settings row.</p><div className="grid">{s.settings.filter(r => r.page === 'Dependencies').map(r => <window.UI.SettingControl key={r.id} row={r} />)}</div></>;else if (k === 'Meeting notes') body = <><h2>{s.meeting.title || "Meeting notes"}</h2><p>{s.meeting.actions.join(" · ") || "No meeting notes available."}</p><Btn onClick={event => executeAction("appShell.OpenTeam.95", {
+      }, event)}>Review change</Btn></>;else if (k === 'App health') body = <window.UI.AppHealth close={close} />;else if (k === 'Tool check') body = <><p>Check each managed tool from its Settings row.</p><div className="grid">{s.settings.filter(r => r.page === 'Dependencies').map(r => <window.UI.SettingControl key={r.id} row={r} />)}</div></>;else if (k === 'Meeting notes') body = <><h2>{s.meeting.title || "Meeting notes"}</h2><p>{s.meeting.actions.join(" · ") || "No meeting notes available."}</p><Btn onClick={event => executeAction("appShell.OpenTeam.95", {
         u
       }, event)}>Open team</Btn></>;else if (k === 'What’s new') body = <><p>One companion, one Workshop, editable nodes and settings, and a clear review before a change.</p><Btn onClick={event => executeAction("appShell.UpdatesAbout.96", {
         u
@@ -1791,9 +1804,9 @@
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellReceipts16({
-    go
+    show
   }, event) {
-    const handler = () => go('receipts');
+    const handler = () => show('App health');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellDismiss17({

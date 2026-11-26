@@ -37,7 +37,6 @@ async function mountAppShell(page) {
       docs: 'Docs',
       community: 'Community',
       social: 'Social media',
-      receipts: 'Receipts',
       library: 'Library',
       workshop: 'Workshop',
       agents: 'Agents'
@@ -307,7 +306,7 @@ async function mountAppShell(page) {
     window.UI.Docs = () => React.createElement('main', {'data-screen': 'docs'}, 'Docs screen');
     window.UI.Community = () => React.createElement('main', {'data-screen': 'community'}, 'Community screen');
     window.UI.Social = () => React.createElement('main', {'data-screen': 'social'}, 'Social screen');
-    window.UI.Receipts = () => React.createElement('main', {'data-screen': 'receipts'}, 'App health receipts');
+    window.UI.AppHealth = () => React.createElement('div', {'data-design': 'app.health'}, 'App health');
     window.UI.Settings = ({page}) => React.createElement('main', {'data-screen': 'settings', 'data-settings-page': page}, 'Settings · ' + page);
     window.UI.Home = () => {
       const u = window.UI.useApp();
@@ -489,7 +488,9 @@ test('P2-A5: Header mark/workspace/bell popovers, Add node filters+keys+value, C
       await markMenu.getByRole('menuitem', {name: item, exact: true}).waitFor();
     }
     await markMenu.getByRole('menuitem', {name: 'App health', exact: true}).click();
-    await page.locator('[data-screen="receipts"]').waitFor();
+    // App health is the design's dialog (Logs & receipts live in it), never a page of its own.
+    await page.getByRole('dialog').locator('[data-design="app.health"]').waitFor();
+    await page.getByRole('dialog').getByRole('button', {name: /close/i}).first().click();
 
     await page.locator('[data-design="header.workspace"]').click();
     const wsMenu = page.locator('[data-design="workspace.menu"]');

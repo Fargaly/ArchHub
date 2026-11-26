@@ -1565,7 +1565,7 @@ def _store_version():
         logging.getLogger(__name__).debug('Workshop store version unreadable: %s', unreadable)
         return None
 _SESSION_READ_ACTIONS = frozenset(('head', 'read', 'catalogue', 'initial', 'validate', 'agent-history',  # session-files
-                                   'list', 'get', 'links', 'runs', 'setting'))  # session-model
+                                   'list', 'get', 'links', 'runs', 'activity', 'setting'))  # session-model
 _WORKSHOP_READ_FUNCTIONS = frozenset(('listTasks', 'listWorkshopMessages', 'listApprovals', 'listNotifications',
                                       'listLiveAgents', 'listAgentsWorking', 'readWatcher', 'readDesktop', 'readHostSkills'))
 
@@ -2927,6 +2927,11 @@ def r_session_model(s, req):
             for row in group['sessions']:
                 _mark_live(row, live)
         return listed
+    if action == 'activity':
+        limit = body.get('limit', 60)
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise Refused('Choose 1 to 500 runs.')
+        return {'ok': True, 'runs': files.recent_runs(limit)}
     path = str(files.local_path(str(body.get('path') or '')))
     if action == 'get':
         return {'ok': True, 'session': _mark_live(files.session_fields(files.read_document(path), path), _live_triggers(s))}

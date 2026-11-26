@@ -705,8 +705,7 @@
         return () => { live = false; };
       }
       setLoad({status: 'waiting', message: ''});
-      window.fetch('/api/session-files', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'resolve-session', params: n.params})})
-        .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not check linked session.')))
+      Promise.resolve().then(() => api.resolveLinkedSession(n.params))
         .then(res => {
           if (!live) return;
           const childOuts = (res?.document?.nodes || []).filter(cn => cn.type === 'output' || cn.kind === 'Output' || (cn.ports?.source || []).some(p => p.exposed)).map(cn => cn.title || cn.id).join('|');
@@ -720,19 +719,7 @@
       return () => { live = false; };
     }, [attempt, n.id, n.title, n.embedChanged, n.outputsChanged, n.status, JSON.stringify(n.params?.session_file || ''), s.revision]);
     const updateEmbedNow = () => u.act(async () => {
-      if (typeof api.updateEmbeddedSession === 'function') {
-        const res = await api.updateEmbeddedSession(n.id);
-        setLoad({status: 'empty', message: ''});
-        return res;
-      }
-      const doc = api.getSessionDocument?.(), sessionPath = api.getSessionPath?.();
-      if (doc) {
-        const resp = await window.fetch('/api/session-files', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'update-session', document: doc, node: n.id})});
-        const data = resp.ok ? await resp.json() : null;
-        if (data?.ok && data.document && sessionPath) {
-          await window.fetch('/api/session-files', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'save', path: sessionPath, document: data.document})});
-        }
-      }
+      await api.updateEmbeddedSession(n.id);
       setLoad({status: 'empty', message: ''});
       await api.refreshLibraryPorts?.();
       const refreshed = await api.refreshProjects?.({userCanvas: true});
@@ -1838,7 +1825,7 @@
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
       } else if (n.kind === 'Agent') u.show('Agent', {
         id: n.params.provider
-      });else if (n.kind === 'Research') u.go('xray');else if (n.kind === 'History') u.go('receipts');else if (['Remember', 'Recall'].includes(n.kind)) u.go('brain');else if (['Social media', 'Read video', 'Read mail', 'Read file', 'Tutorial', 'Digest'].includes(n.kind)) u.go('social');else if (n.kind === 'X-RAY') u.go('xray');else if (['Account access', 'Billing & usage', 'Office invitations'].includes(n.kind)) u.go('access');else if (n.kind === 'Model routing') u.go('routing');else if (n.kind === 'Workshop') u.go('workshop');else if (n.kind === 'BABOOM') u.go('baboom');else if (n.kind === 'Watcher') u.go('watcher');else if (isGroup(n)) {
+      });else if (n.kind === 'Research') u.go('xray');else if (n.kind === 'History') u.show('App health');else if (['Remember', 'Recall'].includes(n.kind)) u.go('brain');else if (['Social media', 'Read video', 'Read mail', 'Read file', 'Tutorial', 'Digest'].includes(n.kind)) u.go('social');else if (n.kind === 'X-RAY') u.go('xray');else if (['Account access', 'Billing & usage', 'Office invitations'].includes(n.kind)) u.go('access');else if (n.kind === 'Model routing') u.go('routing');else if (n.kind === 'Workshop') u.go('workshop');else if (n.kind === 'BABOOM') u.go('baboom');else if (n.kind === 'Watcher') u.go('watcher');else if (isGroup(n)) {
         if (n.children.some(id => s.graph.nodes.some(row => row.id === id))) setParent(n.id);
         else { setParent(null); u.act(() => api.selectGraph(n.id)); }
         setSelected([]);

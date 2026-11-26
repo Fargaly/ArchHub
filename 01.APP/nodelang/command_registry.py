@@ -284,10 +284,10 @@ NAVIGATION_ROUTES = {
     "system": "System graph",
     "first-run": "First run",
     "runs": "Runs",
-    "receipts": "Logs & receipts",
     "automations": "Automations",
     "docs": "Docs",
     "meetings": "Meetings",
+    "settings/Dependencies": "Dependencies",
     "present": "Present",
     "community": "Community",
     "model-review": "Model review",
@@ -299,7 +299,7 @@ NAVIGATION_ROUTES = {
     "routing": "Model routing"
 }
 
-MENU_PAGES = ["meetings","home","workshop","canvas","docs","colleagues","brain","watcher","social","xray","model-review","community","present","interface","access","routing","automations","runs","receipts","feedback","system","first-run"]
+MENU_PAGES = ["meetings","settings/Dependencies","home","workshop","canvas","docs","colleagues","brain","watcher","social","xray","model-review","community","present","interface","access","routing","automations","runs","feedback","system","first-run"]
 
 
 # Existing Studio actions, in their original presentation order. No parameter values live here.
@@ -487,5 +487,5 @@ STUDIO_COMMANDS += tuple(
         ('menu.tray.feedback', 'Send feedback', 'office', ['tray'], 'u.go', 'workshop', '', False, True, False, False, 'read'),
         ('menu.tray.thread', 'Open thread', 'office', ['tray'], 'u.openTaskFile', 'workshop', '', False, True, False, False, 'read'),
         ('menu.tray.check.updates', 'Check for updates', 'host', ['tray'], 'api.checkForUpdates', 'refresh', '', False, False, False, False, 'write'),
-        ('menu.tray.receipts', 'Receipts', 'output', ['tray'], 'u.go', 'docs', '', False, True, False, False, 'read'),
+        ('menu.tray.receipts', 'App health', 'output', ['tray', 'navigation'], 'u.show', 'docs', '', False, True, False, False, 'read'),
     )))

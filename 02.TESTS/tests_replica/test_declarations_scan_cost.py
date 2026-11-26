@@ -152,3 +152,47 @@ def test_changing_nested_fields_of_a_read_never_changes_the_next_read(monkeypatc
         first["native_process"]["runtime"] = "changed"
         again = mb.read_declarations(history._db, include_archived=True)[0]
     assert json.dumps(again) == original
+
+
+def test_unchanged_table_is_not_read_again_and_another_process_write_is_seen(monkeypatch):
+    """Founder 2026-11-25: 'I want it faster'. The installed launcher still spent 92% of a core re-reading the 6 MB
+    declarations table on every Workshop read; the marker counter makes an unchanged table cost one tiny query."""
+    import sqlite3
+    monkeypatch.setattr(ad, "_VERDICTS", {})
+    monkeypatch.setattr(mb, "_BUILT", {})
+    monkeypatch.setattr(mb, "_RECORDS", {})
+    with mb.application_history() as history:
+        _fill(history)
+        with history._transaction(write=True):
+            for statement in mb.DECLARATIONS_MARKER_SCHEMA:
+                history._db.execute(statement)
+        db = history._db
+        path = next(file for _seq, name, file in db.execute("PRAGMA database_list") if name == "main")
+        assert json.dumps(mb.read_declarations(db, include_archived=True)) == \
+            json.dumps(_old_read_declarations(db, include_archived=True))
+        assert json.dumps(mb.read_declarations(db)) == json.dumps(_old_read_declarations(db))
+        assert mb._records(db) is mb._records(db)   # unchanged: the kept texts, no second read
+
+        other = sqlite3.connect(path, isolation_level=None)   # another process's connector writes the same file
+        try:
+            def seen():
+                return json.dumps(mb.read_declarations(db, include_archived=True)) == \
+                    json.dumps(_old_read_declarations(db, include_archived=True))
+            other.execute("INSERT INTO workshop_declarations VALUES(?,?)",
+                          ("room:declaration:" + "f" * 64, json.dumps(_record(99999, live=True))))
+            assert len(mb.read_declarations(db, include_archived=True)) == 6001 and seen()
+            other.execute("UPDATE workshop_declarations SET record=json_set(record,'$.work','w-1') WHERE root=?",
+                          ("room:declaration:" + "f" * 64,))
+            assert any(row.get("work") == "w-1" for row in mb.read_declarations(db, include_archived=True)) and seen()
+            other.execute("DELETE FROM workshop_declarations WHERE root=?", ("room:declaration:" + "f" * 64,))
+            assert len(mb.read_declarations(db, include_archived=True)) == 6000 and seen()
+        finally:
+            other.close()
+
+        uncached = _ms(lambda: mb.read_declarations(db), between=mb._RECORDS.clear)
+        cached = _ms(lambda: mb.read_declarations(db))
+        records_uncached = _ms(lambda: mb._records(db), between=mb._RECORDS.clear)
+        records_cached = _ms(lambda: mb._records(db))
+    print("\n_records 6000 rows: uncached %.2f ms, cached %.3f ms" % (records_uncached, records_cached))
+    print("read_declarations 6000 rows: uncached %.2f ms, cached %.2f ms" % (uncached, cached))
+    assert records_cached * 10 < records_uncached and cached < uncached

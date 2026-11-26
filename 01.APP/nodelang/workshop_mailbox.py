@@ -1793,11 +1793,41 @@ def _entries(texts):
     return [built[text] for text in texts]
 
 
+# A one-row counter that triggers bump in the writer's own transaction, whichever process or build writes; a reader
+# compares it first and reuses the record texts it already read (installed launcher: 6 MB re-read on every call).
+_MARKED = ("workshop_declarations_version", "workshop_declarations_version_insert",
+           "workshop_declarations_version_update", "workshop_declarations_version_delete")
+DECLARATIONS_MARKER_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS workshop_declarations_version("
+    "singleton INTEGER PRIMARY KEY CHECK(singleton=1),counter INTEGER NOT NULL) STRICT",
+    # A random start: a replaced file never matches a counter a reader kept for the old one.
+    "INSERT OR IGNORE INTO workshop_declarations_version VALUES(1,abs(random()%4503599627370496))",
+    *("CREATE TRIGGER IF NOT EXISTS workshop_declarations_version_%s AFTER %s ON workshop_declarations "
+      "BEGIN UPDATE workshop_declarations_version SET counter=counter+1; END" % (event.lower(), event)
+      for event in ("INSERT", "UPDATE", "DELETE")))
+_RECORDS = {}   # database file -> (counter, record texts); only the newest read per file is kept
+
+
 def _records(connection, records=None):
-    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
+    if records is not None:
+        return records if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone() else None
+    present = {name for name, in connection.execute("SELECT name FROM sqlite_master WHERE name IN (?,?,?,?,?)",
+                                                    ("workshop_declarations",) + _MARKED)}
+    if "workshop_declarations" not in present:
         return None
-    return [row[0] for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root")] \
-        if records is None else records
+    path = next((file for _seq, name, file in connection.execute("PRAGMA database_list") if name == "main"), "")
+    # Never inside an open transaction: its own uncommitted writes may still roll back the counter.
+    marked = len(present) == 5 and path and not connection.in_transaction
+    counter = marked and connection.execute("SELECT counter FROM workshop_declarations_version").fetchone()
+    if counter:
+        kept = _RECORDS.get(path)
+        if kept and kept[0] == counter[0]:
+            return kept[1]
+    texts = tuple(row[0] for row in connection.execute("SELECT record FROM workshop_declarations ORDER BY root"))
+    if counter:   # the counter was read before the records: a write in between only costs one more read
+        _RECORDS[path] = (counter[0], texts)
+    return texts
 
 
 def _identities(connection, records=None):
@@ -1944,6 +1974,8 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     with history._transaction(write=True):
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_declarations("
                             "root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
+        for statement in DECLARATIONS_MARKER_SCHEMA:
+            history._db.execute(statement)
         previous = history._db.execute("SELECT record FROM workshop_declarations WHERE root=?", (root,)).fetchone()
         old = json.loads(previous[0]) if previous else None
         row.update({key: old[key] for key in ("display_name", "model", "role", "title") if old and key in old})

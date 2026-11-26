@@ -1495,7 +1495,7 @@ def r_providers(s, req):
 def _declarations():
     from .workshop_mailbox import application_history, read_declarations
     with application_history(read_only=True) as history:
-        return read_declarations(history._db, include_archived=True)
+        return read_declarations(history._db)   # current rows: all its caller keeps
 
 
 # One Studio poll asks listTasks and then listNotifications, which needs the same column: built once, shared for

@@ -404,7 +404,8 @@ class ConversationHistoryStore(ConversationPageProtection):
         # workshop_declarations: the Workshop mailbox's presence table lives in this same file.
         permitted = set(required) | set(migration_tables) | {
             "message_search_data", "message_search_idx", "message_search_docsize", "message_search_config",
-            "workshop_declarations"}
+            "workshop_declarations", "workshop_declarations_version", "workshop_declarations_version_insert",
+            "workshop_declarations_version_update", "workshop_declarations_version_delete"}
         if version in (_RETENTION_VERSION, PAGE_PROTECTION_VERSION):
             permitted.update(("conversation_retention", "message_tombstones", "message_reply_to"))
             self._db.execute("SELECT conversation_id," + ",".join(_RETENTION_FIELDS) +

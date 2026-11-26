@@ -90,7 +90,12 @@
         "01.APP/nodelang/native_stop_hook.py",
         "01.APP/nodelang/stem_graph_evaluation.py",
         "01.APP/nodelang/window_commands.py",
-        "02.TESTS/tests_replica/test_agent_settings_owner.py"
+        "02.TESTS/tests_replica/test_agent_settings_owner.py",
+        "01.APP/nodelang/brain_files.py",
+        "02.TESTS/tests/test_settings_areas_live.py",
+        "02.TESTS/tests/test_settings_declared_rows.py",
+        "02.TESTS/tests_js/settings_areas_live.cjs",
+        "02.TESTS/tests_js/settings_scope.test.cjs"
       ]
     },
     "WHOLEDESIGN-A8": {

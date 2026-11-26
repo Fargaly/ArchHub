@@ -444,14 +444,16 @@
     };
     const hosts=s.hosts||[],accounts=(s.connections||[]).filter(row=>!row.host);
     const selected=hosts.find(host=>host.id===chosen);
+    const socialProviders={LinkedIn:'linkedin',Instagram:'instagram',Facebook:'facebook','WhatsApp Business':'whatsapp',X:'x',TikTok:'tiktok',YouTube:'youtube'};
     function tiles(cardId,records,program) {
       const specs=areaCardSpecs.find(card=>card.id===cardId).rows;
       const byName=new Map(records.filter(row=>row.name).map(row=>[row.name,row]));
       const names=[...new Set([...specs.map(spec=>spec[1]),...byName.keys()])];
       return <div className="sheet-connection-tiles">{names.map(name=>{
-        const record=byName.get(name),connected=program?['connected','listening'].includes(record?.state):Boolean(record?.connected);
+        // A social account the cloud can connect stays clickable before the accounts read lands.
+        const provider=program?'':socialProviders[name],record=byName.get(name)||(provider&&{id:provider,name,connected:false}),connected=program?['connected','listening'].includes(record?.state):Boolean(record?.connected);
         const status=record?(program?(record.state||'Status unavailable'):connected?(record.display_name||'Connected'):(record.blocker||'Not connected')):'';
-        const activate=()=>program?setChosen(chosen===record.id?'':record.id):record.credential?u.show('My secrets'):u.show(connected?'Connection':'Connect',{id:record.id});
+        const activate=()=>{if(provider&&!byName.has(name))api.refreshSocialConnections().catch(()=>{});return program?setChosen(chosen===record.id?'':record.id):record.credential?u.show('My secrets'):u.show(connected?'Connection':'Connect',{id:record.id});};
         const button=<button type="button" className="sheet-connection-tile" disabled={!record} data-connected={connected} aria-label={name+' · '+status} title={specs.find(spec=>spec[1]===name)?.[2]} onClick={event=>executeAction('projects.controls.activate',{handler:activate},event)}>
           <span aria-hidden="true">{name[0]}</span><b>{name}</b><small>{record?status:"\u00a0"}</small></button>;
         return record?<React.Fragment key={name}>{button}</React.Fragment>:<window.UI.Soon key={name} label={name}>{button}</window.UI.Soon>;

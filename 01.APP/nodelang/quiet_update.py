@@ -814,6 +814,13 @@ def _status(updates, app_dir, *, verify_confirmed=False, reconcile=False):
     confirmed_current = phase == "confirmed" and current == data["build_id"]
     if verify_confirmed or not confirmed_current:
         if _digest(target) != data["sha256"].lower():
+            if phase == "staged":
+                # A crash between staging's os.replace and its marker left an older marker beside newer
+                # bytes. Nothing was installed from it: set both aside so the next check stages afresh.
+                os.replace(target, target.with_name(target.name + ".stale"))
+                os.replace(updates / "staged.json", updates / "staged.json.stale")
+                return {"staged": False, "build_id": "", "status": "none",
+                        "reason": "nothing staged: the staged installer no longer matched its SHA-256 and was set aside"}
             raise ValueError("staged installer no longer matches published SHA-256")
     _plain(target)
     status = "awaiting_boot" if resume_direct_install or (current == data["build_id"] and phase == "staged") else phase
@@ -1370,36 +1377,38 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                     drain(Path(app_dir), attempt)  # admission closed and confirmed idle before anything is stopped
                 except (OSError, ValueError) as exc:
                     return {**data, "applied": False, "status": "failed", "reason": str(exc)}
-            if stop_runtime is not None:
-                try:
-                    stop_runtime(Path(app_dir))
-                except (OSError, ValueError) as exc:
-                    if drain is not None:
-                        reopen_connectors(Path(app_dir), attempt)  # refused: agents' calls flow again
-                    if str(exc) != _LAUNCHER_HOLDS_INSTALL and not connector_install_deferred(str(exc)):
-                        # Refused before Setup: this candidate is not installed automatically again.
-                        # A new build or the user's own Retry re-arms it (hold_auto_install).
-                        _marker(updates, {**data, "phase": "staged", "auto_held": str(exc)[:512]})
-                    return {**data, "applied": False, "status": "failed", "reason": str(exc)}
-            data.pop("auto_held", None)
-            _discard_rollback_copy(updates)
-            _marker(updates, {**data, "phase": "applying"})
-            attempted_build = data["build_id"]
-            # Setup may hash/copy several large closed journals. Wait for its
-            # real exit rather than killing it on an arbitrary 600s deadline.
-            options = {"timeout": None, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
-            setup_log = updates / 'setup.log'
-            setup_log.unlink(missing_ok=True)
-            # /NOCLOSEAPPLICATIONS wins over the script default. /CLOSEAPPLICATIONS
-            # and /FORCECLOSEAPPLICATIONS make Restart Manager ask every process
-            # that holds a file under the install directory to quit. Revit holds
-            # its bridge DLL there; that flag closed the founder's Revit.
-            result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-                             "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
-                             "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir),
-                             *(["/ARCHHUBDRAIN=" + attempt] if drain is not None else [])], **options)
-            if drain is not None:
-                reopen_connectors(Path(app_dir), attempt)  # Setup has ended; its own marker is gone too
+            # Whatever happens from here to Setup's exit (a refusal, or Setup failing to launch at all),
+            # this attempt's drain request is removed, or every connector and the next Setup refuse forever.
+            try:
+                if stop_runtime is not None:
+                    try:
+                        stop_runtime(Path(app_dir))
+                    except (OSError, ValueError) as exc:
+                        if str(exc) != _LAUNCHER_HOLDS_INSTALL and not connector_install_deferred(str(exc)):
+                            # Refused before Setup: this candidate is not installed automatically again.
+                            # A new build or the user's own Retry re-arms it (hold_auto_install).
+                            _marker(updates, {**data, "phase": "staged", "auto_held": str(exc)[:512]})
+                        return {**data, "applied": False, "status": "failed", "reason": str(exc)}
+                data.pop("auto_held", None)
+                _discard_rollback_copy(updates)
+                _marker(updates, {**data, "phase": "applying"})
+                attempted_build = data["build_id"]
+                # Setup may hash/copy several large closed journals. Wait for its
+                # real exit rather than killing it on an arbitrary 600s deadline.
+                options = {"timeout": None, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+                setup_log = updates / 'setup.log'
+                setup_log.unlink(missing_ok=True)
+                # /NOCLOSEAPPLICATIONS wins over the script default. /CLOSEAPPLICATIONS
+                # and /FORCECLOSEAPPLICATIONS make Restart Manager ask every process
+                # that holds a file under the install directory to quit. Revit holds
+                # its bridge DLL there; that flag closed the founder's Revit.
+                result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                                 "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
+                                 "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir),
+                                 *(["/ARCHHUBDRAIN=" + attempt] if drain is not None else [])], **options)
+            finally:
+                if drain is not None:
+                    reopen_connectors(Path(app_dir), attempt)  # Setup has ended or never started: calls flow again
             exit_code = getattr(result, "returncode", 1)
             if exit_code != 0 or not _installed_matches_target(app_dir, data):
                 reason = ("installer failed (exit %s)" % exit_code) if exit_code != 0 else "installer did not confirm its outcome"

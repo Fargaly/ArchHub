@@ -338,6 +338,43 @@ def test_a_refusal_after_the_drain_reopens_admission(tmp_path):
     assert result["applied"] is False and not (folder / qu.DRAIN_REQUEST).exists()
 
 
+def test_setup_that_fails_to_launch_still_reopens_admission(tmp_path):
+    """The installer not launching at all must not leave drain-request.json: every connector would refuse forever."""
+    release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "LOCAL" / "ArchHub", "old", "2026-11-17T16:08:00Z")
+    state = tmp_path / "updater-state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    _app, folder, processes = _supervisor_fixture(tmp_path, {})
+    drain = lambda d, a: qu.drain_connectors(d, a, sleep=lambda _s: None, bound=3,
+                                            acknowledgements=lambda dd, aa: qu.connector_acknowledgements(dd, aa, process_iter=processes))
+
+    def unlaunchable(argv, **_options):
+        assert (folder / qu.DRAIN_REQUEST).exists()
+        raise OSError("[WinError 2] The system cannot find the file specified")
+
+    result = qu.apply_staged(state, app, runner=unlaunchable, stop_runtime=lambda _d: [], drain=drain)
+    assert result["applied"] is False
+    assert not (folder / qu.DRAIN_REQUEST).exists()
+
+
+def test_a_crash_between_staging_replace_and_marker_is_treated_as_nothing_staged(tmp_path):
+    """os.replace(partial, target) then a crash before _marker: the old marker no longer matches the bytes."""
+    release = _build_output(tmp_path / "release", "next", "2026-11-17T17:44:00Z")
+    app = _installed_app(tmp_path / "LOCAL" / "ArchHub", "old", "2026-11-17T16:08:00Z")
+    state = tmp_path / "updater-state"
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+    updates = state / "updates"
+    (updates / qu.ASSET_NAME).write_bytes(b"newer bytes replaced before the marker was written")
+
+    with qu._locked(state) as held:
+        seen = qu._status(held, app)
+    assert seen["staged"] is False and seen["status"] == "none"
+    assert not (updates / qu.ASSET_NAME).exists() and not (updates / "staged.json").exists()
+    assert (updates / (qu.ASSET_NAME + ".stale")).exists()
+    # The next check stages afresh instead of raising "staged installer no longer matches" forever.
+    assert qu.stage_if_newer(state, app, opener=_local_github(release))["staged"]
+
+
 @pytest.mark.parametrize("exe, owned", [
     ("Registry", False), ("System", False), ("", False), (None, False),
     ("nodelang\\worker.exe", False),            # relative: never joined to the current folder

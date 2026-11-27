@@ -118,6 +118,7 @@ COVERED_ELSEWHERE = {
     "/founder/api/agent-tasks/claim": "test_a_claimed_task_and_its_result_are_audited_an_idle_poll_is_not",
     "/founder/api/agent-tasks/{task_id}/result": "test_a_claimed_task_and_its_result_are_audited_an_idle_poll_is_not",
     "/founder/api/purge-test-users": "test_the_purge_route_audits_its_preview_and_its_effect",
+    "/founder/api/agent-approvals/{approval_id}/decide": "test_cockpit_mcp.test_approve_runs_it_once_and_the_agent_can_see_the_outcome",
 }
 CALLED_HERE = {
     "/founder/api/companies/{company_id}/ai-mode": lambda c: ("/founder/api/companies/%s/ai-mode" % c["co"], {"ai_mode": "hosted"}),

@@ -380,6 +380,12 @@ def call_workshop_tool(user: dict, name: str, arguments: dict, *, workshop_call)
                                      workshop_arguments(name, arguments)))
 
 
+def _cockpit():
+    """The Cockpit's tools (cockpit_mcp.py), imported on first use: it reaches the database and the Cockpit modules."""
+    import cockpit_mcp
+    return cockpit_mcp
+
+
 def sse_block(rpc_id: object, body: dict) -> bytes:
     """One SSE message block: the exact shape the local daemon returns."""
     said = json.dumps({"jsonrpc": "2.0", "id": rpc_id, **body},
@@ -445,7 +451,7 @@ def answer(
         return 200, sse_block(rpc_id, {"result": {
             "tools": (
                 TOOLS + (SESSION_TOOLS if authenticated else []) +
-                (HOST_TOOLS + EFFECT_TOOLS + (WORKSHOP_TOOLS if workshop else []) if founder else [])
+                (HOST_TOOLS + EFFECT_TOOLS + (WORKSHOP_TOOLS if workshop else []) + _cockpit().tools() if founder else [])
             )}}), sse
     if method != "tools/call":
         return 200, sse_block(rpc_id, {
@@ -474,6 +480,10 @@ def answer(
             result = call_host_tool(user, name, arguments,
                                     host_read=host_read, pushed_hosts=pushed_hosts,
                                     host_effect=host_effect)
+        elif name in _cockpit().names():
+            if not is_founder(user):
+                raise KeyError(name)  # another account is never told they exist
+            result = _cockpit().call(user, name, arguments)
         elif name in WORKSHOP_TOOL_NAMES:
             if not is_founder(user):
                 raise KeyError(name)  # another account is never told they exist

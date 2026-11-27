@@ -788,6 +788,20 @@ CREATE TABLE IF NOT EXISTS founder_action_keys (
     finished_at INTEGER
 );
 
+-- A write an agent asked for through the Cockpit MCP: held with its preview until the founder approves it in the
+-- Cockpit (cockpit_mcp.py). Nothing changes while it is pending; approve runs it once, reject or expiry ends it.
+CREATE TABLE IF NOT EXISTS founder_agent_approvals (
+    id          TEXT PRIMARY KEY,
+    created_at  INTEGER NOT NULL,
+    asked_by    TEXT NOT NULL,         -- the founder account whose token the agent used
+    tool        TEXT NOT NULL,         -- a cockpit_agent write tool
+    args        TEXT NOT NULL,         -- JSON
+    preview     TEXT NOT NULL,         -- JSON from the tool's preview()
+    state       TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected | expired
+    decided_at  INTEGER,
+    result      TEXT NOT NULL DEFAULT ''
+);
+
 -- Members the founder stopped from sharing to communities (reversible).
 CREATE TABLE IF NOT EXISTS community_bans (
     user_id   TEXT PRIMARY KEY,
@@ -3588,6 +3602,53 @@ def log_founder_action(*, actor: str, command: str, action: str,
     with connect() as con:
         return _insert_founder_action(con, actor=actor, command=command, action=action,
                                       target=target, result=result, ok=ok)
+
+
+AGENT_APPROVAL_TTL_S = 24 * 3600
+
+
+def create_agent_approval(*, asked_by: str, tool: str, args: dict, preview: dict) -> str:
+    approval_id = "ap_" + secrets.token_urlsafe(12)
+    with connect() as con:
+        con.execute("INSERT INTO founder_agent_approvals (id, created_at, asked_by, tool, args, preview) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (approval_id, int(time.time()), asked_by, tool, _json.dumps(args), _json.dumps(preview)))
+    return approval_id
+
+
+def _approval_row(row) -> Optional[dict]:
+    if row is None:
+        return None
+    out = dict(row)
+    for key in ("args", "preview"):
+        out[key] = _json.loads(out[key] or "{}")
+    if out["state"] == "pending" and int(time.time()) - out["created_at"] > AGENT_APPROVAL_TTL_S:
+        out["state"] = "expired"
+    return out
+
+
+def get_agent_approval(approval_id: str) -> Optional[dict]:
+    with connect() as con:
+        return _approval_row(con.execute("SELECT * FROM founder_agent_approvals WHERE id = ?",
+                                         (str(approval_id),)).fetchone())
+
+
+def pending_agent_approvals() -> list[dict]:
+    with connect() as con:
+        rows = con.execute("SELECT * FROM founder_agent_approvals WHERE state = 'pending' "
+                           "AND created_at > ? ORDER BY created_at DESC",
+                           (int(time.time()) - AGENT_APPROVAL_TTL_S,)).fetchall()
+    return [_approval_row(r) for r in rows]
+
+
+def decide_agent_approval(approval_id: str, state: str, result: str = "") -> bool:
+    """Move one pending approval to approved or rejected, once. False when it was not pending (decided or expired)."""
+    with connect() as con:
+        cur = con.execute("UPDATE founder_agent_approvals SET state = ?, decided_at = ?, result = ? "
+                          "WHERE id = ? AND state = 'pending' AND created_at > ?",
+                          (state, int(time.time()), result[:2000], str(approval_id),
+                           int(time.time()) - AGENT_APPROVAL_TTL_S))
+        return cur.rowcount == 1
 
 
 def record_payment_event(*, kind: str, user_id: Optional[str], stripe_object: Optional[str],

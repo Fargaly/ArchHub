@@ -36,7 +36,7 @@ import time
 from collections import deque
 from typing import Optional
 
-from urllib.parse import quote as _urlquote
+from urllib.parse import quote as _urlquote, urlparse
 
 from datetime import datetime, timezone
 
@@ -1627,8 +1627,31 @@ def api_inbox(_founder: dict = Depends(require_founder)) -> JSONResponse:
                "text": view.get("message") or UNCERTAIN_TEXT, "stripe_url": view.get("stripe_url"),
                "amount": view.get("amount"), "currency": view.get("currency"), "customer": view.get("customer")}
               for view in (_action_view(r) for r in db.unresolved_action_keys(who, **_stale()))]
+    items += [{"kind": "agent_write", "at": row["created_at"], "who": None, "id": row["id"],
+               "title": (row["preview"] or {}).get("summary") or row["tool"],
+               "text": "An agent asked for this through the Cockpit MCP. Nothing changes until you approve it.",
+               "tool": row["tool"]} for row in db.pending_agent_approvals()]
     items.sort(key=lambda item: int(item["at"] or 0), reverse=True)
     return JSONResponse({"count": len(items), "items": items})
+
+
+@router.post("/api/agent-approvals/{approval_id}/decide")
+def api_agent_approval_decide(request: Request, approval_id: str, payload: dict = Body(default={}),
+                              authorization: Optional[str] = Header(None),
+                              _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The founder approves or rejects one write an agent asked for through the Cockpit MCP (cockpit_mcp.py).
+    Approve runs the existing executor once and audits it; reject changes nothing.
+
+    The Cockpit cookie authorises this route, and approval is the one thing an agent must never reach, so a cookie
+    call must come from the Cockpit's own page: its Origin is this host. (A bearer call is the founder's own client.)"""
+    if not authorization:
+        origin = (request.headers.get("origin") or "").strip()
+        if not origin or urlparse(origin).netloc != (request.headers.get("host") or ""):
+            raise HTTPException(status_code=403, detail="founder_only")
+    import cockpit_mcp
+    out = cockpit_mcp.decide(approval_id=approval_id, approve=bool(payload.get("approve")),
+                             actor=(_founder.get("email") or "").strip().lower())
+    return JSONResponse(out, status_code=200 if out.get("ok") else 409)
 
 
 # --- Community Brain moderation (ADGR-0004) --------------------------------

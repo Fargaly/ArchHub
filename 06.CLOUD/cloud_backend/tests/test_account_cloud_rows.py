@@ -47,6 +47,8 @@ def test_invite_access_days_end_the_membership_after_that_many_days(client):
     expected = (date.today() + timedelta(days=30)).isoformat()
     assert answer["access_until"] == expected
     assert db.get_membership(cid, member["id"])["access_until"] == expected
+    shown = {m["email"]: m["access_until"] for m in client.get(f"/v1/companies/{cid}", headers=owner).json()["members"]}
+    assert shown["temp@rows.example"] == expected  # the owner's Team list shows when access ends
     with db.connect() as con:  # once the date passes, the membership reads as gone
         con.execute("UPDATE company_members SET access_until=? WHERE user_id=?",
                     ((date.today() - timedelta(days=1)).isoformat(), member["id"]))

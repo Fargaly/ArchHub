@@ -214,6 +214,10 @@ def get_company_detail(company_id: str,
     if company is None:
         raise HTTPException(status_code=404, detail="company_not_found")
     members = db.list_company_members(company_id)
+    with db.connect() as con:  # db.list_company_members does not select the optional access_until column
+        _column(con, "company_members", "access_until", "TEXT")
+        until = dict(con.execute("SELECT user_id, access_until FROM company_members WHERE company_id=?",
+                                 (company_id,)).fetchall())
     return {
         "id": company["id"],
         "name": company["name"],
@@ -231,7 +235,7 @@ def get_company_detail(company_id: str,
                 "role": x["role"],
                 "joined_at": x["joined_at"],
                 # WIRE-settings
-                'access_until': x.get('access_until'),
+                'access_until': until.get(x['user_id']),
                 # WIRE-settings end
             }
             for x in members

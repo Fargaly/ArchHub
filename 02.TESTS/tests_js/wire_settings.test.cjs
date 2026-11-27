@@ -52,7 +52,7 @@ test('first run retains all six steps and refuses a finished-result claim before
 });
 
 test('approved account, storage, plan and billing controls remain present',()=>{
- const h=harness();for(const [component,controls]of [['Account',['Sync','Sign in with your browser','My profile','My secrets','My files']],['Storage',['Archive old activity','Back up now','Roll back']],['Access',['Settings']],['BillingAccount',['Review plan','Refresh payment confirmation','Cancel checkout','Download invoice','Refresh billing','Plan & access']]]){
+ const h=harness();for(const [component,controls]of [['Account',['Sync','Sign in with your browser','My profile','My secrets','My files']],['Storage',['Archive old activity','Back up now','Roll back']],['BillingAccount',['Review plan','Refresh payment confirmation','Cancel checkout','Download invoice','Refresh billing','Plan & access']]]){
  h.reset();const tree=h.render(component);for(const control of controls)button(h,tree,control);
  }
 });

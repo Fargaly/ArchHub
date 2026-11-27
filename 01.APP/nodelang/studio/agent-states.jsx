@@ -10,8 +10,7 @@
       Card,
       Chip,
       Table
-    } = window.UI,
-    Icon = window.AHIcon;
+    } = window.UI;
   function AgentChannel({
     id
   }) {
@@ -196,18 +195,6 @@
           pinned: !n?.pinned
         })}>{n?.pinned ? 'Unpin output' : 'Pin output'}</Btn><Btn sm onClick={() => executeAction("ui.download", u, 'Results', id)}>Export</Btn></div></div>;
   }
-  function HostSkills() {
-    const s = useData(),
-      u = useApp();
-    return <Card style={{
-      padding: 20
-    }}><div className="spread"><h2>Program skills</h2>{api.supportsAction?.('importHostSkill') !== false && <Btn sm title="Import skill" aria-label="Import skill" onClick={() => executeAction("ui.show", u, 'Import skill')}><Icon name="plus" size={16} /></Btn>}</div>{s.hostSkills.map(skill => <div className="row" key={skill.id}><div className="spread"><div><h3>{skill.name}</h3><p className="muted">{skill.host} · {skill.format}</p></div><div className="flex">{api.supportsAction?.('setHostSkillEnabled') !== false && <D.Toggle label={'Enable skill ' + skill.name} checked={skill.enabled} onCheckedChange={v => executeAction("setHostSkillEnabled", u, skill.id, v)} />}<Btn sm title={'Open skill ' + skill.name} aria-label={'Open skill ' + skill.name} onClick={() => executeAction("ui.show", u, 'Host skill', {
-              id: skill.id
-            })}><Icon name="arrow" size={16} /></Btn></div></div><p className="muted" style={{
-          fontSize: 11,
-          marginTop: 10
-        }}>{skill.audit}</p></div>)}</Card>;
-  }
   function HostSkill({
     id
   }) {
@@ -272,7 +259,6 @@
     AgentProfile,
     TaskDetails,
     NodeOutput,
-    HostSkills,
     HostSkill,
     ConnectorTools,
     BrainControls,

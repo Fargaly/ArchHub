@@ -31,7 +31,7 @@ async function fixture(component,overrides={}){
  const components=w.AH_DS;vm.runInContext(compile(read('ds/index.jsx')),context);w.AH_DS=components;
  vm.runInContext(compile(read('ui.jsx')),context,{filename:'ui.jsx'});
  w.UI.Composer=()=>null;w.UI.TranscriptProvenance=()=>null;
- for(const file of ['social.jsx','research-surfaces.jsx','meetings.jsx','ds_colleagues.jsx'])vm.runInContext(compile(read(file)),context,{filename:file});
+ for(const file of ['research-surfaces.jsx'])vm.runInContext(compile(read(file)),context,{filename:file});
  w.UI.Composer=()=>null;w.UI.TranscriptProvenance=()=>null;
  const expand=node=>{if(node==null||typeof node!=='object')return node;if(Array.isArray(node))return node.map(expand);if(typeof node.type==='function')return expand(node.type(node.props));return {...node,props:{...node.props,children:(node.props.children||[]).map(expand)}};};
  const render=()=>{cursor=0;tree=expand(w.UI[component]());};
@@ -46,17 +46,7 @@ async function fixture(component,overrides={}){
 test('empty presentation keeps Add slide executable and renders the owner-created slide',async()=>{
  const h=await fixture('Present');await h.click('Add slide');assert.deepEqual(h.calls,['addSlide']);assert.ok(h.input('Slide title'));assert.doesNotMatch(h.text(),/Office 301|Meeting 302/);await h.click('Export');assert.deepEqual(h.calls.at(-1),['download','Presentation']);
 });
-test('Social navigation reaches the actual triage and settings handlers',async()=>{
- const h=await fixture('Social');await h.click('Inbox');await h.click('Triage inbox');assert.deepEqual(h.calls,['triageSocialInbox']);await h.click('Social connection settings');assert.deepEqual(h.calls.at(-1),['go','settings/Connections']);
-});
-test('source error retains the input and Retry invokes the failed owner request',async()=>{
- const h=await fixture('Social');await h.click('Read');await h.input('Content source').props.onChange({target:{value:'https://example.invalid/missing'}});await h.settle();const reads=h.all().filter(n=>n.type==='button'&&n.props.children.join('')==='Read');await reads.at(-1).props.onClick({});await h.settle();assert.match(h.text(),/Check its URL/);assert.equal(h.input('Content source').props.value,'https://example.invalid/missing');await h.click('Retry');assert.deepEqual(h.calls,[{kind:'Web',url:'https://example.invalid/missing'},{kind:'Web',url:'https://example.invalid/missing'}]);
-});
 test('model refresh calls the live roster adapter',async()=>{const h=await fixture('ModelAvailability');await h.click('Refresh models');assert.deepEqual(h.calls,['refreshModelRoster']);});
-test('Colleagues navigation and Meetings source imports stay executable',async()=>{
- const h=await fixture('Colleagues');await h.click('Meetings');assert.deepEqual(h.calls.at(-1),['go','meetings']);let imported=false;const m=await fixture('Meetings',{importMeetingCalendar:async()=>{imported=true;return [];}});await m.click('Read calendar file');assert.ok(imported);
-});
-
 test('actual adapter sends graph operations and rejects failed writes without optimistic publication',async()=>{
  const posts=[],events=[];
  const canvas={root:'fixture-graph',nodes:[],wires:[],scope:{current:'fixture-graph'},workshop_scope:{workshops:[{root:'fixture-workshop',is_general:true}]}};

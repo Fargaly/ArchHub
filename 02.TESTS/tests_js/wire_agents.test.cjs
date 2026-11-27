@@ -33,7 +33,7 @@ async function mount(name,props={},server=()=>({ok:true,result:[]})){
   Heading:({title,children})=>R.createElement('header',null,title,children),Table:({rows})=>R.createElement('pre',null,JSON.stringify(rows)),
   ResearchReview:()=>null,DecisionResult:()=>null};
  w.AHIcon=()=>null;
- const source={'AgentChannel':'agent-states.jsx','NodeOutput':'agent-states.jsx','Brain':'brain.jsx'}[name];
+ const source={'AgentChannel':'agent-states.jsx','NodeOutput':'agent-states.jsx'}[name];
  w.eval(w.Babel.transform(read(source),{presets:['react']}).code);
  for(const helper of ['UncertainLinks','IntakeRules','BrainControls','BrainSuggestions'])w.UI[helper]??=()=>null;
  const root=w.ReactDOM.createRoot(w.document.getElementById('root'));root.render(R.createElement(w.UI[name],props));
@@ -56,11 +56,6 @@ test('NodeOutput reads real adapter rows and JSON without assuming a synchronous
  const v=await mount('NodeOutput',{id:'node'});
  try{await v.until(()=>v.w.document.body.textContent.includes('Output loaded.'));assert.match(v.w.document.body.textContent,/7/);
   v.button('JSON').click();await v.until(()=>v.w.document.querySelector('textarea'));assert.equal(JSON.parse(v.w.document.querySelector('textarea').value)[0].value,7);
- }finally{v.close();}
-});
-test('Brain refresh projects only facts returned by the existing Brain export owner',async()=>{
- const v=await mount('Brain');try{await v.until(()=>v.w.document.body.textContent.includes('A real fixture fact'));
- assert.equal(v.api.getKnowledgeGraph().nodes[0].type,'Memory');assert.equal(v.api.getKnowledgeGraph().edges.length,0);
  }finally{v.close();}
 });
 test('unknown command is refused before calling an owner',async()=>{

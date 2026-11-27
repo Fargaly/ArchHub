@@ -68,6 +68,15 @@ def _rows():
     return json.loads(hook_decision._ask_path(os.environ).read_text(encoding='utf-8'))['holds']
 
 
+def test_approval_mutex_ignores_legacy_lock_file():
+    from nodelang import hook_decision
+
+    lock = hook_decision._ask_path(os.environ).with_suffix(".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch()
+    assert hook_decision._with_ask_file(os.environ, lambda path: path) == lock.with_suffix(".json")
+
+
 def _hold_reader_open(seconds):
     """A reader without share-delete, as Path.read_text is while it reads; closed by a timer."""
     from nodelang import hook_decision
@@ -150,15 +159,25 @@ def test_a_file_that_does_not_exist_is_an_empty_store():
 
 
 def test_two_writers_wait_for_each_other_instead_of_failing_at_once():
+    from app.credential_lock import exclusive
     from nodelang import hook_decision
     hold, digest = _card()
-    lock = hook_decision._ask_path(os.environ).with_suffix('.lock')
-    held = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_RDWR)       # another writer is inside
+    ready = threading.Event()
+    release = threading.Event()
 
-    def leave():
-        os.close(held)
-        lock.unlink()
-    threading.Timer(0.3, leave).start()
-    began = time.monotonic()
-    assert hook_decision.ask_apply(hold, digest, 'deny')['status'] == 'declined'
-    assert time.monotonic() - began >= 0.25
+    def hold_mutex():
+        with exclusive(hook_decision._ask_path(os.environ)):
+            ready.set()
+            release.wait(3)
+
+    writer = threading.Thread(target=hold_mutex)
+    writer.start()
+    try:
+        assert ready.wait(2)
+        threading.Timer(0.3, release.set).start()
+        began = time.monotonic()
+        assert hook_decision.ask_apply(hold, digest, 'deny')['status'] == 'declined'
+        assert time.monotonic() - began >= 0.25
+    finally:
+        release.set()
+        writer.join()

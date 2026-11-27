@@ -2163,39 +2163,19 @@ def _write_holds(path: Path, data: dict) -> None:
         try:
             os.replace(temporary, path)   # all or nothing: when it fails the file on disk is unchanged
             return
-        except PermissionError:           # a reader has the file open right now
-            if attempt >= _STORE_TRIES - 1:
+        except OSError as error:          # a Windows reader may hold the file without share-delete
+            if getattr(error, "winerror", None) not in (5, 32) or attempt >= _STORE_TRIES - 1:
                 raise
             time.sleep(_STORE_PAUSE)
 
 
 def _with_ask_file(environment, change):
+    from app.credential_lock import exclusive
+
     path = _ask_path(environment)
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock = path.with_suffix(".lock")
-    held = None
-    for _ in range(_STORE_TRIES * 2):
-        try:
-            held = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_RDWR)
-            break
-        except FileExistsError:
-            try:
-                if time.time() - lock.stat().st_mtime > 5:
-                    lock.unlink(missing_ok=True)
-                    continue
-            except OSError as busy:
-                if type(busy).__name__ == "":
-                    break
-            time.sleep(_STORE_PAUSE)   # another writer is inside: wait for it instead of failing at once
-        except PermissionError:
-            time.sleep(_STORE_PAUSE)   # Windows: the lock file is being removed by the writer that just left
-    if held is None:
-        raise OSError("The approval file is busy.")
-    try:
+    with exclusive(path):
         return change(path)
-    finally:
-        os.close(held)
-        lock.unlink(missing_ok=True)
 
 
 def _approval_now():

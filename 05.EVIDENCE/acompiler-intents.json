@@ -12464,6 +12464,14 @@
         "01.APP/nodelang/studio/style.css"
       ]
     },
+    "APPROVALSECURITY": {
+      "source": "Workshop b894457abbdc4eb6a5d538b21022557b: harden approval decisions, policy storage, recovery, and hook telemetry.",
+      "scope": [
+        "01.APP/nodelang/hook_decision.py",
+        "02.TESTS/tests_replica/test_approval_store.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "APPROVALCONTEXT": {
       "source": "Founder 2026-11-19: a waiting approval shows no context and Show opens Settings Models. The card says what changes, where, who asked and why with the draft preview; Show opens that node in its own canvas.",
       "scope": [

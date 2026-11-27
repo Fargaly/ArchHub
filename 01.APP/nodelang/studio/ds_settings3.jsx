@@ -407,7 +407,7 @@
             <div className="sheet-property-control">{live[id]??(owner?<SettingControl row={owner} presentation={spec[3]} unit={spec[3]==='step'?spec[4]:undefined}/>:APP_SETTING_ROWS[id]?<AppSettingControl id={id} label={label}/>:<UpcomingControl spec={spec}/>)}</div>
           </div>;
         })}{visible.length<rows.length&&<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>setExpanded(state=>({...state,[card.id]:true}))},event)}>{rows.length-visible.length} more</Btn>}</>}
-        {extras[card.id]&&<div className="sheet-property-row sheet-card-foot"><span className="sheet-property-copy"/><div className="sheet-property-control">{extras[card.id]}</div></div>}
+        {extras[card.id]}
         {focused?.title===card.title && focused.content}
       </section>;
     });

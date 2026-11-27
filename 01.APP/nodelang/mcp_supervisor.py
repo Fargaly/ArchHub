@@ -56,6 +56,57 @@ class Supervisor:
         self.pending = set()        # agent request ids the current child has not answered
         self.restarts = 0
         self.closed = False
+        self.ready_event = threading.Event()
+        self.reload_event = threading.Event()
+        self.restarting_update = False
+        self.child_generation = self._generation()
+
+    @staticmethod
+    def _read_marker(path):
+        """Read a stripped ASCII marker file, or None when absent or unreadable."""
+        try:
+            if not path.is_file():
+                return None
+            return path.read_text(encoding="ascii", errors="replace").strip() or None
+        except OSError as error:
+            print("ArchHub MCP supervisor: marker read failed (%s): %s" % (path.name, error),
+                  file=sys.stderr, flush=True)
+            return None
+
+    def _generation(self):
+        """Return (BUILD_ID, .archhub-ready) for the paused install root, or (None, None)."""
+        if self.pause is None:
+            return (None, None)
+        root = self.pause.parent
+        return (self._read_marker(root / "BUILD_ID"), self._read_marker(root / ".archhub-ready"))
+
+    def _generation_changed(self):
+        """True when a live child is running against a superseded BUILD_ID or .archhub-ready."""
+        if self._installing() or self.child is None:
+            return False
+        build, ready = self._generation()
+        old_build, old_ready = self.child_generation
+        if build is not None and build != old_build:
+            return True
+        return ready is not None and ready != old_ready
+
+    @staticmethod
+    def _advertise_list_changed(message):
+        """Ensure InitializeResult advertises capabilities.tools.listChanged = True."""
+        result = message.get("result")
+        if not isinstance(result, dict):
+            return False
+        caps = result.get("capabilities")
+        if not isinstance(caps, dict):
+            return False
+        tools = caps.get("tools")
+        if tools is None:
+            caps["tools"] = {"listChanged": True}
+            return True
+        if isinstance(tools, dict) and tools.get("listChanged") is not True:
+            tools["listChanged"] = True
+            return True
+        return False
 
     def to_client(self, message):
         data = message if isinstance(message, bytes) else json.dumps(message).encode("utf-8")
@@ -94,7 +145,9 @@ class Supervisor:
         """Start the connector and replay the agent's handshake into it. False when it could not start."""
         with self.lock:
             previous, self.child = self.child, None
+            self.ready_event.clear()
         self._stop_child(previous)  # Cursor can open many MCP hosts; never stack connectors under one supervisor
+        generation = self._generation()
         try:
             child = subprocess.Popen(self.command, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=None, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -114,9 +167,12 @@ class Supervisor:
                     self._send(child, json.dumps(message).encode("utf-8"))
                     if self.initialized is not None:
                         self._send(child, self.initialized)
+                else:
+                    self.restarting_update = False
             except OSError:
                 return True  # it ended during the handshake; its pump starts the next one
             self.child = child  # agent requests reach it only after the handshake
+            self.child_generation = generation
         return True
 
     def _pump(self, child):
@@ -125,14 +181,24 @@ class Supervisor:
             line = raw.rstrip(b"\r\n")
             message = _parse(line)
             if message is not None and "method" not in message and "id" in message:
-                if message["id"] == self.replay_id:
-                    self.replay_id = None
+                with self.lock:
+                    is_replay = self.replay_id is not None and message["id"] == self.replay_id
+                    if is_replay:
+                        self.replay_id = None
+                        self.restarting_update = False
+                if is_replay:
                     self.to_client({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+                    self.ready_event.set()
                     continue
                 with self.lock:
                     self.pending.discard(message["id"])
-                    if self.initialize is not None and message["id"] == _parse(self.initialize).get("id"):
+                    init_msg = _parse(self.initialize) if self.initialize is not None else None
+                    if init_msg is not None and message["id"] == init_msg.get("id"):
+                        if self._advertise_list_changed(message):
+                            line = json.dumps(message).encode("utf-8")
                         self.answered = True
+                        self.restarting_update = False
+                        self.ready_event.set()
                 self._publish()  # the receipt reflects this answer before the agent can see it
             self.to_client(line)
         child.wait()
@@ -140,6 +206,8 @@ class Supervisor:
             if self.child is not child and self.child is not None:
                 return
             self.child = None
+            self.replay_id = None
+            self.ready_event.clear()
             first = None if self.answered or self.initialize is None else _parse(self.initialize).get("id")
             lost, self.pending = [i for i in self.pending if i != first], set()
             closed = self.closed
@@ -244,14 +312,29 @@ class Supervisor:
             time.sleep(BACKOFF[0])
 
     def _watch_install(self):
-        """An install starting swaps the connector for the new build, after the calls in flight are answered."""
+        """An install or build-generation change swaps the connector after in-flight calls finish."""
         while not self.closed:
-            time.sleep(BACKOFF[1])  # the install marker is checked once a second
-            child = self.child
-            if child is not None and self._installing():
+            self.reload_event.wait(0.25)
+            self.reload_event.clear()
+            if self.closed:
+                return
+            with self.lock:
+                child = self.child
+                installing = self._installing()
+                generation_changed = self._generation_changed()
+                should_swap = child is not None and child.poll() is None and (installing or generation_changed)
+                if should_swap:
+                    self.restarting_update = True
+                    self.ready_event.clear()
+                else:
+                    child = None
+            if child is not None:
                 self._drain()
-                print("ArchHub MCP supervisor: install running; connector closed until it finishes", file=sys.stderr, flush=True)
-                child.terminate()
+                note = ("build generation changed; reloading connector"
+                        if generation_changed and not installing
+                        else "install running; connector closed until it finishes")
+                print("ArchHub MCP supervisor: " + note, file=sys.stderr, flush=True)
+                self._stop_child(child)
 
     def _restart(self):
         attempt = 0
@@ -259,10 +342,31 @@ class Supervisor:
             if self._installing():
                 time.sleep(BACKOFF[1])
                 continue
+            if attempt == 0 and self.restarting_update:
+                attempt += 1
+                if self.closed or self.start_child():
+                    return
+                with self.lock:
+                    self.restarting_update = False
+                continue
             time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
             attempt += 1
             if self.closed or self.start_child():
                 return
+
+    def _wait_if_reloading(self):
+        """Trigger immediate generation reload if needed and wait briefly for post-install handshake."""
+        wait = False
+        with self.lock:
+            if self._generation_changed():
+                self.restarting_update = True
+                self.ready_event.clear()
+                self.reload_event.set()
+            if not self._admission_closed() and self.initialize is not None:
+                if (self.child is not None and not self.ready_event.is_set()) or self.restarting_update:
+                    wait = True
+        if wait:
+            self.ready_event.wait(5.0)
 
     def run(self):
         if self.pause is not None:
@@ -278,9 +382,12 @@ class Supervisor:
             message = _parse(line)
             method = message.get("method") if message else None
             request = bool(method) and "id" in message
+            if request and method != "initialize":
+                self._wait_if_reloading()
             with self.lock:
                 if method == "initialize":
                     self.initialize, self.answered = line, False
+                    self.ready_event.clear()
                 elif method == "notifications/initialized":
                     self.initialized = line
                 child = self.child
@@ -300,6 +407,8 @@ class Supervisor:
         with self.lock:
             self.closed = True
             child = self.child
+            self.reload_event.set()
+            self.ready_event.set()
         self._clear_report()
         if child is not None:
             try:

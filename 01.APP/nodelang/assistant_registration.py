@@ -717,14 +717,35 @@ def migrate_gemini(install_root, state_root, *, consent, environment=None) -> di
     return {'client': 'gemini-cli', 'state': 'registered', 'backup': result.get('backup')}
 
 
+def _should_refresh_supervisor(install_root, state_root, env) -> bool:
+    """True when an existing runtime supervisor is ArchHub-owned (shipped marker or Claude Code entry)."""
+    from .client_mcp_installation import RUNTIME_FOLDER
+    target = Path(state_root).parent / RUNTIME_FOLDER / "mcp_supervisor.py"
+    if not target.is_file():
+        return False
+    try:
+        if b"ARCHHUB_MCP_SUPERVISED" in target.read_bytes():
+            return True
+    except OSError:
+        return False
+    try:
+        return claude_readiness(install_root, state_root, environment=env).get("claude_code") in (
+            "registered", "registered_with_project_overrides")
+    except (OSError, ValueError, RegistrationRefused):
+        return False
+
+
 def migrate_install_connectors(*, consent, environment=None, warning=None) -> list:
     """The Setup consent applies to existing managed connectors, never new ones."""
     env = os.environ if environment is None else environment
     ownership = preflight_install_connectors(env, warning=warning)
     root, state = install_roots(env)
     rows = []
-    if consent is True and all(value == 'absent' for value in ownership.values()):
-        refresh_legacy_supervisor(root, state)
+    if consent is True:
+        if _should_refresh_supervisor(root, state, env):
+            deploy_supervisor(root, state)
+        elif all(value == 'absent' for value in ownership.values()):
+            refresh_legacy_supervisor(root, state)
     for vendor, migrate in (('codex', migrate_codex), ('gemini', migrate_gemini)):
         if ownership.get(vendor) in ('current', 'retired'):
             rows.append(migrate(root, state, consent=consent, environment=env))

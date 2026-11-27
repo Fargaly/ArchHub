@@ -362,3 +362,272 @@ def test_calls_at_the_stop_step_and_at_setup_entry_are_refused_unstarted(tmp_pat
     finally:
         proc.stdin.close()
         proc.wait(10)
+
+
+_HOT_RELOAD_SERVER = textwrap.dedent("""
+    import json, os, sys
+    from pathlib import Path
+    app_root = Path(sys.argv[1])
+    tools = json.loads((app_root / "tools_spec.json").read_text(encoding="utf-8"))
+    for line in sys.stdin:
+        msg = json.loads(line)
+        if "id" not in msg:
+            continue
+        method = msg.get("method")
+        if method == "initialize":
+            res = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                   "serverInfo": {"name": "hot-fixture", "version": "1"}}
+        elif method == "tools/list":
+            res = {"tools": [{"name": name, "inputSchema": {"type": "object", "properties": {}}} for name in tools]}
+        elif method == "tools/call":
+            name = (msg.get("params") or {}).get("name")
+            if name not in tools:
+                sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"],
+                                             "error": {"code": -32602, "message": "unknown tool"}}) + "\\n")
+                sys.stdout.flush()
+                continue
+            res = {"content": [{"type": "text", "text": f"{name}:{os.getpid()}"}]}
+        else:
+            res = {"ok": True}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": res}) + "\\n")
+        sys.stdout.flush()
+""")
+
+
+def _isolated_env(tmp_path):
+    """Build an isolated subprocess environment pointing state and profile roots into tmp_path."""
+    env = dict(os.environ)
+    env["ARCHHUB_TEST_STATE_DIR"] = str(tmp_path / "state")
+    env["LOCALAPPDATA"] = str(tmp_path / "local")
+    env["APPDATA"] = str(tmp_path / "roaming")
+    env["USERPROFILE"] = str(tmp_path / "home")
+    return env
+
+
+def _next_msg(proc, timeout=15):
+    """Read the next JSON-RPC line from proc.stdout via one shared reader queue per process."""
+    import queue
+    import threading
+    if not hasattr(proc, "_msg_q"):
+        lines = queue.Queue()
+
+        def _reader():
+            for raw in iter(proc.stdout.readline, b""):
+                lines.put(raw)
+            lines.put(None)
+
+        proc._msg_q = lines
+        threading.Thread(target=_reader, daemon=True).start()
+    try:
+        raw = proc._msg_q.get(timeout=timeout)
+    except queue.Empty:
+        raise AssertionError("timed out waiting for connector stdout")
+    if not raw:
+        raise AssertionError("connector stdout closed early")
+    return json.loads(raw)
+
+
+def _qcall(proc, message, want_id=None, timeout=15):
+    """Send message to proc.stdin and read from the shared queue until want_id arrives."""
+    proc.stdin.write((json.dumps(message) + "\n").encode())
+    proc.stdin.flush()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        remaining = max(0.05, deadline - time.time())
+        reply = _next_msg(proc, timeout=remaining)
+        if want_id is None or reply.get("id") == want_id:
+            return reply
+    raise AssertionError(f"no reply for id={want_id!r}")
+
+
+def _qinit(proc, timeout=15):
+    """Initialize proc using the shared stdout reader queue."""
+    reply = _qcall(
+        proc,
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                    "clientInfo": {"name": "court", "version": "1"}}},
+        1,
+        timeout=timeout,
+    )
+    proc.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+    proc.stdin.flush()
+    return reply
+
+
+def _read_until(proc, predicate, timeout=15):
+    """Read JSON-RPC messages from proc's shared stdout queue until predicate(msg) is True."""
+    deadline = time.time() + timeout
+    seen = []
+    while time.time() < deadline:
+        remaining = max(0.05, deadline - time.time())
+        msg = _next_msg(proc, timeout=remaining)
+        seen.append(msg)
+        if predicate(msg):
+            return msg, seen
+    raise AssertionError(f"timed out waiting for message (seen={seen!r})")
+
+
+def _pid_exited(pid, timeout=10):
+    """Return True once the given pid is no longer running."""
+    import psutil
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not psutil.pid_exists(pid):
+            return True
+        try:
+            proc = psutil.Process(pid)
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                return True
+        except psutil.NoSuchProcess:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _stop_proc(proc):
+    """Close stdin and force-kill proc if it does not exit within 5 seconds."""
+    try:
+        if proc.stdin is not None:
+            proc.stdin.close()
+    except OSError:
+        pass
+    try:
+        proc.wait(5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(5)
+
+
+def test_real_native_mcp_advertises_tools_list_changed(tmp_path):
+    """Real native_agent_mcp must advertise capabilities.tools.listChanged=True on initialize."""
+    env = dict(_isolated_env(tmp_path), ARCHHUB_MCP_SUPERVISED="1")
+    loader = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+              "runpy.run_module('nodelang.native_agent_mcp',run_name='__main__')")
+    proc = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c", loader, str(APP)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+    )
+    try:
+        reply = _qcall(
+            proc,
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": {"name": "court", "version": "1"}}},
+            1,
+        )
+        assert reply["result"]["capabilities"]["tools"]["listChanged"] is True
+    finally:
+        _stop_proc(proc)
+
+
+def _start_hot_supervisor(tmp_path, app_root):
+    """Launch Supervisor wrapping the hot-reload fixture server inside tmp_path."""
+    server = tmp_path / "hot_server.py"
+    server.write_text(_HOT_RELOAD_SERVER, encoding="utf-8")
+    code = ("import os,sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);"
+            "from nodelang.mcp_supervisor import Supervisor;"
+            "sys.exit(Supervisor(sys.argv[3:],dict(os.environ),sys.stdin.buffer,"
+            "sys.stdout.buffer,pause=Path(sys.argv[2])).run())")
+    return subprocess.Popen(
+        [sys.executable, "-I", "-c", code, str(APP), str(app_root / ".archhub-installing"),
+         sys.executable, "-I", str(server), str(app_root)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+
+
+def _tool_names(reply):
+    """Extract tool names from a tools/list response."""
+    return [tool["name"] for tool in reply["result"]["tools"]]
+
+
+def test_supervisor_hot_reloads_on_build_id_change_and_serves_new_tools_for_both_client_types(tmp_path):
+    """Supervisor reloads on both marker and direct BUILD_ID/.archhub-ready updates for reactive and passive clients."""
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    (app_root / "BUILD_ID").write_text("build-1\n", encoding="ascii")
+    (app_root / "tools_spec.json").write_text(json.dumps(["tool_v1"]), encoding="utf-8")
+    proc = _start_hot_supervisor(tmp_path, app_root)
+    try:
+        init = _qinit(proc)
+        assert init["result"]["capabilities"]["tools"]["listChanged"] is True
+        assert _tool_names(_qcall(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, 2)) == ["tool_v1"]
+        pid1 = int(_qcall(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                 "params": {"name": "tool_v1"}}, 3)["result"]["content"][0]["text"].split(":")[1])
+
+        # Type A client (honors notifications/tools/list_changed) via .archhub-installing + BUILD_ID.
+        (app_root / ".archhub-installing").write_text("build-2", encoding="ascii")
+        assert _pid_exited(pid1)
+        (app_root / "tools_spec.json").write_text(json.dumps(["tool_v1", "tool_v2"]), encoding="utf-8")
+        (app_root / "BUILD_ID").write_text("build-2\n", encoding="ascii")
+        (app_root / ".archhub-installing").unlink()
+        note, _ = _read_until(proc, lambda m: m.get("method") == "notifications/tools/list_changed")
+        assert note["method"] == "notifications/tools/list_changed"
+        assert _tool_names(_qcall(proc, {"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, 4)) == ["tool_v1", "tool_v2"]
+        pid2 = int(_qcall(proc, {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                                 "params": {"name": "tool_v2"}}, 5)["result"]["content"][0]["text"].split(":")[1])
+        assert pid2 != pid1
+
+        # Type B client (ignores notifications/tools/list_changed) on direct BUILD_ID update without .archhub-installing.
+        (app_root / "tools_spec.json").write_text(json.dumps(["tool_v1", "tool_v2", "tool_v3"]), encoding="utf-8")
+        (app_root / "BUILD_ID").write_text("build-3\n", encoding="ascii")
+        listed = _qcall(proc, {"jsonrpc": "2.0", "id": 6, "method": "tools/list"}, 6)
+        assert "result" in listed and _tool_names(listed) == ["tool_v1", "tool_v2", "tool_v3"]
+        called = _qcall(proc, {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "tool_v3"}}, 7)
+        assert "result" in called
+        pid3 = int(called["result"]["content"][0]["text"].split(":")[1])
+        assert pid3 != pid2 and _pid_exited(pid2)
+
+        # Generation change via .archhub-ready after BUILD_ID was already written.
+        (app_root / "tools_spec.json").write_text(
+            json.dumps(["tool_v1", "tool_v2", "tool_v3", "tool_v4"]), encoding="utf-8")
+        (app_root / ".archhub-ready").write_text("venv-v1:build-3:abc\n", encoding="ascii")
+        _read_until(proc, lambda m: m.get("method") == "notifications/tools/list_changed")
+        listed4 = _qcall(proc, {"jsonrpc": "2.0", "id": 8, "method": "tools/list"}, 8)
+        assert _tool_names(listed4) == ["tool_v1", "tool_v2", "tool_v3", "tool_v4"]
+        assert _pid_exited(pid3)
+    finally:
+        _stop_proc(proc)
+
+
+def test_supervised_native_agent_mcp_exits_for_supervisor_respawn_on_build_change(tmp_path):
+    """Even under an older supervisor without BUILD_ID watching, native_agent_mcp exits when idle on BUILD_ID change."""
+    import shutil
+    app_root = tmp_path / "app"
+    shutil.copytree(APP / "nodelang", app_root / "nodelang",
+                    ignore=shutil.ignore_patterns("__pycache__", "studio", "*.pyc"))
+    (app_root / "BUILD_ID").write_text("build-1\n", encoding="ascii")
+    try:
+        old_supervisor_src = subprocess.run(
+            ["git", "show", "a9ce4a95:01.APP/nodelang/mcp_supervisor.py"],
+            cwd=APP.parent, capture_output=True, check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        old_supervisor_src = (APP / "nodelang" / "mcp_supervisor.py").read_bytes()
+    old_supervisor = tmp_path / "old_mcp_supervisor.py"
+    old_supervisor.write_bytes(old_supervisor_src)
+    env = dict(_isolated_env(tmp_path), ARCHHUB_MCP_SUPERVISED="1")
+    loader = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+              "runpy.run_module('nodelang.native_agent_mcp',run_name='__main__')")
+    child_cmd = [sys.executable, "-I", "-B", "-c", loader, str(app_root)]
+    load = ("import importlib.util,os,sys;from pathlib import Path;"
+            "s=importlib.util.spec_from_file_location('old_sup',sys.argv[1]);"
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+            "sys.exit(m.Supervisor(sys.argv[3:],dict(os.environ),sys.stdin.buffer,"
+            "sys.stdout.buffer,pause=Path(sys.argv[2])).run())")
+    proc = subprocess.Popen(
+        [sys.executable, "-I", "-c", load, str(old_supervisor), str(app_root / ".archhub-installing"), *child_cmd],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+    )
+    try:
+        _qinit(proc)
+        before = _qcall(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, 2)
+        assert "result" in before and before["result"]["tools"]
+        # Update BUILD_ID while .archhub-installing and .archhub-ready are both absent.
+        (app_root / "BUILD_ID").write_text("build-2\n", encoding="ascii")
+        note, _ = _read_until(proc, lambda m: m.get("method") == "notifications/tools/list_changed", timeout=15)
+        assert note["method"] == "notifications/tools/list_changed"
+        after = _qcall(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, 3)
+        assert "result" in after and after["result"]["tools"]
+    finally:
+        _stop_proc(proc)

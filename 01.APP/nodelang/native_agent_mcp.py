@@ -635,9 +635,7 @@ class _FreshStdio:
         self.idle_poll_seconds = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['mutation_poll_ms'] / 1000  # idle stdin poll
         self.app_dir = Path(__file__).resolve().parent.parent
         self.build = _STARTED_BUILD
-        self.marker = None
-        self.current_build = self.build
-        self.ready_build = None
+        self.ready = self._ready_marker()
         self.next_check = 0
         self.pending_build = None
         self.deferred = False
@@ -693,22 +691,28 @@ class _FreshStdio:
         import select
         return os.read(self.fd, 65536) if select.select([self.fd], [], [], 0)[0] else None
 
-    def _changed(self):
+    def _ready_marker(self):
+        import logging
+        ready_path = self.app_dir / '.archhub-ready'
         try:
-            ready_path = self.app_dir / '.archhub-ready'
-            marker = tuple((stat.st_mtime_ns, stat.st_size, stat.st_ino)
-                           for stat in ((self.app_dir / 'BUILD_ID').stat(), ready_path.stat()))
-            if marker != self.marker:
-                self.current_build = installed_build_id(self.app_dir)
-                with ready_path.open(encoding='ascii') as stream:
-                    ready = stream.read(257).strip()
-                self.ready_build = (self.current_build if len(ready) <= 256 and self.current_build
-                                    and ready.startswith('venv-v1:' + self.current_build + ':') else None)
-                self.marker = marker
-        except (OSError, UnicodeError):
-            self.marker = None
+            if not ready_path.is_file():
+                return None
+            ready = ready_path.read_text(encoding='ascii')[:257].strip()
+        except (OSError, UnicodeError) as error:
+            logging.getLogger(__name__).debug('ready marker unreadable: %s', error)
             return None
-        return self.ready_build if self.ready_build and self.ready_build != self.build else None
+        return ready if ready and len(ready) <= 256 else None
+
+    def _changed(self):
+        if (self.app_dir / '.archhub-installing').exists():
+            return None
+        build = installed_build_id(self.app_dir)
+        if build and build != self.build:
+            return build
+        ready = self._ready_marker()
+        if ready and ready != self.ready:
+            return build or ready
+        return None
 
     def _tick(self, *, request=False):
         import psutil
@@ -731,6 +735,8 @@ class _FreshStdio:
                 os._exit(0)
             self.pending_build = self._changed()
         elif request:
+            if os.environ.get('ARCHHUB_MCP_SUPERVISED') == '1':
+                return None  # Let the supervisor drain or finish this call; exit on the next idle tick.
             self.pending_build = self._changed()
         changed = self.pending_build
         if (changed and self.initialize and self.initialized and not self.bootstrap
@@ -754,6 +760,12 @@ class _FreshStdio:
         return True
 
     def _exec(self, changed):
+        if os.environ.get('ARCHHUB_MCP_SUPERVISED') == '1':
+            stopper = getattr(self.server, '_mailbox_stop', None)
+            if callable(stopper):
+                stopper()
+            self.output.flush()
+            os._exit(0)
         self._replace(changed)
 
     def _replace(self, changed):
@@ -867,6 +879,9 @@ class _FreshStdio:
                 if self.suppress_initialize and message['id'] == json.loads(self.initialize)['id']:
                     self.suppress_initialize = False
                     self.inflight.discard(message['id'])
+                    note = json.dumps({'jsonrpc': '2.0', 'method': 'notifications/tools/list_changed'}) + '\n'
+                    await anyio.to_thread.run_sync(self.output.write, note.encode('utf-8'))
+                    await anyio.to_thread.run_sync(self.output.flush)
                     return
         await anyio.to_thread.run_sync(self.output.write, text.encode('utf-8'))
         if 'id' in message and 'method' not in message:
@@ -881,11 +896,13 @@ class _FreshStdio:
 
 
 async def _run_fresh_stdio(server, resume):
+    from mcp.server.lowlevel.server import NotificationOptions
     from mcp.server.stdio import stdio_server
     transport = _FreshStdio(server, resume)
     async with stdio_server(stdin=transport, stdout=transport) as (read, write):
         transport.responses = write
-        await server._mcp_server.run(read, write, server._mcp_server.create_initialization_options())
+        options = server._mcp_server.create_initialization_options(NotificationOptions(tools_changed=True))
+        await server._mcp_server.run(read, write, options)
 
 
 def main():

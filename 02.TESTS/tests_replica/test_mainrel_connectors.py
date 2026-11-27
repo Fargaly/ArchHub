@@ -91,6 +91,19 @@ def test_setup_without_managed_records_preserves_absent_or_unrecognised_runtime(
         assert not machine.supervisor.parent.exists()
 
 
+def test_migrate_connectors_refreshes_existing_runtime_supervisor_for_any_vendor(machine):
+    """Setup migrate-connectors refreshes ArchHub-Runtime/mcp_supervisor.py even without Codex or Gemini configs."""
+    machine.supervisor.parent.mkdir()
+    machine.supervisor.write_bytes(b"# older supervisor using ARCHHUB_MCP_SUPERVISED\n")
+    claude_cfg = machine.profile / ".claude.json"
+    claude_before = (claude_cfg.read_bytes(), claude_cfg.stat().st_mtime_ns)
+    registration.migrate_install_connectors(consent=True, environment=machine.env)
+    assert machine.supervisor.read_bytes() == machine.source.read_bytes()
+    assert (claude_cfg.read_bytes(), claude_cfg.stat().st_mtime_ns) == claude_before
+    assert not (machine.profile / ".codex").exists()
+    assert not (machine.profile / ".gemini").exists()
+
+
 def test_setup_preflight_restores_relay_an_older_status_read_put_back(machine, monkeypatch):
     """The older installed app re-deploys its legacy relay on a status read; Setup's preflight puts its own back."""
     import hashlib

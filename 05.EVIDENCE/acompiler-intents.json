@@ -13181,6 +13181,9 @@
         "02.TESTS/tests_replica/test_account_cloud_rows.py",
         "06.CLOUD/cloud_backend/companies.py",
         "06.CLOUD/cloud_backend/tests/test_account_cloud_rows.py",
+        "01.APP/nodelang/pc_maintenance.py",
+        "01.APP/nodelang/workspace_roots_catalogue.py",
+        "01.APP/nodelang/studio/ui.jsx",
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]

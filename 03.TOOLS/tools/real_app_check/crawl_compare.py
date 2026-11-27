@@ -55,7 +55,7 @@ def compare(installed: dict, candidate: dict, removed: dict | None = None) -> di
         elif now is None:
             if after_surfaces.get(tuple(key.split('|')[:2])):  # its surface opened: the control itself is gone
                 regressions.append({'key': key, 'was': row['cls'], 'now': 'gone'})
-        elif now.get('cls') in BROKEN:
+        elif now.get('cls') not in WORKED:
             regressions.append({'key': key, 'was': row['cls'], 'now': now['cls'], 'why': now.get('why') or now.get('status') or '', 'shot': now.get('shot', '')})
     for key, row in after.items():
         if row.get('cls') in WORKED and before.get(key, {}).get('cls') in BROKEN:

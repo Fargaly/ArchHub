@@ -47,3 +47,12 @@ def test_the_command_line_exits_nonzero_on_a_regression(tmp_path, capsys):
     assert crawl_compare.main([str(tmp_path / 'a.json'), str(tmp_path / 'b.json'), '--out', str(tmp_path / 'r.json')]) == 1
     assert 'REGRESSION Canvas|1920x1032|Run||0: was did-its-action(stubbed-effect), now error' in capsys.readouterr().out
     assert json.loads((tmp_path / 'r.json').read_text(encoding='utf-8'))['pass'] is False
+
+
+def test_a_previously_working_menu_action_must_be_exercised():
+    installed = crawl(('Canvas', [row('ArchHub menu > App health', 'opened-dialog-or-menu')], {}))
+    for classification in ('SKIPPED', 'NOT-CLICKED'):
+        candidate = crawl(('Canvas', [row('ArchHub menu > App health', classification)], {}))
+        result = crawl_compare.compare(installed, candidate)
+        assert not result['pass']
+        assert [detail['now'] for detail in result['regressions']] == [classification]

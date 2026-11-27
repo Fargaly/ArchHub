@@ -490,7 +490,7 @@ test('registered graph control keeps the current screen on refusal and opens aft
  }finally{await s.close();}
 });
 test('Library uses the catalogue identity and stays open until explicitly closed',async()=>{
- const s=await screen('ds_library.jsx',{catalogue:[{id:'definition-id',name:'Readable label',family:'Get',description:'Reads data'}],templates:[],runs:[],graph:{name:'Graph'},mods:[]},`{addNode:async id=>{if(id!=='definition-id')throw Error('Wrong catalogue identity');return refused?{ok:false}:{id:'made'};}}`);
+ const s=await screen(['answer-widgets.jsx','ds_library.jsx'],{catalogue:[{id:'definition-id',name:'Readable label',family:'Get',description:'Reads data'}],templates:[],runs:[],graph:{name:'Graph'},mods:[]},`{addNode:async id=>{if(id!=='definition-id')throw Error('Wrong catalogue identity');return refused?{ok:false}:{id:'made'};}}`);
  try{
   const rejected=await s.evaluate(`(async()=>{let closed=0;window.readClosed=()=>closed;render(UI.LibraryShelf,{onClose:()=>closed++});await click(document.querySelector('[aria-label="Add Readable label"]'));return closed;})()`);
   assert.equal(rejected,0);

@@ -259,7 +259,6 @@
       ["providerPrefs", "Model per provider", "Each provider starts with this model", "list", ""],
     ]},
     {area:"Connections", id:"phone", title:"Phone and cloud", icon:"link", family:"model", wide:false, rows:[
-      ["phone", "ArchHub on your phone", "The same Workshop threads and BABOOM, as an app on your phone", "phone", ""],
       ["cloudReach", "Let your cloud agents reach this PC", "Off until you allow it; withdraw any time", "bool", ""],
       ["cloudPublish", "Publish to ArchHub cloud", "Off until you allow it; lets your phone see your maps", "bool", ""],
     ]},
@@ -494,6 +493,44 @@
     if(load.status==='empty')return <span>Agents have not learned anything yet.</span>;
     return load.status==='loaded'&&<div className="sheet-list-rows">{(s.brain||[]).map(row=><div className="sheet-list-row" key={row.id}><span dir="auto">{row.text}</span>
       <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forgetMemory(row.id))},event)}>Forget</Btn></div>)}</div>;
+  }
+  function requestGroups(requests, agents, providers) {
+    const groups = new Map();
+    for (const row of requests) {
+      const identity = [...agents,...providers].find(agent => agent.id === row.agent || agent.name === row.agent || agent.sessions?.some(session=>session.root===row.agent));
+      const agent = identity?.name || row.agent_name || (/^(BABOOM|Claude Code|Codex|OpenCode|Gemini|Goose)$/i.test(row.agent||'') ? row.agent : 'Unidentified agent');
+      const key = JSON.stringify([identity?.id||row.agent||agent,row.model,row.provider]);
+      if (!groups.has(key)) groups.set(key,{key,agent,model:row.model,provider:row.provider,count:0,tokens:0,measuredTokens:0,ms:0,measuredTime:0});
+      const group = groups.get(key); group.count++;
+      if (Number.isFinite(row.tokens)) {group.tokens+=row.tokens;group.measuredTokens++;}
+      if (Number.isFinite(row.ms) && row.ms > 0) {group.ms+=row.ms;group.measuredTime++;}
+    }
+    return [...groups.values()];
+  }
+  // The Profiling dialog (Agents > Models): model requests per agent, model and provider, from the router's request record.
+  function ProfilingDialog() {
+    const s=useData(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.refreshRouter(attempt>0)).then(r=>{if(live)setLoad({status:(r?.requests||[]).length?'loaded':'empty'});},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[attempt]);
+    if(load.status==='waiting')return <p role="status">Reading model requests…</p>;
+    if(load.status==='error')return <p role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></p>;
+    if(load.status==='empty')return <p>No model requests yet.</p>;
+    const groups=requestGroups(s.router?.requests||[],s.agents||[],s.providers||[]);
+    const time=row=>row.measuredTime?`${row.ms.toLocaleString()} ms${row.measuredTime<row.count?' (partial)':''}`:'Not measured';
+    const tokens=row=>row.measuredTokens?`${row.tokens.toLocaleString()}${row.measuredTokens<row.count?' (partial)':''}`:'Not reported';
+    return load.status==='loaded'&&<div className="router-table-scroll"><table className="router-requests" aria-label="Model requests"><thead><tr><th scope="col">Agent</th><th scope="col">Model</th><th scope="col">Provider</th><th scope="col">Requests</th><th scope="col">Tokens</th><th scope="col">Measured time</th></tr></thead>
+      <tbody>{groups.map(row=><tr key={row.key}><th scope="row">{row.agent}</th><td>{row.model}</td><td>{row.provider}</td><td>{row.count}</td><td>{tokens(row)}</td><td>{time(row)}</td></tr>)}</tbody></table></div>;
+  }
+  // Agents > Automations: each schedule is a row with on/off; Edit opens the automation's canvas (desktop owner schedules).
+  function ScheduleRows() {
+    const s=useData(),u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readDesktop()).then(()=>{if(live)setLoad({status:(api.getSnapshot().schedules||[]).length?'loaded':'empty'});},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[attempt]);
+    if(load.status==='waiting')return <div className="sheet-property-row" data-row="schedules"><span role="status">Reading automations…</span></div>;
+    if(load.status==='error')return <div className="sheet-property-row" data-row="schedules"><span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span></div>;
+    if(load.status==='empty')return <div className="sheet-property-row" data-row="schedules"><span className="sheet-property-copy">Automations<small>No automations yet. Automate from a canvas toolbar.</small></span></div>;
+    return load.status==='loaded'&&(s.schedules||[]).map(t=><div className="sheet-property-row" data-row={'schedule.'+t.id} key={t.id}>
+      <span className="sheet-property-copy">{t.title}<small>{t.daily?'Daily at '+t.time:t.time}</small></span>
+      <div className="sheet-property-control"><D.Toggle variant="settings" label={t.title+' automation'} checked={!!t.enabled} onCheckedChange={value=>u.act(()=>api.setScheduleEnabled(t.id,value))}/>
+        <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.go('canvas',t.taskId||t.task_id||t.path)},event)}>Edit</Btn></div></div>);
   }
 
   function ConnectionDesignCards({programNotice,focused}) {
@@ -1526,7 +1563,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         toolRules:focusSection==='What agents may do'?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>content.current?.querySelector('[aria-label="Tool name or pattern"]')?.focus()},event)}>Edit tool rules</Btn>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Tool rules</Btn>,
         bbPinned:<D.Toggle variant="settings" label="Pin in place" checked={!!s.companion?.pinned} onCheckedChange={value=>act(()=>api.setCompanionState({pinned:value}))}/>,
         finishReport:preference('Finish and report')||undefined,wsRelease:preference('Stale claim after idle minutes')||undefined,wsArchive:preference('Archive after idle days')||undefined
-      }} extras={{perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>}}/>}
+      }} extras={{models:<div className="sheet-property-row" data-row="profiling"><span className="sheet-property-copy">Profiling<small>Model requests per agent, model and provider</small></span><div className="sheet-property-control"><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Profiling')},event)}>Profiling</Btn></div></div>,perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>,auto:<ScheduleRows/>}}/>}
 
       {isPcDesign&&<PcSettingsCards additional={additional} requested={requestedPage} page={currentCategory} advanced={advancedOpen} setAdvanced={setAdvancedOpen}/>}
       {currentCategory==='Projects'&&<AreaDesignCards area="Projects"
@@ -1554,5 +1591,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
   window.UI.Account = Account;
   window.UI.Connections = Connections;
   window.UI.WorkspaceRows = WorkspaceRows;
+  window.UI.ProfilingDialog = ProfilingDialog;
+  window.UI.requestGroups = requestGroups;
   window.UI.Storage = Storage;
 })();

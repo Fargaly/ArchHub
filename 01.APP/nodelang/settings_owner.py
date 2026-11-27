@@ -458,6 +458,13 @@ class SettingsOwner:
         companies = self.cloud('GET', '/v1/companies/mine').get('companies', [])
         active = next((x for x in companies if x.get('is_current')), None)
         detail = self.cloud('GET', '/v1/companies/' + quote(active['id'], safe='')) if active else {}
+        if active:  # Office policy: this PC follows the office's lock (members) and shows it (everyone)
+            try:
+                apply_office_policy(self.cloud('GET', '/v1/companies/{company_id}/policy'.format(
+                    company_id=quote(active['id'], safe=''))), active.get('role'), _settings_file())
+            except ValueError as missing:
+                from logging import getLogger
+                getLogger(__name__).warning('office policy not read (%s); this PC keeps its values', missing)
         profile = {key: me[field] for key, field in (('name', 'full_name'), ('firm', 'firm_name'))
                    if isinstance(me.get(field), str) and me[field].strip()}
         billing = self._billing(me, prefs)
@@ -519,8 +526,10 @@ class SettingsOwner:
     def invitePerson(self, email):
         if type(email) is not str or '@' not in email or len(email) > 254:
             raise ValueError('Enter your teammate’s email address and retry.')
+        days = {'30 days': 30, '90 days': 90}.get(declared_setting('Account.Access ends'))  # Never: no end
         result = self.cloud('POST', '/v1/companies/' + self._company() + '/invites',
-                            {'email': email.strip(), 'role': declared_setting('Account.Role for new invites').lower()})
+                            {'email': email.strip(), 'role': declared_setting('Account.Role for new invites').lower(),
+                             **({'access_days': days} if days else {})})
         # An issued invite is not proof that the mail provider delivered it.
         return {'email': result['email'], 'message': 'Invitation issued; delivery is confirmed by your mail provider.'}
 
@@ -1338,8 +1347,23 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    declared = [{**spec, 'value': settings.read().get(spec['storageKey'], spec['default'])} for spec in DECLARED_ROWS]
+    declared = [_live_row({**spec, 'value': settings.read().get(spec['storageKey'], spec['default'])}) for spec in DECLARED_ROWS]
     return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows, *agent_rows, *declared]}
+
+
+_DRIVES = {'at': 0.0, 'missing': {}}
+
+
+def _live_row(row):
+    """Sync .archhub files offers a drive only when that drive's app keeps a folder on this PC (read once a minute)."""
+    if row['storageKey'] != 'syncFiles':
+        return row
+    import time
+    from .session_files import SYNC_DRIVES, drive_folder
+    if time.time() - _DRIVES['at'] > 60:
+        _DRIVES.update(at=time.time(), missing={name: name + ' is not set up on this PC' for name in SYNC_DRIVES
+                                                if drive_folder(name) is None})
+    return {**row, 'disabledOptions': {**row['disabledOptions'], **_DRIVES['missing']}}
 
 
 def _declared(page, group, label, key, kind, default, **extra):
@@ -1356,6 +1380,7 @@ def _choices(page, group, label, key, options):
 CLOUD = 'Off: needs the ArchHub cloud service, which does not offer this'
 WATCH = 'Off: needs a program watcher, which ArchHub does not have'
 DRIVER = 'Off: needs a Windows app driver, which ArchHub does not have'
+OFFICE_OPEN, OFFICE_LOCKED = 'Office defaults, I can change them', 'Office policy, locked by the admin'
 
 
 # Settings rows the design shows in Account, Connections and Projects whose one owner is settings/settings.json
@@ -1364,18 +1389,21 @@ DRIVER = 'Off: needs a Windows app driver, which ArchHub does not have'
 DECLARED_ROWS = (
     _choices('Account', 'You', 'Numbers', 'numerals', ('123', '١٢٣')),
     _choices('Account', 'You', 'Time zone', 'timezone', ('Asia/Riyadh (GMT+3)', 'Africa/Cairo (GMT+2)', 'Asia/Dubai (GMT+4)', 'UTC')),
-    _declared('Account', 'Plan & access', 'Office policy', 'policyLock', 'choice', 'Office defaults, I can change them', options=['Office defaults, I can change them', 'Office policy, locked by the admin'], unavailable=CLOUD),
+    _declared('Account', 'Plan & access', 'Office policy', 'policyLock', 'choice', OFFICE_OPEN, options=[OFFICE_OPEN, OFFICE_LOCKED]),
     _choices('Account', 'Plan & access', 'Role for new invites', 'inviteRole', ('Member', 'Admin')),  # the cloud invites as member or admin only,
-    _declared('Account', 'Plan & access', 'Access ends', 'accessEnds', 'choice', 'Never', options=['Never', '30 days', '90 days', 'When the project ends'], unavailable=CLOUD),
+    _declared('Account', 'Plan & access', 'Access ends', 'accessEnds', 'choice', 'Never', options=['Never', '30 days', '90 days', 'When the project ends'],
+              disabledOptions={'When the project ends': 'Needs a project end date, which the Project register does not hold yet'}),
     _declared('Account', 'Community', 'Public profile', 'commProfile', 'boolean', False, unavailable=CLOUD),
     _declared('Account', 'Community', 'Profile address', 'commHandle', 'text', '', pattern=r'[a-z0-9-]{0,40}', unavailable=CLOUD),
     _declared('Account', 'Community', 'Tell me about installs and comments', 'commNotify', 'boolean', True, unavailable=CLOUD),
     _declared('Account', 'Social media', 'Send replies without asking', 'socialAutoSend', 'boolean', False, unavailable=CLOUD),
     _declared('Account', 'Social media', 'Inbox digest', 'socialDigest', 'choice', 'Off', options=['Off', 'Daily', 'Weekly'], unavailable=CLOUD),
     _declared('Account', 'Brain and cloud sync', 'Memories in each request', 'brainContext', 'number', 8, control='range', min=0, max=50),
-    _declared('Account', 'Brain and cloud sync', 'Brain follows your account', 'syncBrain', 'boolean', True, unavailable=CLOUD),
+    _declared('Account', 'Brain and cloud sync', 'Brain follows your account', 'syncBrain', 'boolean', True),
     _declared('Account', 'Brain and cloud sync', 'Settings follow your account', 'syncSettings', 'boolean', True),
-    _declared('Account', 'Brain and cloud sync', 'Sync .archhub files', 'syncFiles', 'choice', 'Off', options=['Off', 'Office server', 'OneDrive', 'Google Drive'], unavailable=CLOUD),
+    _declared('Account', 'Brain and cloud sync', 'Sync .archhub files', 'syncFiles', 'choice', 'Off',
+              options=['Off', 'ArchHub account', 'Office server', 'OneDrive', 'Google Drive'],
+              disabledOptions={'Office server': 'Needs an office server folder, which ArchHub does not have yet'}),
     _declared('Connections', 'Program options', 'Connect when a program opens', 'autoConnect', 'boolean', True, unavailable=WATCH),
     _choices('Connections', 'Program options', 'Revit version', 'revitVer', ('Newest installed', '2026', '2025', '2024', '2023')),
     _choices('Connections', 'Program options', 'AutoCAD version', 'acadVer', ('Newest installed', '2026', '2025', '2024')),
@@ -1425,6 +1453,8 @@ def declared_value(spec, value):
         raise ValueError(spec['label'] + ': ' + spec['unavailable'] + '.')
     if kind == 'boolean' and type(value) is bool:
         return value
+    if kind == 'choice' and value in spec.get('disabledOptions', {}):
+        raise ValueError(spec['label'] + ': ' + spec['disabledOptions'][value] + '.')
     if kind == 'choice' and value in spec['options']:
         return value
     if kind == 'number' and type(value) is int and spec['min'] <= value <= spec['max']:
@@ -1975,7 +2005,10 @@ class PreferenceScope:
                     values[id] = value
             maps[scope] = values
             self.validate(scope, values, maps)
+            held = self.settings.read()
+            account_effects(held, changes, self.keys, self.settings)
             self._write(scope, values, keyboard=keyboard or reset or any(id in self.keyboard for id in changes))
+        account_effects_after(self.settings.read(), changes, self.keys)
         return self.read()
 
     def select(self, scope, workspace='', expected=''):
@@ -2077,6 +2110,77 @@ def _sync_cache(path, content):
             except ValueError:
                 continue
     settings.update(admitted)
+
+
+def _policy_rows(held):
+    """The office's values: every Projects row (standard, templates, CAD, naming, units), as this user holds them."""
+    return [row for row in preference_settings(settings=_PreferenceValues(dict(held)))['appearanceSettings']
+            if row['page'] == 'Projects']
+
+
+def _active_office(cloud=None):
+    rows = (cloud or cloud_call)('GET', '/v1/companies/mine').get('companies', [])
+    office = next((row for row in rows if row.get('is_current')), None)
+    if office is None:
+        raise ValueError('Select your office in Account settings, then retry.')
+    return office
+
+
+def publish_office_policy(locked, held, cloud=None):
+    """Office policy row, admin side: the office's lock and this admin's Projects values go to the cloud."""
+    office = _active_office(cloud)
+    if office.get('role') not in ('owner', 'admin'):
+        raise ValueError('Only an office owner or admin can change the office policy.')
+    values = {row['storageKey']: row['value'] for row in _policy_rows(held)}
+    answer = (cloud or cloud_call)('PUT', '/v1/companies/{company_id}/policy'.format(company_id=quote(office['id'], safe='')),
+                                   {'locked': bool(locked), 'values': values})
+    return {'locked': bool(answer.get('locked')), 'admin': True, 'keys': sorted(values), 'office': office['id']}
+
+
+def apply_office_policy(policy, role, settings):
+    """Office policy row, every member: the office's lock state, and while locked its values replace this PC's."""
+    admin = role in ('owner', 'admin')
+    locked = bool(policy.get('locked'))
+    values = policy.get('values') if isinstance(policy.get('values'), dict) else {}
+    patch = {'policyLock': OFFICE_LOCKED if locked else OFFICE_OPEN,
+             'officePolicy': {'locked': locked, 'admin': admin, 'keys': sorted(values), 'office': policy.get('company_id', '')}}
+    if locked and not admin:
+        ids = {row['storageKey']: row['id'] for row in _policy_rows(settings.read())}
+        for key, value in values.items():
+            try:  # the office's value is checked like a local edit; one this build refuses is skipped
+                preference_settings('setAppearance', [ids[key], value], _PreferenceValues({}))
+                patch[key] = value
+            except (KeyError, ValueError):
+                continue
+    settings.update(patch)
+    return patch['officePolicy']
+
+
+def account_effects(held, changes, keys, settings):
+    """Rows whose value acts outside settings.json run first, so a refusal stores nothing."""
+    policy = held.get('officePolicy') or {}
+    if policy.get('locked') and not policy.get('admin'):
+        named = [id for id in changes if keys.get(id) in set(policy.get('keys') or ())]
+        if named:
+            raise ValueError(named[0].split('.', 1)[-1] + ' is locked by your office admin (Settings › Account › Office policy).')
+    if 'Account.Office policy' in changes:
+        choice = changes['Account.Office policy'] or OFFICE_OPEN
+        if choice != held.get('policyLock', OFFICE_OPEN):
+            settings.update({'officePolicy': publish_office_policy(choice == OFFICE_LOCKED, held)})
+    if 'Account.Sync .archhub files' in changes:
+        from .session_files import apply_files_sync
+        choice, previous = changes['Account.Sync .archhub files'] or 'Off', held.get('syncFiles', 'Off')
+        if choice != previous:
+            apply_files_sync(previous, choice)
+
+
+def account_effects_after(held, changes, keys):
+    if changes.get('Account.Brain follows your account') is True:
+        from . import brain_files
+        brain_files.sync_in_background(force=True)
+    policy = held.get('officePolicy') or {}
+    if policy.get('locked') and policy.get('admin') and any(keys.get(id) in set(policy.get('keys') or ()) for id in changes):
+        publish_office_policy(True, held)  # the admin's own edit is the office's new value
 
 
 def register_settings_sync():

@@ -340,7 +340,9 @@ class NoGraphServer:
         from .model_router import request_profiles
         request_profiles()
         from .settings_owner import apply_network_settings, register_settings_sync
+        from .session_files import register_sessions_sync
         register_settings_sync()
+        register_sessions_sync()
         try:
             apply_network_settings()
         except (OSError, ValueError) as error:  # an unreadable settings file keeps direct connections
@@ -385,6 +387,12 @@ class NoGraphServer:
 
     def _warm_after_listen(self):
         """Finish non-admission work after HTTP is already answering Home."""
+        try:  # D-051/D-055: an account already signed in at boot gets its items and Brain here, as at sign-in
+            from . import account_sync, brain_files
+            account_sync.restore_in_background()
+            brain_files.sync_in_background(force=True)
+        except Exception as refused:  # noqa: BLE001 - Home stays up; the next sign-in or change retries
+            print('  account    : restore skipped -- %s' % refused, flush=True)
         try:
             self.ensure_cloud_relay()
         except Exception as refused:  # noqa: BLE001 - Home stays up; relay is optional warm-up

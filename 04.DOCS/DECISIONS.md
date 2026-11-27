@@ -702,3 +702,21 @@ Replaces: the None ("sign-in not checked") answer for antigravity and cursor. No
 Budgets: one read-only query per row per Settings > Connections refresh, SQLite default lock wait. Not measured on the installed app.
 
 Verification: 02.TESTS/tests_replica/test_custom_mcp.py test_antigravity_and_cursor_sign_in_is_read_from_their_state_database (present -> True, empty -> False, missing or corrupt -> None); live read on this PC: antigravity True, cursor True.
+
+## D-055 Settings > Account rows that live on the ArchHub account: Brain, .archhub files, office policy, invite access (2026-11-27)
+
+Request: founder screenshot via coordinator 717, 2026-11-27. Settings > Account showed "Off: needs the ArchHub cloud service, which does not offer this" on "Brain follows your account", "Sync .archhub files", "Office policy" and "Access ends". Design source archhub-directions app.js: syncBrain "Every PC and archhub.io read the same memories. Off keeps them on this PC"; syncFiles "Your tasks on your other PCs" with options Off / Office server / OneDrive / Google Drive; policyLock "An office admin can lock values for everyone"; accessEnds "Invites expire on their own". Also D-051 ("Everything moves to another PC with nothing lost").
+
+Prior art: VS Code Settings Sync keeps one copy per account (Microsoft or GitHub) and every device merges into it. Obsidian Sync syncs each vault file per account and keeps conflict copies. Chrome Enterprise lets an admin set a policy users cannot change, or a default they can change, applied whenever a managed account signs in. Slack lets admins set when a guest's access expires. Fit: each row extends an owner that already exists, and none of them adds a store.
+
+Decision:
+- Brain: the desktop becomes a client of the existing per-account cloud Brain (/v1/brain/sync, brain_replica, the same replica /v1/brain/facts serves to archhub.io). Merge is last writer wins by time. A forget is sent as valid_until. A fact naming the client area never leaves the PC. No new cloud endpoint.
+- .archhub files: "ArchHub account" is added as an option and is the sessions/ namespace of the D-051 account-sync owner, keyed by document id and written byte for byte. A displaced head becomes a conflict copy, as D-051 already does. OneDrive and Google Drive move the Sessions folder into that drive's own synced folder through the existing set_sessions_directory, and that drive's app does the syncing. "Office server" stays shown but disabled until an office server folder exists. No second sync engine.
+- Office policy: one row per company (company_policy) behind GET/PUT /v1/companies/{id}/policy. Only an owner or admin may write it. Locking publishes that admin's Projects values. While the policy is locked, a member's PC takes those values and refuses edits to them.
+- Access ends: an invite carries access_days (30 or 90). Acceptance sets the existing company_members.access_until, which db.get_membership already enforces. "When the project ends" stays disabled until the Project register holds an end date.
+
+Replaces: the four CLOUD "unavailable" markings in settings_owner.DECLARED_ROWS. The desktop's 64 KB answer cap for account-sync calls is raised to 16 MiB so a whole session can travel.
+
+Budgets: Brain sync runs once per change and at most once a minute on a read, in a background thread, and opens nothing while signed out. A session uploads once per 20-second burst of saves, and each item stays at or under 8 MiB (the existing session limit). The drive check on Settings reads runs at most once a minute. The office policy read happens once per Settings > Account open. Not measured on the installed app.
+
+Verification: 06.CLOUD/cloud_backend/tests/test_account_cloud_rows.py (7) and 02.TESTS/tests_replica/test_account_cloud_rows.py (16) both fail on origin/main and pass with this change. The live proof uses two profiles on the QA account and the built-app rows, in 72.60-NEW-APP/APP-BUTTONS/PROOF/account-cloud-rows-1.

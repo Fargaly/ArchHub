@@ -99,6 +99,8 @@ class UpdateCompanyReq(BaseModel):
 class InviteReq(BaseModel):
     email: EmailStr
     role: str = Field(default="member")
+    # Settings > Account > Access ends: the membership this invite grants ends this many days after acceptance.
+    access_days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
 class AcceptInviteReq(BaseModel):
@@ -257,11 +259,19 @@ async def invite_member(company_id: str, req: InviteReq,
                          authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
     _require_membership(company_id, user["id"], roles=("owner", "admin"))
-    return await send_company_invite(company_id, str(req.email), req.role, user["id"])
+    return await send_company_invite(company_id, str(req.email), req.role, user["id"],
+                                     access_days=req.access_days)
+
+
+def _column(con, table: str, column: str, declaration: str) -> None:
+    """Add one optional column on first use (the WIRE-settings access_until pattern)."""
+    if column not in {r[1] for r in con.execute(f"PRAGMA table_info({table})")}:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 async def send_company_invite(company_id: str, email: str, role: str,
-                              invited_by_user_id: str, *, with_outcome: bool = False) -> dict:
+                              invited_by_user_id: str, *, with_outcome: bool = False,
+                              access_days: Optional[int] = None) -> dict:
     """The one company invite, for the owner's route above and the founder's
     Cockpit route: seat check, invite row, best-effort email."""
     if role not in ("admin", "member"):
@@ -281,6 +291,10 @@ async def send_company_invite(company_id: str, email: str, role: str,
         role=role,
         invited_by_user_id=invited_by_user_id,
     )
+    if access_days:
+        with db.connect() as con:
+            _column(con, "company_invites", "access_days", "INTEGER")
+            con.execute("UPDATE company_invites SET access_days=? WHERE token=?", (int(access_days), invite["token"]))
     # Best-effort email. We still return the token in the response so
     # the dashboard can show a copy-able link if email is unconfigured.
     link = (
@@ -366,11 +380,20 @@ def accept_invite(req: AcceptInviteReq,
         role=invite["role"],
         invited_by_user_id=invite["invited_by_user_id"],
     )
+    access_until = None
+    if invite.get("access_days"):
+        from datetime import date, timedelta
+        access_until = (date.today() + timedelta(days=int(invite["access_days"]))).isoformat()
+        with db.connect() as con:
+            _column(con, "company_members", "access_until", "TEXT")  # read by db.get_membership
+            con.execute("UPDATE company_members SET access_until=? WHERE company_id=? AND user_id=?",
+                        (access_until, invite["company_id"], user["id"]))
     db.mark_invite_accepted(req.invite_token)
     return {
         "ok": True,
         "company_id": invite["company_id"],
         "role": invite["role"],
+        "access_until": access_until,
     }
 
 
@@ -592,3 +615,59 @@ def decline_account_invitation(req: AcceptInviteReq, authorization: str | None =
                     (int(time.time())-1,req.invite_token))
     return {'ok': True}
 # WIRE-settings end
+
+
+# ---------------------------------------------------------------------------
+# Office policy (Settings > Account > Office policy): an owner or admin locks
+# the office's values for every member. One row per company; members read it.
+# ---------------------------------------------------------------------------
+class PolicyReq(BaseModel):
+    locked: bool
+    values: dict = Field(default_factory=dict)
+
+
+def _policy_table(con) -> None:
+    con.execute("CREATE TABLE IF NOT EXISTS company_policy (company_id TEXT PRIMARY KEY, locked INTEGER NOT NULL,"
+                " values_json TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+
+
+def _policy_values(values: dict) -> dict:
+    """Plain setting values only: short keys, text/number/yes-no, nothing nested."""
+    import re
+    if len(values) > 200:
+        raise HTTPException(status_code=400, detail="policy_too_many_values")
+    for key, value in values.items():
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,63}", key) or not (
+                type(value) in (bool, int) or (type(value) is str and len(value) <= 400)):
+            raise HTTPException(status_code=400, detail="policy_invalid_value")
+    return values
+
+
+@router.get("/v1/companies/{company_id}/policy")
+def get_company_policy(company_id: str, authorization: str | None = Header(None)) -> dict:
+    import json
+    user = _require_user(authorization)
+    member = _require_membership(company_id, user["id"])
+    with db.connect() as con:
+        _policy_table(con)
+        row = con.execute("SELECT * FROM company_policy WHERE company_id=?", (company_id,)).fetchone()
+    return {"company_id": company_id, "your_role": member["role"], "locked": bool(row and row["locked"]),
+            "values": json.loads(row["values_json"]) if row else {},
+            "updated_at": row["updated_at"] if row else None}
+
+
+@router.put("/v1/companies/{company_id}/policy")
+def set_company_policy(company_id: str, req: PolicyReq, authorization: str | None = Header(None)) -> dict:
+    import json
+    user = _require_user(authorization)
+    member = _require_membership(company_id, user["id"], roles=("owner", "admin"))
+    values = _policy_values(req.values)
+    now = int(time.time())
+    with db.connect() as con:
+        _policy_table(con)
+        con.execute("INSERT INTO company_policy VALUES (?,?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET"
+                    " locked=excluded.locked, values_json=excluded.values_json, updated_by=excluded.updated_by,"
+                    " updated_at=excluded.updated_at",
+                    (company_id, int(req.locked), json.dumps(values, sort_keys=True), user["id"], now))
+    return {"company_id": company_id, "your_role": member["role"], "locked": req.locked, "values": values,
+            "updated_at": now}

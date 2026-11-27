@@ -55,12 +55,17 @@ def _admitted():
         return False
 
 
+def _request(method, url, *, bearer, body=None):
+    # A blob answer carries up to one 8 MiB session (gzip, base64), a Brain pull the whole memory list.
+    return _cloud._request(method, url, bearer=bearer, body=body, limit=16 * 1024 * 1024)
+
+
 def _call(method, route, body=None, query=""):
     token, base = _cloud._session(None)
     if not token or not _admitted():
         return None, {}
     try:
-        return (_http or _cloud._request)(method, base + route + query, bearer=token, body=body)
+        return (_http or _request)(method, base + route + query, bearer=token, body=body)
     except OSError:
         return None, {}
 
@@ -83,7 +88,8 @@ def _state():
     except (OSError, ValueError):
         whole = {}
     mine = whole.get(_account(), {}) if isinstance(whole, dict) else {}
-    return {"base": dict(mine.get("base", {})), "pending_delete": set(mine.get("pending_delete", []))}
+    return {"base": dict(mine.get("base", {})), "pending_delete": set(mine.get("pending_delete", [])),
+            "marks": dict(mine.get("marks", {}))}
 
 
 def _save_state(state):
@@ -92,7 +98,8 @@ def _save_state(state):
         whole = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         whole = {}
-    whole[_account()] = {"base": state["base"], "pending_delete": sorted(state["pending_delete"])}
+    whole[_account()] = {"base": state["base"], "pending_delete": sorted(state["pending_delete"]),
+                         "marks": state.get("marks", {})}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(whole, indent=1, sort_keys=True), encoding="utf-8")
@@ -136,6 +143,27 @@ def delete(path):
         (state["pending_delete"].discard if code == 200 else state["pending_delete"].add)(path)
         _save_state(state)
         return code == 200
+
+
+def mark(name, value=None):
+    """A per-account sync watermark of another account owner (the Brain's last pull); value=None reads it."""
+    with _LOCK:
+        state = _state()
+        if value is None:
+            return state["marks"].get(name)
+        state["marks"][name] = value
+        _save_state(state)
+        return value
+
+
+def signed_in():
+    """True when a request would reach the account (signed in, and DesktopAccess admits work)."""
+    return bool(_cloud._session(None)[0]) and _admitted()
+
+
+def call(method, route, body=None):
+    """One signed-in, admitted request to the account's cloud: (status, answer) or (None, {})."""
+    return _call(method, route, body)
 
 
 def connection(entry):

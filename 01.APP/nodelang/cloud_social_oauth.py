@@ -23,7 +23,7 @@ PROVIDERS = frozenset({"linkedin", "meta", "instagram", "facebook", "whatsapp", 
 
 
 def _request(method: str, url: str, *, bearer: str, body: Optional[dict] = None,
-             headers: Optional[dict] = None, timeout: float = 10.0) -> tuple[int, dict]:
+             headers: Optional[dict] = None, timeout: float = 10.0, limit: int = 65536) -> tuple[int, dict]:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     sent = {"Accept": "application/json", "Authorization": "Bearer " + bearer,
             "User-Agent": "ArchHub-desktop/2.0"}
@@ -34,7 +34,7 @@ def _request(method: str, url: str, *, bearer: str, body: Optional[dict] = None,
         **sent}, data=data)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw, status = response.read(65536), response.status
+            raw, status = response.read(limit), response.status
     except urllib.error.HTTPError as refused:
         raw, status = refused.read(65536), refused.code
     try:

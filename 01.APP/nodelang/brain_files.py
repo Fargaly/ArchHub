@@ -352,7 +352,135 @@ def _publish(fact_id, text):
     return {'ok': False, 'error': 'Sharing with the Community Brain needs the ArchHub cloud review; the fact stays on this machine.'}
 
 
+# ------------------------------------------------------------------ account --
+# Settings > Account > Brain follows your account: this file and the account's cloud Brain (the existing
+# /v1/brain/sync replica that archhub.io reads) converge, last writer wins by time (D-055).
+_SYNC = {'last': 0.0, 'running': False, 'again': False}
+_PULL_EVERY = 60  # seconds between the pulls a read triggers
+
+
+def _hlc(at):
+    return '%016d.%s' % (int(at * 1000), hashlib.sha256(os.environ.get('COMPUTERNAME', 'pc').encode()).hexdigest()[:8])
+
+
+def _iso(at):
+    return time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(at)) + '.%03dZ' % int(at % 1 * 1000)
+
+
+def _outgoing(connection, since):
+    """Facts changed after ``since`` as cloud fragments; a fact naming the client area never leaves this PC."""
+    out = []
+    for (fact_id,) in connection.execute('SELECT DISTINCT fact_id FROM beliefs WHERE valid_from > ? OR valid_to > ?',
+                                         (since, since)).fetchall():
+        kind, text, at, ended = connection.execute(
+            'SELECT kind, text, valid_from, valid_to FROM beliefs WHERE fact_id=? ORDER BY valid_from DESC, id DESC '
+            'LIMIT 1', (fact_id,)).fetchone()
+        if names_the_client_area(text, fact_id):
+            continue
+        fragment = {'id': fact_id, 'kind': 'fact', 'text': text, 'scope': 'user', 'extra': {'kind': kind},
+                    'valid_from': _iso(at), 'hlc': _hlc(ended or at)}
+        if ended is not None:
+            fragment['valid_until'] = _iso(ended)
+        out.append(fragment)
+    return out
+
+
+def _incoming(connection, fragment):
+    """One account fragment onto this file when it is newer than what this PC holds; 1 if it changed anything."""
+    if (fragment.get('scope') or 'user') not in ('user', 'project') or (fragment.get('kind') or 'fact') != 'fact':
+        return 0  # office and community facts are read through their own scopes, not "what agents remember about you"
+    fact_id, text = str(fragment.get('id') or ''), str(fragment.get('text') or '').strip()
+    try:
+        at = int(str(fragment.get('hlc') or '').split('.')[0]) / 1000
+    except ValueError:
+        return 0
+    if not fact_id or not text:
+        return 0
+    latest = connection.execute('SELECT id, text, valid_from, valid_to FROM beliefs WHERE fact_id=? '
+                                'ORDER BY valid_from DESC, id DESC LIMIT 1', (fact_id,)).fetchone()
+    if latest and max(latest[2], latest[3] or 0) >= at:
+        return 0  # this PC's version is as new or newer
+    live = latest is not None and latest[3] is None
+    if fragment.get('valid_until'):
+        if live:
+            _close_belief(connection, latest[0], at, forgotten=True)
+        return int(live)
+    if live and latest[1] == text:
+        return 0
+    kind = str((fragment.get('extra') or {}).get('kind') or 'fact')
+    if live:
+        _close_belief(connection, latest[0], at)
+    belief = _open_belief(connection, fact_id, kind, text, at, 'your ArchHub account', text)
+    if live:
+        connection.execute('UPDATE beliefs SET superseded_by=? WHERE id=?', (belief, latest[0]))
+    return 1
+
+
+def sync_with_account():
+    """Push this PC's changed facts, pull the account's: {'ok', 'pushed', 'pulled'} or why nothing moved."""
+    from . import account_sync
+    from .settings_owner import declared_setting
+    if declared_setting('Account.Brain follows your account') is not True:
+        return {'ok': False, 'skipped': 'Brain follows your account is off'}
+    if not account_sync.signed_in():
+        return {'ok': False, 'skipped': 'not signed in'}  # nothing is opened or read for an account that is not here
+    started = time.time()
+    since = float(account_sync.mark('brain.pushed') or 0)
+    with _LOCK:
+        fragments = _outgoing(_db(), since)
+    # shortcut: every pull reads the whole account Brain (since_hlc ''), so a fact another PC wrote offline with an
+    # older clock is never skipped; move to a server-side receive cursor when brains reach tens of thousands of facts.
+    code, answer = account_sync.call('POST', '/v1/brain/sync', {'since_hlc': '', 'delta': {'fragments': fragments}})
+    if code != 200:
+        return {'ok': False, 'status': code}
+    merged = (answer.get('merged') or {}).get('fragments') or []
+    with _LOCK:
+        connection = _db()
+        with _tx(connection):
+            pulled = sum(_incoming(connection, fragment) for fragment in merged if isinstance(fragment, dict))
+    account_sync.mark('brain.pushed', started)
+    return {'ok': True, 'pushed': int(answer.get('accepted') or 0), 'pulled': pulled,
+            'refused': len(answer.get('rejected') or [])}
+
+
+def sync_in_background(force=False):
+    """A change follows at once (force); a read pulls at most once a minute. Never holds the caller."""
+    with _LOCK:
+        if _SYNC['running']:
+            _SYNC['again'] = _SYNC['again'] or force
+            return
+        if not force and time.time() - _SYNC['last'] < _PULL_EVERY:
+            return
+        _SYNC.update(running=True, again=False, last=time.time())
+
+    def work():
+        try:
+            while True:
+                try:
+                    sync_with_account()
+                except Exception as missed:  # the next change or read retries
+                    import logging
+                    logging.getLogger(__name__).warning('Brain account sync did not finish (%s)', type(missed).__name__)
+                with _LOCK:
+                    if not _SYNC['again']:
+                        return
+                    _SYNC['again'] = False
+        finally:
+            with _LOCK:
+                _SYNC['running'] = False
+    threading.Thread(target=work, name='archhub-brain-account', daemon=True).start()
+
+
 def call(tool, arguments):
+    answer = _call(tool, arguments)
+    if tool in ('brain.write', 'brain.edit_fact', 'brain.delete_fact') and answer.get('ok'):
+        sync_in_background(force=True)
+    elif tool in ('brain.list_facts', 'brain.context'):
+        sync_in_background()
+    return answer
+
+
+def _call(tool, arguments):
     arguments = dict(arguments or {})
     params = BRAIN_NODE['params']
     if tool == 'brain.health':

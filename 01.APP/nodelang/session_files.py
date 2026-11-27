@@ -706,6 +706,7 @@ def write_document(path, document):
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
+    follow_to_account(document.get('id'))
     return str(target)
 
 
@@ -2202,6 +2203,7 @@ class SessionFiles:
                         run_file.unlink(missing_ok=True)
                 if target.exists() and not target.is_symlink():
                     target.unlink()
+            follow_to_account(doc_id, removed=True)
         self.forget_path(str(target))
         return {'ok': True, 'removed': str(target), 'id': doc_id}
 
@@ -3409,3 +3411,141 @@ def resolve_sample_input(value: object) -> str | None:
     except OSError as error:
         raise ValueError("Shipped sample could not be inspected.") from error
     return str(shipped)
+
+
+# ------------------------------------------------------------------ account --
+# Settings > Account > Sync .archhub files (D-055). "ArchHub account": every session file is the sessions/
+# namespace of the one account-sync owner (D-051), keyed by document id. "OneDrive" / "Google Drive": the
+# Sessions folder moves into that drive's own synced folder (set_sessions_directory) and its app syncs it.
+_ACCOUNT_PREFIX = 'sessions/'
+_ACCOUNT_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}')
+_FOLLOW = {}  # document id -> another save arrived while its upload ran
+_FOLLOW_LOCK = threading.Lock()
+SYNC_ACCOUNT = 'ArchHub account'
+SYNC_DRIVES = ('OneDrive', 'Google Drive')
+
+
+def files_follow_account():
+    from .settings_owner import declared_setting
+    return declared_setting('Account.Sync .archhub files') == SYNC_ACCOUNT
+
+
+def _account_files():
+    """{document id: (path, bytes)} for every session in the Sessions folder that fits one account item."""
+    found = {}
+    for path in sorted(sessions_directory(_wait_for_locks=False).glob('*.archhub')):
+        try:
+            raw = path.read_bytes()
+            identity = str(json.loads(raw).get('id') or '')
+        except (OSError, ValueError, AttributeError):
+            continue
+        if _ACCOUNT_ID.fullmatch(identity) and len(raw) <= MAX_BYTES:
+            found[identity] = (path, raw)
+    return found
+
+
+def _account_items():
+    if not files_follow_account():
+        return {}
+    return {_ACCOUNT_PREFIX + identity + '.archhub': ({'path': str(path)}, raw)
+            for identity, (path, raw) in _account_files().items()}
+
+
+def _account_cache(logical, content):
+    """The account's copy of one session lands in the Sessions folder byte for byte (so both sides hash alike)."""
+    if not files_follow_account():
+        return
+    document = json.loads(content)
+    validate(document)
+    identity = str(document.get('id') or '')
+    if _ACCOUNT_PREFIX + identity + '.archhub' != logical:
+        raise ValueError('The account item does not match its session id')
+    held = _account_files().get(identity)
+    target = held[0] if held else document_path(sessions_directory(), document)
+    with canvas_documents.locked(target):
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.' + target.name, suffix='.tmp', delete=False) as stream:
+            temporary = stream.name
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            _metadata_io(os.replace, temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    with _DOCUMENTS_LOCK:
+        _DOCUMENTS.pop(str(target), None)
+        _SESSION_FIELDS_CACHE.pop(str(target), None)
+
+
+def _account_drop(logical, meta):
+    """Removed on another PC: removed here too (only a file still in the Sessions folder)."""
+    path = Path(meta.get('path') or '')
+    if path.parent == sessions_directory(_wait_for_locks=False) and path.is_file() and not path.is_symlink():
+        with canvas_documents.locked(path):
+            path.unlink()
+
+
+def register_sessions_sync():
+    """The sessions/ namespace of the account-sync owner (idempotent), next to settings/ and connections/."""
+    from . import account_sync
+    account_sync.register(_ACCOUNT_PREFIX, items=_account_items, cache=_account_cache, drop=_account_drop)
+
+
+def follow_to_account(identity, removed=False):
+    """A save uploads (a burst coalesces into at most one more upload); a removal leaves the account. Inert unless the row says so."""
+    if not (isinstance(identity, str) and _ACCOUNT_ID.fullmatch(identity)) or not files_follow_account():
+        return
+    from . import account_sync
+    logical = _ACCOUNT_PREFIX + identity + '.archhub'
+    if removed:
+        threading.Thread(target=account_sync.delete, args=(logical,), name='archhub-session-account', daemon=True).start()
+        return
+    with _FOLLOW_LOCK:
+        if identity in _FOLLOW:  # an upload of this session is running: it sends once more with the newest file
+            _FOLLOW[identity] = True
+            return
+        _FOLLOW[identity] = False
+
+    def send():
+        try:
+            while True:
+                held = _account_files().get(identity)
+                if held:
+                    account_sync.put(logical, held[1])
+                with _FOLLOW_LOCK:
+                    if not _FOLLOW.get(identity):
+                        return
+                    _FOLLOW[identity] = False
+        finally:
+            with _FOLLOW_LOCK:
+                _FOLLOW.pop(identity, None)
+    threading.Thread(target=send, name='archhub-session-account', daemon=True).start()
+
+
+def drive_folder(name):
+    """The local folder a drive's own app keeps in sync, or None when that app is not on this PC."""
+    import string
+    if name == 'OneDrive':
+        roots = [os.environ.get(key) for key in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial')]
+    else:  # Google Drive for desktop mounts "My Drive" on its own drive letter
+        roots = ['%s:\\My Drive' % letter for letter in string.ascii_uppercase[3:]]
+    for root in roots:
+        if root and Path(root).is_dir():
+            return Path(root) / 'ArchHub' / 'Sessions'
+    return None
+
+
+def apply_files_sync(previous, choice):
+    """Settings changed Sync .archhub files: move the Sessions folder in or out of a drive, or restore the account."""
+    if choice in SYNC_DRIVES:
+        folder = drive_folder(choice)
+        if folder is None:
+            raise ValueError(choice + ' is not set up on this PC. Install it and sign in, then choose it again.')
+        set_sessions_directory(folder)
+    elif previous in SYNC_DRIVES:
+        set_sessions_directory(_default_sessions_directory())
+    if choice == SYNC_ACCOUNT:
+        from . import account_sync
+        threading.Thread(target=account_sync.pull_and_restore, args=(_ACCOUNT_PREFIX,), name='archhub-sessions-account',
+                         daemon=True).start()

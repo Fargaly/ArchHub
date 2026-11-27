@@ -282,6 +282,21 @@
     .page.docs .sk.t-file, .page.docs .sk.t-folder { background: #58b368; }
     .page.docs .sk.t-boolean, .page.docs .sk.t-bool { background: #a87ffb; }
     .page.docs .sk.t-event, .page.docs .sk.t-view { background: #56b6c2; }
+    .page.docs .ncat section { margin-top: 18px; }
+    .page.docs .ncat h3 { margin: 0 0 8px; }
+    .page.docs .ncrow { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+    .page.docs .nc { text-align: left; display: grid; gap: 4px; padding: 0 0 6px; border-radius: 6px; border: 1px solid var(--color-line, #26262e); background: var(--color-bg-panel, #15151a); color: inherit; font: inherit; font-size: 12px; cursor: pointer; min-width: 0; }
+    .page.docs .nc:hover, .page.docs .nc:focus-visible { border-color: var(--color-accent, #d97757); }
+    .page.docs .nch { display: flex; align-items: center; gap: 8px; padding: 7px 10px 0; min-width: 0; }
+    .page.docs .nch b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+    .page.docs .nct { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; flex: none; color: var(--color-on-fill, #180f08); }
+    .page.docs .fam-model { background: var(--color-blue, #7898d6); } .page.docs .fam-list { background: var(--color-purple, #a98cd6); } .page.docs .fam-agent { background: var(--color-cyan, #5fb3b3); } .page.docs .fam-effect { background: var(--color-accent, #d97757); }
+    .page.docs .ncl { padding: 0 10px; color: var(--color-ink-soft, #9b938a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .page.docs .ncb { display: flex; justify-content: space-between; gap: 6px; border-top: 1px solid var(--color-line, #26262e); padding: 5px 10px 0; color: var(--color-ink-soft, #9b938a); }
+    .page.docs .ncb > span { display: grid; gap: 2px; min-width: 0; } .page.docs .ncb > span:last-child { justify-items: end; }
+    .page.docs .ncb > span > span { display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .page.docs .ncb .si { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--c); flex: none; } .page.docs .ncb .so { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
+    .page.docs .c-el { --c: var(--color-accent, #d97757); } .page.docs .c-num { --c: var(--color-warn, #e5b25a); } .page.docs .c-file { --c: var(--color-ok, #7ec18e); } .page.docs .c-bool { --c: var(--color-purple, #a98cd6); } .page.docs .c-ev { --c: var(--color-cyan, #5fb3b3); } .page.docs .c-text { --c: var(--color-ink-soft, #9b938a); }
     .page.docs .cmap { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; align-items: start; margin-top: 12px; }
     .page.docs .cmapc { position: relative; height: 320px; background: rgba(0,0,0,0.24); border: 1px solid var(--color-line, #2a2a33); border-radius: 10px; overflow: hidden; }
     .page.docs .cmapl { width: 100%; height: 100%; }
@@ -309,8 +324,33 @@
     return t;
   }
 
+  // Guide text arrives as markdown; the reader sees words, never its marks.
   function cleanStepLine(line) {
-    return String(line || '').replace(/^#+\s*/, '').replace(/^\d+\.\s*/, '').trim();
+    return String(line || '').replace(/^#+\s*/, '').replace(/^\d+\.\s*/, '').replace(/^[-*]\s+/, '')
+      .replace(/`([^`]*)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').trim();
+  }
+
+  const SOCKET_CLASS = t => /^(number|num|int|integer|float)$/.test(t) ? 'c-num'
+    : /^(file|folder|path)$/.test(t) ? 'c-file'
+    : /^(bool|boolean)$/.test(t) ? 'c-bool'
+    : /^(event|trigger|view)$/.test(t) ? 'c-ev'
+    : /^(list|elements)$/.test(t) ? 'c-el' : 'c-text';
+
+  function shortLine(text) {
+    const first = String(text || '').split(/[.;:(]/)[0].trim().split(/\s+/).filter(Boolean);
+    return first.slice(0, 6).join(' ');
+  }
+
+  function NodeCard({ it, open, onToggle }) {
+    const ins = it.ins.slice(0, 3), outs = it.outs.slice(0, 3);
+    return <button type="button" className={'nc' + (open ? ' on' : '')} data-docnode={it.id} aria-expanded={open} onClick={event => executeAction('projects.docs.SelectNode', { handler: onToggle }, event)}>
+      <span className="nch"><span className={'nct tile fam-' + it.fam}><Icon name={it.icon} size={12} /></span><b>{it.n}</b></span>
+      <span className="ncl">{shortLine(it.src)}</span>
+      {(ins.length > 0 || outs.length > 0) && <span className="ncb">
+        <span>{ins.map((p, i) => <span key={i} className={SOCKET_CLASS(p.t)}><i className="si" />{p.n}</span>)}</span>
+        <span>{outs.map((p, i) => <span key={i} className={'out ' + SOCKET_CLASS(p.t)}>{p.n}<i className="so" /></span>)}</span>
+      </span>}
+    </button>;
   }
 
   function parseGlossaryRows(bookGlossary) {
@@ -511,6 +551,7 @@
         title: d.title,
         summary: d.summary || '',
         steps: (d.steps || []).map(cleanStepLine).filter(Boolean),
+        heads: (d.steps || []).filter(line => /^#+\s/.test(String(line))).map(cleanStepLine).filter(Boolean),
         visual: d.visual || '',
         route: d.route || 'canvas'
       });
@@ -740,6 +781,7 @@
     const allTopics = React.useMemo(() => DOC_GROUPS.flatMap(g => grouped[g] || []), [grouped]);
     const libNodes = React.useMemo(() => normalizeLibraryNodes(s), [s.libraryPorts, s.catalogue]);
     const glossaryRows = React.useMemo(() => parseGlossaryRows(s.bookGlossary), [s.bookGlossary]);
+    const nodeFamilies = React.useMemo(() => [...new Set(libNodes.map(x => x.g))], [libNodes]);
 
     const active = allTopics.find(x => x.title === selectedTitle) || allTopics[0];
     const activeNode = active?.title === 'Node reference' && docNode ? libNodes.find(x => x.id === docNode) : null;
@@ -808,29 +850,17 @@
       </dl>;
     };
 
+    // Node reference: each family is a row of node cards drawn like the canvas node; a card opens its page with a wired example.
     const renderNodeRef = () => {
       const visible = q ? libNodes.filter(x => `${x.g} ${x.n} ${x.src}`.toLowerCase().includes(q)) : libNodes;
       const groups = [...new Set(visible.map(x => x.g))];
       if (!groups.length) return <p className="sub">No nodes match.</p>;
-      return <div className="tablewrap">
-        <table className="mini">
-          <thead>
-            <tr><th>Group</th><th>Nodes</th><th>Count</th></tr>
-          </thead>
-          <tbody>
-            {groups.map(g => {
-              const items = visible.filter(x => x.g === g);
-              return <tr key={g}>
-                <td>{g}</td>
-                <td>{items.map((x, i) => <React.Fragment key={x.id}>
-                  {i > 0 ? ', ' : ''}
-                  <button type="button" className="link" data-docnode={x.id} onClick={event => executeAction('projects.docs.SelectNode', { handler: () => setDocNode(x.id) }, event)}>{x.n}</button>
-                </React.Fragment>)}</td>
-                <td>{items.length}</td>
-              </tr>;
-            })}
-          </tbody>
-        </table>
+      return <div className="ncat">
+        {groups.map(g => <section key={g} data-fam={g}>
+          <h3>{g}</h3>
+          <div className="ncrow">{visible.filter(x => x.g === g).map(x => <NodeCard key={x.id} it={x} open={false}
+            onToggle={() => setDocNode(x.id)} />)}</div>
+        </section>)}
       </div>;
     };
 
@@ -908,11 +938,18 @@
       const askTarget = activeNode ? activeNode.n : active.title;
 
       return <aside className="dside">
-        {!activeNode && active.steps?.length > 1 && <section>
+        {!activeNode && active.title === 'Node reference' && nodeFamilies.length > 0 && <section>
+          <div className="eyebrow">Families</div>
+          {nodeFamilies.map(g => <button key={g} type="button" className="tocb" data-dfam={g} onClick={event => executeAction('projects.docs.ScrollFamily', { handler: () => [...(articleRef.current?.querySelectorAll?.('[data-fam]') || [])].find(el => el.dataset.fam === g)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) }, event)}>{g}</button>)}
+        </section>}
+        {!activeNode && active.title !== 'Node reference' && (active.heads ? active.heads.length > 1 : active.steps?.length > 1) && <section>
           <div className="eyebrow">On this page</div>
-          {active.steps.map((st, idx) => <button key={idx} type="button" className="tocb" data-dstep={idx} onClick={event => executeAction('projects.docs.CueStep', { handler: () => handleCueStep(idx) }, event)}>
-            {st.split(/[.:;]/)[0]}
-          </button>)}
+          {(active.heads || active.steps).map(st => {
+            const idx = active.steps.indexOf(st);
+            return <button key={st} type="button" className="tocb" data-dstep={idx} onClick={event => executeAction('projects.docs.CueStep', { handler: () => handleCueStep(idx) }, event)}>
+              {st.split(/[.:;]/)[0]}
+            </button>;
+          })}
         </section>}
         {tryAction && <section className="dtry">
           <div className="eyebrow">Try it</div>
@@ -1114,6 +1151,7 @@
   function projectsdocsjsxCloseConnectMap({ handler }) { return handler?.(); }
   function projectsdocsjsxPickConnectBox({ handler }) { return handler?.(); }
   function projectsdocsjsxRetryDocs({ handler }) { return handler?.(); }
+  function projectsdocsjsxScrollFamily({ handler }) { return handler?.(); }
   const PROJECT_ACTIONS = {
     'projects.docs.SetSelectedDId.1': 'projectsdocsjsxSetSelectedDId1',
     'projects.docs.NodeReference.2': 'projectsdocsjsxNodeReference2',
@@ -1132,7 +1170,8 @@
     'projects.docs.StartTutorial': 'projectsdocsjsxStartTutorial',
     'projects.docs.CloseConnectMap': 'projectsdocsjsxCloseConnectMap',
     'projects.docs.PickConnectBox': 'projectsdocsjsxPickConnectBox',
-    'projects.docs.RetryDocs': 'projectsdocsjsxRetryDocs'
+    'projects.docs.RetryDocs': 'projectsdocsjsxRetryDocs',
+    'projects.docs.ScrollFamily': 'projectsdocsjsxScrollFamily'
   };
   if (typeof window.registerActions === 'function') {
     window.registerActions(PROJECT_ACTIONS, {
@@ -1153,7 +1192,8 @@
       projectsdocsjsxStartTutorial,
       projectsdocsjsxCloseConnectMap,
       projectsdocsjsxPickConnectBox,
-      projectsdocsjsxRetryDocs
+      projectsdocsjsxRetryDocs,
+      projectsdocsjsxScrollFamily
     });
   }
 })();

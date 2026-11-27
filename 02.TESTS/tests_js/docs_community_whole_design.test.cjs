@@ -364,14 +364,15 @@ test('AG-21, AG-22, AG-23: Glossary merges 6 core + 9 status + bookGlossary; Nod
     }
     assert.ok(terms.includes('Document') && terms.includes('Broker'), 'bookGlossary terms merged');
 
-    // AG-22: Node reference 3-column table (Group | Nodes | Count)
+    // AG-22: Node reference is a drawn catalogue: one row of node cards per family, families only in the aside
     const nodeRefBtn = [...h.doc.querySelectorAll('.toc .tocb')].find(b => b.textContent.trim() === 'Node reference');
     await h.click(nodeRefBtn);
-    const headers = [...h.doc.querySelectorAll('article.card table.mini th')].map(th => th.textContent.trim());
-    assert.deepEqual(headers, ['Group', 'Nodes', 'Count']);
-    const revitRow = [...h.doc.querySelectorAll('article.card table.mini tbody tr')].find(tr => tr.children[0].textContent === 'Revit');
+    const revitRow = h.doc.querySelector('article.card [data-fam="Revit"]');
     assert.ok(revitRow);
-    assert.equal(revitRow.children[2].textContent.trim(), '2');
+    assert.equal(revitRow.querySelectorAll('.nc').length, 2);
+    assert.ok(revitRow.querySelector('.nc .nct') && revitRow.querySelector('.nc .ncb'), 'cards carry an icon tile and sockets');
+    assert.ok(!/`/.test(h.doc.querySelector('article.card').textContent), 'no raw markdown');
+    assert.ok([...h.doc.querySelectorAll('.dside [data-dfam]')].some(b => b.textContent.trim() === 'Revit'));
 
     // AG-23: Per-node doc page for Pure node + redacted file basename + upstream/downstream .pgraph
     const collectBtn = h.doc.querySelector('[data-docnode="revit.collect_sheets"]');

@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -371,13 +372,16 @@ def session_file(event) -> tuple[str, dict, dict]:
     if not native:
         return "", {}, {}
     from .workshop_mailbox import application_history, read_declarations
-    from .workshop_tasks import _declared_id, get
+    from .workshop_tasks import _declared_id, rows
     try:
         with application_history(read_only=True) as history:
             # Archived rows too: a native session id names one agent session, live or not.
             row = next((d for d in read_declarations(history._db, include_archived=True)
                         if native in (d.get("native_session_id"), d.get("session"))), None)
-            held = get(history, row.get("work") or _declared_id(row["session"])) if row else None
+            held = next(iter(rows(history, row.get("work") or _declared_id(row["session"]), settle=False)), None) if row else None
+    except sqlite3.Error:
+        logging.getLogger(__name__).debug("Session policy database unavailable", exc_info=True)
+        raise
     except (OSError, ValueError, KeyError, IndexError) as unreadable:
         logging.getLogger(__name__).debug("No session file for %s: %s", native, unreadable)
         return "", {}, {}
@@ -2712,6 +2716,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="ArchHub hook decision (one function for every agent)")
     parser.add_argument("--vendor", required=True, choices=VENDORS + tuple(_ALIAS) + ("cursor",))
     args = parser.parse_args(argv)
+    payload = {}
+    event_name = "PreToolUse"
+    exit_code = 0
     try:
         raw = sys.stdin.buffer.read(4 * 1024 * 1024 + 1)
         payload = json.loads(raw or b"{}")
@@ -2723,13 +2730,23 @@ def main(argv=None) -> int:
                 and payload.get("hook_event_name") in ("stop", "beforeSubmitPrompt")):
             from .native_agent_hooks import emit_cursor_hook
             return emit_cursor_hook(payload)
+        event_name = payload.get("hook_event_name") or event_name
         decision = decide(payload, args.vendor)
-        out = render(decision, args.vendor, payload.get("hook_event_name") or "PreToolUse")
-    except Exception as exc:  # organize, never obstruct: a broken check never stops work
-        print("ArchHub hook decision unavailable (%s); the call continues." % type(exc).__name__, file=sys.stderr)
-        out = {} if args.vendor != "opencode" else {"verdict": "allow", "notes": [], "rules": []}
+        out = render(decision, args.vendor, event_name)
+    except Exception as exc:
+        try:
+            action, _facts = classify(normalize(payload, args.vendor), os.environ)
+        except Exception:
+            action = "unknown"
+        read_only = action == "read"
+        fallback = {"verdict": "allow" if read_only else "refuse", "notes": [],
+                    "rules": [] if read_only else ["Approval policy is unavailable"]}
+        outcome = "read continues" if read_only else "call blocked"
+        print(f"ArchHub hook decision unavailable ({type(exc).__name__}); {outcome}.", file=sys.stderr)
+        out = render(fallback, args.vendor, event_name)
+        exit_code = 0 if read_only else 2
     sys.stdout.write(json.dumps(out, ensure_ascii=True) + "\n")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

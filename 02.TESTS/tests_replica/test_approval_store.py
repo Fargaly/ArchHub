@@ -5,12 +5,32 @@ taken for an empty file. Found on the chat release: "The approval could not be s
 and a waiter that could deny a live request. Every case here holds a real reader open at the exact step.
 """
 import json
+import io
 import os
+import sqlite3
 import threading
 import time
 from pathlib import Path
 
 import pytest
+
+
+@pytest.mark.parametrize("tool, expected", [("Read", 0), ("Write", 2)])
+def test_hook_database_failure_blocks_effects(monkeypatch, capsys, tool, expected):
+    from nodelang import hook_decision
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    payload = {"tool_name": tool, "tool_input": {"file_path": "example.txt"}}
+    monkeypatch.setattr(hook_decision.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode())))
+    monkeypatch.setattr(hook_decision, "decide", locked)
+    assert hook_decision.main(["--vendor", "codex"]) == expected
+    result = json.loads(capsys.readouterr().out)
+    if expected:
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    else:
+        assert result == {}
 
 
 @pytest.fixture(autouse=True)

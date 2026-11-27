@@ -237,7 +237,19 @@
     const [query, setQuery] = React.useState(''),
       [options, setOptions] = React.useState(false),
       [preview, setPreview] = React.useState(null),
-      [localDialog, setLocalDialog] = React.useState(null);
+      [localDialog, setLocalDialog] = React.useState(null),
+      // "From Community" in Add a node opens this section; it may mount after that choice.
+      [commOpen, setCommOpen] = React.useState(() => { const asked = Boolean(window.UI.openLibraryCommunity); window.UI.openLibraryCommunity = false; return asked; }),
+      [commItem, setCommItem] = React.useState(null);
+    // Library › Community: the shared catalogue lives here, not on a page of its own.
+    const commRead = window.UI.useAction();
+    const readCommunity = () => commRead.run(() => api.refreshCommunity());
+    React.useEffect(() => { readCommunity(); }, []);
+    React.useEffect(() => {
+      const openComm = () => { window.UI.openLibraryCommunity = false; setCommOpen(true); };
+      window.addEventListener('archhub:library-community', openComm);
+      return () => window.removeEventListener('archhub:library-community', openComm);
+    }, []);
     const shelfRef = React.useRef(null),
       optionsButton = React.useRef(null),
       optionsMenu = React.useRef(null);
@@ -526,6 +538,8 @@
     }).filter(sec => sec.count > 0);
 
     const isOpen = group => Boolean(q) || !collapsed.includes(group.id);
+    const commItems = (window.UI.communityWorkflows?.(s) || []).filter(c => !q || `${c.name} ${c.by} ${(c.steps || []).join(' ')}`.toLowerCase().includes(q));
+    const commShown = Boolean(q) || commOpen;
     const openImportDialog = () => {
       u?.show?.('Install mod');
       setLocalDialog('import');
@@ -553,7 +567,7 @@
             if (e.key === 'Escape') e.currentTarget.blur();
           }} />
         <span className="shelf-options-anchor" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOptions(false); }}>
-          <button type="button" id="libmore" ref={optionsButton} className="shelf-options icon-btn" aria-label="Library options" aria-haspopup="menu" aria-expanded={options} title="Library & Mods, Community" onClick={event => executeAction('ui.select', () => setOptions(shown => !shown), event)}>
+          <button type="button" id="libmore" ref={optionsButton} className="shelf-options icon-btn" aria-label="Library options" aria-haspopup="menu" aria-expanded={options} title="Library & Mods" onClick={event => executeAction('ui.select', () => setOptions(shown => !shown), event)}>
             <window.AHIcon name="more" size={15} />
           </button>
           {options && <section ref={optionsMenu} className="context-menu shelf-options-menu" role="menu" aria-label="Library options" onClick={() => setOptions(false)} onKeyDown={e => {
@@ -566,7 +580,6 @@
           }}>
             <div className="context-group">
               <button type="button" role="menuitem" onClick={event => executeAction('projects.ds_library.LibraryMods.15', { u }, event)}><window.AHIcon name="library" size={15} /><span>{'Library & Mods'}</span></button>
-              <button type="button" role="menuitem" onClick={event => executeAction('projects.ds_library.Community.16', { u }, event)}><window.AHIcon name="users" size={15} /><span>Community</span></button>
               <button type="button" role="menuitem" onClick={event => executeAction('ui.select', openImportDialog, event)}><window.AHIcon name="plus" size={15} /><span>Import a node…</span></button>
             </div>
           </section>}
@@ -610,7 +623,37 @@
             {body}
           </section>;
         })}
-        {Boolean(q) && !sections.length && <Empty>Nothing matches.</Empty>}
+        {(!q || commItems.length > 0) && <section className={'shelf-group libcat' + (commShown ? ' open' : '')} data-library-category="community" data-open={commShown || undefined}>
+          <button type="button" className="shelf-category libch" data-libcat="community" aria-expanded={commShown} onClick={event => executeAction('ui.select', () => setCommOpen(v => !v), event)}>
+            <window.AHIcon name="arrow" size={10} style={{ transform: commShown ? 'rotate(90deg)' : undefined }} />
+            <window.AHIcon name="users" size={13} />
+            <b>Community</b>
+            <em>{commItems.length}</em>
+          </button>
+          {commShown && <>
+            {commItems.map(c => <button type="button" key={'comm:' + c.id} data-design="library.row" data-comm={c.id}
+              className="listbutton shelf-node libi"
+              onClick={event => executeAction('ui.select', () => setCommItem(c), event)}
+              title={`${c.by} · v${c.version}`}
+              aria-label={'Preview ' + c.name}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left' }}>
+              {renderTile(c.effect ? 'effect' : 'list', 'group')}
+              <span className="shelf-node-copy ln" style={{ minWidth: 0, flex: 1 }}>
+                <b>{c.name}</b>
+                <em style={{ fontStyle: 'normal', fontSize: 'calc(11px * var(--text-scale,1))', color: A.inkSoft, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.by} · {c.effect ? 'Writes outside the file' : 'Read only'}</em>
+              </span>
+            </button>)}
+            {commRead.state === 'waiting' && <p className="hint" role="status" style={{ margin: '4px 10px 6px 28px', fontSize: 12, color: A.inkMuted }}>Reading the Community…</p>}
+            {commRead.state === 'error' && <p className="hint" role="alert" style={{ margin: '4px 10px 6px 28px', fontSize: 12, color: A.warn }}>{commRead.error} <button type="button" onClick={event => executeAction('ui.select', readCommunity, event)}>Retry</button></p>}
+            {commRead.state === 'empty' ? <p className="hint" data-comm-empty="" style={{ margin: '4px 10px 6px 28px', fontSize: 12, color: A.inkMuted }}>Nothing shared with you yet. Workflows from your office and the people you follow appear here.</p> : null}
+            {commRead.state === 'loaded' ? (!commItems.length && <p className="hint" data-comm-empty="" style={{ margin: '4px 10px 6px 28px', fontSize: 12, color: A.inkMuted }}>Nothing shared with you yet. Workflows from your office and the people you follow appear here.</p>) : null}
+            <button type="button" className="listbutton shelf-node libi" id="publish" onClick={event => executeAction('ui.select', () => setLocalDialog('publish'), event)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left' }}>
+              {renderTile('list', 'send')}
+              <span className="shelf-node-copy ln"><b>Publish a workflow…</b></span>
+            </button>
+          </>}
+        </section>}
+        {Boolean(q) && !sections.length && !commItems.length && <Empty>Nothing matches.</Empty>}
       </div>
       <button type="button" className="libcomm button-reset" id="pkgadd" onClick={event => executeAction('ui.select', openPkgAddDialog, event)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: '1px dashed ' + A.line, borderRadius: 6, color: A.inkSoft, fontSize: 12, cursor: 'pointer', width: '100%' }}>
         <window.AHIcon name="plus" size={13} />
@@ -644,6 +687,8 @@
         : localDialog === 'import' && !u?.modal && window.UI.ImportModDialog
         ? <window.UI.ImportModDialog kind="Install a mod" onClose={() => setLocalDialog(null)} />
         : null}
+      {commItem && window.UI.CommunityPreview && <window.UI.CommunityPreview item={commItem} onClose={() => setCommItem(null)} />}
+      {localDialog === 'publish' && window.UI.PublishCommunityDialog && <window.UI.PublishCommunityDialog onClose={() => setLocalDialog(null)} />}
       {localDialog === 'pkgadd' && window.UI.AddNodePluginDialog && (window.ReactDOM?.createPortal
         ? window.ReactDOM.createPortal(<window.UI.AddNodePluginDialog onClose={() => setLocalDialog(null)} />, document.body)
         : <window.UI.AddNodePluginDialog onClose={() => setLocalDialog(null)} />)}
@@ -656,7 +701,6 @@ function projectsdslibraryjsxToggleSection13({f,toggleSection}) {return toggleSe
 async function projectsdslibraryjsxNewSession14({api,u}) {const result=await u.act(api.newSession);if(result)u.go('canvas');}
 
 function projectsdslibraryjsxLibraryMods15({u}) {return u.go('settings/Library & Mods');}
-function projectsdslibraryjsxCommunity16({u}) {return u.go('community');}
 function projectsdslibraryjsxCloseLibrary1({onClose}, event) {
   const handler = onClose;
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
@@ -700,8 +744,7 @@ const PROJECT_ACTIONS = {
   "projects.ds_library.InstallMod.11": "projectsdslibraryjsxInstallMod11",
   "projects.ds_library.ToggleSection.13":"projectsdslibraryjsxToggleSection13",
   "projects.ds_library.NewSession.14":"projectsdslibraryjsxNewSession14",
-  "projects.ds_library.LibraryMods.15":"projectsdslibraryjsxLibraryMods15",
-  "projects.ds_library.Community.16":"projectsdslibraryjsxCommunity16"
+  "projects.ds_library.LibraryMods.15":"projectsdslibraryjsxLibraryMods15"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsdslibraryjsxToggleSection13,projectsdslibraryjsxNewSession14,projectsdslibraryjsxLibraryMods15,projectsdslibraryjsxCommunity16,projectsdslibraryjsxCloseLibrary1,projectsdslibraryjsxSetFamilyF3,projectsdslibraryjsxAddC4,projectsdslibraryjsxOnClose5,projectsdslibraryjsxUShowSkillIdT6,projectsdslibraryjsxExportRecipe8,projectsdslibraryjsxMCPTools10,projectsdslibraryjsxInstallMod11});
+window.registerActions(PROJECT_ACTIONS, {projectsdslibraryjsxToggleSection13,projectsdslibraryjsxNewSession14,projectsdslibraryjsxLibraryMods15,projectsdslibraryjsxCloseLibrary1,projectsdslibraryjsxSetFamilyF3,projectsdslibraryjsxAddC4,projectsdslibraryjsxOnClose5,projectsdslibraryjsxUShowSkillIdT6,projectsdslibraryjsxExportRecipe8,projectsdslibraryjsxMCPTools10,projectsdslibraryjsxInstallMod11});
 })();

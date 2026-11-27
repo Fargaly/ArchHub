@@ -60,7 +60,7 @@
     Connections:'Connections', 'This PC':'Look, Appearance, System, Advanced, Updates & About'
   };
   // Former page names stay valid links: [the page that holds them now, the section to scroll to].
-  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Connections','Accounts'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced'],
+  const formerAreas = {Look:['Appearance'], Interface:['Appearance'], You:['Privacy','Workspaces and files'], System:['System graph','Agents on this PC'], Models:['Agents','Models'], BABOOM:['Agents','BABOOM'], Permissions:['Agents','What agents may do'], Hooks:['Agents','What agents may do'], Workshop:['Agents','Workshop'], Automations:['Agents','Automations'], 'Library & Mods':['Agents','Tools in the Library'], Brain:['Account','Brain and cloud sync'], Social:['Connections','Accounts'], Community:['Account','Community'], Access:['Account','Plan & access'], Team:['Account','Plan & access'], Providers:['Connections','AI providers','advanced'],
     // Pages merged into Settings (founder 2026-11-26): each opens at the card that now holds it.
     Meetings:['Agents','Meetings'], 'Model review':['Agents','Models'], Watcher:['Agents','Automations'], 'X-RAY':['Agents','Tools in the Library'], 'Interface studio':['Appearance']};
   // Display metadata from the Settings design. Values and writes belong to the settings owners.
@@ -454,7 +454,7 @@
     // An account in no office works in Personal only: the one choice there is.
     live.office=s.firms?.length?<select aria-label="Active office" value={s.activeFirm||''} onChange={event=>u.act(()=>api.selectFirm(event.target.value))}>
       {s.firms.map(firm=><option key={firm.id} value={firm.id}>{firm.name}</option>)}</select>:<select aria-label="Active office" value="Personal" onChange={()=>{}}><option>Personal</option></select>;
-    live.commPublished=open('Open Community',()=>u.go('community'));
+    live.commPublished=open('Publish a workflow',()=>u.show('Publish to Community'));
     if(Array.isArray(s.officeInvitations))live.officeInvites=<div>
       {s.controlErrors?.officeInvitations?<span role="status">{s.controlErrors.officeInvitations}</span>:!s.officeInvitations.length&&<span>No office invitations.</span>}
       {s.officeInvitations.map(invite=><div key={invite.id}><b>{invite.office}</b> · {invite.status}

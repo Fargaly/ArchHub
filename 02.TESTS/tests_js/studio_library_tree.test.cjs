@@ -13,7 +13,7 @@ const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 // Never the bare python on PATH (on this PC that is the Windows Store stub).
 const python = process.env.ARCHHUB_TEST_PYTHON || process.env.PYTHON || path.join(process.env.LOCALAPPDATA, 'Python/bin/python.exe');
 const DESIGN = ['Programs', 'Files', 'Workflows and skills', 'Starts a run', 'Checks and standards', 'Agents and AI', 'Lists and data', 'Change geometry', 'Decide and branch'];
-const OPTIONS = [['Library & Mods', ['go', 'settings/Library & Mods']], ['Community', ['go', 'community']], ['Import a node…', ['show', 'Install mod']]];
+const OPTIONS = [['Library & Mods', ['go', 'settings/Library & Mods']], ['Import a node…', ['show', 'Install mod']]];
 
 test('LIBRARY tree: owner categories under plain labels, closed first, every option acts, fluid at 1009/1440/1920', async t => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'librarytree-'));

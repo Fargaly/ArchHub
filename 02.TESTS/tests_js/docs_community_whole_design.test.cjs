@@ -214,8 +214,11 @@ async function mountStudio(initialState = {}, apiOverrides = {}, initialRoute = 
       setToast: msg => toasts.push(msg),
       act: fn => Promise.resolve().then(fn)
     };
-    const Screen = appState.route === 'community'
-      ? win.UI.Community
+    // Community has no page: its catalogue rows sit in the Library and open these two dialogs.
+    const Screen = appState.route === 'community-preview'
+      ? () => win.React.createElement(win.UI.CommunityPreview, { item: win.UI.communityWorkflows(state)[0], onClose: () => setAppState({ route: 'canvas' }) })
+      : appState.route === 'community-publish'
+        ? () => win.React.createElement(win.UI.PublishCommunityDialog, { onClose: () => setAppState({ route: 'canvas' }) })
       : appState.route === 'docs'
         ? win.UI.Docs
         : () => win.React.createElement('div', { 'data-screen': appState.route }, 'Canvas view');
@@ -475,72 +478,28 @@ test('AG-32: Start the tutorial with BABOOM creates copy workflow, navigates to 
   }
 });
 
-test('AG-28, AG-29, AG-30, AG-31: Unified Community catalogue, zero price/charges UI, Preview & Install copy without running, Standard rule modal, and Publish privacy check', async () => {
+test('AG-29, AG-30: Library › Community preview installs a copy without running; Publish dialog blocks keys (no Community page)', async () => {
   const h = await mountStudio({
-    graphs: [
-      {
-        id: 'g-pub',
-        name: 'Issue Exporter',
-        nodes: [
-          {
-            id: 'n-sec',
-            title: 'Upload bundle',
-            effect: true,
-            params: {
-              api_key: 'sk-abc123secretkey',
-              out_file: '/workspace/deliverables/bundle.ifc',
-              endpoint: 'https://bim.example.org/upload'
-            }
-          }
-        ]
-      }
-    ]
-  }, {}, 'community');
+    community: {
+      peers: [{ id: 'community:office', name: 'office', subscribed: true }],
+      patterns: [{ id: 'p1', title: 'Sheet register to Excel', description: 'Collect sheets', source: 'community:office', status: 'Accepted' }],
+      shared: [], groups: [], joinStatus: '', marketQuery: '', listing: {}, charge: {}, charges: [], marketplace: []
+    },
+    graphs: [{ id: 'g-pub', name: 'Issue Exporter', nodes: [{ id: 'n-sec', title: 'Upload bundle', effect: true,
+      params: { api_key: 'sk-abc123secretkey', out_file: '/workspace/deliverables/bundle.ifc', endpoint: 'https://bim.example.org/upload' } }] }]
+  }, {}, 'community-preview');
 
   try {
-    // AG-28: Header, toolbar, segmented buttons, scope select, Publish yours
-    assert.equal(h.doc.querySelector('[data-screen="community"] h1').textContent.trim(), 'Community');
-    assert.equal(h.doc.querySelector('#cq').getAttribute('placeholder'), 'Search the catalogue');
-    const segLabels = [...h.doc.querySelectorAll('.seg button')].map(b => b.textContent.trim());
-    assert.deepEqual(segLabels, ['All', 'Workflows', 'Nodes', 'Standard']);
-    const scopeLabels = [...h.doc.querySelectorAll('#cscope option')].map(o => o.textContent.trim());
-    assert.deepEqual(scopeLabels, ['From everyone', 'Yours', 'Office', 'Public']);
+    assert.equal(h.win.UI.Community, undefined, 'the Community page is gone');
+    // Only real owner records: the fixed sample catalogue is gone.
+    assert.deepEqual(Array.from(h.win.UI.communityWorkflows(h.getState()), c => c.name), ['Sheet register to Excel']);
 
-    // AG-29: Strict F22 — zero price / creator share / project charges UI anywhere on Community
-    const fullText = h.doc.body.textContent;
-    assert.doesNotMatch(fullText, /Creator share|Price · USD|Client project charges|Amount · USD|\$\d/);
-
-    // Filter to Nodes -> verify .card.citem actions (Docs + Add to canvas) and Docs cross-link
-    await h.click(h.doc.querySelector('[data-ck="Nodes"]'));
-    const nodeCards = [...h.doc.querySelectorAll('.card.citem')];
-    assert.ok(nodeCards.length >= 3);
-    assert.ok(nodeCards.some(c => c.textContent.includes('Collect sheets') && c.textContent.includes('Read only')));
-    assert.ok(nodeCards.some(c => c.textContent.includes('Write sheet register') && c.textContent.includes('Writes outside the file')));
-    await h.click(h.doc.querySelector('[data-cdoc="revit.collect_sheets"]'));
-    assert.equal(h.getAppState().route, 'docs');
-    assert.equal(h.doc.querySelector('article.card h2').textContent.trim(), 'Collect sheets');
-
-    // Return to Community -> Filter to Standard -> AG-31: Open the rule modal with code, summary and provenance
-    h.win.ReactDOM.flushSync(() => h.setAppState({ route: 'community' }));
-    await h.settle(15);
-    await h.click(h.doc.querySelector('[data-ck="Standard"]'));
-    const ruleBtn = h.doc.querySelector('[data-cstd="WALLS-07"]') || h.doc.querySelector('[data-cstd="FOLDERS-02"]');
-    await h.click(ruleBtn);
-    const ruleDialog = h.doc.querySelector('[role="dialog"]');
-    assert.ok(ruleDialog);
-    assert.match(ruleDialog.textContent, /From the Office standard \(2026 · current\)/);
-    assert.match(ruleDialog.textContent, /baboom\.archhub\.io/);
-    await h.click([...ruleDialog.querySelectorAll('button')].find(b => b.textContent.trim() === 'Close'));
-
-    // Filter to Workflows -> AG-30: Preview modal (.pgraph + copy explanation) & Install without running
-    await h.click(h.doc.querySelector('[data-ck="Workflows"]'));
-    await h.click(h.doc.querySelector('[data-prev="c1"]'));
+    // AG-30: Preview dialog (.pgraph + copy explanation) and Install without running
     const prevDialog = h.doc.querySelector('[role="dialog"][aria-label="Sheet register to Excel"]');
     assert.ok(prevDialog);
     assert.match(prevDialog.textContent, /Install makes a copy in its own \.archhub file\. Nothing runs until you press Run/);
-    const previewSteps = [...prevDialog.querySelectorAll('.pgraph .pn2')].map(el => el.textContent.trim());
-    assert.deepEqual(previewSteps, ['Collect sheets', 'Read sheet', 'Write register']);
-
+    // AG-29: no price or charges UI (F22)
+    assert.doesNotMatch(h.doc.body.textContent, /Creator share|Price · USD|Client project charges|Amount · USD|\$\d/);
     const runCallsBefore = h.calls.filter(c => c[0] === 'runNode').length;
     await h.click([...prevDialog.querySelectorAll('button')].find(b => b.textContent.trim() === 'Install'));
     assert.equal(h.calls.filter(c => c[0] === 'runNode').length, runCallsBefore, 'Install must never auto-run');
@@ -548,43 +507,27 @@ test('AG-28, AG-29, AG-30, AG-31: Unified Community catalogue, zero price/charge
     assert.ok(h.toasts.includes('Sheet register to Excel imported as a copy. Nothing ran; assign an agent or press Run.'));
     assert.equal(h.getAppState().route, 'canvas');
 
-    // Return to Community -> test Publish yours live Privacy check blocking secrets, then publishing once secret is removed
-    h.win.ReactDOM.flushSync(() => h.setAppState({ route: 'community' }));
+    // Publish dialog: live privacy check blocks secrets, then sends for review once the key is removed
+    h.win.ReactDOM.flushSync(() => h.setAppState({ route: 'community-publish' }));
     await h.settle(15);
-    await h.click(h.doc.querySelector('#publish'));
     let pubDialog = h.doc.querySelector('[role="dialog"][aria-label="Publish a workflow"]');
     assert.ok(pubDialog);
     await h.typeInput(pubDialog.querySelector('#pubt'), 'g-pub');
     assert.ok(pubDialog.querySelector('#pubcheck .f-err'), 'Secret key triggers error state in Privacy check');
     assert.match(pubDialog.querySelector('#pubcheck').textContent, /local path.*will be published as file names only/);
-
     await h.click([...pubDialog.querySelectorAll('button')].find(b => b.textContent.trim() === 'Publish'));
     assert.ok(h.toasts.includes('Remove the key first. Nothing was published.'));
     assert.ok(h.doc.querySelector('[role="dialog"][aria-label="Publish a workflow"]'), 'Dialog stays open when blocked');
 
-    // Remove secret from parameter, verify Privacy check turns green and Publish succeeds
     h.win.ReactDOM.flushSync(() => {
-      h.setState(prev => ({
-        ...prev,
-        graphs: [{
-          id: 'g-pub',
-          name: 'Issue Exporter',
-          nodes: [{
-            id: 'n-sec',
-            title: 'Upload bundle',
-            effect: true,
-            params: { out_file: '/workspace/deliverables/bundle.ifc' }
-          }]
-        }]
-      }));
+      h.setState(prev => ({ ...prev, graphs: [{ id: 'g-pub', name: 'Issue Exporter', nodes: [{ id: 'n-sec', title: 'Upload bundle', effect: true, params: { out_file: '/workspace/deliverables/bundle.ifc' } }] }] }));
     });
     await h.settle(15);
     pubDialog = h.doc.querySelector('[role="dialog"][aria-label="Publish a workflow"]');
     assert.equal(pubDialog.querySelector('#pubcheck .f-err'), null);
     await h.click([...pubDialog.querySelectorAll('button')].find(b => b.textContent.trim() === 'Publish'));
-    assert.ok(h.toasts.includes('Issue Exporter published to Office. Paths were reduced to file names.'));
-    await h.typeInput(h.doc.querySelector('#cscope'), 'Ours');
-    assert.match(h.doc.querySelector('.cgrid').textContent, /Issue Exporter/);
+    assert.ok(h.toasts.includes('Issue Exporter sent for review before it is shared with Office. Paths are reduced to file names.'));
+    assert.equal(h.doc.querySelector('[role="dialog"][aria-label="Publish a workflow"]'), null);
   } finally {
     h.close();
   }

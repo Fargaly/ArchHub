@@ -492,8 +492,7 @@
         id: 'std-' + slugify(rule.code || rule.title),
         title: rule.title,
         summary: rule.summary,
-        steps: rule.steps,
-        route: 'community'
+        steps: rule.steps
       });
     }
 

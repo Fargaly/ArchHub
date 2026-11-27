@@ -680,7 +680,7 @@
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace, desktopAccess?.admitted]);
     const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
-    const screen = route === 'community' ? <window.UI.Community /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace /> : route === 'canvas' ? null : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'docs' ? <window.UI.Docs /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -1166,13 +1166,13 @@
     const logTask = k === 'Raw log' && s.tasks.find(task => task.id === m.id);
     const title = k === 'Confirm' ? (m.heading || m.title || 'Confirm') : logTask ? 'Raw log · ' + logTask.title : k;
     if (k === 'Profile card') return <ProfileCardPopover close={close} popRef={ref} u={u} />;
+    if (k === 'Publish to Community') return window.UI.PublishCommunityDialog ? <window.UI.PublishCommunityDialog onClose={close} /> : null;
     if (k === 'Crop your photo') return <CropPhotoDialog modal={m} close={close} u={u} />;
     if (k === 'ArchHub menu') {
       const entries = [
         ['All pages…', () => u.show('Search')],
         ['How everything connects', () => u.go('settings/System graph')],
         ['App health', () => u.show('App health')],
-        ['Community', () => u.go('community')],
         ['Social media', () => u.go('settings/Social')],
         ['Docs', () => u.go('docs')],
         ['Settings', () => u.go('settings/Account')]

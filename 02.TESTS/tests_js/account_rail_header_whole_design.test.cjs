@@ -292,8 +292,7 @@ async function mountAppShell(page) {
     window.UI.workshopPeople = () => ({choices: [{key: 'claude', name: 'Claude Code', handle: 'claude-code'}]});
     window.UI.chatTurn = (_c, _to, text) => ({prompt: text, agent: 'BABOOM'});
     window.UI.paletteCommands = (_s, u) => [
-      {id: 'page.docs', label: 'Docs', group: 'Pages', action: () => u.go('docs')},
-      {id: 'page.community', label: 'Community', group: 'Pages', action: () => u.go('community')}
+      {id: 'page.docs', label: 'Docs', group: 'Pages', action: () => u.go('docs')}
     ];
     window.UI.openSurfaceMenu = () => {};
     window.UI.keyboardContextMenu = () => false;
@@ -304,7 +303,6 @@ async function mountAppShell(page) {
     window.UI.BillingAccount = blank;
     window.UI.Canvas = () => React.createElement('div', {className: 'node-canvas'}, 'Canvas stage');
     window.UI.Docs = () => React.createElement('main', {'data-screen': 'docs'}, 'Docs screen');
-    window.UI.Community = () => React.createElement('main', {'data-screen': 'community'}, 'Community screen');
     window.UI.Social = () => React.createElement('main', {'data-screen': 'social'}, 'Social screen');
     window.UI.AppHealth = () => React.createElement('div', {'data-design': 'app.health'}, 'App health');
     window.UI.Settings = ({page}) => React.createElement('main', {'data-screen': 'settings', 'data-settings-page': page}, 'Settings · ' + page);
@@ -484,7 +482,7 @@ test('P2-A5: Header mark/workspace/bell popovers, Add node filters+keys+value, C
     await page.locator('[data-design="header.mark"]').click();
     const markMenu = page.locator('[data-design="mark.menu"]');
     await markMenu.waitFor();
-    for (const item of ['All pages…', 'How everything connects', 'App health', 'Community', 'Social media', 'Docs']) {
+    for (const item of ['All pages…', 'How everything connects', 'App health', 'Social media', 'Docs']) {
       await markMenu.getByRole('menuitem', {name: item, exact: true}).waitFor();
     }
     await markMenu.getByRole('menuitem', {name: 'App health', exact: true}).click();

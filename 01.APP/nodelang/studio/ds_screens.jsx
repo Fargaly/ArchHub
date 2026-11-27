@@ -1796,7 +1796,7 @@
         });
         return;
       }
-      if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.show('Present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
+      if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.show('Present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('settings/Community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
       } else if (n.kind === 'Agent') u.show('Agent', {
         id: n.params.provider
@@ -2012,7 +2012,7 @@
                 u.setToast(doneSteps.length ? 'Re-ran the saved examples of ' + doneSteps.length + ' finished step' + (doneSteps.length > 1 ? 's' : '') + ': all match their last result.' : 'Nothing to test yet. Steps get examples once they run.');
                 return {ok: true};
               })],
-              ['Publish to Community', () => u.go('community')],
+              ['Publish to Community', () => u.show('Publish to Community')],
               ['Keyboard shortcuts', () => u.show('Keyboard shortcuts')],
               ['Archive task…', () => setArchiveAsk(true)],
               ['Delete task…', () => { setDeleteError(''); setDeleteAsk(true); }],

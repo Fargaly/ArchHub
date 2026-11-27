@@ -22,7 +22,7 @@ const execution=(async()=>{
  await check('Built approved Home opens',async()=>{await page.locator('[data-screen="home"]').waitFor({timeout:timeoutMs});assert(await page.locator('.home-content').count()===1,'Approved Home layout missing');});
  await page.screenshot({path:path.join(out,'home.png')});
  if(report.checks.at(-1).status!=='PASS')throw Error('Boot refused: '+await page.locator('body').innerText());
- const names=['Home','Workshop','Canvas','Docs','Team','Brain','Watcher','Meetings','Dependencies','Present','Community','Model review','Interface studio','Plan & access','Model routing','Social media','X-RAY','Runs','Logs & receipts','Automations','System graph','Feedback','First run'];
+ const names=['Home','Workshop','Canvas','Docs','Team','Brain','Watcher','Meetings','Dependencies','Present','Model review','Interface studio','Plan & access','Model routing','Social media','X-RAY','Runs','Logs & receipts','Automations','System graph','Feedback','First run'];
  for(const name of names){
   await check('Screen '+name,async()=>{await go(name);await page.waitForTimeout(75);assert(!await page.getByText('Could not open this view',{exact:true}).count(),'Error boundary');assert(await page.locator('[data-screen]').count()>0,'No rendered screen');});
   const file=name.toLowerCase().replaceAll(/[^a-z0-9]+/g,'-')+'.png';await page.screenshot({path:path.join(out,file)});report.screens.push({name,file});

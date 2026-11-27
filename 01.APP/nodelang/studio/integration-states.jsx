@@ -145,7 +145,9 @@
     const chooseSource = async key => {
       if (key === 'comm') {
         close?.();
-        u?.go?.('community');
+        window.UI.openLibraryCommunity = true;
+        window.dispatchEvent(new CustomEvent('archhub:library-community'));
+        if (u?.route !== 'canvas' && u?.route !== 'task-file') u?.go?.('canvas');
         return;
       }
       if (key === 'agent') {

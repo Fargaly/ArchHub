@@ -2473,6 +2473,9 @@ api.selectGraph=path=>{
  return api.openSession(path);
 };
 api.getGraph=()=>copy(state.graph);
+// Settings > Agents > Tools in the Library: per-node on/off, kept by the settings owner (libraryOff).
+api.readLibraryOff=async()=>{const result=await settingsAction('readLibraryOff');publish({libraryOff:result.libraryOff});return result;};
+api.setLibraryNodeEnabled=async(id,enabled)=>{const result=await settingsAction('setLibraryNodeEnabled',[id,Boolean(enabled)]);publish({libraryOff:result.libraryOff});return result;};
 api.setLibraryCollapsed=async groups=>{
  if(!state.libraryCategories)await settingsAction('readLibraryCollapsed');
  if(!Array.isArray(groups)||groups.some(name=>!state.libraryCategories.includes(name)))throw Error('Unknown Library category.');
@@ -2848,6 +2851,7 @@ async function loadDesktop(){
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
  // The refusal still belongs on the status footer; a later update read must not erase it.
+ void api.readLibraryOff().catch(error=>notice(error.message||String(error)));
  void settingsAction('readLibraryCollapsed').catch(error=>{const message=error.message||String(error);notice(message);publish({libraryCollapsed:[],connectionNotice:state.connectionNotice&&state.connectionNotice!=='Checking for updates…'?state.connectionNotice:message});});
  // The Library catalogue reads every saved session file (a cold first start on a full profile takes seconds): it loads after
  // the splash, and the Library shows that it is loading. The first file's nodes take their ports when it arrives.

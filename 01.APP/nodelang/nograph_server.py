@@ -2653,6 +2653,18 @@ def r_settings_action(s, req):
         # Until he opens or closes a category himself, the tree starts closed (the design's first look).
         return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [row['id'] for row in tree]),
                                       'libraryCategories': categories, 'libraryTree': tree}}
+    if function in ('readLibraryOff', 'setLibraryNodeEnabled'):
+        # Settings > Agents > Tools in the Library: node types he turned off stay out of the Library and Add node.
+        off = [row for row in settings.read().get('libraryOff', []) if isinstance(row, str)]
+        if function == 'setLibraryNodeEnabled':
+            if (len(args) != 2 or not isinstance(args[0], str) or not args[0].strip() or len(args[0]) > 200
+                    or not isinstance(args[1], bool)):
+                raise Refused('Choose a Library node and on or off.')
+            off = [row for row in off if row != args[0]] + ([] if args[1] else [args[0]])
+            if len(off) > 5000:
+                raise Refused('Too many Library nodes are off.')
+            settings.update({'libraryOff': off})
+        return {'ok': True, 'result': {'libraryOff': off}}
     if function in ('readSessionListFilters', 'setSessionListFilter'):
         filters = settings.read().get('sessionListFilters', {})
         if function == 'setSessionListFilter':

@@ -293,7 +293,8 @@
     );
 
     const baseCatalogue = [
-      ...(s.catalogue || []).filter(c => !agentSessions.has(c.id)),
+      // A node type turned off in Settings > Agents > Tools in the Library stays out of the Library.
+      ...(s.catalogue || []).filter(c => !agentSessions.has(c.id) && !(s.libraryOff || []).includes(c.id)),
       ...disabledModCards.filter(dc => !(s.catalogue || []).some(c => c.id === dc.id))
     ].filter(c => {
       if (!savedWorkflows.has(c.id)) return true;

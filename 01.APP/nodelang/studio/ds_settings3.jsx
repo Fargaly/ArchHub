@@ -492,13 +492,13 @@
     const s=useData(),u=useApp(),[open,setOpen]=React.useState(false);
     const nodes=s.catalogue||[],groups=[...new Set(nodes.map(row=>row.family))];
     if(!s.catalogue)return <span role="status">Reading the Library…</span>;
-    // shortcut: no owner turns one node type off yet, so every node is on and its switch is Coming soon.
-    return <><div className="sheet-library-summary"><span><b>{nodes.length}</b> of {nodes.length} nodes on, from {groups.length} sources</span>
+    const off=new Set(s.libraryOff||[]),on=rows=>rows.filter(row=>!off.has(row.id)).length;
+    return <><div className="sheet-library-summary"><span><b>{on(nodes)}</b> of {nodes.length} nodes on, from {groups.length} sources</span>
       <Btn sm aria-expanded={open} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setOpen(value=>!value)},event)}>{open?'Hide':'Manage'}</Btn>
       <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Install mod')},event)}>Import</Btn></div>
-      {open&&<div className="sheet-library-groups">{groups.map(group=>{const rows=nodes.filter(row=>row.family===group);return <details key={group}><summary>{group} <em>{rows.length} of {rows.length}</em></summary>
+      {open&&<div className="sheet-library-groups">{groups.map(group=>{const rows=nodes.filter(row=>row.family===group);return <details key={group}><summary>{group} <em>{on(rows)} of {rows.length}</em></summary>
         {rows.map(row=><div className="sheet-property-row" data-row={'lib.'+row.id} key={row.id}><span className="sheet-property-copy">{row.name}<small>{row.description}</small></span>
-          <div className="sheet-property-control"><window.UI.Soon label={'Turn off '+row.name}><D.Toggle disabled variant="settings" label={row.name} checked onCheckedChange={()=>{}}/></window.UI.Soon></div></div>)}</details>;})}</div>}</>;
+          <div className="sheet-property-control"><D.Toggle variant="settings" label={row.name} checked={!off.has(row.id)} onCheckedChange={value=>u.act(()=>api.setLibraryNodeEnabled(row.id,value))}/></div></div>)}</details>;})}</div>}</>;
   }
   // Design row "Signed in on": every PC and browser on this account, read from the account owner.
   function DeviceRows() {

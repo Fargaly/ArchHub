@@ -13131,6 +13131,23 @@
         "02.TESTS/tests_replica/test_studio_text_has_no_mojibake.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ACCOUNTCLOUDROWS": {
+      "source": "Founder screenshot via 717, 2026-11-27: Settings > Account rows 'Brain follows your account', 'Sync .archhub files', 'Office policy', 'Access ends' showed 'Off: needs the ArchHub cloud service'. Build them on the existing owners (cloud Brain replica, D-051 account sync, companies) and remove the marking. Decision D-055.",
+      "scope": [
+        "01.APP/nodelang/account_sync.py",
+        "01.APP/nodelang/brain_files.py",
+        "01.APP/nodelang/cloud_signin.py",
+        "01.APP/nodelang/cloud_social_oauth.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/settings_owner.py",
+        "02.TESTS/tests_replica/test_account_cloud_rows.py",
+        "06.CLOUD/cloud_backend/companies.py",
+        "06.CLOUD/cloud_backend/tests/test_account_cloud_rows.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

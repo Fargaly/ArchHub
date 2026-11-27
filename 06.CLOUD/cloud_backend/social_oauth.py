@@ -24,7 +24,7 @@ from typing import Callable
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 
 import account_sync
 import config
@@ -454,15 +454,13 @@ def start(provider: str, authorization: str | None = Header(None),
     url = _AUTHORIZE[provider] + "?" + urllib.parse.urlencode(params)
     answer = {"ok": True, "provider": provider, "auth_url": url}
     if provider == "whatsapp":
-        # Meta's own dialog with our callback as redirect_uri, exchanged with the same redirect_uri. A code from the
-        # JS SDK popup (/oauth/whatsapp/embedded) fails the exchange with 100/36008 (Meta forum, widespread, Nov 2026).
-        answer["browser_url"] = url
+        answer["browser_url"] = config.PUBLIC_URL.rstrip("/") + "/oauth/whatsapp/embedded?" + urllib.parse.urlencode({"state": state})
     return answer
 
 
-@router.get("/oauth/whatsapp/embedded", response_class=HTMLResponse)
-def whatsapp_embedded(state: str = "") -> HTMLResponse:
-    """Cloud-owned SDK kickoff. Only public app config and signed state render."""
+@router.get("/oauth/whatsapp/embedded")
+def whatsapp_embedded(state: str = "") -> RedirectResponse:
+    """Cloud-owned kickoff: checks the signed state, then sends the browser to Meta's dialog."""
     try:
         payload = _unsign(state)
         if payload.get("p") != "whatsapp":
@@ -472,41 +470,14 @@ def whatsapp_embedded(state: str = "") -> HTMLResponse:
         app_id, _secret_value, redirect = _client("whatsapp")
     except SocialOAuthError as exc:
         raise HTTPException(status_code=400, detail={"error": str(exc)})
-    settings = json.dumps({"appId": app_id, "configId": _setting("WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID"),
-                           "callback": redirect, "state": state}, separators=(",", ":")).replace("<", "\\u003c")
-    document = """<!doctype html><meta charset="utf-8"><title>Connect WhatsApp Business · ArchHub</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>body{font:16px system-ui;background:#102021;color:#fff;display:grid;place-content:center;min-height:90vh;padding:24px}button{font:inherit;background:#25d366;color:#102021;border:0;border-radius:12px;padding:14px 22px;cursor:pointer}p{max-width:42ch;line-height:1.5}</style>
-<h1>Connect WhatsApp Business</h1><p id="status">Opening Meta’s secure sign-in. Your existing WhatsApp Business app stays available.</p>
-<button id="continue" type="button" disabled>Continue with Meta</button>
-<script>
-const settings = SETTINGS;
-const button = document.getElementById('continue');
-function finish(code, error) {
-  const target = new URL(settings.callback);
-  target.searchParams.set('state', settings.state);
-  if (code) target.searchParams.set('code', code);
-  else target.searchParams.set('error', error || 'access_denied');
-  window.location.assign(target.href);
-}
-function connect() {
-  if (!window.FB) return;
-  document.getElementById('status').textContent = 'Continue in Meta’s secure sign-in. If no window opens, use Continue with Meta.';
-  FB.login(function(response) {
-    const code = response && response.authResponse && response.authResponse.code;
-    if (code) finish(code);
-    else if (response && response.status === 'not_authorized') finish('', 'access_denied');
-  }, {config_id: settings.configId, response_type: 'code', override_default_response_type: true,
-      extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}});
-}
-button.addEventListener('click', connect);
-window.fbAsyncInit = function() {
-  FB.init({appId: settings.appId, autoLogAppEvents: false, xfbml: false, version: 'v25.0'});
-  button.disabled = false;
-  connect();
-};
-</script><script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>""".replace("SETTINGS", settings)
-    return HTMLResponse(document, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    # Meta's own dialog with our callback as redirect_uri (exchanged with the same one). The JS SDK popup's code
+    # failed the exchange with 100/36008 (Meta forum, widespread). Installed desktops only open this cloud path.
+    dialog = _AUTHORIZE["whatsapp"] + "?" + urllib.parse.urlencode({
+        "response_type": "code", "client_id": app_id, "redirect_uri": redirect, "state": state,
+        "scope": _SCOPES["whatsapp"], "config_id": _setting("WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID"),
+        "extras": json.dumps({"setup": {}, "featureType": "whatsapp_business_app_onboarding", "sessionInfoVersion": "3"},
+                             separators=(",", ":"))})
+    return RedirectResponse(dialog, status_code=302, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @router.get("/oauth/{provider}/callback")

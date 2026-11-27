@@ -1409,6 +1409,7 @@ api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.i
 // Settings › This PC › The app: backup place and folder, Back up now, Export diagnostics (settings_owner.maintenance_settings).
 for(const functionName of ['readMaintenance','setMaintenance','exportDiagnostics','readWorkspaceAccess','setWorkspaceReadOnly'])api[functionName]=(...args)=>settingsAction(functionName,args);
 api.readDevices=()=>settingsAction('readDevices');
+api.signOutDevice=id=>settingsAction('signOutDevice',[id]);
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
 function setAppearance(id,value,destination=state.settingsDestination){
  const identity=state.profile.id;

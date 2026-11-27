@@ -479,6 +479,8 @@ class SignIn:
             social_custody.register_with_account()
             account_sync.restore_in_background()  # D-051: the account's items reach this PC
             brain_files.sync_in_background(force=True)  # D-055: and the account's Brain
+            from .access_owner import heartbeat
+            heartbeat()  # Settings > Account > Signed in on lists this PC
         if self._on_complete is not None:
             try:
                 self._on_complete(email)
@@ -660,6 +662,9 @@ def confirm_with_cloud(path: Optional[Path], *, now: Optional[float] = None,
     if status == 200:
         from .cloud_session import remember_verified_account
         remember_verified_account(held, status, me)
+        if record == cloud_session_path():
+            from .access_owner import heartbeat
+            heartbeat(held)  # this PC stays on the account's Signed in on list
         owns = me.get("founder")
         if not isinstance(owns, bool):
             # A cloud without the /v1/me field: its founder-only route decides.

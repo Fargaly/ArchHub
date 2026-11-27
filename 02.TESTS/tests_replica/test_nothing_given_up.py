@@ -323,6 +323,29 @@ def test_devices_list_this_pc_and_keep_the_choice(app):
     assert status == 400 and answer['error'].startswith('Not restored yet: sending work to another device')
 
 
+def test_signed_in_devices_come_from_the_account_and_one_signs_out(tmp_path):
+    from nodelang.access_owner import access_action
+    from nodelang.nograph_server import JsonFile
+    settings = JsonFile(tmp_path / 'settings.json', {'deviceId': 'desktop-mine'})
+    calls, listed = [], [{'device_id': 'desktop-mine', 'name': 'PC', 'online': True, 'current': True},
+                         {'device_id': 'laptop-1', 'name': 'Laptop', 'online': False, 'current': False},
+                         {'device_id': 'gone', 'name': 'Old', 'signed_out': True}]
+
+    def cloud(method, path, body=None):
+        calls.append((method, path))
+        if method == 'POST':
+            listed[1]['signed_out'] = True
+            return {'ok': True}
+        return {'ok': True, 'devices': listed}
+    read = access_action(settings, 'readDevices', [], cloud=cloud)
+    assert [(d['id'], d['current']) for d in read['devices']] == [('this-pc', True), ('laptop-1', False)]
+    assert read['deviceNotice'] == ''
+    done = access_action(settings, 'signOutDevice', ['laptop-1'], cloud=cloud)
+    assert ('POST', '/v1/devices/laptop-1/sign-out') in calls and [d['id'] for d in done['devices']] == ['this-pc']
+    with pytest.raises(ValueError):
+        access_action(settings, 'signOutDevice', ['this-pc'], cloud=cloud)
+
+
 @pytest.mark.parametrize('function', ['grantAccess', 'rollBack'])
 def test_access_functions_without_an_owner_answer_a_visible_notice(app, function):
     status, answer = settings_action(app, function, 'item')

@@ -692,7 +692,7 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
         if error.code == 410 and method == 'GET' and path.startswith('/v1/watching/'):
             from .watch_grants import WatchEnded
             raise WatchEnded('This shared session cannot be shown now.') from None
-        if error.code == 404 and ((method == 'GET' and path == '/v1/companies/invites/mine')
+        if error.code == 404 and ((method == 'GET' and path in ('/v1/companies/invites/mine', '/v1/devices'))
                                   or path.startswith(('/v1/watch-grants', '/v1/watching'))):
             raise CloudRouteUnavailable('Cloud feature unavailable. Update the cloud service and retry.') from None
         raise ValueError('Cloud backend refused (HTTP %s). Refresh account status and retry.' % error.code) from None

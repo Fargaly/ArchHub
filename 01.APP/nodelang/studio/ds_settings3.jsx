@@ -502,13 +502,14 @@
   }
   // Design row "Signed in on": every PC and browser on this account, read from the account owner.
   function DeviceRows() {
-    const s=useData(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
-    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readDevices()).then(()=>{if(live)setLoad({status:(api.getSnapshot().devices||[]).length?'loaded':'empty'});},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[attempt]);
+    const u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    const shown=result=>({status:(result?.devices||[]).some(device=>!device.current)?'loaded':'empty',devices:result?.devices||[]});
+    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readDevices()).then(result=>{if(live)setLoad(shown(result));},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[attempt]);
     if(load.status==='waiting')return <span role="status">Reading your devices…</span>;
     if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
     if(load.status==='empty')return <span>Only this PC.</span>;
-    return load.status==='loaded'&&<div className="sheet-list-rows">{(s.devices||[]).map(device=><div className="sheet-list-row" key={device.id}><span><b>{device.name}</b> <small>{device.status}</small></span>
-      <window.UI.Soon label={'Sign out '+device.name}><span className="sheet-action secondary" aria-disabled="true">Sign out</span></window.UI.Soon></div>)}</div>;
+    return load.status==='loaded'&&<div className="sheet-list-rows">{load.devices.map(device=><div className="sheet-list-row" key={device.id} data-device={device.id}><span><b>{device.name}</b> <small>{device.status}</small></span>
+      {!device.current&&<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.signOutDevice(device.id).then(result=>setLoad(shown(result))))},event)}>Sign out</Btn>}</div>)}</div>;
   }
   // Design row "What agents remember about you": the Brain's lines; Forget removes one.
   function MemoryRows() {

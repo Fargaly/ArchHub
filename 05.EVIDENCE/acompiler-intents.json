@@ -12430,7 +12430,10 @@
         "02.TESTS/tests_js/design_canvas_live.cjs",
         "02.TESTS/tests_js/dock_model.test.cjs",
         "05.EVIDENCE/acompiler-intents.json",
-        "01.APP/nodelang/hook_decision.py"
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests/test_approve_payload.py",
+        "02.TESTS/tests_js/approve_card_payload_live.cjs"
       ]
     },
     "AGENTSJOIN": {

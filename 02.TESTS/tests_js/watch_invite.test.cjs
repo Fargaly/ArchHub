@@ -39,7 +39,7 @@ async function mountAccess(page, watch, watching = {capability: false, reason: '
       const u = {go: () => {}, act: async fn => fn(), show: (k, m) => setModal({k, m}), close: () => setModal(null)};
       window.closed = () => modal === null;
       return React.createElement(window.UI.Ctx.Provider, {value: u}, React.createElement('div', null,
-        React.createElement(window.UI.Access), React.createElement('section', {'aria-label': 'Invite form'},
+        React.createElement(window.UI.WatchSessions), React.createElement(window.UI.WatchingShared), React.createElement('section', {'aria-label': 'Invite form'},
           React.createElement(window.UI.WatchInvite, {path: 'C:\\Fixture\\P-001\\Session B.archhub', title: 'Session B'})),
         modal && modal.k === 'Watching' && React.createElement('section', {role: 'dialog', 'aria-label': 'Watching'},
           React.createElement(window.UI.WatchView, {grant: modal.m.grant}))));
@@ -48,7 +48,7 @@ async function mountAccess(page, watch, watching = {capability: false, reason: '
   });
 }
 
-test('Account lists watchers with Stop only when the cloud serves watching', async () => {
+test('The watcher list shows Stop only when the cloud serves watching', async () => {
   const browser = await chromium.launch({headless: true, executablePath: executable()});
   try {
     const off = await browser.newPage(), errors = [];

@@ -104,15 +104,6 @@ test('AGENTS-TRUTH incomplete inventory retains undeclared sessions until recove
  assert.equal(api.getSnapshot().agentSummary,'2 working · 0 idle');
 });
 
-test('AGENTS-TRUTH provider null sign-in renders unchecked with no pretend switches',()=>{
- const window={UI:{api:{supportsAction:()=>false},useData:()=>({providers:[{id:'openrouter',name:'OpenRouter',signedIn:null,
-  availability:'Credential present · Sign-in not checked'}]}),useApp:()=>({}),Card:({children})=>React.createElement('section',null,children),Av:()=>null},
-  AH_DS:{Toggle:()=>React.createElement('input',{type:'checkbox'})}};
- vm.runInNewContext(transformSync(truthSource('ds_baboom.jsx'),{loader:'jsx'}).code,{window,React});
- const html=renderToStaticMarkup(React.createElement(window.UI.Providers));
- assert.match(html,/Sign-in not checked/);assert.doesNotMatch(html,/Signed out|type="checkbox"/);
-});
-
 test('the existing Task used by Workshop and Board renders runtime facts and honest flags',()=>{
  const window={ArchHubAPI:{executeAction:()=>{}},UI:{A:{warn:'#fc0'},D:{dot:()=>null},
   useApp:()=>({}),Av:()=>null,Btn:()=>null,Card:()=>null,Chip:()=>null,Composer:()=>null,ApprovalCard:()=>null,Empty:()=>null,

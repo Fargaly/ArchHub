@@ -12961,6 +12961,19 @@
         "06.CLOUD/cloud_backend/tests/test_baboom_relay_retirement.py"
       ]
     },
+    "COCKPITDESIGNMCP": {
+      "source": "Founder 2026-11-27: \"Fix the Cockpit design, make it like the app; it works but needs an upgrade\" (the Cockpit admin panel: users, community, billing, feedback), and 717: the Cockpit has no MCP or API an agent can reach and put in automations. The panel takes the app's shell (64px rail, header chips, rows, buttons); the Cockpit's own tools (cockpit_agent.TOOLS) are served on the existing /mcp door to the founder's account only, reads run, writes hold a preview until the founder approves in the Cockpit Inbox, every call audited.",
+      "scope": [
+        "06.CLOUD/cloud_backend/cockpit_assets/admin.html",
+        "06.CLOUD/cloud_backend/cockpit_mcp.py",
+        "06.CLOUD/cloud_backend/brain_mcp.py",
+        "06.CLOUD/cloud_backend/db.py",
+        "06.CLOUD/cloud_backend/founder_cockpit.py",
+        "06.CLOUD/cloud_backend/tests/test_cockpit_mcp.py",
+        "06.CLOUD/cloud_backend/tests/test_founder_actions_are_audited.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "COMMUNITYOWNERRECOVERY": {
       "source": "Independently authorized recovery of an existing community through the signed-in founder Cockpit. Verify the account and its Ed25519 proof, preserve existing rows, refuse competing claims, and use the existing founder audit for every attempt. Separate from normal creation or join. Coordinator Workshop assignment 32f3c613544b441991838438216901f1.",
       "scope": [

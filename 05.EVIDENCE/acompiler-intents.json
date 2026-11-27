@@ -13124,6 +13124,15 @@
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },
+    "SITESIGNIN": {
+      "source": "Founder 2026-11-27 (live site): archhub.io \"Sign in to ArchHub Cloud -> Continue with Google\"; after he signs in it does NOT take him to his account page on archhub.io. Fix: the website's sign-in links carry next=account, the cloud browser finisher returns to the fixed https://archhub.io/account/, and the exchange leaves an HttpOnly SameSite=Lax session cookie on api.archhub.io that the account page's credentialed reads use.",
+      "scope": [
+        "06.CLOUD/cloud_backend/main.py",
+        "06.CLOUD/cloud_backend/tests/test_endpoints.py",
+        "03.TOOLS/packaging/website/build_site.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "ROUTERCOURTS": {
       "source": "Coordinator 2026-11-25 (child of RELAYMODELS, F20 known problem first): router courts that read retired application_server.py / studio-lm.jsx are rewritten against the NoGraph routes over model_router and exercise the real code path (F6); the three free tool-routing courts are repaired (test isolation, SWITCHFIX refusal code) and proved live on OpenRouter.",
       "scope": [

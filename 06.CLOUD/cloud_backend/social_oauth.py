@@ -281,17 +281,25 @@ def _whatsapp_profile(token: str) -> dict:
     client_id, secret, _redirect = _client("whatsapp")
     debug = _get_json("https://graph.facebook.com/v25.0/debug_token?" + urllib.parse.urlencode({"input_token": token}), client_id + "|" + secret)
     discovered, waba = {}, {}
-    for scope in debug.get("data", {}).get("granular_scopes", []):
-        if scope.get("scope") != "whatsapp_business_management":
+    accounts = [str(target) for scope in debug.get("data", {}).get("granular_scopes", [])
+                if scope.get("scope") == "whatsapp_business_management" for target in scope.get("target_ids", [])]
+    if not accounts:
+        # A returning Meta sign-in ("has been connected to ArchHub") can skip the number step and grant
+        # without target ids: the WhatsApp Business accounts are then read through the user's businesses.
+        for business in _get_json("https://graph.facebook.com/v25.0/me/businesses?fields=id", token).get("data", []):
+            if isinstance(business, dict) and _GRAPH_ID.fullmatch(str(business.get("id", ""))):
+                for edge in ("owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"):
+                    accounts += [str(row.get("id")) for row in _get_json(
+                        "https://graph.facebook.com/v25.0/" + str(business["id"]) + "/" + edge + "?fields=id", token).get("data", [])
+                        if isinstance(row, dict)]
+    for business_id in dict.fromkeys(accounts):
+        if not _GRAPH_ID.fullmatch(str(business_id)):
             continue
-        for business_id in scope.get("target_ids", []):
-            if not _GRAPH_ID.fullmatch(str(business_id)):
-                continue
-            phones = _get_json("https://graph.facebook.com/v25.0/" + str(business_id) + "/phone_numbers?fields=id,display_phone_number,verified_name", token).get("data", [])
-            for phone in phones:
-                if isinstance(phone, dict) and _GRAPH_ID.fullmatch(str(phone.get("id", ""))):
-                    discovered[str(phone["id"])] = phone
-                    waba[str(phone["id"])] = str(business_id)
+        phones = _get_json("https://graph.facebook.com/v25.0/" + str(business_id) + "/phone_numbers?fields=id,display_phone_number,verified_name", token).get("data", [])
+        for phone in phones:
+            if isinstance(phone, dict) and _GRAPH_ID.fullmatch(str(phone.get("id", ""))):
+                discovered[str(phone["id"])] = phone
+                waba[str(phone["id"])] = str(business_id)
     if len(discovered) == 1:
         phone_id, phone = next(iter(discovered.items()))
         # Webhooks (messages, coexistence echoes/history) reach the cloud only
@@ -542,6 +550,7 @@ def callback(provider: str, code: str = "", state: str = "", error: str = "", er
     except (SocialOAuthError, urllib.error.URLError, ValueError, KeyError, TypeError) as exc:
         if stored:
             failure = str(exc) if isinstance(exc, SocialOAuthError) else _permission_failure(provider)
+            _LOG.warning("%s sign-in finished without a grant: %s", provider, failure)
             return RedirectResponse(url=stored["return_url"] + "?" + urllib.parse.urlencode({
                 "provider": provider, "nonce": nonce, "error": failure}), status_code=302)
         raise HTTPException(status_code=400, detail={"error": str(exc)})

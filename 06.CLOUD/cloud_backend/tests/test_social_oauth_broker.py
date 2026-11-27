@@ -1064,3 +1064,25 @@ def test_consume_keeps_the_grant_on_the_account_and_refreshes_it_server_side(cli
     assert opened.json()["record"]["token"] == "x-access-2" and "refresh" not in opened.text
     assert account_sync._held_refresh(user_id, "social-x-101")["refresh_token"] == "x-refresh-2"
     assert json.loads(account_sync.read_item(user_id, "connections/social-x-101.json")[1])["token"] == "x-access-2"
+
+
+def test_whatsapp_number_found_through_businesses_when_meta_skips_the_number_step(monkeypatch):
+    # Founder 2026-11-27: Meta answered "has been connected to ArchHub" with no target ids; no number linked.
+    import social_oauth
+    _social3_config(monkeypatch)
+    def fake_graph(url, token):
+        if "/debug_token?" in url:
+            return {"data": {"granular_scopes": [{"scope": "whatsapp_business_management"}]}}
+        if "/me/businesses?" in url:
+            return {"data": [{"id": "111"}]}
+        if "/111/owned_whatsapp_business_accounts?" in url:
+            return {"data": [{"id": "123"}]}
+        if "/111/client_whatsapp_business_accounts?" in url:
+            return {"data": []}
+        assert "/123/phone_numbers?" in url
+        return {"data": [{"id": "456", "display_phone_number": "+123456"}]}
+    monkeypatch.setattr(social_oauth, "_get_json", fake_graph)
+    subscribed = []
+    monkeypatch.setattr(social_oauth, "_post_bearer", lambda url, token: subscribed.append(url) or {"success": True})
+    assert social_oauth._whatsapp_profile("fake-business-token") == {"id": "456", "name": "+123456"}
+    assert subscribed == ["https://graph.facebook.com/v25.0/123/subscribed_apps"]

@@ -101,6 +101,8 @@ class InviteReq(BaseModel):
     role: str = Field(default="member")
     # Settings > Account > Access ends: the membership this invite grants ends this many days after acceptance.
     access_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    # "When the project ends": the membership ends on the project's end date (ISO, today or later).
+    access_until: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class AcceptInviteReq(BaseModel):
@@ -263,8 +265,15 @@ async def invite_member(company_id: str, req: InviteReq,
                          authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
     _require_membership(company_id, user["id"], roles=("owner", "admin"))
+    if req.access_until:
+        from datetime import date
+        try:
+            if date.fromisoformat(req.access_until) < date.today():
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="access_date_has_passed") from None
     return await send_company_invite(company_id, str(req.email), req.role, user["id"],
-                                     access_days=req.access_days)
+                                     access_days=req.access_days, access_until=req.access_until)
 
 
 def _column(con, table: str, column: str, declaration: str) -> None:
@@ -275,7 +284,7 @@ def _column(con, table: str, column: str, declaration: str) -> None:
 
 async def send_company_invite(company_id: str, email: str, role: str,
                               invited_by_user_id: str, *, with_outcome: bool = False,
-                              access_days: Optional[int] = None) -> dict:
+                              access_days: Optional[int] = None, access_until: Optional[str] = None) -> dict:
     """The one company invite, for the owner's route above and the founder's
     Cockpit route: seat check, invite row, best-effort email."""
     if role not in ("admin", "member"):
@@ -295,10 +304,12 @@ async def send_company_invite(company_id: str, email: str, role: str,
         role=role,
         invited_by_user_id=invited_by_user_id,
     )
-    if access_days:
+    if access_days or access_until:
         with db.connect() as con:
             _column(con, "company_invites", "access_days", "INTEGER")
-            con.execute("UPDATE company_invites SET access_days=? WHERE token=?", (int(access_days), invite["token"]))
+            _column(con, "company_invites", "access_until", "TEXT")
+            con.execute("UPDATE company_invites SET access_days=?, access_until=? WHERE token=?",
+                        (int(access_days) if access_days else None, access_until, invite["token"]))
     # Best-effort email. We still return the token in the response so
     # the dashboard can show a copy-able link if email is unconfigured.
     link = (
@@ -384,10 +395,11 @@ def accept_invite(req: AcceptInviteReq,
         role=invite["role"],
         invited_by_user_id=invite["invited_by_user_id"],
     )
-    access_until = None
-    if invite.get("access_days"):
+    access_until = invite.get("access_until") or None  # a fixed end (the project's), else a period from today
+    if not access_until and invite.get("access_days"):
         from datetime import date, timedelta
         access_until = (date.today() + timedelta(days=int(invite["access_days"]))).isoformat()
+    if access_until:
         with db.connect() as con:
             _column(con, "company_members", "access_until", "TEXT")  # read by db.get_membership
             con.execute("UPDATE company_members SET access_until=? WHERE company_id=? AND user_id=?",

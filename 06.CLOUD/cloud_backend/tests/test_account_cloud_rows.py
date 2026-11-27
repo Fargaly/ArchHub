@@ -55,6 +55,19 @@ def test_invite_access_days_end_the_membership_after_that_many_days(client):
     assert db.get_membership(cid, member["id"]) is None
 
 
+def test_invite_until_the_project_end_date_ends_on_that_date(client):
+    import db
+    _owner, owner = _user("owner8@rows.example")
+    cid = _office(client, owner)
+    end = (date.today() + timedelta(days=200)).isoformat()
+    member, _headers, answer = _join(client, cid, owner, "project@rows.example", access_until=end)
+    assert answer["access_until"] == end
+    assert db.get_membership(cid, member["id"])["access_until"] == end
+    past = client.post(f"/v1/companies/{cid}/invites", json={"email": "late@rows.example", "access_until": "2001-01-01"},
+                       headers=owner)
+    assert past.status_code == 400
+
+
 def test_invite_without_access_days_never_ends(client):
     import db
     _owner, owner = _user("owner2@rows.example")

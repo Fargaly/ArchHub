@@ -3422,7 +3422,7 @@ _ACCOUNT_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}')
 _FOLLOW = {}  # document id -> another save arrived while its upload ran
 _FOLLOW_LOCK = threading.Lock()
 SYNC_ACCOUNT = 'ArchHub account'
-SYNC_DRIVES = ('OneDrive', 'Google Drive')
+SYNC_DRIVES = ('Office server', 'OneDrive', 'Google Drive')  # places whose own folder carries the Sessions folder
 
 
 def files_follow_account():
@@ -3523,25 +3523,31 @@ def follow_to_account(identity, removed=False):
     threading.Thread(target=send, name='archhub-session-account', daemon=True).start()
 
 
-def drive_folder(name):
-    """The local folder a drive's own app keeps in sync, or None when that app is not on this PC."""
-    import string
-    if name == 'OneDrive':
-        roots = [os.environ.get(key) for key in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial')]
-    else:  # Google Drive for desktop mounts "My Drive" on its own drive letter
-        roots = ['%s:\\My Drive' % letter for letter in string.ascii_uppercase[3:]]
-    for root in roots:
-        if root and Path(root).is_dir():
-            return Path(root) / 'ArchHub' / 'Sessions'
-    return None
+def drive_folder(name, office_folder=None):
+    """The synced folder the Sessions folder moves into for a place, or None when that place is not reachable here.
+
+    Office server: the folder the row names (a mapped drive such as Z:\\Projects). OneDrive and Google Drive: the
+    folder their own app keeps in sync (pc_maintenance.drive_root, the same answer the backup place uses)."""
+    if name == 'Office server':
+        if office_folder is None:
+            from .settings_owner import declared_setting
+            office_folder = declared_setting('Account.Office server folder')
+        root = Path(office_folder) if office_folder else None
+        root = root if root is not None and root.is_absolute() and root.is_dir() else None
+    else:
+        from .pc_maintenance import drive_root
+        root = drive_root(name)
+    return root / 'ArchHub' / 'Sessions' if root is not None else None
 
 
-def apply_files_sync(previous, choice):
-    """Settings changed Sync .archhub files: move the Sessions folder in or out of a drive, or restore the account."""
+def apply_files_sync(previous, choice, office_folder=None):
+    """Settings changed Sync .archhub files: move the Sessions folder in or out of a synced place, or follow the account."""
     if choice in SYNC_DRIVES:
-        folder = drive_folder(choice)
+        folder = drive_folder(choice, office_folder)
         if folder is None:
-            raise ValueError(choice + ' is not set up on this PC. Install it and sign in, then choose it again.')
+            raise ValueError('Choose the office server folder in this row first (a mapped drive such as Z:\\Projects).'
+                             if choice == 'Office server' else
+                             choice + ' is not set up on this PC. Install it and sign in, then choose it again.')
         set_sessions_directory(folder)
     elif previous in SYNC_DRIVES:
         set_sessions_directory(_default_sessions_directory())

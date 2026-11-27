@@ -64,21 +64,31 @@ def _atomic_zip(target: Path, fill) -> int:
     return target.stat().st_size
 
 
+def drive_root(name, environ=os.environ):
+    """The folder OneDrive or Google Drive for desktop keeps in sync on this PC, or None when it is not set up."""
+    if name == 'OneDrive':
+        roots = [environ.get('OneDrive')]
+    elif name == 'Google Drive':
+        roots = [f'{letter}:\\My Drive' for letter in DRIVE_LETTERS]
+    else:
+        return None
+    return next((Path(root) for root in roots if root and Path(root).is_dir()), None)
+
+
 def backup_destination(backup_to, backup_dir=None, environ=os.environ, state_dir=None) -> Path:
     """The folder a backup goes to, for the 'Back up to' and 'Backup folder' rows."""
     if backup_to == 'This PC':
         return Path(backup_dir) if backup_dir else _state(state_dir) / 'Backups'
     if backup_to == 'OneDrive':
-        root = environ.get('OneDrive')
-        if not root or not Path(root).is_dir():
+        root = drive_root('OneDrive', environ)
+        if root is None:
             raise ValueError('OneDrive is not set up on this PC. Sign in to OneDrive or pick another place.')
-        return Path(root) / 'ArchHub Backups'
+        return root / 'ArchHub Backups'
     if backup_to == 'Google Drive':
-        for letter in DRIVE_LETTERS:
-            root = Path(f'{letter}:\\My Drive')
-            if root.is_dir():
-                return root / 'ArchHub Backups'
-        raise ValueError('Google Drive is not set up on this PC. Install Google Drive for desktop or pick another place.')
+        root = drive_root('Google Drive', environ)
+        if root is None:
+            raise ValueError('Google Drive is not set up on this PC. Install Google Drive for desktop or pick another place.')
+        return root / 'ArchHub Backups'
     if backup_to == 'Office server':
         if not backup_dir or not Path(backup_dir).is_dir():
             raise ValueError('The office server folder cannot be reached. Pick a backup folder that exists.')

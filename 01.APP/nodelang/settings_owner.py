@@ -526,10 +526,14 @@ class SettingsOwner:
     def invitePerson(self, email):
         if type(email) is not str or '@' not in email or len(email) > 254:
             raise ValueError('Enter your teammate’s email address and retry.')
-        days = {'30 days': 30, '90 days': 90}.get(declared_setting('Account.Access ends'))  # Never: no end
+        ends = declared_setting('Account.Access ends')
+        access = {'access_days': {'30 days': 30, '90 days': 90}[ends]} if ends in ('30 days', '90 days') else {}
+        if ends == 'When the project ends':
+            access = {'access_until': active_project_end()}
+            if not access['access_until']:
+                raise ValueError('Access ends: set the project end date in Settings > Account first.')
         result = self.cloud('POST', '/v1/companies/' + self._company() + '/invites',
-                            {'email': email.strip(), 'role': declared_setting('Account.Role for new invites').lower(),
-                             **({'access_days': days} if days else {})})
+                            {'email': email.strip(), 'role': declared_setting('Account.Role for new invites').lower(), **access})
         # An issued invite is not proof that the mail provider delivered it.
         return {'email': result['email'], 'message': 'Invitation issued; delivery is confirmed by your mail provider.'}
 
@@ -1347,23 +1351,48 @@ def preference_settings(function='readControls', args=(), settings=None):
     cad_rows = [{"id": "Projects." + label, "storageKey": storage_key, "page": "Projects", "group": "CAD",
                  "type": "choice", "label": label, "options": list(options), "default": options[0],
                  "value": settings.read().get(storage_key, options[0])} for label, storage_key, options in cad]
-    declared = [_live_row({**spec, 'value': settings.read().get(spec['storageKey'], spec['default'])}) for spec in DECLARED_ROWS]
+    held = settings.read()
+    declared = [_live_row({**spec, 'value': held.get(spec['storageKey'], spec['default'])}, held) for spec in DECLARED_ROWS]
     return {**result, 'appearanceSettings': [*result['appearanceSettings'], row, bcf, ifc, setup, title_block, sheet_size, sheet_set, *cad_rows, *measurement_rows, *naming_rows, *account_rows, *agent_rows, *declared]}
 
 
 _DRIVES = {'at': 0.0, 'missing': {}}
 
 
-def _live_row(row):
-    """Sync .archhub files offers a drive only when that drive's app keeps a folder on this PC (read once a minute)."""
-    if row['storageKey'] != 'syncFiles':
-        return row
-    import time
-    from .session_files import SYNC_DRIVES, drive_folder
-    if time.time() - _DRIVES['at'] > 60:
-        _DRIVES.update(at=time.time(), missing={name: name + ' is not set up on this PC' for name in SYNC_DRIVES
-                                                if drive_folder(name) is None})
-    return {**row, 'disabledOptions': {**row['disabledOptions'], **_DRIVES['missing']}}
+def active_project_end():
+    """The active project's end date in the Project register (settings/workspaces.json), or '' (read only)."""
+    from .session_files import profile_directory
+    folder = profile_directory() / 'settings'
+    try:
+        active = json.loads((folder / 'settings.json').read_text(encoding='utf-8-sig')).get('activeWorkspace', '')
+        roots = json.loads((folder / 'workspaces.json').read_text(encoding='utf-8-sig')).get('roots', [])
+    except (OSError, ValueError, AttributeError):
+        return ''
+    row = next((r for r in roots if isinstance(r, dict) and r.get('root_id') == active), None)
+    return str(row.get('project_end') or '') if row else ''
+
+
+def _live_row(row, held):
+    """A choice that needs one more value says so in its own row and carries that control (row['companion'])."""
+    if row['storageKey'] == 'syncFiles':
+        import time
+        from .session_files import drive_folder
+        if time.time() - _DRIVES['at'] > 60:  # the drive apps' folders, read once a minute
+            _DRIVES.update(at=time.time(), missing={name: name + ' is not set up on this PC'
+                                                    for name in ('OneDrive', 'Google Drive') if drive_folder(name) is None})
+        office = str(held.get('officeServer') or '')
+        disabled = dict(_DRIVES['missing'])
+        if drive_folder('Office server', office) is None:
+            disabled['Office server'] = 'Choose the office server folder in this row first'
+        return {**row, 'disabledOptions': disabled, 'companion': {
+            'kind': 'folder', 'id': 'Account.Office server folder', 'label': 'Office server folder', 'value': office,
+            'hint': 'For Office server: a mapped drive such as Z:\\Projects. Your Sessions folder moves into its ArchHub\\Sessions.'}}
+    if row['storageKey'] == 'accessEnds':
+        end = active_project_end()
+        return {**row, 'disabledOptions': {} if end else {'When the project ends': 'Set the project end date in this row first'},
+                'companion': {'kind': 'date', 'label': 'Project end date', 'value': end,
+                              'hint': 'For When the project ends: saved on the active project in the Project register.'}}
+    return row
 
 
 def _declared(page, group, label, key, kind, default, **extra):
@@ -1391,8 +1420,7 @@ DECLARED_ROWS = (
     _choices('Account', 'You', 'Time zone', 'timezone', ('Asia/Riyadh (GMT+3)', 'Africa/Cairo (GMT+2)', 'Asia/Dubai (GMT+4)', 'UTC')),
     _declared('Account', 'Plan & access', 'Office policy', 'policyLock', 'choice', OFFICE_OPEN, options=[OFFICE_OPEN, OFFICE_LOCKED]),
     _choices('Account', 'Plan & access', 'Role for new invites', 'inviteRole', ('Member', 'Admin')),  # the cloud invites as member or admin only,
-    _declared('Account', 'Plan & access', 'Access ends', 'accessEnds', 'choice', 'Never', options=['Never', '30 days', '90 days', 'When the project ends'],
-              disabledOptions={'When the project ends': 'Needs a project end date, which the Project register does not hold yet'}),
+    _declared('Account', 'Plan & access', 'Access ends', 'accessEnds', 'choice', 'Never', options=['Never', '30 days', '90 days', 'When the project ends']),
     _declared('Account', 'Community', 'Public profile', 'commProfile', 'boolean', False, unavailable=CLOUD),
     _declared('Account', 'Community', 'Profile address', 'commHandle', 'text', '', pattern=r'[a-z0-9-]{0,40}', unavailable=CLOUD),
     _declared('Account', 'Community', 'Tell me about installs and comments', 'commNotify', 'boolean', True, unavailable=CLOUD),
@@ -1402,8 +1430,10 @@ DECLARED_ROWS = (
     _declared('Account', 'Brain and cloud sync', 'Brain follows your account', 'syncBrain', 'boolean', True),
     _declared('Account', 'Brain and cloud sync', 'Settings follow your account', 'syncSettings', 'boolean', True),
     _declared('Account', 'Brain and cloud sync', 'Sync .archhub files', 'syncFiles', 'choice', 'Off',
-              options=['Off', 'ArchHub account', 'Office server', 'OneDrive', 'Google Drive'],
-              disabledOptions={'Office server': 'Needs an office server folder, which ArchHub does not have yet'}),
+              options=['Off', 'ArchHub account', 'Office server', 'OneDrive', 'Google Drive']),
+    # The office server folder Sync .archhub files moves the Sessions folder into (set in that row, beside its choice).
+    _declared('Account', 'Brain and cloud sync', 'Office server folder', 'officeServer', 'text', '',
+              pattern=r'(?:[A-Za-z]:\\[^\x00-\x1f]{0,397})?'),
     _declared('Connections', 'Program options', 'Connect when a program opens', 'autoConnect', 'boolean', True, unavailable=WATCH),
     _choices('Connections', 'Program options', 'Revit version', 'revitVer', ('Newest installed', '2026', '2025', '2024', '2023')),
     _choices('Connections', 'Program options', 'AutoCAD version', 'acadVer', ('Newest installed', '2026', '2025', '2024')),
@@ -2167,11 +2197,16 @@ def account_effects(held, changes, keys, settings):
         choice = changes['Account.Office policy'] or OFFICE_OPEN
         if choice != held.get('policyLock', OFFICE_OPEN):
             settings.update({'officePolicy': publish_office_policy(choice == OFFICE_LOCKED, held)})
-    if 'Account.Sync .archhub files' in changes:
+    office_changed = 'Account.Office server folder' in changes
+    if 'Account.Sync .archhub files' in changes or office_changed:
         from .session_files import apply_files_sync
-        choice, previous = changes['Account.Sync .archhub files'] or 'Off', held.get('syncFiles', 'Off')
-        if choice != previous:
-            apply_files_sync(previous, choice)
+        previous = held.get('syncFiles', 'Off')
+        choice = (changes.get('Account.Sync .archhub files') if 'Account.Sync .archhub files' in changes else previous) or 'Off'
+        office = (changes['Account.Office server folder'] if office_changed else held.get('officeServer')) or ''
+        if choice != previous or (office_changed and choice == 'Office server'):  # a new office folder moves it again
+            apply_files_sync(previous, choice, office)
+    if changes.get('Account.Access ends') == 'When the project ends' and not active_project_end():
+        raise ValueError('Access ends: set the project end date in this row first.')
 
 
 def account_effects_after(held, changes, keys):

@@ -2943,6 +2943,18 @@ def r_workspace_roots(s, req):
                     references['issued_destination'] = None if value == '' else issued_destination(row['path'], value)
                 except ValueError as refused:
                     raise Refused(str(refused)) from None
+            if 'endDate' in body:  # absent keeps the end date; '' clears it
+                from datetime import date
+                end = body['endDate']
+                try:
+                    if end != '' and (type(end) is not str or date.fromisoformat(end) < date.today()):
+                        raise ValueError
+                except ValueError:
+                    raise Refused('Choose a project end date from today on.') from None
+                if end:
+                    row['project_end'] = end
+                else:
+                    row.pop('project_end', None)
             if number.strip():
                 row['project_number'] = number.strip()
             else:

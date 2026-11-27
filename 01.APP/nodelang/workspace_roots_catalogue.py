@@ -215,6 +215,8 @@ def project_register(row):
             register[key] = row[field]
     if row.get('issued_destination'):
         register['issuedDestination'] = row['issued_destination']
+    if row.get('project_end'):
+        register['endDate'] = row['project_end']  # ISO date; Account > Access ends "When the project ends" reads it
     return register
 
 

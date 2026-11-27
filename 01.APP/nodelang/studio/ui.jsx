@@ -663,7 +663,51 @@
           u,
           destination
         }, event)}>Reset</button>}
- </div></div>;
+ </div>{row.companion && <SettingCompanion row={row} disabled={disabled} destination={destination} />}</div>;
+  }
+  // A choice that needs one more value carries it in its own row (D-055): the office server folder for Sync .archhub
+  // files (a Settings row), the project end date for Access ends (saved on the active project's register).
+  function SettingCompanion({row, disabled, destination}) {
+    const u = useApp(), data = useData(), c = row.companion;
+    const [draft, setDraft] = React.useState(c.value || '');
+    React.useEffect(() => setDraft(c.value || ''), [c.value]);
+    const workspace = (data.workspaces || []).find(w => w.id === data.activeWorkspace && !w.builtIn && w.register);
+    const saveFolder = value => u.act(() => api.setSetting(c.id, value, destination));
+    const saveDate = value => u.act(() => api.updateProjectRegister(workspace, workspace.register.number || '', Boolean(workspace.register.override), {endDate: value}));
+    const today = new Date().toISOString().slice(0, 10);
+    const [pick, setPick] = React.useState({status: 'empty', message: ''});
+    const choose = async () => {
+      setPick({status: 'waiting', message: ''});
+      try {
+        const picked = await api.pickProjectRegister('Choose the office server folder', true);
+        if (picked.path) {
+          setDraft(picked.path);
+          await saveFolder(picked.path);
+          setPick({status: 'loaded', message: 'Office server folder saved.'});
+        } else {
+          setPick({status: 'empty', message: picked.note || 'No folder chosen.'});
+        }
+      } catch (failure) {
+        setPick({status: 'error', message: failure.message || 'The folder could not be chosen. Retry.'});
+      }
+    };
+    return <div className="setting-companion" data-companion={c.kind} style={{gridColumn: '1 / -1', display: 'grid', gap: 4, marginTop: 4}}>
+      <small className="muted">{c.hint}{c.kind === 'date' && !workspace ? ' Choose a project in Projects first.' : ''}</small>
+      <div className="flex" style={{gap: 6, minWidth: 0}}>
+        {c.kind === 'folder' ? <>
+          <input aria-label={c.label} type="text" placeholder="Z:\Projects" value={draft} disabled={disabled}
+            onChange={event => setDraft(event.target.value)} onBlur={() => { if (draft.trim() !== (c.value || '')) saveFolder(draft.trim()); }}
+            onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
+          <Btn sm disabled={disabled || pick.status === 'waiting'} aria-label={'Choose ' + c.label.toLowerCase()}
+            onClick={event => executeAction('projects.controls.activate', {handler: choose}, event)}>Choose…</Btn>
+        </> : <input aria-label={c.label} type="date" min={today} value={draft} disabled={disabled || !workspace}
+          onChange={event => { const value = event.target.value; setDraft(value); saveDate(value); }} />}
+      </div>
+      {pick.status === 'waiting' ? <small role="status">Choosing a folder…</small>
+        : pick.status === 'error' ? <small role="alert">{pick.message} <button type="button" onClick={event => executeAction('sharedUI.Retry.22', {retry: choose}, event)}>Retry</button></small>
+        : pick.status === 'loaded' ? <small role="status">{pick.message}</small>
+        : pick.status === 'empty' ? <small role="status">{pick.message}</small> : null}
+    </div>;
   }
   // ADAPTIVE (founder: "why is the app static … why not dynamic?"): one text renderer for every long text
   // surface. A small markdown subset (paragraphs, lists, ``` code, `code`, **bold**) like Slack/Discord, wrapped

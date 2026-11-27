@@ -172,7 +172,7 @@ def test_onedrive_moves_the_sessions_folder_into_the_drive_and_off_brings_it_bac
 
 def test_a_drive_that_is_not_on_this_pc_is_refused(pcs, monkeypatch):
     pcs('A')
-    monkeypatch.setattr(session_files, 'drive_folder', lambda name: None)
+    monkeypatch.setattr(session_files, 'drive_folder', lambda name, office_folder=None: None)
     with pytest.raises(ValueError, match='not set up on this PC'):
         session_files.apply_files_sync('Off', 'Google Drive')
 
@@ -187,15 +187,86 @@ def test_the_four_rows_are_controls_not_off_notices(pcs):
     for key in ('syncBrain', 'syncFiles', 'policyLock', 'accessEnds'):
         assert 'unavailable' not in rows[key], key
     assert 'ArchHub account' in rows['syncFiles']['options']
-    assert rows['accessEnds']['disabledOptions'] == {
-        'When the project ends': 'Needs a project end date, which the Project register does not hold yet'}
+    # A choice that needs one more value says what to set and carries that control in its own row.
+    assert rows['accessEnds']['disabledOptions'] == {'When the project ends': 'Set the project end date in this row first'}
+    assert rows['accessEnds']['companion']['kind'] == 'date'
+    assert rows['syncFiles']['disabledOptions']['Office server'] == 'Choose the office server folder in this row first'
+    assert rows['syncFiles']['companion']['kind'] == 'folder'
 
 
-def test_a_disabled_choice_is_refused_not_stored(pcs):
+def test_a_choice_missing_its_value_is_refused_not_stored(pcs):
     pcs('A')
-    for identity, value in (('Account.Access ends', 'When the project ends'), ('Account.Sync .archhub files', 'Office server')):
-        with pytest.raises(ValueError):
-            settings_owner.preference_settings('setAppearance', [identity, value])
+    with pytest.raises(ValueError, match='project end date'):
+        settings_owner.preference_scope().change({'Account.Access ends': 'When the project ends'})
+    with pytest.raises(ValueError, match='office server folder'):
+        settings_owner.preference_scope().change({'Account.Sync .archhub files': 'Office server'})
+    assert _rows()['accessEnds']['value'] == 'Never' and _rows()['syncFiles']['value'] == 'Off'
+
+
+def test_office_server_folder_set_in_the_row_moves_the_sessions_folder(pcs, tmp_path):
+    pcs('A')
+    office = tmp_path / 'OfficeServer'
+    office.mkdir()
+    _session('Office plan')
+    settings_owner.preference_scope().change({'Account.Office server folder': str(office)})
+    assert 'Office server' not in _rows()['syncFiles']['disabledOptions']
+    settings_owner.preference_scope().change({'Account.Sync .archhub files': 'Office server'})
+    assert (office / 'ArchHub' / 'Sessions' / 'Office plan.archhub').is_file()
+    assert _rows()['syncFiles']['value'] == 'Office server'
+
+
+def _project(end=None):
+    from nodelang.nograph_server import JsonFile, r_workspace_roots
+    from types import SimpleNamespace
+    folder = session_files.profile_directory().parent / 'Tower project'
+    folder.mkdir(exist_ok=True)
+    settings = session_files.profile_directory() / 'settings'
+    roots = JsonFile(settings / 'workspaces.json', {})
+    roots.write({'roots': [{'root_id': 'tower', 'path': str(folder), 'label': 'Tower'}], 'imported_legacy': True})
+    server = SimpleNamespace(files={'settings': JsonFile(settings / 'settings.json', {}), 'workspaces': roots},
+                             workspace_built_in=lambda: '')
+
+    def call(action, **body):
+        return r_workspace_roots(server, SimpleNamespace(body={'action': action, **body}))
+    call('select', id='tower')
+    return call
+
+
+def test_project_end_date_lives_on_the_project_register_and_enables_the_choice(pcs):
+    from datetime import date, timedelta
+    pcs('A')
+    call = _project()
+    end = (date.today() + timedelta(days=120)).isoformat()
+    answer = call('update-register', id='tower', expected={'number': '', 'override': False}, number='', override=False,
+                  endDate=end)
+    assert answer['register']['endDate'] == end
+    with pytest.raises(Exception, match='from today on'):
+        call('update-register', id='tower', expected=answer['register'], number='', override=False, endDate='2001-01-01')
+    rows = _rows()
+    assert rows['accessEnds']['disabledOptions'] == {} and rows['accessEnds']['companion']['value'] == end
+    settings_owner.preference_scope().change({'Account.Access ends': 'When the project ends'})
+    sent = []
+
+    def cloud(method, path, body=None):
+        sent.append(body)
+        return {'companies': [{'id': 'c1', 'is_current': True}]} if path.endswith('mine') else {'email': 'x'}
+    settings_owner.SettingsOwner(None, cloud=cloud, dependencies=object()).invitePerson('x@studio.example')
+    assert sent[-1]['access_until'] == end and 'access_days' not in sent[-1]
+
+
+def test_a_relative_session_path_is_refused_and_nothing_lands_under_the_repo(pcs, tmp_path, monkeypatch):
+    from pathlib import Path
+    from nodelang.cloud_session import cloud_session_path
+    from nodelang.cloud_signin import write_cloud_session
+    pcs('A')
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match='absolute'):
+        write_cloud_session(Path('brain') / 'cloud.json', {'email': 'qa@example.org'})
+    assert not (tmp_path / 'brain').exists()
+    state = session_files.profile_directory().resolve()
+    assert state in cloud_session_path().resolve().parents  # the account session lives in the profile folder
+    repo = Path(__file__).resolve().parents[2]
+    assert not (repo / 'brain' / 'cloud.json').exists()  # and nothing at the repository root
 
 
 def test_an_invite_carries_the_access_period(pcs):

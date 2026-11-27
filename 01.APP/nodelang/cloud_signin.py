@@ -164,6 +164,8 @@ def _preserve_legacy_resume_before_exchange(path: Path, http) -> None:
 
 def write_cloud_session(path: Path, patch: dict, *, expected_token: str | None = None) -> dict:
     """Merge patch into cloud.json atomically; keys set to None are dropped."""
+    if not Path(path).is_absolute():  # a relative path would land in whatever folder the caller runs from
+        raise ValueError('The account session needs an absolute profile path.')
     with _SESSION_WRITE_LOCK, _session_file_lock(path):
         return _write_cloud_session(path, patch, expected_token=expected_token)
 

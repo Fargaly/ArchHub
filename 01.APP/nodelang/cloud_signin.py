@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import tempfile
@@ -631,13 +632,20 @@ def sign_in_state(path: Optional[Path] = None, *, now: Optional[float] = None, s
 
 
 def _session_invalid(status: int, payload: object) -> bool:
-    """Only a refused SESSION lapses the record: 401, or a 403 that says the
-    session is invalid. The cockpit's 403 founder_only is about the account,
-    never the session, and leaves the record alone."""
+    """Only a refused SESSION lapses the record: 401, or a 403 whose detail says
+    the session or token is invalid/refused/revoked/expired. Any other 403
+    (founder_only, a proxy, a plan or membership refusal) is about the request,
+    never the session, and leaves the record alone: locking the workspace on it
+    would sign a live account out."""
     if status == 401:
         return True
-    detail = payload.get("detail") if isinstance(payload, dict) else None
-    return status == 403 and detail not in ("founder_only",)
+    if status != 403 or not isinstance(payload, dict):
+        return False
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        detail = detail.get("error") or detail.get("code") or ""
+    words = set(re.split(r"[^a-z]+", str(detail or "").casefold()))
+    return bool(words & {"session", "token"}) and bool(words & {"invalid", "refused", "revoked", "expired"})
 
 
 def confirm_with_cloud(path: Optional[Path], *, now: Optional[float] = None,

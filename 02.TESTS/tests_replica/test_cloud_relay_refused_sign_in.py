@@ -70,3 +70,22 @@ def test_the_relay_is_started_with_the_machine_session_loader_and_the_boot_line_
     refused = refused[:refused.index("else:")]
     assert "the cloud refused this request" in refused
     assert "Check sign-in and access under Settings, Account." in refused
+
+
+def test_only_a_refused_session_lapses_on_refresh_not_any_403(tmp_path):
+    """A 403 from /v1/auth/refresh used to mark the session refused and lock the workspace whatever it meant."""
+    import secrets
+    import time
+    from nodelang import cloud_signin
+    cases = [((403, {"detail": "plan_required"}), "signed_in"), ((403, {}), "signed_in"),
+             ((403, {"detail": "founder_only"}), "signed_in"),
+             ((403, {"detail": "session_revoked"}), "expired"), ((403, {"detail": {"error": "invalid token"}}), "expired"),
+             ((401, {"detail": "invalid_token"}), "expired")]
+    for index, (answer, state) in enumerate(cases):
+        record = tmp_path / ("cloud-%d.json" % index)
+        now = time.time()
+        cloud_signin.write_cloud_session(record, {"token": secrets.token_urlsafe(32), "email": "user@example.com",
+                                                  "expires_at": now + 3600})
+        result = cloud_signin.refresh_session(record, now=now, http=lambda *a, **k: answer)
+        assert result["state"] == state, (answer, result)
+        assert bool(cloud_signin.read_cloud_session(record).get("refused_at")) is (state == "expired")

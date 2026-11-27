@@ -356,10 +356,6 @@ def exchange_and_profile(provider: str, code: str, *, verifier: str = "") -> dic
     def real_exchange(p, c, cid, secret):
         form = {"grant_type": "authorization_code", "code": c, "redirect_uri": redirect,
                 "client_key" if p == "tiktok" else "client_id": cid, "client_secret": secret}
-        if p == "whatsapp":
-            # Embedded Signup's JS SDK returns a business integration code;
-            # Meta's code exchange takes app id, app secret and code only.
-            form.pop("redirect_uri")
         if p == "x":
             if not verifier:
                 raise SocialOAuthError("pkce_verifier_missing")
@@ -458,7 +454,9 @@ def start(provider: str, authorization: str | None = Header(None),
     url = _AUTHORIZE[provider] + "?" + urllib.parse.urlencode(params)
     answer = {"ok": True, "provider": provider, "auth_url": url}
     if provider == "whatsapp":
-        answer["browser_url"] = config.PUBLIC_URL.rstrip("/") + "/oauth/whatsapp/embedded?" + urllib.parse.urlencode({"state": state})
+        # Meta's own dialog with our callback as redirect_uri, exchanged with the same redirect_uri. A code from the
+        # JS SDK popup (/oauth/whatsapp/embedded) fails the exchange with 100/36008 (Meta forum, widespread, Nov 2026).
+        answer["browser_url"] = url
     return answer
 
 

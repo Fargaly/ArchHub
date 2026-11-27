@@ -218,8 +218,15 @@ def test_whatsapp_launch_serves_signed_sdk_coexistence_page_without_credentials(
     _social3_config(monkeypatch)
     token = _token_for("embedded@social3.test")
     started = _social3_start(client, "whatsapp", token).json()
-    launch = urllib.parse.urlsplit(started["browser_url"])
-    assert launch.path == "/oauth/whatsapp/embedded"
+    # Founder 2026-11-27: SDK-popup codes failed the exchange (100/36008); the browser opens Meta's own dialog.
+    dialog = urllib.parse.urlsplit(started["browser_url"])
+    query = urllib.parse.parse_qs(dialog.query)
+    assert dialog.netloc == "www.facebook.com" and dialog.path.endswith("/dialog/oauth")
+    assert query["config_id"] == ["fake-coexistence-config"] and query["response_type"] == ["code"]
+    assert query["redirect_uri"] == ["https://api.archhub.io/oauth/whatsapp/callback"]
+    assert "whatsapp_business_app_onboarding" in query["extras"][0]
+    assert "fake-cloud-secret" not in started["browser_url"]
+    launch = urllib.parse.urlsplit("https://api.archhub.io/oauth/whatsapp/embedded?" + urllib.parse.urlencode({"state": query["state"][0]}))
     page = client.get(launch.path + "?" + launch.query)
     assert page.status_code == 200
     assert page.headers["cache-control"] == "no-store"
@@ -257,7 +264,7 @@ def test_whatsapp_real_sdk_code_exchange_and_phone_discovery_use_fake_graph(monk
             assert form["client_id"] == ["fake-publisher-app"]
             assert form["client_secret"] == ["fake-cloud-secret"]
             assert form["code"] == ["sdk-business-code"]
-            assert "redirect_uri" not in form
+            assert form["redirect_uri"] == ["https://api.archhub.io/oauth/whatsapp/callback"]  # same as the dialog's
             payload = {"access_token": "fake-business-token"}
         elif "/debug_token?" in request.full_url:
             assert request.get_header("Authorization") == "Bearer fake-publisher-app|fake-cloud-secret"

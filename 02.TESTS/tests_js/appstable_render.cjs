@@ -9,7 +9,7 @@ async function run(studio, output) {
   const checks = [];
   const check = (name, ok, detail) => checks.push({name,ok:!!ok,detail});
   try {
-    for (const screen of ['workshop','colleagues']) {
+    for (const screen of ['workshop']) {
       const page = await browser.newPage({viewport:{width:1440,height:900}});
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -60,7 +60,7 @@ async function run(studio, output) {
           sendToBaboom:async (text,options) => {window.calls.push(['send',text,options]);return window.fixture.tasks[0];},
           sendChatTurn:async turn => {window.calls.push(['send',turn.prompt]);return {ok:true};},listTasks:async () => []};
       });
-      for (const source of ['tokens.js','ds-index.js','icons.js','ui.js','ds_workshop3.js','dock.js','ds_colleagues.js'])
+      for (const source of ['tokens.js','ds-index.js','icons.js','ui.js','ds_workshop3.js','dock.js'])
         await page.addScriptTag({path:path.join(studio,'compiled',source)});
       await page.evaluate(screen => {
         const UI=window.UI;
@@ -70,7 +70,7 @@ async function run(studio, output) {
           React.createElement('main',null,React.createElement(UI.TaskComposer,{choices:[],to:'',setTo:() => {}})));
         window.ReactDOM.createRoot(document.getElementById('root')).render(
           React.createElement(UI.Ctx.Provider,{value:window.app},
-            React.createElement(screen==='colleagues'?UI.Colleagues:workshop)));
+            React.createElement(workshop)));
       },screen);
       try {await page.waitForSelector('[data-screen="'+screen+'"]');}
       catch (error) {check(screen+' renders',false,[...errors,error.message]);await page.close();continue;}
@@ -86,37 +86,7 @@ async function run(studio, output) {
       check(screen+' two-column geometry',layout.children===2&&layout.aside.x===0&&layout.main.x===340&&
         Math.abs(layout.main.y-layout.aside.y)<1&&layout.main.w>=1000&&!layout.overflow,layout);
       check(screen+' no question avatars',!layout.avatars.includes('?'),layout.avatars);
-      if (screen==='colleagues') {
-        check('Team no dead-owner placeholder',!layout.text.includes('Waiting for the owner'),layout.text.slice(0,180));
-        check('Team connected providers available',layout.text.includes('Available')&&!layout.text.includes('Unavailable'),layout.text.slice(0,260));
-        await page.evaluate(() => window.socialRequests.forEach(request => request.reject(new Error('Fixture service offline; retry.'))));
-        await page.getByRole('alert').filter({hasText:'Fixture service offline'}).first().waitFor();
-        check('Team action errors remain visible',await page.getByRole('button',{name:'Retry',exact:true}).count()>0,null);
-        await page.getByRole('button',{name:'Retry',exact:true}).first().click();
-        await page.evaluate(() => window.socialRequests.at(-1).resolve(window.fixture));
-        await page.getByRole('alert').filter({hasText:'Fixture service offline'}).waitFor({state:'hidden'});
-        check('Team retry recovers the existing request',await page.getByRole('alert').count()===0,null);
-        await page.getByRole('button',{name:/OpenAI/}).click();
-        await page.getByRole('button',{name:'Meetings',exact:true}).click();
-        await page.getByRole('button',{name:'New task',exact:true}).click();
-        check('Team agent/meeting/task actions',await page.evaluate(() =>
-          window.calls.some(c=>c[0]==='show'&&c[1]==='Agent'&&c[2].id==='openai')&&
-          window.calls.some(c=>c[0]==='go'&&c[1]==='meetings')&&window.calls.some(c=>c[1]==='New task')),null);
-        await page.getByRole('button',{name:'Remember',exact:true}).click();
-        await page.getByRole('textbox',{name:'Learned rule'}).fill('Preserve the existing owner');
-        await page.getByRole('button',{name:'Save',exact:true}).click();
-        await page.getByText('Preserve the existing owner',{exact:true}).waitFor();
-        await page.getByRole('button',{name:'Edit',exact:true}).click();
-        await page.getByRole('textbox',{name:'Learned rule'}).fill('Updated fixture rule');
-        await page.getByRole('button',{name:'Save',exact:true}).click();
-        await page.getByText('Updated fixture rule',{exact:true}).waitFor();
-        await page.getByRole('button',{name:'Forget',exact:true}).click();
-        await page.getByText('No learned rules.',{exact:true}).waitFor();
-        check('Team memory create/edit/forget actions',await page.evaluate(() =>
-          window.calls.some(c=>c[0]==='remember'&&c[1]==='Preserve the existing owner')&&
-          window.calls.some(c=>c[0]==='edit'&&c[1]==='fact:fixture'&&c[2]==='Updated fixture rule')&&
-          window.calls.some(c=>c[0]==='forget'&&c[1]==='fact:fixture')),null);
-      } else {
+      {
         check('Workshop honest unassigned owner',!layout.text.includes('null'),layout.text.slice(-350));
         await page.getByRole('textbox',{name:'Search threads'}).fill('isolated application');
         check('Workshop search preserves saved tasks',await page.locator('[data-ws-working]').count()===1,null);

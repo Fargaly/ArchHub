@@ -3,45 +3,12 @@
 (() => {
   function executeAction(...args) { return window.executeAction(...args); }
   const {
-    D,
     api,
     useData,
     useApp,
     Btn,
-    Card,
-    Heading,
-    Empty,
     Table
   } = window.UI;
-  function Automations() {
-    const s = useData(),
-      u = useApp();
-    const paused = s.desktop?.automationsPaused;
-    const [busy, setBusy] = React.useState(false);
-    const body = <div className="grid">
-      <div className="spread"><h2>Schedules</h2><div className="flex">
-        <Btn sm disabled={typeof paused !== 'boolean' || busy} onClick={() => executeAction('projects.automations.togglePause', {api,u,paused,setBusy})}>{paused ? 'Resume all' : 'Pause all'}</Btn>
-        <Btn sm onClick={event => executeAction("projects.surfaces.AddSchedule.1", {s,u}, event)}>Add schedule</Btn>
-      </div></div>
-      {s.schedules.length ? s.schedules.map(t => <Card key={t.id} style={{padding: 16}}>
-        <div className="spread"><div>
-          <h3><button type="button" className="button-reset" onClick={event => executeAction('projects.surfaces.OpenTaskCanvas', {t,u}, event)}>{t.title}</button></h3>
-          <p className="muted">{!t.enabled ? 'Off · ' : paused ? 'Paused · ' : ''}{t.daily ? 'Daily at ' + t.time : t.time}</p>
-        </div><div className="flex">
-          {t.daily && <input aria-label={'Time ' + t.title} type="time" value={t.time} onChange={e => u.act(() => api.setScheduleTime(t.id, e.target.value))} />}
-          <D.Toggle label={t.title + ' schedule'} checked={t.enabled} onCheckedChange={v => u.act(() => api.setScheduleEnabled(t.id, v))} />
-          <Btn sm onClick={event => executeAction("projects.surfaces.Reset.2", {api,t,u}, event)}>Reset</Btn>
-        </div></div>
-        <window.UI.ScheduleResponsibility id={t.id} />
-      </Card>) : <Empty>No schedules yet. Repeat a task when you want it to run again.</Empty>}
-      <Card style={{
-        padding: 16
-      }}><h3>Triggers</h3><div className="flex" style={{
-          marginTop: 12,
-          flexWrap: 'wrap'
-        }}>{['Manual', 'Schedule', 'File changed', 'Host event', 'Approval granted', 'Webhook'].map(t => <Btn key={t} sm onClick={event => executeAction("projects.surfaces.AsyncConstNAwaitU.3", {api,t,u}, event)}>{t}</Btn>)}</div></Card></div>;
-    return body;  // Settings › Agents › Automations holds it (founder 2026-11-26: no page of its own)
-  }
   // ArchHub menu › App health (design: archhub-directions diagDialog; "Logs & receipts" lives here, never a page).
   // Checks from their owners, and Activity from the run receipts beside every session file, notifications and the update.
   function AppHealth({close}) {
@@ -96,82 +63,17 @@
       </div>
     </div>;
   }
-  function Watcher() {
-    const s=useData(),u=useApp();
-    const [requestState,setRequestState]=React.useState(s.watcher.status||'empty');
-    const [failure,setFailure]=React.useState('');
-    const source=s.graph.nodes.find(n=>n.id===s.watcher.source||n.params.engine==='lines.watch');
-    const refresh=()=>{
-      setRequestState('waiting');
-      return api.checkWatcherSource().then(()=>setRequestState(api.getSnapshot().watcher.status))
-        .catch(error=>{setFailure(error.message);setRequestState('error');});
-    };
-    return <main className="page watcher-page" data-screen="watcher">
-      <Heading title="Watcher" sub={source?.title||s.graph.name}>
-        <Btn onClick={event=>executeAction('projects.watcher.connections',{u},event)}>Connections</Btn>
-        <Btn onClick={event=>executeAction('projects.watcher.add',{api,s,u},event)}>Add Watcher</Btn>
-        <Btn p onClick={event=>executeAction('projects.watcher.run',{refresh},event)}>Run to here</Btn>
-      </Heading>
-      {requestState==='waiting'&&<p role="status">Reading the source through its workflow…</p>}
-      {requestState==='error'&&<Card><p role="alert">{failure}</p><Btn onClick={event=>executeAction('projects.watcher.run',{refresh},event)}>Retry source</Btn></Card>}
-      {requestState==='empty'&&<Empty>Wire geometry into the Watcher, then run to here to inspect the source.</Empty>}
-      {requestState==='loaded'&&<Card><window.UI.Sheet large /><Table rows={s.watcher.geometry.walls.map(([x1,y1,x2,y2])=>({x1,y1,x2,y2}))} columns={['x1','y1','x2','y2']} /></Card>}
-      {source&&<Card>{s.settings.filter(row=>row.owner===source.id).map(row=><window.UI.SettingControl key={row.id} row={row} />)}</Card>}
-    </main>;
-  }
   Object.assign(window.UI, {
-    Automations,
-    AppHealth,
-    Watcher
+    AppHealth
   });
 
 // WIRE-projects: each rendered callback is registered with its executable owner.
-function projectssurfacesjsxAddSchedule1({s,u}, event) {
-  const handler = () => u.schedule(s.graph.name);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxReset2({api,t,u}, event) {
-  const handler = () => u.act(() => api.removeSchedule(t.id));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectssurfacesjsxAsyncConstNAwaitU3({api,t,u}, event) {
-  const handler = async () => {
-            const n = await u.act(async () => {
-              const added = await api.addNode('Trigger');
-              if (!added) return null;
-              await api.setNodeParam(added.id, 'event', t);
-              if (api.saveSession && !api.getSessionPath?.()) await api.saveSession();
-              return added;
-            });
-            if (n) {
-              u.go('canvas', api.getSessionPath?.() || undefined);
-            }
-          };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsWatcherConnections({u}) { return u.go('settings/Connections'); }
-function projectsOpenTaskCanvas({t,u}) { return u.go('canvas', t.taskId || t.task_id || t.path); }
 function projectsToggleAutomationPause({api,u,paused,setBusy}) {
   setBusy(true);
   return u.act(() => api.automationPause(!paused)).finally(() => setBusy(false));
 }
-function projectsWatcherRun({refresh}) { return refresh(); }
-function projectsWatcherAdd({api,s,u}) {
-  return u.act(()=>{
-    const entry=s.catalogue.find(c=>c.descriptor?.engine==='lines.watch');
-    if(!entry)throw Error('The Watcher definition is missing. Repair the Library catalogue, then retry.');
-    return api.addNode(entry.id);
-  });
-}
 const PROJECT_ACTIONS = {
-  'projects.surfaces.OpenTaskCanvas':'projectsOpenTaskCanvas',
-  'projects.automations.togglePause':'projectsToggleAutomationPause',
-  'projects.watcher.connections':'projectsWatcherConnections',
-  'projects.watcher.add':'projectsWatcherAdd',
-  'projects.watcher.run':'projectsWatcherRun',
-  "projects.surfaces.AddSchedule.1": "projectssurfacesjsxAddSchedule1",
-  "projects.surfaces.Reset.2": "projectssurfacesjsxReset2",
-  "projects.surfaces.AsyncConstNAwaitU.3": "projectssurfacesjsxAsyncConstNAwaitU3"
+  'projects.automations.togglePause':'projectsToggleAutomationPause'
 };
-window.registerActions(PROJECT_ACTIONS, {projectsOpenTaskCanvas,projectsToggleAutomationPause,projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3});
+window.registerActions(PROJECT_ACTIONS, {projectsToggleAutomationPause});
 })();

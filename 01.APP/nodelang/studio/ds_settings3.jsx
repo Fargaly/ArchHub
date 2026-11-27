@@ -2,8 +2,6 @@
 // the Book's 15 pages is now a live projection of the single settings schema.
 (() => {
   const WIRE_DS_SETTINGS3_JSX_ACTIONS = {
-  "settings.ds_settings3.RouterRefresh": "RouterRefresh",
-  "settings.ds_settings3.RouterModel": "RouterModel",
   "settings.ds_settings3.PermissionsSave": "PermissionsSave",
   "settings.ds_settings3.PermissionsRefresh": "PermissionsRefresh",
   "settings.ds_settings3.PermissionsRemove": "PermissionsRemove",
@@ -40,8 +38,7 @@
     Card,
     Chip,
     Empty,
-    SettingControl,
-    Providers
+    SettingControl
   } = window.UI;
   const sections = [
     {name:'Account', pages:['Account','Privacy'], tabs:['Profile','Privacy']},
@@ -446,9 +443,11 @@
       name:<ProfileField key={JSON.stringify([profile.id,profile.name])} field="name" label="Name" value={profile.name||''}/>,
       firm:<ProfileField key={JSON.stringify([profile.id,profile.firm])} field="firm" label="Firm" value={profile.firm||''}/>,
       email:<input readOnly aria-label="Email" value={profile.email||''} placeholder="Add an email" title="Browser sign-in manages your email"/>,
-      plan:open(profile.plan||'Choose plan',()=>u.go('settings/Access')),
-      devices:open('Connected devices',()=>u.go('settings/Access')),
-      memory:<>{window.UI.MemoryRules&&<window.UI.MemoryRules/>}{window.UI.Brain&&<details><summary>What agents remember</summary><window.UI.Brain/></details>}</>
+      // Design names Solo/Studio/Firm; the billing owner takes Personal/Office/Team (settings_owner.setBilling).
+      plan:<select aria-label="Plan" value={{Personal:'Solo',Office:'Studio',Team:'Firm',solo:'Solo',studio:'Studio',firm:'Firm'}[profile.plan||s.billing?.requestedPlan||s.billing?.status]||''} onChange={event=>u.act(()=>api.setAccountPlan({Solo:'Personal',Studio:'Office',Firm:'Team'}[event.target.value]))}>
+        {!(profile.plan||s.billing?.requestedPlan||s.billing?.status)&&<option value="" disabled>Not reported</option>}{['Solo','Studio','Firm'].map(plan=><option key={plan}>{plan}</option>)}</select>,
+      devices:<DeviceRows/>,
+      memory:<MemoryRows/>
     };
     live.role=<ProfileField key={JSON.stringify([profile.id,profile.role])} field="role" label="Role" value={profile.role||''}/>;
     live.photo=<window.UI.PhotoControl value={u.userPhoto||''}/>;
@@ -461,21 +460,53 @@
       {s.officeInvitations.map(invite=><div key={invite.id}><b>{invite.office}</b> · {invite.status}
         {!['Accepted','Declined','Expired'].includes(invite.status)&&<>{open('Accept invitation',()=>u.act(()=>api.acceptOfficeInvitation(invite.id)))}{open('Decline invitation',()=>u.act(()=>api.declineOfficeInvitation(invite.id)))}</>}</div>)}</div>;
 
-    const extras={
-      people:<>{window.UI.Access&&<details><summary>Plan, usage and billing</summary><window.UI.Access/></details>}{window.UI.Colleagues&&<details><summary>Team: people and agents</summary><window.UI.Colleagues/></details>}</>,
-      social:open('Social inbox in Connections',()=>u.go('settings/Social'))
-    };
-    return <AreaDesignCards area="Account" live={live} extras={extras} focused={focused}/>;
+    return <AreaDesignCards area="Account" live={live} focused={focused}/>;
+  }
+  // Design "Tools in the Library": one summary line; Manage lists each source's nodes; Import installs a mod.
+  function LibraryTools() {
+    const s=useData(),u=useApp(),[open,setOpen]=React.useState(false);
+    const nodes=s.catalogue||[],groups=[...new Set(nodes.map(row=>row.family))];
+    if(!s.catalogue)return <span role="status">Reading the Library…</span>;
+    // shortcut: no owner turns one node type off yet, so every node is on and its switch is Coming soon.
+    return <><div className="sheet-library-summary"><span><b>{nodes.length}</b> of {nodes.length} nodes on, from {groups.length} sources</span>
+      <Btn sm aria-expanded={open} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setOpen(value=>!value)},event)}>{open?'Hide':'Manage'}</Btn>
+      <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Install mod')},event)}>Import</Btn></div>
+      {open&&<div className="sheet-library-groups">{groups.map(group=>{const rows=nodes.filter(row=>row.family===group);return <details key={group}><summary>{group} <em>{rows.length} of {rows.length}</em></summary>
+        {rows.map(row=><div className="sheet-property-row" data-row={'lib.'+row.id} key={row.id}><span className="sheet-property-copy">{row.name}<small>{row.description}</small></span>
+          <div className="sheet-property-control"><window.UI.Soon label={'Turn off '+row.name}><D.Toggle disabled variant="settings" label={row.name} checked onCheckedChange={()=>{}}/></window.UI.Soon></div></div>)}</details>;})}</div>}</>;
+  }
+  // Design row "Signed in on": every PC and browser on this account, read from the account owner.
+  function DeviceRows() {
+    const s=useData(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readDevices()).then(()=>{if(live)setLoad({status:(api.getSnapshot().devices||[]).length?'loaded':'empty'});},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[attempt]);
+    if(load.status==='waiting')return <span role="status">Reading your devices…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='empty')return <span>Only this PC.</span>;
+    return load.status==='loaded'&&<div className="sheet-list-rows">{(s.devices||[]).map(device=><div className="sheet-list-row" key={device.id}><span><b>{device.name}</b> <small>{device.status}</small></span>
+      <window.UI.Soon label={'Sign out '+device.name}><span className="sheet-action secondary" aria-disabled="true">Sign out</span></window.UI.Soon></div>)}</div>;
+  }
+  // Design row "What agents remember about you": the Brain's lines; Forget removes one.
+  function MemoryRows() {
+    const s=useData(),u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.refreshBrain()).then(()=>{if(live)setLoad({status:(api.getSnapshot().brain||[]).length?'loaded':'empty'});},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[s.profile.id,attempt]);
+    if(load.status==='waiting')return <span role="status">Reading the Brain…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='empty')return <span>Agents have not learned anything yet.</span>;
+    return load.status==='loaded'&&<div className="sheet-list-rows">{(s.brain||[]).map(row=><div className="sheet-list-row" key={row.id}><span dir="auto">{row.text}</span>
+      <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forgetMemory(row.id))},event)}>Forget</Btn></div>)}</div>;
   }
 
-  function ConnectionDesignCards({refresh,programNotice,focused}) {
+  function ConnectionDesignCards({programNotice,focused}) {
     const s=useData(),u=useApp();
     const [chosen,setChosen]=React.useState('');
     const open=(label,action)=><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:action},event)}>{label}</Btn>;
     const live={
       mcp:<ToolServers/>,
-      providerKeys:open('Add a provider',()=>u.go('settings/Providers')),
-      providerPrefs:open('Manage provider models',()=>u.go('settings/Providers'))
+      // Design: Add a provider opens a dialog; keys go to Windows Credential Manager through My secrets.
+      providerKeys:open('Add a provider',()=>u.show('My secrets')),
+      // Design: each provider starts with this model (router providerPreferences).
+      providerPrefs:(s.providers||[]).some(row=>row.models?.length)?<div className="sheet-list-rows">{s.providers.filter(row=>row.models?.length).map(row=><label className="sheet-list-row" key={row.id}><span>{row.name}</span>
+        <select aria-label={'Model for '+row.name} value={row.model||''} onChange={event=>u.act(()=>api.setProviderModel(row.id,event.target.value))}>{[...new Set([row.model,...row.models].filter(Boolean))].map(model=><option key={model}>{model}</option>)}</select></label>)}</div>:<span>Every provider uses the default model.</span>
     };
     const hosts=s.hosts||[],accounts=(s.connections||[]).filter(row=>!row.host);
     const selected=hosts.find(host=>host.id===chosen);
@@ -484,7 +515,6 @@
     live.revitPaths=found('Revit');live.acadPaths=found('AutoCAD');
     const openrouter=s.router?.providers?.openrouter;
     live.openrouter=openrouter?<D.Toggle variant="settings" label="OpenRouter free models" checked={openrouter.enabled} onCheckedChange={value=>u.act(()=>api.setRouterSettings({providers:{openrouter:{...openrouter,enabled:value}}}))}/>:open('Read the model router',()=>u.act(()=>api.refreshRouter()));
-    live.phone=open('Open connected devices',()=>u.go('settings/Access'));
     const socialProviders={LinkedIn:'linkedin',Instagram:'instagram',Facebook:'facebook','WhatsApp Business':'whatsapp',X:'x',TikTok:'tiktok',YouTube:'youtube'};
     function tiles(cardId,records,program) {
       const specs=areaCardSpecs.find(card=>card.id===cardId).rows;
@@ -509,10 +539,6 @@
     }
     const extras={
       progs:<>{programNotice}{selected&&<p aria-live="polite">{[selected.name,selected.document||selected.document_name||selected.detail||'No document reported',(selected.agents||[]).map(agent=>agent.name||agent).join(', ')].filter(Boolean).join(' · ')}</p>}</>,
-      // Design: Settings > Connections > Social holds the social inbox, drafts and posts (no Social media page).
-      accts:<>{open('Connect',()=>u.show('Connect'))}{open('Refresh',refresh)}{window.UI.Social&&<details data-design="settings.connections.social"><summary>Social inbox, drafts and posts</summary><window.UI.Social/></details>}</>,
-      ai:focused?.title==='AI providers'?null:open('Open model providers',()=>u.go('settings/Providers')),
-      notify:open('Open notification setting',()=>u.go('settings/BABOOM'))
     };
     return <AreaDesignCards area="Connections" focused={focused} live={live} extras={extras} bodies={{progs:tiles('progs',hosts,true),accts:tiles('accts',accounts,false)}}/>;
   }
@@ -786,11 +812,6 @@
     }
     return <window.UI.Soon label={label}>{control}</window.UI.Soon>;
   }
-  // A page merged into its Settings card (founder 2026-11-26): its content mounts only while the card section is open.
-  function MovedPage({title,open,owner:Owner}) {
-    const [shown,setShown]=React.useState(Boolean(open));
-    return <details className="sheet-embed" open={shown||undefined} onToggle={event=>setShown(event.currentTarget.open)}><summary>{title}</summary>{shown&&<Owner/>}</details>;
-  }
   function PcSettingsCards({page,advanced,setAdvanced,additional,requested}) {
     const s=useData(),u=useApp();
     const workspace=(s.workspaces||[]).find(w=>w.id===s.activeWorkspace);
@@ -899,43 +920,6 @@
     if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
     if(load.status==='empty')return <span>No programs reported.</span>;
     return load.status==='loaded'?<div className="sheet-host-effects">{load.rows.map(row=><div className="spread" key={row.key} data-host-effect={row.key}><span>{row.name}</span><D.Toggle variant="settings" label={row.name} checked={row.on} onCheckedChange={value=>u.act(()=>api.setHostEffect(row.key,value)).then(result=>setLoad(show(result)),failure=>setLoad({status:'error',message:failure.message||String(failure)}))}/></div>)}</div>:null;
-  }
-  function requestGroups(requests, agents, providers) {
-    const groups = new Map();
-    for (const row of requests) {
-      const identity = [...agents,...providers].find(agent => agent.id === row.agent || agent.name === row.agent || agent.sessions?.some(session=>session.root===row.agent));
-      const agent = identity?.name || row.agent_name || (/^(BABOOM|Claude Code|Codex|OpenCode|Gemini|Goose)$/i.test(row.agent||'') ? row.agent : 'Unidentified agent');
-      const key = JSON.stringify([identity?.id||row.agent||agent,row.model,row.provider]);
-      if (!groups.has(key)) groups.set(key,{key,agent,model:row.model,provider:row.provider,count:0,tokens:0,measuredTokens:0,ms:0,measuredTime:0});
-      const group = groups.get(key); group.count++;
-      if (Number.isFinite(row.tokens)) {group.tokens+=row.tokens;group.measuredTokens++;}
-      if (Number.isFinite(row.ms) && row.ms > 0) {group.ms+=row.ms;group.measuredTime++;}
-    }
-    return [...groups.values()];
-  }
-  function RouterSettings() {
-    const s=useData(),u=useApp();
-    const [model,setModel]=React.useState('');
-    const [attempt,setAttempt]=React.useState(0),[load,setLoad]=React.useState({status:'waiting'});
-    React.useEffect(()=>{
-      let current=true;setLoad({status:'waiting'});
-      budgetedRead('The model router',()=>api.refreshRouter(attempt>0)).then(r=>{if(current){setModel(r.default_model);setLoad({status:r.requests.length?'loaded':'empty'});}},
-        error=>{if(current)setLoad({status:'error',message:error.message});});
-      return()=>{current=false;};
-    },[attempt]);
-    const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS,{
-      RouterRefresh:()=>setAttempt(value=>value+1),
-      RouterModel:value=>u.act(()=>api.setRouterSettings({default_model:value}))
-    });
-    if(load.status==='waiting')return <p role="status">Reading router settings…</p>;
-    if(load.status==='error')return <div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Retry router</Btn></div>;
-    const r=s.router;
-    const models=[...new Set([r.default_model,...r.fallback_models,...r.models])];
-    const groups=requestGroups(r.requests,s.agents||[],s.providers||[]);
-    const total=groups.reduce((sum,row)=>({count:sum.count+row.count,tokens:sum.tokens+row.tokens,ms:sum.ms+row.ms,measuredTokens:sum.measuredTokens+row.measuredTokens,measuredTime:sum.measuredTime+row.measuredTime}),{count:0,tokens:0,ms:0,measuredTokens:0,measuredTime:0});
-    const time=row=>row.measuredTime ? `${row.ms.toLocaleString()} ms${row.measuredTime<row.count ? ' (partial)' : ''}` : 'Not measured';
-    const tokens=row=>row.measuredTokens ? `${row.tokens.toLocaleString()}${row.measuredTokens<row.count ? ' (partial)' : ''}` : 'Not reported';
-    return <Card style={{padding:18}}><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><h2>Models &amp; request profiling</h2><label>Default free model<select aria-label="Default free model" value={model} onChange={e=>{setModel(e.target.value);runAction('settings.ds_settings3.RouterModel',e.target.value);}}>{models.map(m=><option key={m}>{m}</option>)}</select></label><p className="muted">Free first · no paid fallbacks · request metadata kept for 20 days</p><Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Refresh models and requests</Btn><div className="router-table-scroll"><table className="router-requests" aria-label="Router requests"><thead><tr><th scope="col">Agent</th><th scope="col">Model</th><th scope="col">Provider</th><th scope="col">Requests</th><th scope="col">Tokens</th><th scope="col">Measured time</th></tr></thead><tbody>{groups.map(row=><tr key={row.key}><th scope="row">{row.agent}</th><td>{row.model}</td><td>{row.provider}</td><td>{row.count}</td><td>{tokens(row)}</td><td>{time(row)}</td></tr>)}</tbody><tfoot><tr><th scope="row" colSpan={3}>Total</th><td>{total.count}</td><td>{tokens(total)}</td><td>{time(total)}</td></tr></tfoot></table></div>{load.status==='empty'&&<p>No model requests yet.</p>}{load.status==='loaded'&&<p>{r.requests.length} recent requests</p>}<h3>Live agent processes</h3><p>{r.live_agents.complete?'Observed processes':'Process observation incomplete'}</p>{r.live_agents.processes.map(p=><p key={p.pid}>{p.runtime} · PID {p.pid}</p>)}</Card>;
   }
   // Run mode and per-tool modes: parameters of the one decision every agent's hook runs.
   function Permissions({rulesOnly=false}) {
@@ -1126,10 +1110,10 @@ ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'se
       {register&&<button type="submit" className="sheet-action" disabled={saving||!changed}>Save register</button>}
     </form>;
   }
-  function WorkspaceRows() {
+  function WorkspaceRows({startNew=false}) {
     const s = useData(),
       u = useApp();
-    const [newProject,setNewProject]=React.useState(false), [projectName,setProjectName]=React.useState(''),
+    const [newProject,setNewProject]=React.useState(Boolean(startNew)), [projectName,setProjectName]=React.useState(''),
       [projectParent,setProjectParent]=React.useState(''), [projectTemplate,setProjectTemplate]=React.useState(''), [templateSource,setTemplateSource]=React.useState(''), [creating,setCreating]=React.useState(false);
     const createProject=async()=>{
       if(creating)return;
@@ -1438,9 +1422,6 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
           && !['Finish and report','Stale claim after idle minutes','Archive after idle days'].includes(row.label)
           && (!row.advanced||advancedOpen)) : [];
     const focused=former && area.label!=='This PC' ? {title:focusSection,content:<>
-      {requestedPage==='Providers'&&<section><h3>Providers and request profiling</h3><Providers/><RouterSettings/></section>}
-      {requestedPage==='Automations'&&<window.UI.Automations embedded/>}
-      {requestedPage==='Library & Mods'&&<window.UI.HostSkills/>}
       {requestedPage==='Workshop'&&<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}>Open the thread</Btn>}
       {extraRows.map(row=><SettingControl key={row.id} row={row} raw={advancedOpen}/>)}
     </>} : null;
@@ -1474,7 +1455,8 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
     }
     const jump=id=>scrollToSection(document.getElementById(id));
     // Opens the existing New project form in Project folders (the workspace owner's own control).
-    const openNewProject=()=>{const folders=content.current?.querySelector('details:has(form[aria-label="New project"]), [data-design-section="CDE folders"] details');if(folders)folders.open=true;const form=content.current?.querySelector('form[aria-label="New project"]');if(form){scrollToSection(form);return;}const button=[...(content.current?.querySelectorAll('button')||[])].find(node=>node.textContent.trim()==='New project');if(button){button.click();scrollToSection(button);}};
+    // The design opens New project as a dialog: the Workspaces dialog with its New project form open.
+    const openNewProject=()=>u.show('Workspaces',{newProject:true});
     React.useEffect(()=>{
       if(!focusSection||initialReveal||reveal)return;
       const heading=[...(content.current?.querySelectorAll('h2,h3')||[])].find(node=>node.textContent.trim()===focusSection);
@@ -1512,12 +1494,12 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
 
       <div className="sheet-design-body"><div className="sheet-design-cards"><div className="sheet-columns" hidden={!!needle || changedOnly}>
       {currentCategory==='Account'&&<AccountDesignCards focused={focused} checking={s.profile.checking&&!checkExpired}/>}
-      {currentCategory==='Connections'&&<ConnectionDesignCards focused={focused} refresh={()=>setAttempt(value=>value+1)} programNotice={sourceNotice('programs','Reading programs…')}/>}
+      {currentCategory==='Connections'&&<ConnectionDesignCards focused={focused} programNotice={sourceNotice('programs','Reading programs…')}/>}
       {currentCategory==='Agents'&&<AreaDesignCards area="Agents" focused={focused} bodies={{agents:<><div className="sheet-agents" role="list"><p>One row per agent app. State and model are live; Connect opens Dependencies when an app is not running.</p>{agentNames.map(name=>{
           const agent=reportedAgents.find(row=>row.name===name);
           const state=agent?.status_text||agent?.presence||'Status not reported';
           return <div key={name} className="sheet-agent-tile" role="listitem"><span className="sheet-agent-mark" aria-hidden="true">{name.slice(0,1)}</span><div><b>{name}</b><small>{agent?.model||'Model not reported'}</small><small>{state}</small></div>{!agent||['stopped','missing'].includes(agent.presence)?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Dependencies')},event)}>Connect</Btn>:<span>{state}</span>}</div>;
-        })}{sourceNotice('agents','Reading agents…')}{sources.agents?.ready&&!(s.agents||[]).some(agent=>agent.kind!=='observation')&&<p>No agents reported.</p>}</div><p className="sheet-session-summary" role="status">{s.agentSummary||status||'No agent sessions reported.'}</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(api.listAgentsWorking)},event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn></>,tools:<div className="sheet-library-summary"><span>{s.catalogue?.length!=null?s.catalogue.length+' nodes in the Library':'Library catalogue unavailable'}</span><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('library')},event)}>Manage</Btn><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Install mod')},event)}>Import</Btn></div>}} live={{
+        })}{sourceNotice('agents','Reading agents…')}{sources.agents?.ready&&!(s.agents||[]).some(agent=>agent.kind!=='observation')&&<p>No agents reported.</p>}</div><p className="sheet-session-summary" role="status">{s.agentSummary||status||'No agent sessions reported.'}</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(api.listAgentsWorking)},event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn></>,tools:<LibraryTools/>}} live={{
         model:router?<select aria-label="Default model" value={router.default_model} onChange={event=>act(()=>api.setRouterSettings({default_model:event.target.value})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:sourceNotice('models','Reading models…'),
         // Longest reply, Creativity and Sampling breadth: the model router's generation values (router.json).
         ...Object.fromEntries([['maxTokens','max_tokens',1,32000,50],['temperature','temperature',0,2,0.1],['topP','top_p',0,1,0.05]].map(([id,key,min,max,step])=>[id,router?.generation?<input type="number" aria-label={{maxTokens:'Longest reply',temperature:'Creativity',topP:'Sampling breadth'}[id]} min={min} max={max} step={step} key={router.generation[key]} defaultValue={router.generation[key]} onBlur={event=>{const value=key==='max_tokens'?Math.round(event.target.valueAsNumber):event.target.valueAsNumber;if(event.target.value===''||!event.target.validity.valid||value===router.generation[key])return;act(()=>api.setRouterSettings({generation:{...router.generation,[key]:value}})).then(result=>{if(result)setRouter(result);});}} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur();}}/>:sourceNotice('models','Reading models…')])),
@@ -1542,15 +1524,13 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         toolRules:focusSection==='What agents may do'?<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>content.current?.querySelector('[aria-label="Tool name or pattern"]')?.focus()},event)}>Edit tool rules</Btn>:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Hooks')},event)}>Tool rules</Btn>,
         bbPinned:<D.Toggle variant="settings" label="Pin in place" checked={!!s.companion?.pinned} onCheckedChange={value=>act(()=>api.setCompanionState({pinned:value}))}/>,
         finishReport:preference('Finish and report')||undefined,wsRelease:preference('Stale claim after idle minutes')||undefined,wsArchive:preference('Archive after idle days')||undefined
-      }} extras={{models:<>{window.UI.Routing&&<details open={focusSection==='Models'&&requestedPage!=='Model review'||undefined}><summary>Routing, providers and free sources</summary><window.UI.Routing/></details>}{window.UI.ModelReview&&<MovedPage title="Model review" open={requestedPage==='Model review'||undefined} owner={window.UI.ModelReview}/>}</>,perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>,meet:window.UI.Meetings&&<MovedPage title="Meetings" open={requestedPage==='Meetings'||undefined} owner={window.UI.Meetings}/>,
-        auto:<>{requestedPage==='Automations'||!window.UI.Automations?null:<details><summary>Schedules and triggers</summary><window.UI.Automations embedded/></details>}{window.UI.Watcher&&<MovedPage title="Watcher" open={requestedPage==='Watcher'||undefined} owner={window.UI.Watcher}/>}</>,
-        tools:window.UI.Xray&&<MovedPage title="X-RAY" open={requestedPage==='X-RAY'||undefined} owner={window.UI.Xray}/>}}/>}
+      }} extras={{perm:focusSection==='What agents may do'?null:<Permissions rulesOnly/>}}/>}
 
       {isPcDesign&&<PcSettingsCards additional={additional} requested={requestedPage} page={currentCategory} advanced={advancedOpen} setAdvanced={setAdvancedOpen}/>}
       {currentCategory==='Projects'&&<AreaDesignCards area="Projects"
         bodies={{register:<ProjectRegister key={registerWorkspace?.id||'office'} workspace={registerWorkspace}/>}}
         live={{stdVersion:<SessionStandardControl/>,projTpl:s.settings.some(row=>row.page==='Projects'&&row.label==='New project folders')?undefined:<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:openNewProject},event)}>Open New project</Btn>}}
-        extras={{cde:<details><summary>Project folders</summary><WorkspaceRows /></details>}}/>}
+/>}
       </div>{!needle&&<div className="sheet-owner-cards">{sources.controls?.error&&sourceNotice('controls','Reading controls…')}{sources.controls?.ready&&<span className="visually-hidden">Settings loaded.</span>}{rowGroups.map(title=><section className="sheet-owner-card" key={title}><h3>{title}</h3>{currentCategory==='Appearance'&&title!=='Keyboard'&&!visibleRows.some(row=>groupTitle(row)===title)&&<p>{sources.controls?.ready?'No settings reported for this group.':!sources.controls?.error&&'Reading settings…'}</p>}{visibleRows.filter(row=>groupTitle(row)===title).map(row=><SettingControl key={row.id} row={row} raw={advancedOpen} />)}</section>)}{changedOnly&&changedKeys.length>0&&<section className="sheet-owner-card"><h3>Look - Keyboard</h3><KeyboardSettings changedOnly /></section>}{changedOnly&&!visibleRows.length&&!changedKeys.length&&<p>No settings differ from their defaults.</p>}</div>}</div>{!needle&&!changedOnly&&(outline.length>0||currentCategory==='Appearance')&&<aside className="sheet-design-side">{currentCategory==='Appearance'&&<section className="sheet-live-preview" aria-label="Live preview"><h3>Live preview</h3>{s.graph?.nodes?.length && window.UI.Canvas ? <>
         <div className="sheet-preview-stage" inert>
           <window.UI.Ctx.Provider value={{...u, libraryOpen:false, selectedNodeId:null}}>
@@ -1565,7 +1545,6 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
           <p>Open a workflow to preview its real nodes here.</p></div>}</section>}<nav className="sheet-outline" aria-label="On this page"><b>On this page</b>{outline.map(row=><button type="button" key={row.id} onClick={event=>executeAction('projects.controls.activate',{handler:()=>jump(row.id)},event)}>{row.label}</button>)}</nav></aside>}</div></div></div></section></div></SearchCard.Provider>;
   }
   window.UI.Settings = Settings;
-  window.UI.requestGroups = requestGroups;
   window.UI.PasteSettings = PasteSettings;
   window.UI.KeyboardSettings = KeyboardSettings;
   window.UI.PreferencesTransfer = PreferencesTransfer;

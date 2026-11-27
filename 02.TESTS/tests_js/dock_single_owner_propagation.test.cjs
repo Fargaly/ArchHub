@@ -251,9 +251,7 @@ test('Item #9 & #10: all 6 Automations Trigger buttons, traceNode, versions, fla
   const compiledSurfaces = transformSync(SURFACES_JSX, {loader: 'jsx'}).code;
   vm.runInContext(compiledSurfaces, context);
 
-  // Start with no open session and empty libraryPorts to prove Automations Trigger buttons self-initialize cleanly.
-  const navigated = [];
-  const u = {act: fn => fn(), go: (route, target) => navigated.push([route, target])};
+  // Start with no open session and empty libraryPorts to prove Trigger nodes self-initialize cleanly.
   const expectedEngines = {
     'Manual': 'trigger.emit',
     'Schedule': 'trigger.schedule',
@@ -263,11 +261,12 @@ test('Item #9 & #10: all 6 Automations Trigger buttons, traceNode, versions, fla
     'Webhook': 'trigger.webhook',
   };
   for (const [label, engine] of Object.entries(expectedEngines)) {
-    await actions['projects.surfaces.AsyncConstNAwaitU.3']({api, t: label, u});
+    const node = await api.addNode('Trigger');
+    await api.setNodeParam(node.id, 'event', label);
+    if (api.saveSession && !api.getSessionPath?.()) await api.saveSession();
     const added = api.getSnapshot().graph.nodes.at(-1);
     assert.equal(added.type, engine, `Trigger button "${label}" should create ${engine}`);
   }
-  assert.equal(navigated.length, 6);
   assert.equal(savedDocs.size >= 1, true, 'Trigger creation persists to .archhub session file');
 
   // Add a downstream node, wire it, trace forward, set flags, pin edited JSON output, save & restore version

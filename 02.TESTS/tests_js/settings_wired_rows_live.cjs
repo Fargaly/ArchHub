@@ -68,10 +68,9 @@ const {chromium} = require('playwright');
       await codes.fill('A, S, M');
       await codes.press('Enter');
       await quiet();
-      const cde = sheet.locator('section[data-design-section="CDE folders"]');
-      await cde.locator('summary', {hasText: 'Project folders'}).click();
-      await cde.getByRole('button', {name: 'New project', exact: true}).click();
-      const form = cde.getByRole('form', {name: 'New project'});
+      // The design opens New project as a dialog (Workspaces dialog, New project form open).
+      await sheet.getByRole('button', {name: 'Open New project', exact: true}).click();
+      const form = page.getByRole('dialog').getByRole('form', {name: 'New project'});
       await form.getByLabel('Project name').fill('CDE-' + width);
       report['parent' + at] = await form.getByLabel('Parent workspace').evaluate(node => node.selectedOptions[0]?.textContent);
       await form.getByLabel('New project folders').selectOption('ISO 19650 CDE tree');

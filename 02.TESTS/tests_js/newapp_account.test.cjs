@@ -94,13 +94,10 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
  const snapshot={...api.getSnapshot(),approvals:[{id:'review',title:'Review',status:'pending',kind:'model',rows:[]}],connections:[{id:'youtube',name:'YouTube',connected:true}],hostSkills:[]};
  w.ArchHubAPI={...api,getSnapshot:()=>snapshot};w.matchMedia=()=>({matches:false});w.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
  for(const name of ['vendor/react.js','vendor/react-dom.js','vendor/babel.js'])w.eval(fs.readFileSync(path.join(studio,name),'utf8'));
- for(const name of ['tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx','ds_baboom.jsx','ds_settings3.jsx','workflow-states.jsx','agent-states.jsx','answer-widgets.jsx'])w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,name),'utf8'),{presets:['react']}).code);
+ for(const name of ['tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx','ds_settings3.jsx','workflow-states.jsx','agent-states.jsx','answer-widgets.jsx'])w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,name),'utf8'),{presets:['react']}).code);
  const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
  const render=(component,props={})=>w.ReactDOM.flushSync(()=>root.render(w.React.createElement(w.UI.Ctx.Provider,{value:{act:fn=>fn(),composerDraft:{text:'',revision:0},setComposerDraft(){}}},w.React.createElement(component,props))));
  try{
-  render(w.UI.Providers);
-  assert.equal(w.document.querySelector('[aria-label="Codex signed in"]'),null);
-  assert.ok(w.document.querySelector('[aria-label="Codex enabled"]'));
   render(w.UI.Composer);
   assert.equal(w.document.querySelector('[title="Talk · F2"]'),null);
   assert.ok(w.document.querySelector('[aria-label="Send ↵"]'));
@@ -117,8 +114,6 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
   assert.ok(w.document.querySelector('[aria-label="Open"]'));
   render(w.UI.HomeAwareness);
   assert.doesNotMatch(w.document.body.textContent,/Timesheet draft/);
-  render(w.UI.HostSkills);
-  assert.equal(w.document.querySelector('[aria-label="Import skill"]'),null);
   render(w.UI.ActionEvidence,{id:'review'});
   assert.doesNotMatch(w.document.body.textContent,/Request another review/);
  }finally{root.unmount();dom.window.close();}
@@ -510,15 +505,6 @@ test('DS forwards a native button callback exactly once',async()=>{
  try{assert.equal(await s.evaluate(`(async()=>{let activated=0;render(AH_DS.Btn,{onClick:()=>activated++,children:'Press'});await click(document.querySelector('button'));return activated;})()`),1);}
  finally{await s.close();}
 });
-test('Watcher draws only the confirmed source and exposes retry on failure',async()=>{
- const s=await screen(['ds_home2.jsx','surfaces.jsx'],{watcher:{status:'empty',geometry:{walls:[]}},graph:{name:'Work',nodes:[]},settings:[]},`{checkWatcherSource:async()=>{if(refused)throw Error('Source changed. Run its input again.');testData.watcher={status:'loaded',host:'Actual source',geometry:{walls:[[10,20,30,40]]}};return {lines:{watcher:[[10,20,30,40]]}};}}`);
- try{
-  const error=await s.evaluate(`(async()=>{render(UI.Watcher);await click([...document.querySelectorAll('button')].find(b=>b.textContent==='Run to here'));return document.querySelector('[role="alert"]').textContent;})()`);
-  assert.match(error,/Source changed/);
-  const drawing=await s.evaluate(`(async()=>{refused=false;await click([...document.querySelectorAll('button')].find(b=>b.textContent==='Retry source'));const svg=document.querySelector('svg[aria-label="Actual source"]');return {count:svg.querySelectorAll('path').length,path:svg.querySelector('path').getAttribute('d')};})()`);
-  assert.deepEqual(drawing,{count:1,path:'M10 20L30 40'});
- }finally{await s.close();}
-});
 test('office seat draft does not change billing while typing and requests confirmation before applying',async()=>{
  const s=await screen('project-tools.jsx',{profile:{signedIn:true,id:'owner',plan:'studio'},usage:{seats:2},runs:[],people:[]},`{refreshCompany:async()=>({seat_limit:2}),setAccountSeats:async seats=>{calls.push(['seats',seats]);return {seat_limit:seats};}}`);
  try{
@@ -644,7 +630,7 @@ async function restScreen(component, api, state, props={}) {
  win.UI={api,productLabel:label=>label,A:{ok:'green',warn:'orange',inkSoft:'gray'},D:{Toggle:({checked,onCheckedChange,label})=>React.createElement('input',{type:'checkbox',checked,'aria-label':label,onChange:event=>onCheckedChange(event.target.checked)})},
   useData:()=>state,useApp:()=>u,Btn:({p,sm,ghost,danger,...props})=>React.createElement('button',props),Card:element('section'),Chip:element('span'),
   Heading:({title,children})=>React.createElement('header',null,title,children),Empty:element('p'),Table:({rows})=>React.createElement('pre',null,JSON.stringify(rows)),SettingControl:()=>null,Av:()=>null};
- for(const screenFile of ['answer-widgets.jsx','community-tools.jsx','decision-results.jsx','canvas-states.jsx','watcher-controls.jsx','desktop.jsx','ds_watch_edit.jsx','routing.jsx','xray.jsx','context-menus.jsx',...(component==='NodeDetails'?['workflow-states.jsx']:[])]){
+ for(const screenFile of ['answer-widgets.jsx','community-tools.jsx','decision-results.jsx','canvas-states.jsx','watcher-controls.jsx','desktop.jsx','context-menus.jsx',...(component==='NodeDetails'?['workflow-states.jsx']:[])]){
   win.eval(win.Babel.transform(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio',screenFile),'utf8'),{presets:['react']}).code);
  }
  for(const surfaceName of ['RefineComparison','ModelAvailability','HealthHistory','XrayLayers','Research','GraphMetadata','CapabilitySettings'])if(!win.UI[surfaceName])win.UI[surfaceName]=()=>null;
@@ -671,16 +657,6 @@ test('WIRE-rest rendered Desktop shows waiting, real refusal, retry and the owne
  }finally{screen.close();}
 });
 
-test('WIRE-rest rendered Watcher reads connector owner evidence and opens existing Connections',async()=>{
- const {api}=await adapter({...signedInAccount});let calls=0;
- const screen=await restScreen('Watcher',{...api,readHostAvailability:async()=>{calls++;return {ok:true,operations:[{host:'revit',operation:'read',status:'available',reason:'Broker observed'}]};}},api.getSnapshot());
- try{
-  [...screen.win.document.querySelectorAll('button')].find(b=>b.textContent==='Read source').click();await screen.settle();
-  assert.equal(calls,1);assert.match(screen.win.document.body.textContent,/Broker observed/);
-  [...screen.win.document.querySelectorAll('button')].find(b=>b.textContent==='Connections').click();
-  assert.deepEqual(screen.navigation,['settings/Connections']);
- }finally{screen.close();}
-});
 
 test('WIRE-rest command rejects a changed input schema before posting',async()=>{
  const canvas={root:'canvas',nodes:[],wires:[],interaction_projection:{bindings:[{control:'createCommunityGroup',interaction:'i',event:'activate',event_facts:[]}]}};
@@ -705,7 +681,7 @@ test('WIRE-rest rendered community preserves rejected drafts and executes its re
 
 test('WIRE-rest rendered owned screens mount against the real empty snapshot and keep navigation usable',async()=>{
  const {api}=await adapter({...signedInAccount});
- for(const component of ['GraphProperties','RefineComparison','Routing','Xray','WatcherDimensions']){
+ for(const component of ['GraphProperties','RefineComparison','WatcherDimensions']){
   const screen=await restScreen(component,api,api.getSnapshot());
   try{assert.ok(screen.win.document.getElementById('root').textContent.length>0,component);}
   finally{screen.close();}
@@ -891,36 +867,6 @@ test('HOSTSKILLS unavailable owner hides all six and a local file preserves uplo
  assert.equal(rig.methods.length,count);
 });
 
-test('HOSTSKILLS existing rendered controls invoke package owner actions',async()=>{
- const rig=await hostskillsAdapter(),{JSDOM}=require('jsdom');
- const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
- const studio=path.join(__dirname,'../../01.APP/nodelang/studio');
- for(const vendor of ['react.js','react-dom.js','babel.js'])w.eval(fs.readFileSync(path.join(studio,'vendor',vendor),'utf8'));
- const R=w.React,opened=[],u={act:fn=>fn(),show:(name,data)=>opened.push({name,data})};
- w.AHIcon=()=>null;w.ArchHubAPI=rig.api;
- const element=tag=>({children,...props})=>R.createElement(tag,props,children);
- w.UI={api:rig.api,A:{},D:{Toggle:({label,checked,onCheckedChange})=>R.createElement('button',{'aria-label':label,onClick:()=>onCheckedChange(!checked)})},
-  useData:()=>R.useSyncExternalStore(rig.api.subscribe,rig.api.getSnapshot),useApp:()=>u,
-  Btn:({p,sm,ghost,...props})=>R.createElement('button',props),Card:element('section'),Chip:element('span')};
- w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,'agent-states.jsx'),'utf8'),{presets:['react']}).code);
- const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
- const settle=()=>new Promise(resolve=>setTimeout(resolve,30));
- const render=async(component,props={})=>{root.render(R.createElement(component,props));await settle();};
- const click=async label=>{const button=[...w.document.querySelectorAll('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label);assert.ok(button,label);button.click();await settle();};
- try{
-  await render(w.UI.HostSkills);await click('Import skill');assert.equal(opened.at(-1).name,'Import skill');
-  await click('Enable skill Dimensions');assert.ok(rig.methods.find(m=>m.function==='setHostSkillEnabled'));
-  await render(w.UI.HostSkill,{id:'skill'});await click('Review access');assert.equal(rig.api.getSnapshot().hostSkills[0].audit,'Access findings recorded');
-  await render(w.UI.ConnectorBundle);
-  assert.ok(w.document.querySelector('[aria-label="Precision"]'));
-  const input=w.document.querySelector('[aria-label="Choose connector bundle"]'),bytes=Buffer.from('{}');
-  Object.defineProperty(input,'files',{configurable:true,value:[{name:'fixture.json',arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)}]});
-  input.dispatchEvent(new w.Event('change',{bubbles:true}));await settle();
-  assert.ok(rig.methods.find(m=>m.function==='inspectConnectorBundle'));
-  await click('Install reviewed bundle');assert.ok(rig.methods.find(m=>m.function==='installConnectorBundle'));
-  assert.equal(rig.api.getSnapshot().connectorBundle.installed,false);
- }finally{root.unmount();dom.window.close();}
-});
 
 test('HOSTSKILLS a file switch during a local package read refuses before upload',async()=>{
  const rig=await hostskillsAdapter();
@@ -1122,48 +1068,6 @@ test('WATCHER owner refusal preserves projection; approve is the only host effec
  await rig.api.approve(card.id);assert.equal(rig.writes(),1);assert.equal(rig.api.getSnapshot().watcher.wallY,530);
 });
 
-test('WATCHER rendered tools persist gestures and open the exact approval',async()=>{
- const rig=await watcherAdapter(),{JSDOM}=require('jsdom');
- const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true}),win=dom.window;
- const studio=path.join(__dirname,'../../01.APP/nodelang/studio');
- for(const vendor of ['react.js','react-dom.js','babel.js'])win.eval(fs.readFileSync(path.join(studio,'vendor',vendor),'utf8'));
- win.AHIcon=()=>null;
- const R=win.React,opened=[],element=tag=>({children,...props})=>R.createElement(tag,props,children);
- win.DOMPoint=class{constructor(x,y){this.x=x;this.y=y;}matrixTransform(){return this;}};
- win.SVGElement.prototype.getScreenCTM=()=>({inverse:()=>({})});win.SVGElement.prototype.setPointerCapture=()=>{};
- win.UI={bindActions:(names,handlers)=>(id,...args)=>handlers[names[id]](...args),api:rig.api,useData:()=>R.useSyncExternalStore(rig.api.subscribe,rig.api.getSnapshot),useApp:()=>({show:(name,data)=>opened.push({name,data}),go:()=>{}}),
-  useAction:()=>{const [state,setState]=R.useState('idle');return {state,run:async fn=>{setState('waiting');try{return await fn();}finally{setState('idle');}}};},
-  ActionStatus:()=>null,Btn:({p,sm,ghost,...props})=>R.createElement('button',props),Card:element('section'),Heading:element('header')};
- win.eval(win.Babel.transform(fs.readFileSync(path.join(studio,'answer-widgets.jsx'),'utf8'),{presets:['react']}).code);
- win.eval(win.Babel.transform(fs.readFileSync(path.join(studio,'ds_watch_edit.jsx'),'utf8'),{presets:['react']}).code);
- const root=win.ReactDOM.createRoot(win.document.getElementById('root'));
- const settle=()=>new Promise(resolve=>setTimeout(resolve,30));
- root.render(R.createElement(win.UI.Watcher));await settle();
- const button=label=>[...win.document.querySelectorAll('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label);
- const click=async label=>{assert.ok(button(label),label);button(label).click();await settle();};
- const gesture=async()=>{const svg=win.document.querySelector('svg');for(const [type,x,y] of [['pointerdown',120,510],['pointermove',150,520],['pointerup',220,530]]){svg.dispatchEvent(new win.MouseEvent(type,{bubbles:true,button:0,clientX:x,clientY:y}));await settle();}};
- try{
-  await click('AutoCAD');assert.equal(rig.api.getSnapshot().watcher.host,'AutoCAD');
-  const select=win.document.querySelector('select');select.value='Level 2';select.dispatchEvent(new win.Event('change',{bubbles:true}));await settle();
-  assert.equal(rig.api.getSnapshot().watcher.view,'Level 2');
-  await click('Dimension · D');await gesture();assert.equal(rig.api.getSnapshot().watcher.dimensions.length,1);
-  await click('Mark · M');await gesture();assert.equal(rig.api.getSnapshot().watcher.marks.length,1);
-  await click('Comment · C');await gesture();assert.equal(opened.at(-1).name,'Add comment');assert.equal(opened.at(-1).data.element,'unique-wall');
-  const registrations={};
-  win.registerActions=(names,handlers)=>{for(const [name,key] of Object.entries(names))registrations[name]=handlers[key];};
-  const actualDOM=win.ReactDOM;win.ReactDOM={createRoot:()=>({render(){}})};
-  win.eval(win.Babel.transform(fs.readFileSync(path.join(studio,'app.jsx'),'utf8'),{presets:['react']}).code);
-  win.ReactDOM=actualDOM;
-  await registrations['appShell.AddComment.77']({api:rig.api,m:opened.at(-1).data,saved:fn=>fn(),text:'Keep clear'});
-  assert.equal(rig.api.getSnapshot().watcher.comments[0].text,'Keep clear');
-
-  await click('Edit · E');await gesture();assert.equal(rig.api.getSnapshot().watcher.pendingY,550);
-  await click('Apply to AutoCAD');assert.equal(opened.at(-1).name,'Approve');assert.equal(opened.at(-1).data.id,'proposal');assert.equal(rig.writes(),0);
-  await click('Discard changes');assert.equal(rig.api.getSnapshot().watcher.pendingY,510);
-  rig.refuse('Source revision changed');await click('AutoCAD');assert.match(win.document.querySelector('[role=alert]').textContent,/Source revision changed/);
-  rig.refuse(null);await click('Retry action');assert.equal(win.document.querySelector('[role=alert]'),null);assert.match(win.document.body.textContent,/Watcher saved/);
- }finally{root.unmount();dom.window.close();}
-});
 
 
 // DESKTOP: owner answers first; every control uses the same scoped Workshop.

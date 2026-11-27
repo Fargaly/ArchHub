@@ -60,7 +60,7 @@ async function mount(page,profile,extra){
  await page.evaluate(()=>{
   for(const name of ['MemoryRules','Automations','HostSkills','Providers','Social','Access','Colleagues','Brain','Meetings','ModelReview','Watcher','Xray'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
   function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);const [dialog,setDialog]=React.useState('');
-   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:k=>setDialog(k),settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
+   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:k=>{window.lastShown=k;setDialog(k);},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
    return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}),dialog==='Keyboard shortcuts'&&React.createElement('div',{role:'dialog','aria-label':dialog},React.createElement(window.UI.KeyboardSettings)));}
   window.ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
  });
@@ -144,8 +144,8 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
     const r=target.getBoundingClientRect();
     return shell.getBoundingClientRect().top>=-1&&r.top>=-1&&r.bottom<=window.innerHeight;
    },null,{timeout:3000});
-   // Social media lives in Settings > Connections > Accounts (founder 2026-11-26: all settings in one place), not a page.
-   await page.locator('[data-design="settings.connections.social"] summary',{hasText:'Social inbox, drafts and posts'}).waitFor();
+   // The design's Accounts card is its tiles only: no embedded Social media page (founder 2026-11-27).
+   assert.equal(await page.locator('[data-design-section="Accounts"] details').count(),0,'no page embedded in Accounts');
    // Each page shows only its own rows.
    for(const [route,shown,hidden] of [['settings/Privacy','Privacy.Review','Workshop.Keep messages'],['settings/Look','Appearance.Theme','Workshop.Keep messages'],['settings/Updates & About','Privacy.Review','Workshop.Keep messages'],['settings/Workshop','Workshop.Keep messages','Privacy.Review'],['settings/Automations',null,'Workshop.Keep messages'],['settings/Hooks',null,'Workshop.Keep messages']]){
     await page.evaluate(r=>window.goSettings(r),route);
@@ -207,8 +207,6 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    assert.equal(await page.evaluate(()=>window.writes.some(row=>'scope' in row)),false);
    await tools.locator('summary').first().click();
    await nav.getByRole('button',{name:'Projects',exact:true}).click();
-   await page.locator('[data-design-section^=CDE] summary').click();
-   await page.getByRole('heading',{name:'Example workspace',exact:true}).waitFor();
    await page.getByLabel('Length',{exact:true}).selectOption('Metres');
    await page.getByRole('button',{name:'Increase Length precision',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.writes.slice(-2)),[{id:'Projects.Length',value:'Metres'},{id:'Projects.Length precision',value:1}]);
@@ -251,44 +249,48 @@ test('the five Settings pages show all 44 design cards in order with live owners
    assert.ok(await soon.evaluateAll(parts=>parts.every(node=>node.getAttribute('aria-disabled')==='true'&&node.querySelector('.soon-part[inert]'))),area+' unsupported controls must stay inert');
   }
   // The new doors open the existing owner screens.
-  for(const [route,door,target] of [['Account','Open Community','community'],['Connections','Open model providers','settings/Providers'],['Connections','Open connected devices','settings/Access'],['Connections','Open notification setting','settings/BABOOM']]){
+  for(const [route,door,target] of [['Account','Open Community','community'],['Connections','Add a provider','My secrets']]){
    await page.evaluate(r=>window.goSettings(r),'settings/'+route);
    await page.locator(`[data-screen="settings/${route}"]`).waitFor();
+   await page.evaluate(()=>{window.lastRoute=undefined;window.lastShown=undefined;});
    await page.locator('.sheet-content').getByRole('button',{name:door,exact:true}).click();
-   assert.equal(await page.evaluate(()=>window.lastRoute),target,door);
-  }
-  // The pages merged into Settings (founder 2026-11-26): their old routes open the card that now holds their content.
-  for(const [former,area,card,owner] of [['Meetings','Agents','Meetings','Meetings'],['Model review','Agents','Models','ModelReview'],
-    ['Watcher','Agents','Automations','Watcher'],['X-RAY','Agents','Tools in the Library','Xray']]){
-   await page.evaluate(()=>window.goSettings('settings/Account'));
-   await page.evaluate(r=>window.goSettings(r),'settings/'+former);
-   await page.locator(`[data-screen="settings/${area}"]`).waitFor();
-   await page.locator(`[data-design-section="${card}"] details.sheet-embed[open]`).getByText(owner+' owner',{exact:true}).waitFor();
+   assert.equal(await page.evaluate(()=>window.lastRoute||window.lastShown),target,door);
   }
   // Design: Theme and colour has no embedded page; the former Interface studio route opens that card's rows.
   await page.evaluate(()=>window.goSettings('settings/Account'));
   await page.evaluate(()=>window.goSettings('settings/Interface studio'));
   await page.locator('[data-screen="settings/Appearance"] [data-design-section="Theme and colour"]').waitFor();
   assert.equal(await page.locator('[data-design-section="Theme and colour"] details, [data-design-section="The app"] details').count(),0,'no inline page in Theme and colour or The app');
-  // The former Providers entry embeds the real owner inside Connections › AI providers.
-  await page.evaluate(()=>window.goSettings('settings/Account'));
-  await page.evaluate(()=>window.goSettings('settings/Providers'));
-  await page.locator('[data-screen="settings/Connections"]').waitFor();
-  await page.locator('[data-design-section="AI providers"]').getByRole('heading',{name:'Providers and request profiling',exact:true}).waitFor();
-  assert.equal(await page.getByText('Providers owner',{exact:true}).count(),1,'provider owner mounted');
+  // Former page routes open the card that holds their rows; the card shows only the design's rows, never the old page.
+  for(const [former,area,card] of [['Meetings','Agents','Meetings'],['Model review','Agents','Models'],['Watcher','Agents','Automations'],
+    ['X-RAY','Agents','Tools in the Library'],['Access','Account','Plan & access'],['Team','Account','Plan & access'],['Brain','Account','Brain and cloud sync'],
+    ['Social','Connections','Accounts'],['Providers','Connections','AI providers']]){
+   await page.evaluate(()=>window.goSettings('settings/Account'));
+   await page.evaluate(r=>window.goSettings(r),'settings/'+former);
+   await page.locator(`[data-screen="settings/${area}"]`).waitFor();
+   const section=page.locator(`[data-design-section="${card}"]`);await section.waitFor();
+   assert.equal(await section.locator('details.sheet-embed').count(),0,former+' embeds no page');
+   assert.equal(await section.getByText(/ owner$/).count(),0,former+' mounts no page owner');
+  }
   const settingsMenu=await openSettingsMenu(page);
   assert.equal(await settingsMenu.getByRole('button',{name:'Hide advanced',exact:true}).count(),1);
   // New project folders is a working workflow, not a whole-feature placeholder.
   await page.evaluate(()=>window.goSettings('settings/Projects'));
   await page.locator('[data-screen="settings/Projects"]').waitFor();
   assert.equal(await page.getByRole('group',{name:'New project folders. Coming soon: not built yet',exact:true}).count(),0,'no false placeholder');
+  // The design opens New project as a dialog: the Workspaces dialog with its New project form open.
+  await page.evaluate(()=>{window.lastShown=undefined;});
   await page.getByRole('button',{name:'Open New project',exact:true}).click();
-  const folders=page.getByLabel('New project folders',{exact:true});
+  assert.equal(await page.evaluate(()=>window.lastShown),'Workspaces');
+  // The form itself, as the dialog mounts it.
+  await page.evaluate(()=>{const host=document.createElement('div');host.id='dialog-host';document.body.append(host);
+   window.ReactDOM.createRoot(host).render(React.createElement(window.UI.Ctx.Provider,{value:{act:async fn=>fn(),show:()=>{},go:()=>{},confirm:()=>{},pickWorkspace:()=>{}}},React.createElement(window.UI.WorkspaceRows,{startNew:true})));});
+  const folders=page.locator('#dialog-host').getByLabel('New project folders',{exact:true});
   await folders.waitFor();
   assert.equal(await folders.locator('option[value="ISO 19650 CDE tree"]').evaluate(o=>o.disabled),false,'the ISO tree is built from Settings › Projects › CDE folders');
   await folders.selectOption('Office project tree');
-  await page.getByRole('button',{name:'Choose template folder',exact:true}).waitFor();
-  assert.equal(await page.getByLabel('Project name',{exact:true}).count(),1,'registration fields stay separate in the New project form');
+  await page.locator('#dialog-host').getByRole('button',{name:'Choose template folder',exact:true}).waitFor();
+  assert.equal(await page.locator('#dialog-host').getByLabel('Project name',{exact:true}).count(),1,'registration fields stay separate in the New project form');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({orderedDesignCards:43,areas:5,errors}));
   await page.close();

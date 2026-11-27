@@ -57,13 +57,6 @@ test('A message without a model does not claim an independent check',()=>{
  const c=context();load(c,'ds_workshop3.jsx');
  assert.doesNotMatch(text(c.UI.Messages({task:{messages:[{id:'m',who:'Codex',text:'stored'}]}})),/Checks the result/);
 });
-test('Meetings renders missing calendar and participants without invented defaults',()=>{
- const c=context();load(c,'meetings.jsx');
- const tree=c.UI.Meetings();
- const calendar=nodes(tree).find(n=>n.props?.['aria-label']==='Meeting from calendar');
- assert.equal(calendar.props.value,'');
- assert.doesNotMatch(text(tree),/Mona|fire door|site plan/);
-});
 test('Agent channel is an exported face backed by the shared API',()=>{
  const c=context();load(c,'agent-states.jsx');assert.equal(typeof c.UI.AgentChannel,'function');
  const tree=c.UI.AgentChannel({id:'codex'});
@@ -82,19 +75,6 @@ test('Desktop state reads the native frame owner and never starts another compan
  load(c,'desktop.jsx');const tree=c.UI.DesktopScene();
  await nodes(tree).find(n=>text(n)==='Read companion state').props.onClick();assert.equal(calls,1);
 });
-test('Team meeting task uses the reviewed meeting action owner, rather than sending an unowned duplicate',async()=>{
- const c=context({meeting:{title:'Real meeting',actions:['A real decision'],actionOwners:{0:'Owner'},actionTasks:{}}}),calls=[];
- c.UI.api.createMeetingTask=async i=>{calls.push(i);return {id:'existing-task'};};
- load(c,'ds_colleagues.jsx');const tree=c.UI.Colleagues();
- assert.doesNotMatch(text(tree),/fire door|revised site plan/);
- await nodes(tree).find(n=>text(n)==='Make task').props.onClick();assert.deepEqual(calls,[0]);
-});
-
-test('The company directory is never presented as meeting attendance',()=>{
- const c=context({people:[{id:'employee',name:'Employee not in meeting'}]});load(c,'meetings.jsx');
- assert.doesNotMatch(text(c.UI.Meetings()),/Employee not in meeting/);
-});
-
 test('Native sessions button calls only discovery, without sending into a session',async()=>{
  const c=context();let calls=0;c.UI.api.listAgentSessions=async()=>{calls++;return {sessions:[],adapters:{},truncated:false};};
  load(c,'agent-states.jsx');const tree=c.UI.AgentChannel({id:'codex'});

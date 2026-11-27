@@ -1513,19 +1513,7 @@
       }, event)}>Hide</Btn><Btn danger onClick={event => executeAction("appShell.Quit.48", {
         api,
         saved
-      }, event)}>Quit</Btn></div>;else if (k === 'Workshop board') body = <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3,minmax(200px,1fr))',
-      minHeight: 300
-    }}>{window.UI.workshopGroups(false, new Set(s.approvals.filter(c => c.status === 'pending').map(c => c.taskId))).map(([name, member, status]) => <div className="task-column" key={name} data-workshop-lane={name} onDragOver={e => e.preventDefault()} onDrop={e => {
-        e.preventDefault();
-        const id = e.dataTransfer.getData('task');
-        if (id) u.act(() => api.setTaskStatus(id, status));
-      }}><h3 style={{
-          color: A.inkSoft
-        }}>{name} · {s.tasks.filter(member).length}</h3>{s.tasks.filter(member).map(t => <Card key={t.id} style={{
-          padding: 8
-        }}><window.UI.Task task={t} select={() => u.openTaskFile(t.id)} /></Card>)}</div>)}</div>;else if (k === 'Notifications' || k === 'Founder inbox') body = <div className="grid">{s.notifications.map(n => (api.supportsAction?.('readNotification') !== false && <button className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {
+      }, event)}>Quit</Btn></div>;else if (k === 'Notifications') body = <div className="grid">{s.notifications.map(n => (api.supportsAction?.('readNotification') !== false && <button className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {
         api,
         n,
         u
@@ -1727,7 +1715,7 @@
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
     }}><section ref={ref} className={'dialog'+(k==='Search'?' v22g-palette':'')} role="dialog" aria-modal="true" aria-label={title} style={{
-        width: k === 'Workshop board' ? 'min(1250px,95vw)' : k === 'Approve' ? 'min(850px,95vw)' : undefined
+        width: k === 'Approve' ? 'min(850px,95vw)' : undefined
       }}><header className="spread"><h2>{title}</h2><Btn sm ghost aria-label="Close dialog" onClick={event => executeAction("appShell.CloseDialog.98", {
             close
           }, event)}>×</Btn></header><Boundary key={k}>{body}</Boundary></section></div>;

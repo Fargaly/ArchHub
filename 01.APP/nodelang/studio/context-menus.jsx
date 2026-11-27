@@ -646,7 +646,7 @@
       context = card?.matches('.ws-msg') ? 'message' : 'workshop';
       label = 'Workshop menu';
       const inspect = card?.matches('.ws-msg') && [...card.querySelectorAll('.ws-msg-foot button')].find(button => button.hasAttribute('aria-expanded'));
-      if (!card) rawGroups = [[search(workshopDock, 'input[aria-label="Search threads"]')]];
+      if (!card) rawGroups = [];
       else if (inspect) rawGroups = [[click('menu.workshop.inspect', inspect, inspect.textContent.trim())]];
       else {
         const buttons = [...card.querySelectorAll('button')];

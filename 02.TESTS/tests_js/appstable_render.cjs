@@ -88,16 +88,10 @@ async function run(studio, output) {
       check(screen+' no question avatars',!layout.avatars.includes('?'),layout.avatars);
       {
         check('Workshop honest unassigned owner',!layout.text.includes('null'),layout.text.slice(-350));
-        await page.getByRole('textbox',{name:'Search threads'}).fill('isolated application');
-        check('Workshop search preserves saved tasks',await page.locator('[data-ws-working]').count()===1,null);
-        await page.getByRole('textbox',{name:'Search threads'}).fill('');
-        check('Workshop search clears back to every task',await page.locator('[data-ws-working]').count()===2,null);
+        check('Workshop panel lists every task, no search row',await page.locator('[data-ws-working]').count()===2&&await page.getByRole('textbox',{name:'Search threads'}).count()===0,null);
         await page.getByRole('button',{name:/Restore isolated application/}).click();
-        await page.getByRole('button',{name:'Board',exact:true}).click();
-        await page.getByRole('button',{name:'Inbox',exact:true}).click();
-        check('Workshop task/board/inbox actions',await page.evaluate(() =>
-          window.calls.some(c=>c[0]==='task'&&c[1]==='work:control')&&
-          window.calls.some(c=>c[1]==='Workshop board')&&window.calls.some(c=>c[1]==='Founder inbox')),null);
+        check('Workshop task action',await page.evaluate(() =>
+          window.calls.some(c=>c[0]==='task'&&c[1]==='work:control')),null);
       }
       await page.getByRole('textbox',{name:'Message',exact:true}).fill('Fixture-only reply');
       await page.getByRole('textbox',{name:'Message',exact:true}).press('Enter');

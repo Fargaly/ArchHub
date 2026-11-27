@@ -378,11 +378,7 @@
           u
         }, event)}><window.AHIcon name="plus" size={16} /></button><button type="button" className="icon-button" title="Commands" aria-label="Commands" onClick={event => executeAction("sharedUI.Commands.6", {
           u
-        }, event)}><span>/</span></button>{[['Sketch', 'palette'], ['Mark', 'eye'], ['Mask', 'shield']].map(([tool, icon]) => <button type="button" key={tool} className="icon-button" title={tool} aria-label={tool} onClick={event => executeAction("sharedUI.Control.7", {
-          api,
-          tool,
-          u
-        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{window.UI.AgentPicker && <window.UI.AgentPicker choices={choices} to={to} setTo={setTo} />}<span className="fill" />{u.route!=='home' && api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
+        }, event)}><span>/</span></button>{window.UI.AgentPicker && <window.UI.AgentPicker choices={choices} to={to} setTo={setTo} />}<span className="fill" />{u.route!=='home' && api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
         }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn data-design="composer.send" p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} />{u.route==='home'?'Send':null}</Btn></div>

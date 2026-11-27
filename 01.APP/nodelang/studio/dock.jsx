@@ -662,7 +662,6 @@
           onPointerDown={event => { event.preventDefault(); const a = event.currentTarget.previousElementSibling, b = event.currentTarget.nextElementSibling; grab(event, {kind: 'stack', side, index: index - 1, a, b, y: event.clientY, from: a.offsetHeight, total: a.offsetHeight + b.offsetHeight, sum: d.st[index - 1].h + sl.h}); }} />}
         <section className={'dslot' + (sl.c ? ' c' : '')} data-slot={side + ':' + index} aria-label={PANELS[sl.a][0]} style={{flex: sl.c ? '0 0 auto' : sl.h + ' 1 0'}}>
           <div className="dtabs st" role="tablist" aria-label={side + ' panel ' + (index + 1)}>{sl.p.map(pid => tab(pid, side, pid === sl.a, true))}<span className="fill" />
-            <button type="button" className="icon-btn" data-panel-menu={sl.a} aria-label={PANELS[sl.a][0] + ' panel options'} title="Panel options" onClick={event => executeAction('ui.select', () => openTabMenu(event, sl.a), event)}>⋯</button>
             <button type="button" className="icon-btn scol" aria-label={(sl.c ? 'Open ' : 'Fold ') + PANELS[sl.a][0]} title={sl.c ? 'Open' : 'Fold to its header'} onClick={event => executeAction('ui.select', () => change(toggleSlot(current.current, side, index)), event)}><Icon name={sl.c ? 'arrow' : 'minus'} size={13} /></button>
             {index === 0 && <button type="button" className="icon-btn dcol" aria-label={'Fold the ' + side + ' dock to icons'} title="Fold the dock to icons" onClick={event => executeAction('ui.select', () => fold(side), event)}><Icon name="arrange" size={13} /></button>}
           </div>
@@ -729,14 +728,8 @@
   function WorkshopDockView({onShow}) {
     const {useData, useApp, Btn, Av} = window.UI, s = useData(), u = useApp();
     const [busy, setBusy] = React.useState(''), [shown, setShown] = React.useState(''), acting = React.useRef('');
-    const [query, setQuery] = React.useState(''), [chosenProject, setProject] = React.useState('');
-    // The project room (moved from the Workshop page): work and room messages of one project; work without a project shows in every room.
-    const known = [...new Set((s.tasks || []).map(task => task.project).filter(Boolean))];
-    const project = known.includes(chosenProject) ? chosenProject : (s.tasks || []).find(task => task.id === (u.task || s.focusedTask))?.project || known[0] || '';
-    const inRoom = row => !project || !row.project || row.project === project;
-    const all = (s.tasks || []).filter(task => task.status !== 'ARCHIVED' && inRoom(task));
-    const matches = text => !query || String(text || '').toLowerCase().includes(query.toLowerCase());
-    const tasks = all.filter(task => matches(task.title + ' ' + task.status));
+    // The design's Workshop panel: what waits, what failed, who works and the threads; no project picker or search row.
+    const all = (s.tasks || []).filter(task => task.status !== 'ARCHIVED'), tasks = all;
     // The room: Workshop messages bound to no task, shown while no session is open. An older page asked for under one
     // graph or account is dropped if it arrives after a switch (the scope key), so another room's messages never show.
     const roomScope = JSON.stringify([s.graph?.id, s.profile?.email, s.profile?.signedIn, s.workshopMessagesScope]);
@@ -746,11 +739,11 @@
     const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
     const bound = new Set((s.tasks || []).flatMap(task => [...(task.messages || []), ...(task.agentLog || [])].map(message => message.id)));
     const room = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
-      .filter(message => !bound.has(message.id) && inRoom(message) && matches(message.who + ' ' + message.text));
+      .filter(message => !bound.has(message.id));
     const roomMore = previous.before ? previous.more : s.workshopMessagesMore;
     const roomShown = !(u.route === 'task-file' && u.task);
     const taskOf = card => all.find(task => [card.taskId, card.task_id, card.work, ...(card.taskIds || [])].includes(task.id));
-    const waiting = (s.approvals || []).filter(card => card.status === 'pending' && (!query || tasks.includes(taskOf(card)) || matches(card.title)))
+    const waiting = (s.approvals || []).filter(card => card.status === 'pending')
       .filter((card, index, all) => all.findIndex(row => (row.input_digest || row.id) === (card.input_digest || card.id)) === index);
     const stepTitle = (task, id) => (task.workflow || []).find(node => node.id === id)?.title || (task.sessionOpen ? s.graph.nodes.find(node => node.id === id)?.title : '') || 'A step';
     const failed = tasks.flatMap(task => (task.activity || []).filter(row => row.status === 'Error').map(row => ({task, row})));
@@ -776,10 +769,6 @@
       await u.act(() => api.runNode(row.id));
     });
     return <div className="wsb" data-dock-workshop="">
-      {known.length > 0 && <select className="field wsroom" aria-label="Project room" value={project} onChange={event => setProject(event.target.value)}>{known.map(name => <option key={name} value={name}>{name}</option>)}</select>}
-      <div className="flex wstb"><input className="field" aria-label="Search threads" placeholder="Search threads" value={query} onChange={event => setQuery(event.target.value)} />
-        <button type="button" className="button-reset icon-btn" aria-label="Board" title="Board: Planned / WIP / In review / Done" onClick={event => executeAction('ui.select', () => u.show('Workshop board'), event)}><Icon name="arrange" size={15} /></button>
-        <button type="button" className="button-reset icon-btn" aria-label="Inbox" title="Inbox: notifications and approvals" onClick={event => executeAction('ui.select', () => u.show('Founder inbox'), event)}><Icon name="bell" size={15} /></button></div>
       <section className="wssec" aria-label="Waiting for you"><span className="eyebrow"><Icon name="shield" size={12} />Waiting for you · {waiting.length}</span>
         {waiting.map(card => { const task = taskOf(card), draft = card.draft || card.send;
           const whereLabel = task?.title || (card.path ? card.path.split(/[\\/]/).pop().replace(/\.archhub$/, '') : '');

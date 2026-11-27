@@ -1,5 +1,5 @@
 // Opening a saved workflow in the compiled Studio shows its saved places and leaves the file alone; an edit writes only
-// that edit (never an arrangement); his own Tidy up saves.
+// that edit (never an arrangement); his own Arrange (More menu) saves.
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -41,7 +41,7 @@ const {chromium} = require('playwright');
       await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().sessionDirty === false);
       assert.ok(writes.length >= 1, 'the edit is saved');
     } else {
-      await page.getByRole('button', {name: 'Tidy up', exact: true}).click();
+      await page.getByRole('button', {name: 'More canvas actions', exact: true}).first().click(); await page.getByRole('menuitem', {name: 'Arrange', exact: true}).click();
       await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().properties.canvasLayout === 'v48' && window.ArchHubAPI.getSnapshot().sessionDirty === false);
       const arranged = await read();
       assert.deepEqual(arranged.held.list, arranged.shown.list, 'his Tidy up is the document now');

@@ -142,7 +142,7 @@ const {chromium} = require('playwright');
     await same('after a reload, on another session');
     // The thread's Rules opens the Inspector while the thread folds the docks for display only: what is saved is his layout
     // with the Inspector open, never the thread's fold. After closing the thread and a reload, the left dock is as he had it.
-    await page.locator('[data-design="toolbar.layout"]').click();
+    await page.locator('[data-design="toolbar.layout"]').click(); await page.getByRole('menu', {name: 'Layout', exact: true}).getByRole('menuitem', {name: /^Build/}).click();
     await page.waitForFunction(() => document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label') === 'Layout: Build');
     await settle();
     if (!await ws.locator('.dock.right').evaluate(dock => dock.classList.contains('col'))) {

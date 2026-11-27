@@ -50,7 +50,7 @@ const {chromium} = require('playwright');
 
     // C1: the default is this session's agents, never BABOOM.
     assert.equal(await target(), 'All agents', 'inside a session the composer talks to its agents');
-    assert.equal(await composer.locator('textarea').getAttribute('placeholder'), 'Message All agents');
+    assert.equal(await composer.locator('textarea').getAttribute('placeholder'), 'Message the agents');
     // With no agent of this session joined, Send says so and sends nothing; it never makes a session.
     await composer.locator('textarea').fill('Check the sheet index');
     await composer.getByRole('button', {name: 'Send', exact: true}).click();

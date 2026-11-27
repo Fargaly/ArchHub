@@ -44,7 +44,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   const approval=app.locator('.v48-current-approval');await approval.getByRole('button',{name:'Reject',exact:true}).click();
   await app.waitForFunction(()=>window.ArchHubAPI.getSnapshot().approvals.some(card=>card.status==='declined'));
   const positions=await app.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.map(n=>({id:n.id,...n.position})));
-  await app.getByRole('button',{name:'Tidy up',exact:true}).click();
+  await app.getByRole('button',{name:'More canvas actions',exact:true}).first().click();await app.getByRole('menuitem',{name:'Arrange',exact:true}).click();
   const arranged=await app.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.map(n=>({id:n.id,...n.position})));
   assert.deepEqual(arranged,positions);
   const cards=await app.locator('[data-graph-node]').evaluateAll(elements=>elements.map(el=>({id:el.dataset.graphNode,width:el.offsetWidth})));

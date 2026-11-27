@@ -286,31 +286,31 @@ test('Canvas toolbar, preview tab pin, split peek Work here, Layout menu/Bottom/
   await peek.locator('[data-peek-work-here]').click();
   assert.equal((await page.locator('[data-design="tab.active"] [role="tab"]').textContent()).trim(), 'Structural grid sync');
 
-  // 2. Layout options caret menu: presets (Review, Meeting -> People panel), Focus mode + Esc, panel Move to bottom / Float, direct toolbar.layout reset to Build
-  await page.locator('[data-design="toolbar.layout.menu"]').click();
+  // 2. Layout menu: presets (Review, Meeting -> People panel), Focus mode + Esc, panel Move to bottom / Float, Build resets
+  await page.locator('[data-design="toolbar.layout"]').click();
   await page.getByRole('menu', {name: 'Layout', exact: true}).getByRole('menuitem', {name: /Meeting/}).click();
   await page.locator('[data-dock-people]').waitFor();
   assert.equal(await page.locator('[data-design="toolbar.layout"]').getAttribute('aria-label'), 'Layout: Meeting');
 
   // Panel options -> Move to the bottom & Float
-  await page.locator('[data-panel-menu="people"]').click();
+  await page.locator('.dock [data-tab="people"]').first().click({button: 'right'});
   await page.getByRole('menuitem', {name: 'Move to the bottom', exact: true}).click();
   await page.locator('.dock.bottom [data-tab="people"]').waitFor();
 
-  await page.locator('[data-panel-menu="people"]').click();
+  await page.locator('.dock [data-tab="people"]').first().click({button: 'right'});
   await page.getByRole('menuitem', {name: 'Float', exact: true}).click();
   await page.locator('.dfloat[data-float-panel="people"]').waitFor();
 
   // Focus mode via Layout menu + Escape exit
-  await page.locator('[data-design="toolbar.layout.menu"]').click();
+  await page.locator('[data-design="toolbar.layout"]').click();
   await page.getByRole('menuitem', {name: /Focus mode/}).click();
   await page.locator('.dockws.focus-mode').waitFor();
   await page.locator('[data-focus-exit]').waitFor();
   await page.locator('body').press('Escape');
   assert.equal(await page.locator('.dockws.focus-mode').count(), 0);
 
-  // Direct click on toolbar.layout resets directly to Build
-  await page.locator('[data-design="toolbar.layout"]').click();
+  // Layout menu > Build puts every panel back
+  await page.locator('[data-design="toolbar.layout"]').click(); await page.getByRole('menu', {name: 'Layout', exact: true}).getByRole('menuitem', {name: /^Build/}).click();
   assert.equal(await page.locator('[data-design="toolbar.layout"]').getAttribute('aria-label'), 'Layout: Build');
 
   // 3. Automate button -> Inspector Automate tab: + Schedule, + File change, + Program event, .adot, Pause/Arm, Run now -> Automation runs, Delete confirm, and Session tab
@@ -380,7 +380,7 @@ for (const [width, height, opts] of [[1920, 1032, {}], [1920, 1032, {interrupted
       if (thread !== (await page.locator('[data-design="toolbar.thread"]').getAttribute('aria-pressed') === 'true')) {
         if (await page.locator('[data-design="toolbar.thread"]').isVisible()) await page.locator('[data-design="toolbar.thread"]').click();
         else {
-          await page.locator('[data-design="toolbar.layout.menu"]').click();
+          await page.locator('[data-design="toolbar.layout"]').click();
           await page.getByRole('menuitem', {name: thread ? 'Show the thread' : 'Hide the thread', exact: true}).click();
         }
       }
@@ -402,7 +402,7 @@ for (const [width, height] of [[1920, 1032], [944, 968]]) test('Thread is a dock
   await page.locator('[data-home-map] [data-design="home.card"]').first().waitFor();
   await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Canvas', exact: true}).click();
   await page.locator('.dx-home-root[data-screen="task-file"]').waitFor({timeout: 5000});
-  const toggle = async label => { await page.locator('[data-design="toolbar.layout.menu"]').click(); await page.getByRole('menuitem', {name: label, exact: true}).click(); };
+  const toggle = async label => { await page.locator('[data-design="toolbar.layout"]').click(); await page.getByRole('menuitem', {name: label, exact: true}).click(); };
   await toggle('Show the thread');
   const thread = page.locator('.dock [data-tab="thread"]');
   await thread.waitFor();
@@ -425,7 +425,7 @@ for (const [width, height] of [[1920, 1032], [944, 968]]) test('Thread is a dock
   await page.locator('.dock.' + side + '.col [data-tab="thread"]').click();
   await pane.waitFor();
   // Its panel menu moves it like any panel.
-  await page.locator('[data-panel-menu="thread"]').click();
+  await page.locator('.dock [data-tab="thread"]').first().click({button: 'right'});
   await page.getByRole('menuitem', {name: 'Move to the left', exact: true}).click();
   await page.locator('.dock.left [data-tab="thread"]').waitFor();
   // Resize the left dock with the real pointer; the thread follows the dock width.
@@ -436,7 +436,7 @@ for (const [width, height] of [[1920, 1032], [944, 968]]) test('Thread is a dock
   await page.locator('.dock.left [data-tab="thread"]').dragTo(page.locator('.dockws .dcenter-main'), {targetPosition: {x: 160, y: 200}});
   assert.equal(await page.locator('.dockws .dzp:not([hidden]), .dghost').count(), 0, 'no drop tint or ghost stays after the drag');
   // Closing the panel hides the thread; the toolbar follows.
-  await page.locator('[data-panel-menu="thread"]').click();
+  await page.locator('.dock [data-tab="thread"]').first().click({button: 'right'});
   await page.getByRole('menuitem', {name: 'Close panel', exact: true}).click();
   await page.waitForFunction(() => document.querySelector('[data-design="toolbar.thread"]')?.getAttribute('aria-pressed') === 'false');
   assert.equal(await page.locator('.dock [data-tab="thread"]').count(), 0);

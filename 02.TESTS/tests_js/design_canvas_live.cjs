@@ -174,6 +174,7 @@ const {chromium} = require('playwright');
     assert.notEqual(await dockTabs(), home, 'the Library moved');
     assert.equal(await layoutButton.getAttribute('aria-pressed'), 'false');
     await layoutButton.click();
+    await page.getByRole('menu', {name: 'Layout', exact: true}).getByRole('menuitem', {name: /^Build/}).click();
     await page.waitForFunction(() => document.querySelector('[data-design="toolbar.layout"]').getAttribute('aria-label') === 'Layout: Build');
     assert.equal(await layoutButton.getAttribute('aria-pressed'), 'true');
     assert.equal(await dockTabs(), home, 'every panel is back where Build puts it');

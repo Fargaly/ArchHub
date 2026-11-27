@@ -549,7 +549,7 @@
     };
 
     return <aside ref={shelfRef} className="pane library-shelf" data-screen="library" aria-label="Library shelf">
-      <header className="spread libh" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <header className="spread libh" style={{ gap: 8 }}>
         <b>Library</b>
         <span className="kb" style={{ marginLeft: 'auto', font: '500 11px ' + (A.mono || 'monospace'), color: A.inkMuted, border: '1px solid ' + A.line, borderRadius: 3, padding: '0 5px' }}>Tab</span>
         <button type="button" id="libx" className="button-reset icon-btn" aria-label="Collapse library" title="Collapse library" onClick={event => executeAction('projects.ds_library.CloseLibrary.1', { onClose }, event)} style={{ display: 'grid', placeItems: 'center', width: 26, height: 26, borderRadius: 5, color: A.inkSoft }}>

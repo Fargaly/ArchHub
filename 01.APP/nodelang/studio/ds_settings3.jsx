@@ -459,7 +459,33 @@
       {s.officeInvitations.map(invite=><div key={invite.id}><b>{invite.office}</b> · {invite.status}
         {!['Accepted','Declined','Expired'].includes(invite.status)&&<>{open('Accept invitation',()=>u.act(()=>api.acceptOfficeInvitation(invite.id)))}{open('Decline invitation',()=>u.act(()=>api.declineOfficeInvitation(invite.id)))}</>}</div>)}</div>;
 
-    return <AreaDesignCards area="Account" live={live} focused={focused}/>;
+    // Community groups and invitations (community_owner.py) open as the Groups dialog.
+    const extras={community:<div className="sheet-property-row" data-row="groups"><span className="sheet-property-copy">Groups<small>Groups you run or joined, and their invitations</small></span><div className="sheet-property-control">{open('Groups',()=>u.show('Groups'))}</div></div>};
+    return <AreaDesignCards area="Account" live={live} extras={extras} focused={focused}/>;
+  }
+  // The Groups dialog: list, create, invite and revoke on the Community owner; joining and leaving
+  // answer from the owner (joining needs the cloud join code; leaving has no owner yet).
+  function GroupsDialog() {
+    const s=useData(),u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
+    const [name,setName]=React.useState(''),[emails,setEmails]=React.useState({});
+    React.useEffect(()=>{let live=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.refreshCommunity()).then(()=>{if(live)setLoad({status:(api.getSnapshot().community?.groups||[]).length?'loaded':'empty'});},error=>{if(live)setLoad({status:'error',message:error.message});});return()=>{live=false;};},[attempt]);
+    const act=fn=>executeAction('projects.controls.activate',{handler:()=>u.act(fn).then(result=>{setLoad({status:(api.getSnapshot().community?.groups||[]).length?'loaded':'empty'});return result;})});
+    const groups=s.community?.groups||[];
+    const create=<form className="sheet-list-row" aria-label="New group" onSubmit={event=>{event.preventDefault();if(name.trim())act(()=>api.createCommunityGroup(name.trim()).then(()=>setName('')));}}>
+      <input aria-label="Group name" placeholder="New group name" value={name} maxLength={80} onChange={event=>setName(event.target.value)}/>
+      <span className="flex"><Btn sm disabled={!name.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.createCommunityGroup(name.trim())).then(result=>{if(result)setName('');setLoad({status:(api.getSnapshot().community?.groups||[]).length?'loaded':'empty'});return result;})},event)}>Create group</Btn>
+      <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.joinCommunityGroup())},event)}>Join with a code</Btn></span></form>;
+    if(load.status==='waiting')return <p role="status">Reading your groups…</p>;
+    if(load.status==='error')return <p role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></p>;
+    if(load.status==='empty')return <div className="sheet-list-rows" data-groups="">{create}<p>No groups yet.</p></div>;
+    return load.status==='loaded'&&<div className="sheet-list-rows" data-groups="">{create}{groups.map(group=><section key={group.id} className="sheet-group" aria-label={group.name}>
+      <div className="sheet-list-row"><span><b>{group.name}</b> <small>{group.status} · {(group.members||[]).join(', ')}</small></span>
+        <window.UI.Soon label={'Leave '+group.name}><span className="sheet-action secondary" aria-disabled="true">Leave</span></window.UI.Soon></div>
+      {(group.invites||[]).map(invite=><div className="sheet-list-row" key={invite.id}><span>{invite.email} <small>{invite.status}</small></span>
+        {invite.status!=='Revoked'&&<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.revokeCommunityInvite(group.id,invite.id))},event)}>Revoke</Btn>}</div>)}
+      <div className="sheet-list-row"><input type="email" aria-label={'Invite to '+group.name} placeholder="colleague@office.com" value={emails[group.id]||''} onChange={event=>setEmails(state=>({...state,[group.id]:event.target.value}))}/>
+        <Btn sm disabled={!(emails[group.id]||'').trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.issueCommunityInvite(group.id,emails[group.id].trim())).then(result=>{if(result)setEmails(state=>({...state,[group.id]:''}));return result;})},event)}>Invite</Btn></div>
+    </section>)}</div>;
   }
   // Design "Tools in the Library": one summary line; Manage lists each source's nodes; Import installs a mod.
   function LibraryTools() {
@@ -1592,6 +1618,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
   window.UI.Connections = Connections;
   window.UI.WorkspaceRows = WorkspaceRows;
   window.UI.ProfilingDialog = ProfilingDialog;
+  window.UI.GroupsDialog = GroupsDialog;
   window.UI.requestGroups = requestGroups;
   window.UI.Storage = Storage;
 })();

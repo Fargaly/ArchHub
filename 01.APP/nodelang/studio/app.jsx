@@ -1493,7 +1493,7 @@
             api,
             f,
             u
-          }, event)}>Remove</Btn></div></div>)}</>;else if (k === 'Workspaces') body = <window.UI.WorkspaceRows startNew={Boolean(m?.newProject)} />;else if (k === 'Profiling') body = <window.UI.ProfilingDialog />;else if (k === 'App menu') body = <div className="grid">{Object.entries(routeNames).map(([r, l]) => <Btn key={r} sm ghost onClick={event => executeAction("appShell.Control.42", {
+          }, event)}>Remove</Btn></div></div>)}</>;else if (k === 'Workspaces') body = <window.UI.WorkspaceRows startNew={Boolean(m?.newProject)} />;else if (k === 'Profiling') body = <window.UI.ProfilingDialog />;else if (k === 'Groups') body = <window.UI.GroupsDialog />;else if (k === 'App menu') body = <div className="grid">{Object.entries(routeNames).map(([r, l]) => <Btn key={r} sm ghost onClick={event => executeAction("appShell.Control.42", {
         r,
         u
       }, event)}>{l}</Btn>)}<Btn sm onClick={event => executeAction("appShell.Settings.43", {

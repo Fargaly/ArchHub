@@ -197,6 +197,23 @@ def test_atomic_save_and_locked_concurrent_edits(profile):
     assert {h['by'] for h in final['properties']['history']} == {'agent:claude', 'agent:codex'}
 
 
+def test_viewport_autosave_of_a_file_without_properties_saves(profile):
+    """A valid .archhub with no properties block: a view-only autosave writes, never a KeyError (HTTP 400 'properties')."""
+    import json
+    from nodelang import canvas_documents as docs
+    from nodelang.session_files import read_document, validate
+    base = {'format': 'archhub', 'version': 1, 'id': 'autosave-no-properties', 'title': 'No properties',
+            'nodes': [], 'wires': [], 'groups': [], 'notes': [], 'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
+    validate(base)
+    path = profile / 'plain.archhub'
+    path.write_text(json.dumps(base), encoding='utf-8')
+    moved = copy.deepcopy(base)
+    moved['viewport']['x'] = 25
+    saved = docs.commit_ui(path, moved, 0, expect_existing=True)
+    assert read_document(path) == saved and saved['viewport']['x'] == 25
+    assert saved['properties']['revision'] == 1 and saved['properties']['history'][-1]['view_only'] is True
+
+
 def test_ui_save_merges_concurrent_agent_edit(profile):
     from nodelang import canvas_documents as docs
     from nodelang.session_files import read_document

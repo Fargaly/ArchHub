@@ -896,7 +896,7 @@ def commit_ui(path, document, base_revision, by='You', *, record_creation=True, 
             view_only = current is not None and all(document.get(k) == current.get(k)
                 for k in document.keys() | current.keys() if k not in ('viewport', 'properties'))
             if view_only:
-                old, new = current['properties'], document['properties']
+                old, new = current.get('properties', {}), document['properties']
                 view_only = all(old.get(k) == new.get(k) for k in old.keys() | new.keys()
                                 if k not in ('revision', 'history', 'viewportSaved'))
             _stamp(document, current, by, 'edit in ArchHub')

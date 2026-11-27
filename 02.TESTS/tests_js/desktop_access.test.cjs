@@ -7,7 +7,7 @@ const {ReadableStream}=require('node:stream/web');
 const {structuredClone}=globalThis;const {setImmediate}=require('node:timers');
 const studio=path.resolve(__dirname,'../../01.APP/nodelang/studio');
 // UI contract fixture only: the real pinned cloud decision has its own backend and installed courts.
-function fixture(storage=new Map(),previousView=null){
+function fixture(storage=new Map(),previousView=null,extra={}){
  const calls=[],events=new Map();
  let signin={phase:'pending'};
  let pendingStatus=null;let access={ok:true,admitted:false,state:'signed_out',subject:null,email:null},refuse=false;
@@ -36,7 +36,7 @@ function fixture(storage=new Map(),previousView=null){
    if(url==='/api/router/chat'&&status===200)return {ok:true,status,body:new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({result:{ok:true,answer:'Fixture streamed answer'}})+'\n\n'));controller.close();}})};
    return {ok:status<400,status,headers:new Headers(),json:async()=>data};
   }};
- context.window=context;vm.createContext(context);
+ context.window=context;Object.assign(context,extra);vm.createContext(context);
  for(const name of ['studio-authority.js','api.js'])vm.runInContext(fs.readFileSync(path.join(studio,name),'utf8'),context,{filename:name});
  return {context,api:context.ArchHubAPI,calls,storage,signin:value=>{signin=value;},holdStatus:()=>{let release;pendingStatus=new Promise(resolve=>{release=()=>{pendingStatus=null;resolve();};});return release;},set:subject=>{access=subject?{ok:true,admitted:true,state:'admitted',subject,email:subject+'@example.test'}:{ok:true,admitted:false,state:'unavailable',subject:null,email:null};},refuse:value=>{refuse=value;},close:async()=>{access={ok:true,admitted:false,state:'unavailable',subject:null,email:null};await context.ArchHubAPI.refreshDesktopAccess(true);}};
 }
@@ -215,4 +215,24 @@ test('an offline event asks the verifier and locks only when it reports access u
  assert.equal(f.api.getSnapshot().desktopAccess.admitted,false);
  assert.equal(f.api.getSnapshot().desktopAccess.state,'unavailable');
  assert.equal(f.api.getSessionDocument(),null);
+});
+// A channel that never answers: a closed page cannot reply to the live ping, so its draft is provably orphaned.
+const silentChannel=class{postMessage(){}};
+test('a moved view alone leaves no recovery draft when the page closes',async()=>{
+ const storage=new Map(),a=fixture(storage);a.set('A');await a.api.refreshDesktopAccess(true);await a.api.ready;
+ a.api.setSessionViewport({x:40,y:50,zoom:.61});assert.equal(a.api.getSnapshot().sessionDirty,true);
+ await a.close();a.context.dispatchEvent(new Event('pagehide'));
+ assert.deepEqual([...storage.keys()].filter(key=>key.startsWith('archhub.draft.')),[]);
+});
+test('a closed window real edit is kept as a copy automatically and releases its update hold',async()=>{
+ const storage=new Map(),a=fixture(storage,null,{BroadcastChannel:silentChannel});a.set('A');await a.api.refreshDesktopAccess(true);await a.api.ready;
+ await a.api.addNote('REAL CLOSED EDIT',{x:1,y:1});await a.close();a.context.dispatchEvent(new Event('pagehide'));
+ const [key,value]=[...storage].find(([name])=>name.startsWith('archhub.draft.'));const oldView=JSON.parse(value).view;
+ const b=fixture(storage,null,{BroadcastChannel:silentChannel});b.set('A');await b.api.refreshDesktopAccess(true);await b.api.ready;await b.api.recoverLocalWork();
+ const copy=b.calls.find(call=>call.body?.action==='save'&&call.body.save_as===true);
+ assert(copy&&JSON.stringify(copy.body.document).includes('REAL CLOSED EDIT'),'the draft bytes were saved as a copy');
+ assert.equal(copy.body.conflict_copy_of,'C:/fixture/A.archhub');
+ assert(b.calls.some(call=>call.body?.action==='edit_state'&&call.body.resolves===oldView&&call.body.resolved==='keep'),'the closed window hold is released');
+ assert.equal(storage.has(key),false);assert.equal(b.api.getSnapshot().orphanDrafts.length,0);assert(!b.api.getSnapshot().orphanDraftError);
+ await b.close();
 });

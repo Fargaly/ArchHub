@@ -49,6 +49,15 @@
     const zoom = Math.max(zoomMin, Math.min(zoomMax, zoomFitMax, (width - 60) / Math.max(1, spanW), (height - 60) / Math.max(1, spanH)));
     return {zoom, pan: {x: (width - spanW * zoom) / 2 - minX * zoom, y: (height - spanH * zoom) / 2 - minY * zoom}};
   }
+  // Home opens with the whole map in view; when that would be under 62% (tiny cards in an empty room) it opens at a
+  // readable 80-100% from the top-left instead (design openView).
+  function fitHomeViewport(boxes, width, height, zoomMin, zoomMax) {
+    const fitted = fitCanvasViewport(boxes, width, height, zoomMin, zoomMax, 1);
+    if (!fitted || fitted.zoom >= .62) return fitted;
+    const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y)), spanH = Math.max(...boxes.map(b => b.y + b.h)) - minY;
+    const zoom = Math.max(zoomMin, Math.min(zoomMax, Math.max(.8, Math.min(1, (height - 16) / Math.max(1, spanH)))));
+    return {zoom, pan: {x: 16 - minX * zoom, y: 8 - minY * zoom}};
+  }
   // SPEC 7.4: a window dragged left to right keeps the nodes wholly inside it; right to left takes every node it touches.
   // Flow coordinates, so zoom does not change the result.
   function boxSelection(boxes, a, b, crossing) {
@@ -2307,8 +2316,10 @@
       const host = area.current.getBoundingClientRect(), barEl = window.document.querySelector('.home-map-bar')?.getBoundingClientRect(), formEl = window.document.querySelector('.home-map-stage .global-composer form')?.getBoundingClientRect();
       const topClear = barEl ? Math.max(0, barEl.bottom - host.top + 8) : 0, botClear = formEl?.height ? Math.max(0, host.bottom - formEl.top + 8) : (window.document.querySelector('.home-map-stage .global-composer') ? 110 : 0);
       const usableH = Math.max(80, area.current.clientHeight - topClear - botClear);
-      const fitted = fitCanvasViewport(chart.nodes.map(n => ({x: n.x, y: n.y, w: n.w, h: n.h})), area.current.clientWidth, usableH, zoomMin, zoomMax, 1);
-      if (fitted) { fitted.pan.y += topClear; touched.current = false; setView(fitted); }
+      const fitted = fitHomeViewport(chart.nodes.map(n => ({x: n.x, y: n.y, w: n.w, h: n.h})), area.current.clientWidth, usableH, zoomMin, zoomMax);
+      if (!fitted) return;
+      fitted.pan.y += topClear;
+      touched.current = false; setView(fitted);
     };
     const zoomAt = value => {
       if (!area.current) return;
@@ -2375,6 +2386,7 @@
   window.UI.NodeInspector = NodeInspector;
   window.UI.WireInspector = WireInspector;
   window.UI.fitCanvasViewport = fitCanvasViewport;
+  window.UI.fitHomeViewport = fitHomeViewport;
   window.UI.boxSelection = boxSelection;
   window.UI.SystemGraph = SystemGraph;
 

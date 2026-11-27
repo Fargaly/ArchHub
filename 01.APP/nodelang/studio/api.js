@@ -33,11 +33,11 @@ const waitForDesktop=()=>desktopAdmitted()?Promise.resolve():new Promise(resolve
 async function changeDesktopSubject(subject){
  if(!desktopSubject||desktopSubject===subject){desktopSubject=subject;return;}
  keepDraftForRecovery(currentEditState().unsaved,sessionPath);
- suspendedDesktop.set(desktopSubject,{document:sessionDocument,path:sessionPath,revision:sessionRevision,history:fileHistory,future:fileFuture,dirty:localDirty,conflict:saveConflict,failed:saveFailed,breadcrumbs:sessionBreadcrumbs,view:state.desktopView});
- clearCanvas();fileNavigation++;runEpoch++;sessionDocument=null;sessionPath='';sessionRevision=0;fileHistory=[];fileFuture=[];localDirty=false;saveConflict=null;saveFailed=false;sessionBreadcrumbs=[];systemProjection=null;preferenceContext='';reportedEditState=null;reportedEditFile=null;
+ suspendedDesktop.set(desktopSubject,{document:sessionDocument,path:sessionPath,revision:sessionRevision,history:fileHistory,future:fileFuture,dirty:localDirty,edited:contentEdited,conflict:saveConflict,failed:saveFailed,breadcrumbs:sessionBreadcrumbs,view:state.desktopView});
+ clearCanvas();fileNavigation++;runEpoch++;sessionDocument=null;sessionPath='';sessionRevision=0;fileHistory=[];fileFuture=[];localDirty=false;contentEdited=false;saveConflict=null;saveFailed=false;sessionBreadcrumbs=[];systemProjection=null;preferenceContext='';reportedEditState=null;reportedEditFile=null;
  desktopSubject=subject;localRecoveryRequested=false;
  const held=suspendedDesktop.get(subject);
- if(held){sessionDocument=held.document;sessionPath=held.path;sessionRevision=held.revision;fileHistory=held.history;fileFuture=held.future;localDirty=held.dirty;saveConflict=held.conflict;saveFailed=held.failed;sessionBreadcrumbs=held.breadcrumbs;publish({desktopView:held.view});suspendedDesktop.delete(subject);}
+ if(held){sessionDocument=held.document;sessionPath=held.path;sessionRevision=held.revision;fileHistory=held.history;fileFuture=held.future;localDirty=held.dirty;contentEdited=held.edited??held.dirty;saveConflict=held.conflict;saveFailed=held.failed;sessionBreadcrumbs=held.breadcrumbs;publish({desktopView:held.view});suspendedDesktop.delete(subject);}
 }
 async function refreshDesktopAccess(force=false){
  if(nativeReview)return desktopAccess;
@@ -951,7 +951,7 @@ async function taskFileAction(method,id,...args){
  const unchanged=()=>navigation===fileNavigation&&target&&sessionDocument&&sessionPath===target&&sent&&sessionDocument.id===sent.id&&JSON.stringify(portableDocument())===text;
  if(unchanged()){
   const read=await sessionRequest('read',{path:target,id:sent.id});
-  if(unchanged()&&read?.document){sessionDocument=copy(read.document);sessionRevision=read.revision||read.document.properties?.revision||0;localDirty=false;projectFile();}
+  if(unchanged()&&read?.document){sessionDocument=copy(read.document);sessionRevision=read.revision||read.document.properties?.revision||0;localDirty=false;contentEdited=false;projectFile();}
  }
  return {...result,...rememberTask(result,false)};
 }
@@ -1759,7 +1759,7 @@ api.saveGraphVersion=async label=>{
  if(!sessionPath||localDirty)await api.saveSession();
  if(navigation!==fileNavigation)return {cancelled:true};
  const result=await canvasOperation('save_graph_version',[label||null,sessionPath]);
- if(navigation===fileNavigation&&result?.document){sessionDocument=copy(result.document);sessionRevision=result.document.properties?.revision||sessionRevision;localDirty=false;projectFile();}
+ if(navigation===fileNavigation&&result?.document){sessionDocument=copy(result.document);sessionRevision=result.document.properties?.revision||sessionRevision;localDirty=false;contentEdited=false;projectFile();}
  return result?.version||result;
 };
 api.restoreGraphVersion=async id=>{
@@ -2062,7 +2062,7 @@ api.readTaskPreview=async id=>{
  return {...document.properties,id:document.id,scopeKey:document.id+':preview',name:document.title,...projectGroups(nodes,document.wires.map(wire=>projectSessionWire(wire,nodes))),viewport:document.viewport};
 };
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
-let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
+let sessionRevision=0, localDirty=false, contentEdited=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
 // A drop's redraw, waiting for the frame after the drop is painted (the edit itself is already in the document).
 let projectAfterPaint=0;
 function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false,afterPaint=false){
@@ -2080,7 +2080,7 @@ function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve
    for(const node of sessionDocument.nodes)if(!prior.has(node.id))node.workshopTask=task;
   }
  }catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
- localDirty=true;if(!preserveSolve)runEpoch++;
+ localDirty=contentEdited=true;if(!preserveSolve)runEpoch++;
  // afterPaint: the document, undo step and autosave are set now (a reload or close right after still saves it);
  // only the redraw of every view waits for the next painted frame.
  let shown=null;
@@ -2114,7 +2114,7 @@ function acknowledgeSave(sent,saved){
   const shown=document=>({...document,properties:Object.fromEntries(Object.entries(document.properties||{}).filter(([key])=>!['revision','history','checkpoints'].includes(key)))});
   const unchanged=same(shown(saved.document),shown(sent));
   sessionDocument=copy(saved.document);sessionRevision=saved.revision??saved.document.properties?.revision??0;
-  localDirty=false;
+  localDirty=false;contentEdited=false;
   if(unchanged){publish({sessionFile:sessionPath,sessionDirty:!sessionPath});syncPreferenceContext();}else projectFile();
   return;
  }
@@ -2128,7 +2128,7 @@ function acknowledgeSave(sent,saved){
  }
  // The owner now holds saved.revision: the next save builds on it, whatever changed here while this save was in flight.
  sessionRevision=saved.revision??saved.document.properties?.revision??sessionRevision;
- localDirty=!same(sessionDocument,saved.document);projectFile();
+ localDirty=!same(sessionDocument,saved.document);contentEdited&&=localDirty;projectFile();
 }
 let saveConflict=null, resolvingSaveConflict=false, savedConflictDraft=null;
 const saveConflictMessage='This workflow changed elsewhere. Keep your changes in a copy with automations paused, or discard them and reload.';
@@ -2249,7 +2249,8 @@ const draftKey=()=>DRAFT_PREFIX+encodeURIComponent(desktopSubject||'unattributed
 function keepDraftForRecovery(unsaved,file){
  // Written on EVERY edit (not only when the dirty flag flips), in order: the stored draft is always the latest bytes.
  try{
-  if(unsaved&&sessionDocument)window.localStorage.setItem(draftKey(),JSON.stringify({subject:desktopSubject,view:editView,file,revision:++draftRevision,locked:viewLockHeld,document:portableDocument()}));
+  // Only a real edit is kept: a moved view or a re-solved result is not his work, and left a false "unsaved" banner.
+  if(unsaved&&contentEdited&&sessionDocument)window.localStorage.setItem(draftKey(),JSON.stringify({subject:desktopSubject,view:editView,file,revision:++draftRevision,locked:viewLockHeld,document:portableDocument()}));
   else window.localStorage.removeItem(draftKey());
  }catch(error){console.warn('Draft not kept for recovery:',error.message);}
 }
@@ -2271,8 +2272,14 @@ function refreshOrphanDrafts(includeLocal=localRecoveryRequested){
  if(orphanCheck)return orphanCheck;
  orphanCheck=(async()=>{
   const candidates=storedDrafts(includeLocal);
-  const answers=await Promise.all(candidates.map(ownerAlive));
-  publish({orphanDrafts:candidates.filter((_draft,index)=>!answers[index])});
+  const answers=await Promise.all(candidates.map(ownerAlive)),orphans=candidates.filter((_draft,index)=>!answers[index]);
+  publish({orphanDrafts:orphans});
+  // Nothing waits on him: a closed window's draft is kept as a copy at once (or dropped when the file already
+  // holds exactly it), which also releases that window's update hold. Only a failed keep stays on screen.
+  for(const draft of orphans){
+   try{const kept=await api.resolveOrphanDraft(draft.view,true);if(kept.path)notice('Unsaved changes from a closed window were kept as a copy: '+String(kept.path).split(/[\\/]/).pop().replace(/\.archhub$/i,'')+'.');}
+   catch(error){console.warn('Closed-window draft not kept:',error.message);}
+  }
  })().catch(error=>console.warn('Closed-window drafts not checked:',error.message)).finally(()=>{orphanCheck=null;});
  return orphanCheck;
 }
@@ -2289,14 +2296,19 @@ api.resolveOrphanDraft=async(view,keep)=>{
  if(!draft?.document)throw Error('That draft is no longer here.');
  if(await ownerAlive({view,locked:draft.locked===true}))throw Error('That window is still open; choose there.');
  try{
-  if(keep)await sessionRequest('save',{document:draft.document,save_as:true,conflict_copy_of:draft.file||undefined});
+  // A draft the saved file already holds (the closing page's last autosave landed) is dropped: no duplicate copy.
+  const content=document=>JSON.stringify({...document,viewport:null,nodes:(document?.nodes||[]).map(({result,...node})=>node),
+   properties:Object.fromEntries(Object.entries(document?.properties||{}).filter(([key])=>!['revision','history','checkpoints','viewportSaved','canvasRun'].includes(key)))});
+  const saved=keep&&draft.file?await sessionRequest('read',{path:draft.file,id:draft.document.id}).catch(()=>null):null;
+  if(saved?.document&&content(saved.document)===content(draft.document))keep=false;
+  const copied=keep?await sessionRequest('save',{document:draft.document,save_as:true,conflict_copy_of:draft.file||undefined}):null;
   // This page's own state for that file rides along, so the report never clears this page's own draft.
   const mine=currentEditState();
   await sessionRequest('edit_state',{view:editView,file:draft.file||'',seq:++editSeq,
    unsaved:mine.unsaved&&mine.file===(draft.file||''),resolves:view,resolved:keep?'keep':'discard'});
   window.localStorage.removeItem(key);
   publish({orphanDrafts:orphanDrafts().filter(draft=>draft.view!==view),orphanDraftError:''});
-  return {ok:true};
+  return {ok:true,path:copied?.path||''};
  }catch(error){publish({orphanDraftError:error.message});throw error;}
 };
 // A reloaded tab whose old page left an unsaved draft does not retire it: that draft holds until kept or discarded.
@@ -2348,7 +2360,7 @@ async function adoptFile(document,path='',navigation=++fileNavigation,recoveredD
   if(recoveredDraft!==JSON.stringify(sessionDocument))throw Error('Your draft changed during recovery. Choose again to keep the latest edits.');
   saveConflict=null;savedConflictDraft=null;publish({canvasSaveConflict:''});notice('');
  }
- sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();if(recoveredDraft===null)queueAutosave();
+ sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;contentEdited=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();if(recoveredDraft===null)queueAutosave();
  refreshLiveUpdatePolicy();  // an older workflow shows the updater's real settings, not its stored copy
  return state.graph;
 }
@@ -2752,8 +2764,8 @@ api.alignNodes=async(ids,axis)=>{
  const nodes=sessionDocument.nodes.filter(n=>ids.includes(n.id));if(nodes.length<2||nodes.some(n=>n.fixed))throw Error('Choose two editable nodes.');
  const at=Math.min(...nodes.map(n=>n.position[axis]));return api.moveNodes(Object.fromEntries(nodes.map(n=>[n.id,{...n.position,[axis]:at}])));
 };
-api.undo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileHistory.length){fileFuture.push(copy(sessionDocument));sessionDocument=fileHistory.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
-api.redo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileFuture.length){fileHistory.push(copy(sessionDocument));sessionDocument=fileFuture.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
+api.undo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileHistory.length){fileFuture.push(copy(sessionDocument));sessionDocument=fileHistory.pop();localDirty=contentEdited=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
+api.redo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileFuture.length){fileHistory.push(copy(sessionDocument));sessionDocument=fileFuture.pop();localDirty=contentEdited=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
 api.wireMenus=WIRE_MENUS;
 api.setWireRule=async(id,rule)=>{const wire=sessionDocument.wires.find(w=>w.id===id);if(!wire)throw Error('Choose a wire.');const checked=await sessionRequest('wire-rule',{document:portableDocument(),id,rule});return fileEdit(d=>{const current=d.wires.find(w=>w.id===id);if(!current)throw Error('This wire was removed.');current.rule=checked.rule;},[wire.to.node]);};
 api.setWireEnabled=async(id,enabled)=>{const wire=sessionDocument.wires.find(w=>w.id===id);if(!wire||typeof enabled!=='boolean')throw Error('Choose a wire and its enabled state.');return fileEdit(d=>{const w=d.wires.find(w=>w.id===id);if(enabled)delete w.enabled;else w.enabled=false;},[wire.to.node]);};
@@ -2794,7 +2806,7 @@ api.removeGraph=async id=>{
  const removingOpen=sessionDocument&&(id===sessionDocument.id||api.sameSessionPath(id,sessionPath));
  if(removingOpen){clearTimeout(autosaveTimer);autosaveTimer=null;await fileWrites.catch(()=>{});}
  const result=await canvasOperation('remove_graph',[id]);
- if(removingOpen){sessionDocument=null;sessionPath='';localDirty=false;fileHistory=[];fileFuture=[];await api.newSession();}
+ if(removingOpen){sessionDocument=null;sessionPath='';localDirty=false;contentEdited=false;fileHistory=[];fileFuture=[];await api.newSession();}
  await refreshGraphs();
  return result;
 };

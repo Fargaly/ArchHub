@@ -812,10 +812,11 @@
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} taskId={route === 'home' ? homeThreadId : task} />
   {window.UI.TutorialOverlay && <window.UI.TutorialOverlay />}
-  {!s.canvasSaveConflict && s.orphanDrafts?.length > 0 && <div role="alert" style={{position: 'fixed', top: 100, left: '50%',
+  {/* A closed window's draft is kept as a copy automatically (api.js refreshOrphanDrafts); this shows only when that keep failed. */}
+  {!s.canvasSaveConflict && s.orphanDraftError && s.orphanDrafts?.length > 0 && <div role="alert" style={{position: 'fixed', top: 100, left: '50%',
         transform: 'translateX(-50%)', maxWidth: '70vw', border: '1px solid ' + A.line, borderRadius: 10, background: '#24242b',
         padding: '12px 18px', zIndex: 201, boxShadow: '0 8px 30px #0008', display: 'grid', gap: 8}}>
-      <span>Unsaved changes from a closed ArchHub window in {s.orphanDrafts[0].file ? (advanced ? s.orphanDrafts[0].file : String(s.orphanDrafts[0].file).split(/[\\/]/).pop().replace(/\.archhub$/i, '')) : 'an unsaved canvas'}. Updates wait until you choose.</span>
+      <span>Unsaved changes from a closed ArchHub window in {s.orphanDrafts[0].file ? (advanced ? s.orphanDrafts[0].file : String(s.orphanDrafts[0].file).split(/[\\/]/).pop().replace(/\.archhub$/i, '')) : 'an unsaved canvas'} could not be kept as a copy. Updates wait until they are kept or discarded.</span>
       {s.orphanDraftError && <span>{s.orphanDraftError}</span>}
       <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
         <Btn sm onClick={event => executeAction('ui.select', () => api.resolveOrphanDraft(s.orphanDrafts[0].view, true), event)}>Keep those changes as a copy</Btn>

@@ -145,6 +145,13 @@ test('a 1440 canvas fit keeps canonical nodes inside the graph and off the plan 
   });
   const graphWidth = 398, graphHeight = 420, planX = graphWidth + 16, planWidth = 336;
   const nodes = [{id: 'design', x: 640, y: 80, w: 280, h: 160}, {id: 'verify', x: 980, y: 80, w: 280, h: 160}];
+  // Home: a wide map (deep subtask chain) whose whole-map fit would be 61% opens readable from the top-left; a small one still fits whole.
+  const wide = [0, 1, 2, 3, 4, 5].map(i => ({id: 'c' + i, x: i * 356, y: 0, w: 300, h: 150}));
+  const home = ui.fitHomeViewport(wide, 1300, 700, 0.1, 4);
+  assert.ok(home.zoom >= 0.8 && home.zoom <= 1, 'readable Home zoom: ' + home.zoom);
+  assert.deepEqual([Math.round(home.pan.x + wide[0].x * home.zoom), Math.round(home.pan.y)], [16, 8]);
+  const small = ui.fitHomeViewport(wide.slice(0, 2), 1300, 700, 0.1, 4);
+  assert.deepEqual(small, ui.fitCanvasViewport(wide.slice(0, 2), 1300, 700, 0.1, 4, 1));
   const view = ui.fitCanvasViewport(nodes, graphWidth, graphHeight, 0.1, 4, 1.25);
   assert.deepEqual(nodes.map(node => [node.id, node.x, node.y]), [['design', 640, 80], ['verify', 980, 80]]);
   for (const node of nodes) {

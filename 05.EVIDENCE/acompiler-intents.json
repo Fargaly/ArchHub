@@ -13212,6 +13212,17 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DOCSVISUAL": {
+      "source": "Founder 2026-11-27: \"fix this lame documentation and make it VISUAL, we deal with visual people\" and \"visuals all by CODE, not screenshots.\" Each Docs guide opens with a code-drawn figure from one source, the same in the app and on archhub.io/docs, dark and light.",
+      "scope": [
+        "01.APP/nodelang/docs_visuals.py",
+        "01.APP/nodelang/site_export.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/docs.jsx",
+        "03.TOOLS/packaging/website/build_site.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

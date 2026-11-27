@@ -97,32 +97,47 @@ def _composer(app):
     return Rect(app.x + 280, app.bottom - 96, app.width - 320, 72)
 
 
-def test_baboom_stands_above_the_right_end_of_the_composer_on_the_apps_screen():
+def _design_spot(app):
+    # archhub-directions .baboom: beside the rail, 76 px from the window's left, 16 px above its bottom.
+    return Rect(app.x + 76, app.bottom - 16 - 87, 80, 87)
+
+
+def test_baboom_stands_at_the_design_place_beside_the_rail_on_the_apps_screen():
     app = Rect(240, 66, 1440, 900)
     composer = _composer(app)
     stood = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer)
 
-    assert (stood.right, stood.bottom) == (composer.right, composer.y - 4)
+    assert stood == _design_spot(app)
     assert stood.contained_by(app) and stood.contained_by(RIGHT)
     assert stood.intersection_area(composer) == 0
     assert screen_at((LEFT, RIGHT), stood.x, stood.y) == RIGHT
-    # A page with no composer: the window's bottom right corner.
-    corner = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87))
-    assert (corner.right, corner.bottom) == (app.right - 16, app.bottom - 16)
+    # A page with no composer: the same place.
+    assert place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87)) == _design_spot(app)
+    # The open left dock covers that place and its steps aside: above the right end of the composer, never on it.
+    row = Rect(app.x + 64, app.y, 268, app.height)
+    moved = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(row,))
+    assert (moved.right, moved.bottom) == (composer.right, composer.y - 4)
+    assert moved.intersection_area(composer) == 0 and moved.intersection_area(row) == 0
+    # A composer reaching over that place (a narrow window): he never stands on the composer.
+    wide = Rect(app.x, app.bottom - 96, app.width, 72)
+    off = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=wide)
+    assert off.intersection_area(wide) == 0
 
 
 def test_baboom_steps_aside_off_a_control_by_at_most_48_px():
     app = Rect(240, 66, 1440, 900)
     composer = _composer(app)
-    home = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer)
+    dock_row = Rect(app.x + 64, app.y, 268, app.height)   # the open left dock takes the design place: he lives beside the composer
+    home = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(dock_row,))
+    assert (home.right, home.bottom) == (composer.right, composer.y - 4)
     zoom_control = Rect(home.x + 10, home.bottom - 30, 60, 28)
 
-    stepped = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(zoom_control,))
+    stepped = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(dock_row, zoom_control))
     assert stepped.intersection_area(zoom_control) == 0
     assert (stepped.x, home.y - stepped.y) == (home.x, 48)
-    # Text right across the patch leaves no clear spot: he stays where he lives, never hunting the screen.
-    paragraph = Rect(app.x, home.y - 60, app.width, 160)
-    assert place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(paragraph,)) == home
+    # Text right across the bottom leaves no clear spot: he stays at the design place, never hunting the screen.
+    paragraph = Rect(app.x, home.y - 60, app.width, app.bottom - home.y + 60)
+    assert place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=composer, busy=(paragraph,)) == _design_spot(app)
 
 
 @pytest.mark.parametrize("width", [1009, 1440])
@@ -131,7 +146,7 @@ def test_baboom_stays_whole_in_the_work_area_at_snapped_and_full_widths(width):
         app = Rect(x, 66, width, 900)
         stood = place_baboom_beside_composer(app, RIGHT, sprite_size=(80, 87), composer=_composer(app))
         assert stood.contained_by(RIGHT), (width, x, stood)
-        assert stood.x >= app.x and stood.bottom <= _composer(app).y
+        assert stood.x >= app.x and stood.intersection_area(_composer(app)) == 0
 
 
 def test_a_spot_on_no_screen_is_on_no_screen():

@@ -269,8 +269,10 @@ def place_baboom_work_area(
 ) -> tuple[Rect, bool]:
     """Choose BABOOM's work-area anchor and whether he tucks into peek mode.
 
-    Tries beside the composer first, then work-area bottom-right and bottom-left
-    fallbacks, stepping each base by (0, 0), (0, -24), (0, -48), (-48, 0). On
+    Tries the design's place first (beside the rail: 76 px from the window's left,
+    16 px above its bottom), then beside the composer, then work-area bottom-right
+    and bottom-left fallbacks, stepping each by (0, 0), (0, -24), (0, -48), (-48, 0).
+    No spot may cover the composer or a reported control. On
     non-canvas form pages when every candidate overlaps reported controls, keeps
     the primary anchor and signals ``peek=True`` so he tucks to his hat at the
     bottom edge and rises on hover.
@@ -278,6 +280,9 @@ def place_baboom_work_area(
     width, height = sprite_size
     obstacles = tuple(busy)
     anchor = work_area if work_area is not None else app
+    # The design's place (archhub-directions .baboom: left 76px, bottom 16px): beside the rail, never under the composer.
+    design = [_bounded_rect(screen, width=width, height=height, x=app.x + 76 + dx, y=app.bottom - margin - height + dy)
+              for dx, dy in _ASIDE]
     bases: list[tuple[int, int]] = []
     if composer is not None:
         bases.append((min(anchor.right - margin - width, composer.right - width), composer.y - gap - height))
@@ -286,8 +291,8 @@ def place_baboom_work_area(
         bases.append((anchor.x + margin, composer.y - gap - height))
     bases.append((anchor.x + margin, anchor.bottom - margin - height))
 
-    spots: list[Rect] = []
-    seen: set[tuple[int, int]] = set()
+    spots: list[Rect] = design
+    seen: set[tuple[int, int]] = {(spot.x, spot.y) for spot in design}
     for bx, by in bases:
         for dx, dy in _ASIDE:
             cx = bx + dx
@@ -303,8 +308,8 @@ def place_baboom_work_area(
     free = next(
         (
             spot
-            for idx, spot in enumerate(spots)
-            if all(spot.intersection_area(item) == 0 for item in (obstacles if idx == 0 else guard))
+            for spot in spots
+            if all(spot.intersection_area(item) == 0 for item in guard)
         ),
         None,
     )
@@ -326,11 +331,11 @@ def place_baboom_beside_composer(
 ) -> Rect:
     """BABOOM's place in the ArchHub window, whole on the screen that window is on.
 
-    He stands above the right end of the composer; on a page with no composer, in
-    the window's bottom right corner. The first spot clear of every busy rectangle
-    (the controls and text the page reported) wins, falling back to bottom-left
-    when the right side is covered. With none clear he keeps the first: he never
-    leaves the window to find room.
+    He stands where the design puts him, beside the rail at the window's bottom left;
+    when a reported control or the composer is there, above the right end of the
+    composer, then the work area's corners. The first spot clear of every busy
+    rectangle wins. With none clear he keeps the first: he never leaves the window
+    to find room.
     """
     spot, _peek = place_baboom_work_area(
         app,

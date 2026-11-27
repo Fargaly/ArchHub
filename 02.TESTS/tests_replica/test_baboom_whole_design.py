@@ -136,29 +136,33 @@ def test_ag01_poses_dnd_moments_and_step_progress_bar(tmp_path, monkeypatch):
 def test_ag02_collision_stepping_bottom_left_peek_and_walk(tmp_path, monkeypatch):
     """AG-02: y-24, y-48, x-48, bottom-left fallback, peek on form pages, and 900 ms walk on intra-route moves."""
     composer = _composer(APP)
-    home = _beside(APP)
+    assert place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer) == _beside(APP)
+    # A dock row on the design place (beside the rail) sends him above the right end of the composer.
+    dock_row = Rect(APP.x + 64, APP.y, 268, APP.height)   # the open left dock
+    home = Rect(composer.right - 80, composer.y - 4 - 87, 80, 87)
+    assert place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(dock_row,)) == home
 
     # 1. Step y-24 when a 20 px control sits at the bottom of home
     low_bar = Rect(home.x, home.bottom - 20, 80, 20)
-    spot_24 = place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(low_bar,))
+    spot_24 = place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(dock_row, low_bar))
     assert (spot_24.x, home.y - spot_24.y) == (home.x, 24)
 
     # 2. Step y-48 when a 30 px control covers both home and y-24
     tall_bar = Rect(home.x, home.bottom - 30, 80, 30)
-    spot_48 = place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(tall_bar,))
+    spot_48 = place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(dock_row, tall_bar))
     assert (spot_48.x, home.y - spot_48.y) == (home.x, 48)
 
     # 3. Step x-48 when vertical column blocks (0,0), (0,-24), (0,-48) at home.x
     right_col = Rect(home.right - 20, home.y - 60, 30, 160)
-    spot_left48 = place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(right_col,))
+    spot_left48 = place_baboom_beside_composer(APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(dock_row, right_col))
     assert (home.x - spot_left48.x, spot_left48.y) == (48, home.y)
 
-    # 4. Bottom-left fallback when the whole right side is busy
+    # 4. The whole right side busy: the design place on the left is free
     right_half = Rect(APP.x + 500, APP.y, APP.width - 500, APP.height)
     spot_bl, peek_bl = place_baboom_work_area(
         APP, RIGHT, sprite_size=(80, 87), composer=composer, busy=(right_half,), surface="docs"
     )
-    assert spot_bl.x == APP.x + 16 and not peek_bl
+    assert spot_bl == _beside(APP) and not peek_bl
 
     # 5. Peek mode: on form pages (docs/settings) when ALL candidates overlap, peek=True; on canvas, peek=False
     full_form = Rect(APP.x, APP.y, APP.width, APP.height)
@@ -182,7 +186,7 @@ def test_ag02_collision_stepping_bottom_left_peek_and_walk(tmp_path, monkeypatch
         window.follow_app(
             APP,
             composer,
-            (),
+            (dock_row,),
             (LEFT, RIGHT),
             0,
             False,
@@ -195,7 +199,7 @@ def test_ag02_collision_stepping_bottom_left_peek_and_walk(tmp_path, monkeypatch
         window.follow_app(
             APP,
             composer,
-            (right_col,),
+            (dock_row, right_col),
             (LEFT, RIGHT),
             0,
             False,
@@ -234,12 +238,12 @@ def test_ag02_collision_stepping_bottom_left_peek_and_walk(tmp_path, monkeypatch
         assert window._peek is True
         assert window._frame.motion == "idle", "no walk across screen on route switch"
         tucked_y = _stands(window).y
-        assert tucked_y > home.y, "tucked down to hat at bottom edge when unhovered"
+        assert tucked_y > _beside(APP).y, "tucked down to hat at bottom edge when unhovered"
 
         # Hover rises BABOOM to full standing position; leave tucks him back
         enter = QEnterEvent(QPoint(10, 10).toPointF(), QPoint(10, 10).toPointF(), QPoint(10, 10).toPointF())
         court.app.sendEvent(window, enter)
-        assert _stands(window).y == home.y, "hover rises BABOOM out of peek"
+        assert _stands(window).y == _beside(APP).y, "hover rises BABOOM out of peek at the design place"
         court.app.sendEvent(window, QEvent(QEvent.Type.Leave))
         assert _stands(window).y == tucked_y, "leaving tucks BABOOM back"
     finally:

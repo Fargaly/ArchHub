@@ -50,8 +50,8 @@ def _stands(window):
 
 
 def _beside(app):
-    composer = _composer(app)
-    return Rect(composer.right - 80, composer.y - 4 - 87, 80, 87)
+    # The design's place (archhub-directions .baboom): beside the rail, 76 px from the left, 16 px above the bottom.
+    return Rect(app.x + 76, app.bottom - 16 - 87, 80, 87)
 
 
 class _BrainUp(_ScreenTransport):
@@ -115,7 +115,7 @@ def test_a_stale_spot_on_the_left_monitor_ends_beside_the_composer_on_the_right(
     try:
         stood = _stands(court.window)
         assert court.window.isVisible()
-        assert stood == _beside(APP), "BABOOM stands above the right end of the composer"
+        assert stood == _beside(APP), "BABOOM stands beside the rail at the design's place"
         assert (stood.width, stood.height) == (80, 87), "the website's figure at the website's size"
         assert stood.contained_by(RIGHT) and stood.contained_by(APP)
         assert stood.intersection_area(_composer(APP)) == 0, "never on the composer's controls"
@@ -140,7 +140,7 @@ def test_baboom_goes_where_the_archhub_window_goes(tmp_path):
             stood = _stands(window)
             screen = LEFT if app.x < 0 else RIGHT
             assert stood.contained_by(screen), (app, stood)
-            assert stood.bottom == _composer(app).y - 4 and stood.x >= app.x, (app, stood)
+            assert stood.intersection_area(_composer(app)) == 0 and stood.x >= app.x, (app, stood)
             if _beside(app).contained_by(screen):
                 assert stood == _beside(app), app
         assert projections == [], "a move goes along at once, with no projection per step of a drag"
@@ -436,7 +436,9 @@ def test_baboom_floats_three_pixels_and_carries_the_live_dot_while_he_can_answer
         assert (window.width(), window.height(), box.y()) == (80, 100 + 2, 100 - 87)
         assert (ground.width(), ground.height(), ground.y() + ground.height()) == (46, 9, foot + 2)
         assert ground.x() - box.x() == box.x() + box.width() - (ground.x() + ground.width())
-        assert _stands(window) == _beside(APP) and window.geometry().bottom() < _composer(APP).y, "clear of the composer"
+        frame = window.geometry()
+        assert _stands(window) == _beside(APP), "at the design place"
+        assert Rect(frame.x(), frame.y(), frame.width(), frame.height()).intersection_area(_composer(APP)) == 0, "clear of the composer"
 
         # The live dot: 8 px, cyan, 10 px from the top and 8 px from the right of his box.
         assert window._dot_shown(), "his brain is up and his panel is closed"

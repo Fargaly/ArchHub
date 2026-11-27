@@ -13221,7 +13221,8 @@
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/docs.jsx",
         "03.TOOLS/packaging/website/build_site.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/docs_community_whole_design.test.cjs"
       ]
     }
   }

@@ -12961,6 +12961,18 @@
         "06.CLOUD/cloud_backend/tests/test_baboom_relay_retirement.py"
       ]
     },
+    "DEVICESIGNOUT": {
+      "source": "Coordinator 717 2026-11-27 (device sign-out, parts 3-4 of 4, after cloud 983aae50): Settings > Account > Signed in on lists every PC and browser on the account from GET /v1/devices (fallback This PC), Sign out on a device that is not this PC; the desktop sends POST /v1/devices/heartbeat on sign-in and inside the existing account-session check only, with a stable device id kept in settings. Then the Account Brain and Team dialogs and the Connections Social inbox dialog move out of the retired brain.jsx, ds_colleagues.jsx and social.jsx.",
+      "scope": [
+        "01.APP/nodelang/access_owner.py",
+        "01.APP/nodelang/cloud_signin.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests_replica/test_nothing_given_up.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "COCKPITDESIGNMCP": {
       "source": "Founder 2026-11-27: \"Fix the Cockpit design, make it like the app; it works but needs an upgrade\" (the Cockpit admin panel: users, community, billing, feedback), and 717: the Cockpit has no MCP or API an agent can reach and put in automations. The panel takes the app's shell (64px rail, header chips, rows, buttons); the Cockpit's own tools (cockpit_agent.TOOLS) are served on the existing /mcp door to the founder's account only, reads run, writes hold a preview until the founder approves in the Cockpit Inbox, every call audited.",
       "scope": [

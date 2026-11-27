@@ -1,6 +1,7 @@
 """Shared quiet local HTTP transport for ArchHub runtimes."""
 from __future__ import annotations
 
+import socket
 import sys
 from http.server import HTTPServer, ThreadingHTTPServer
 
@@ -16,6 +17,8 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
     """Ignore ordinary client disconnects while preserving unexpected errors."""
 
     daemon_threads = True
+    # The stdlib default backlog of 5 refuses clicks while agents poll (Python 3.15 made SOMAXCONN the default).
+    request_queue_size = socket.SOMAXCONN
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]

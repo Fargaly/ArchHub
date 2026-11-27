@@ -78,13 +78,6 @@
     any: A.inkSoft,
     view: A.cyan
   })[t] || A.accent;
-  function measureWires(world, wires) {
-    if (!world) return [];
-    const bounds=world.getBoundingClientRect(), scale=world.offsetWidth/bounds.width || 1, sockets=new Map([...world.querySelectorAll('[data-port-key]')].map(el=>{
-      const r=el.getBoundingClientRect();return [el.dataset.portKey,{x:(r.left+r.width/2-bounds.left)*scale,y:(r.top+r.height/2-bounds.top)*scale}];
-    }));
-    return wires.map(w=>({w,a:sockets.get(`${w.from}:out:${w.fromPort}`),b:sockets.get(`${w.to}:in:${w.toPort}`)})).filter(p=>p.a&&p.b);
-  }
   // Saved NodeCard colours come from the shared Penpot palette.
   const SPEC = {node:'var(--color-bg-panel)',line:'var(--color-line)',slot:'var(--color-bg-soft)',hollow:'var(--color-ink-muted)',panel:'var(--color-bg-panel)',field:'var(--color-bg-panel)',fieldLine:'var(--color-line)',
     text:'var(--color-ink)',label:'var(--color-ink-soft)',count:'var(--color-ink-muted)',link:'var(--color-accent-hi)',number:'var(--color-ink)',typed:'var(--color-cyan)',rule:'var(--color-bg-raised)',exposed:'var(--color-accent-dim)'};
@@ -112,16 +105,9 @@
     : /done|ran/i.test(n.status) ? ['Done', A.ok] : ['Not run', A.inkSoft];
   // Spec Wire/*: typed socket colour, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2, list hollow cable).
   const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===(w.origTo || w.to)) || {}, false)[0]) ? A.warn : typeColor(w.type);
-  // DESIGNSYS-050 4.9 Wire: ONE stroke for the Canvas (FlowWire) and the System graph (GraphWires); Penpot Wire/Compatible, wire.strokeWidth 2.
+  // DESIGNSYS-050 4.9 Wire: ONE stroke for every Canvas wire (FlowWire); Penpot Wire/Compatible, wire.strokeWidth 2.
   function WirePath({id, state, d, color, dash, opacity, route, list}) {
     return <path data-graph-wire={id} data-wire-state={state} data-wire-route={route || 'Bezier'} data-wire-list={list ? 'true' : undefined} d={d} stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray={dash} opacity={opacity} fill="none" />;
-  }
-  function GraphWires({paths,visibility='Visible',nodes=[]}) {
-    return <>{paths.map(({w,a,b})=>{
-      const portVisibility=nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort],
-        opacity=visibility==='Hidden'||portVisibility==='Hidden' ? 0 : visibility==='Faint'||portVisibility==='Faint' ? .2 : .9;
-      return <WirePath key={w.id} id={w.id} route={w.route} d={wirePath(a,b,w.route)} color={typeColor(w.type)} dash={w.type==='event'?'6 2':undefined} opacity={opacity} />;
-    })}</>;
   }
   const hostLabel = {fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft};
   const hostControl = {width:'100%', boxSizing:'border-box', background:A.bgSoft, color:A.ink, border:'1px solid '+A.line, borderRadius:A.rad.sm, padding:'6px 8px', font:'12px Inter, sans-serif'};
@@ -289,74 +275,6 @@
         </>}
         {n.actions && <div style={{display:'flex',gap:16,fontSize:12,fontWeight:500}}>{n.actions}</div>}
       </div>}
-    </D.Node>;
-  }
-  function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, renderSocket, rejected, members, onMember, onDetach, compact = false}) {
-    const u = useApp(), s = useData(), [expanded,setExpanded] = React.useState(false), [parameterDrafts,setParameterDrafts] = React.useState({});
-    const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
-      engines=catalogue.filter(c=>c.descriptor?.engine===n.kind), category=exact||(engines.length===1 ? engines[0] : null),
-      family = (n.category || category?.family || n.kind).toLowerCase(), grouped = isGroup(n),
-      [color, icon] = grouped ? [A.purple,'group'] : NODE_FAMILY_STYLE[family] || [A.blue,'canvas'],
-      state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle',
-      stateColor = /error|fail|refus/i.test(state) ? A.err : /await/i.test(state) ? A.inkSoft : /saved/i.test(state) ? A.ok : /working|wip/i.test(state) ? A.accent : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
-    // Plate 4.3: only the first three human values; Properties keeps every parameter.
-    // A parameter the user turned off (Exposed parameters, parameterPresentation hidden) stays in Properties, never on the face.
-    const parameters = Object.entries(n.params).filter(([key])=>!n.parameterPresentation?.[key]?.hidden).filter(([key,value])=>!compact || n.parameterSchema?.some(p=>p.key===key && p.editable) ||
-      (!/(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i.test(key) &&
-       (value === null || typeof value !== 'object') &&
-       !/(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i.test(String(value)))),
-      foot = compact && /(?:[a-f0-9]{32,}|(?:assembly|template|node)-instance:)/i.test(state)
-        ? (state.match(/^(?:blocked|error|failed|held|waiting|refused)\b/i)?.[0] || 'See Properties').replace(/^./,c=>c.toUpperCase()) : state;
-    // Spec NodeCard: ComfyUI widget-to-input pattern, a parameter that is also an input carries its socket on its own slot.
-    const spec = compact, [specFoot, specColor] = nodeState(n, rejected), shownKeys = (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key])=>'param:'+key),
-      slotPort = key => spec && renderSocket && n.inputs.find(p=>p.id==='param:'+key),
-      field = spec && n.column && fieldColumn(n, s.graph), frame = spec && (n.column || n.dataset);
-    if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={headerProps} renderSocket={renderSocket} />;
-    if (n.type === 'host.exec') return <HostExecNode n={n} selected={selected} headerProps={headerProps} renderPort={renderPort} />;
-    if (n.type === 'connector.call') return <ConnectorActionNode n={n} selected={selected} headerProps={headerProps} renderPort={renderPort} />;
-    return <D.Node className="lm-node" data-category={family} data-node-state={spec ? specFoot.split(' · ')[0] : undefined} data-spec={spec ? n.dataset ? 'dataset' : 'node' : undefined}
-      w={spec ? n.dataset ? 340 : 156 : n.dataset ? 340 : 224} glyph={<window.AHIcon name={icon} size={12} />} gc={color}
-      title={n.title} sub={grouped ? `group · ${(members || []).length} members` : category?.name || n.assembly || n.kind}
-      style={spec ? {background:frame ? SPEC.panel : SPEC.node,border:frame ? 0 : '1px solid '+specColor,borderRadius:frame ? 12 : 8} : {borderTop:'2px solid '+color}} stacked={grouped}
-      edge={spec ? undefined : !n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
-      selected={selected} run={!spec && /running/i.test(state)} dashed={!spec && n.frozen}
-      foot={spec ? (specFoot === 'Done' ? null : <span title={n.error || state}>{specFoot}</span>) : (/^done\b/i.test(foot) ? null : <span title={state}>{foot + (n.error ? ' · '+n.error : '') + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>)} footc={spec ? specColor : stateColor}
-      ins={spec ? n.inputs.filter(p=>!(renderSocket && shownKeys.includes(p.id))) : n.inputs} outs={n.outputs} renderPort={renderPort} portsAfterContent={spec}
-      headerProps={{...headerProps,style:spec ? headerProps?.style : {borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
-      headerEnd={<>{typeof n.pure === 'boolean' && <span data-node-pure={String(n.pure)} style={{fontSize: 'calc(10px * var(--text-scale,1))',color:n.pure ? A.inkSoft : A.warn}}
-        title={n.pure ? 'Pure: re-solves on every edit' : 'Side effect: waits for Run'}>{n.pure ? 'Pure' : 'Side effect'}</span>}
-        {spec && n.dataset && <span data-dataset-count>{n.dataset.records.length} records</span>}{headerEnd}</>} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag '+m.title+' out of the group' : 'Open '+m.title} onDragStart={event=>{if(!m.chip)return;event.stopPropagation();event.dataTransfer.setData('text/plain',m.id);event.dataTransfer.effectAllowed='move';event.currentTarget.dataset.dragged='1';}} onDragEnd={event=>{if(!m.chip||!onDetach)return;onDetach(m,event);}} onClick={event=>{if(event.currentTarget.dataset.dragged==='1'){event.currentTarget.dataset.dragged='';return;}executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event);}}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
-      {!grouped && (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key,value])=>{
-        const p=n.parameterSchema?.find(p=>p.key===key), label=n.title+' '+key,
-          shown=Object.hasOwn(parameterDrafts,key)?parameterDrafts[key]:value,
-          save=v=>{
-            setParameterDrafts(old=>({...old,[key]:v}));
-            return u.act(()=>api.setNodeParam(n.id,key,v)).then(saved=>{
-              if(!saved || saved.ok===false)return;
-              setParameterDrafts(old=>{if(!Object.is(old[key],v))return old;const next={...old};delete next[key];return next;});
-            });
-          };
-        return <div className="canvas-card-param" data-parameter={key} key={key}>{slotPort(key) && <span className="canvas-port-socket in">{renderSocket(slotPort(key))}</span>}<span title={p?.label || key}>{p?.label && p.label!==key ? p.label : key.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())}{p?.unit ? ' · '+p.unit : ''}</span>
-          {p?.editable && (['string','number','boolean'].includes(typeof value) || p.type==='json') ? p.type==='boolean'
-            ? <D.Toggle label={label} checked={shown} onCheckedChange={save} />
-            : p.options?.length ? <select aria-label={label} value={shown} onChange={e=>save(e.target.value)}>{p.options.map(v=><option key={v}>{v}</option>)}</select>
-            : p.type==='color' ? <input aria-label={label} type="color" value={shown} onChange={e=>save(e.target.value)} />
-            : p.type==='date' ? <input aria-label={label} type="date" value={shown} onChange={e=>save(e.target.value)} />
-            : p.type==='json' ? <input aria-label={label} title={JSON.stringify(shown)} value={typeof shown==='string'?shown:JSON.stringify(shown)} style={{width:96,minWidth:0}} onChange={e=>setParameterDrafts(old=>({...old,[key]:e.target.value}))} onBlur={e=>save(e.target.value)} />
-            : <input aria-label={label} title={String(shown)} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={shown} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
-            : <span tabIndex={0} title={typeof value==='object'?JSON.stringify(value):String(value)}>{typeof value==='object'?JSON.stringify(value):String(value)}</span>}
-          {p?.dataType && <small className="muted" data-param-type={p.dataType}>{p.dataType}</small>}
-          {p?.linkedTo && <small data-linked-to title="Same value as the parameter it is exposed from">linked {'\u2192'} {p.linkedTo}</small>}
-          {p?.promoted && <small data-linked-node title="Edited here or on its Parameter node: one value">linked node</small>}
-          {!n.bind && n.paramDefs && api.promoteParam && key!=='engine' && <button className="button-reset" aria-label={(p?.promoted?'Demote ':'Expose as node ')+key} title={p?.promoted?'Demote: back to an inline parameter':'Expose as node'}
-            onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>p?.promoted?api.demoteParam(n.id,key):api.promoteParam(n.id,key))},event)}>{p?.promoted?'\u21b2':'\u21f1'}</button>}
-        </div>;
-      })}
-      {!grouped && n.dataset && <DatasetEditor n={n} u={u} />}
-      {!grouped && n.column && <small data-column-of={n.column.dataset+'.'+n.column.field} className="muted">{n.column.dataset ? <>{n.column.dataset}.{n.column.field} {'\u00b7'} {n.column.label} {'\u00b7'} values live in {n.column.dataset}</> : 'Unbound: wire a dataset field into column'}</small>}
-      {!grouped && !n.bind && !n.dataset && !n.column && !n.children?.length && api.addNodeParameter && <AddParameter n={n} u={u} />}
-      {!grouped && n.status==='Done' && <output aria-label={n.title+' output'} style={{display:'block',maxHeight:100,overflow:'auto',whiteSpace:'pre-wrap'}}>{typeof n.output==='object'?JSON.stringify(n.output):String(n.output)}</output>}
-      {!grouped && compact && parameters.length>3 && <button className="button-reset canvas-card-more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setExpanded(!expanded)},event)}>{expanded ? 'Show less' : `+${parameters.length-3} more`}</button>}
     </D.Node>;
   }
   // Spec FieldNode (bound): a field node is its dataset's column as a typed list; values are read from the dataset only.
@@ -2242,38 +2160,6 @@
       {requestState === 'loaded' && <>{body}</>}
     </>;
   }
-  function SystemGraph() {
-    const s = useData(), u = useApp(), world=React.useRef(), [paths,setPaths]=React.useState([]), [load,setLoad] = React.useState('waiting'), [error,setError] = React.useState(''), [attempt,setAttempt]=React.useState(0);
-    const [system,setSystem]=React.useState({nodes:[],wires:[]});
-    React.useEffect(()=>{
-      let active=true;
-      setLoad('waiting');
-      api.readSystemGraph().then(graph=>{if(active){setSystem(graph);setLoad(graph.nodes.some(n=>n.application)?'loaded':'empty');}})
-        .catch(e=>{if(active){setError(e.message);setLoad('error');}});
-      return ()=>{active=false;};
-    },[attempt,s.systemRevision]);
-    const nodes = system.nodes.filter(n=>n.application), groups = [...new Set(nodes.map(n=>n.frame||n.category||'System'))];
-    React.useLayoutEffect(()=>{
-      const measure=()=>setPaths(measureWires(world.current,system.wires));
-      measure();
-      const observer=new window.ResizeObserver(measure);if(world.current)observer.observe(world.current);
-      return ()=>observer.disconnect();
-    },[s.revision,load,system]);
-    return <div data-screen="system" className="system-workflow scroll" style={{minHeight:0,padding:24,overflow:'auto'}}>
-      <div className="spread"><h2>System graph</h2><Chip>{nodes.length} nodes</Chip></div>
-      {load==='waiting' && <p role="status">Loading the system graph…</p>}
-      {load==='error' && <p role="alert">{error}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry loading system graph</Btn></p>}
-      {load==='empty' && <p>No system graph is available.</p>}
-      {load==='loaded' && <div ref={world} style={{position:'relative'}}><svg data-system-wires="" width="100%" height="100%" style={{position:'absolute',inset:0,overflow:'visible',pointerEvents:'none'}}><GraphWires paths={paths} nodes={nodes} /></svg>
-      {groups.map(group=><section key={group} data-system-group={group} style={{marginTop:24}}><h3 style={{marginBottom:12}}>{group}</h3><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(224px,1fr))',gap:28,alignItems:'start'}}>
-        {nodes.filter(n=>(n.frame||n.category||'System')===group).map(n=><div key={n.id} data-graph-node={n.id} style={{position:'relative',zIndex:1}}>
-          <NodeRenderer n={n} catalogue={s.catalogue} headerProps={{className:'node-header'}}
-            headerEnd={<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Node',{id:n.id})},event)}>Open</Btn>}
-            renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize: 'calc(12px * var(--text-scale,1))'}}><span data-port-key={`${n.id}:${side}:${p.id}`} style={{position:'absolute',[side==='in'?'left':'right']:-6}}><D.Socket t={p.type} list={p.list} /></span>{p.name}{p.unit ? ' · '+p.unit : ''}</div>} />
-        </div>)}
-      </div></section>)}</div>}
-    </div>;
-  }
   // Home's map of the work (window.UI.homeMap): a read-only lens drawn with the Canvas engine (xyflow), the Canvas card (D.Node),
   // its sockets and its wires. Nothing here edits a file: a card opens its session, a group folds, the view pans and zooms.
   const HomeMapContext = React.createContext(null);
@@ -2388,7 +2274,6 @@
   window.UI.fitCanvasViewport = fitCanvasViewport;
   window.UI.fitHomeViewport = fitHomeViewport;
   window.UI.boxSelection = boxSelection;
-  window.UI.SystemGraph = SystemGraph;
 
   function AgentsCanvas() {
     const s=useData(), u=useApp(), dialog=React.useRef();

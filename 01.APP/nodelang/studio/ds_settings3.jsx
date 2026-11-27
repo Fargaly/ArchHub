@@ -346,20 +346,40 @@
     return <select aria-label="Standard version" value={node.params.standard||def.options?.[0]||''} onChange={event=>{const value=event.target.value;return u.act(()=>api.setNodeParam(node.id,'standard',value));}}>
       {(def.options||[]).map(option=><option key={option}>{option}</option>)}</select>;
   }
-  function AppSettingControl({id,label}) {
-    const s=useData(),u=useApp(),[key,unit,factor,min,max,step]=APP_SETTING_ROWS[id];
-    const [load,setLoad]=React.useState({status:'waiting',saved:{}}),[attempt,setAttempt]=React.useState(0);
+  // Every Settings row read has a budget and a stated end (spec §3.2): the owner's answer, or why not with Retry; never an
+  // endless "Reading…". Rows that ask the same owner at once share one request, so a page sends one read per owner.
+  const readsInFlight=new Map();
+  function budgetedRead(name,read,waitMs=8000){
+    if(readsInFlight.has(name))return readsInFlight.get(name);
+    let timer;
+    const answer=Promise.race([Promise.resolve().then(read),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(name+' did not answer within '+Math.round(waitMs/1000)+' s.')),waitMs);})])
+      .finally(()=>{clearTimeout(timer);readsInFlight.delete(name);});
+    readsInFlight.set(name,answer);
+    return answer;
+  }
+  // [load, setLoad, retry]: load.status is waiting, then shape(answer) or {status:'error',message}; a change of `watch` reads again.
+  function useOwnerRead(name,read,shape,initial,watch){
+    const [load,setLoad]=React.useState({...initial,status:'waiting'}),[attempt,setAttempt]=React.useState(0);
     React.useEffect(()=>{
       let current=true;
       setLoad(held=>({...held,status:'waiting'}));
-      Promise.resolve().then(()=>api.getApplicationSettings()).then(saved=>{if(current)setLoad({status:saved&&Object.keys(saved).length?'loaded':'empty',saved:saved||{}});},
-        error=>{if(current)setLoad({status:'error',saved:{},message:error.message||String(error)});});
+      budgetedRead(name,read).then(answer=>{if(current)setLoad(shape(answer));},error=>{if(current)setLoad(held=>({...held,status:'error',message:error.message||String(error)}));});
       return ()=>{current=false;};
-    },[attempt]);
+    },[attempt,watch]);  // read is fixed per mount (key)
+    return [load,setLoad,()=>setAttempt(value=>value+1)];
+  }
+  function ReadRefused({load,retry}){
+    return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:retry},event)}>Retry</Btn></span>;
+  }
+  const appSettingsShape=saved=>({status:saved&&Object.keys(saved).length?'loaded':'empty',saved:saved||{}});
+  const readAppSettings=()=>api.getApplicationSettings();
+  function AppSettingControl({id,label}) {
+    const s=useData(),u=useApp(),[key,unit,factor,min,max,step]=APP_SETTING_ROWS[id];
+    const [load,setLoad,retry]=useOwnerRead('App settings',readAppSettings,appSettingsShape,{saved:{}},null);
     const stored=load.saved[key]??load.saved._defaults?.[key]??s.runtimeParameters?.[key];
     const save=value=>u.act(()=>api.setApplicationSetting(key,value)).then(saved=>{if(saved)setLoad({status:'loaded',saved});});
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
     if(stored===undefined)return <span role="status">Not reported by the app yet.</span>;
     if(id==='updChannel')return <span className="sheet-segments" role="group" aria-label={label}>{['Stable','Preview'].map(option=><button type="button" key={option} aria-pressed={(option==='Preview')===!!stored} onClick={event=>executeAction('projects.controls.activate',{handler:()=>save(option==='Preview')},event)}>{option}</button>)}</span>;
     if(typeof stored==='boolean')return <D.Toggle variant="settings" label={label} checked={!!stored} onCheckedChange={value=>save(value)}/>;
@@ -507,6 +527,57 @@
   }
 
   // Presentation only: all values and mutations remain with their Settings owners.
+  // Settings › This PC › System graph (design sysGraphHTML): a read-only picture of the running app, never an editor.
+  // Owners and their wires come from the System graph route; agents and programs from their own owners.
+  const SYS_PAGE={'owner:canvas':'Projects','owner:library':'Library & Mods','owner:workshop':'Workshop','owner:router':'Models','owner:profiling':'Models',
+    'owner:brokers':'Connections','owner:settings':'Look','owner:secrets':'Connections','owner:social':'Social','owner:community':'Access'};
+  const SYS_ROUTES=['owner:workshop','owner:router','owner:settings','owner:library','owner:social'];  // the owners agents call first
+  function SystemMap() {
+    const s=useData(),u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0),[sel,setSel]=React.useState('owner:workshop');
+    React.useEffect(()=>{
+      let current=true;setLoad({status:'waiting'});
+      if(!(api.getSnapshot().hosts||[]).length)api.readHostAvailability().catch(()=>{});  // programs fill in when their owner answers
+      budgetedRead('The System graph',()=>api.readSystemGraph()).then(graph=>{if(current)setLoad(!Array.isArray(graph?.nodes)?{status:'error',message:'The System graph route answered without its owners.'}:graph.nodes.length?{status:'loaded',graph:{nodes:graph.nodes,wires:graph.wires||[]}}:{status:'empty'});},
+        error=>{if(current)setLoad({status:'error',message:error.message||String(error)});});
+      return ()=>{current=false;};
+    },[attempt]);
+    if(load.status==='waiting')return <span role="status">Reading how the app is wired…</span>;
+    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry</Btn></span>;
+    if(load.status==='empty')return <span>The System graph route reported no owners.</span>;
+    return load.status==='loaded'&&<SystemMapView graph={load.graph} s={s} u={u} sel={sel} setSel={setSel}/>;
+  }
+  function SystemMapView({graph,s,u,sel,setSel}) {
+    const NW=150,NH=38,col=(x,list)=>list.map((n,i)=>({...n,x,y:24+i*52}));
+    const owners=[...new Map(graph.nodes.map(n=>[n.id,n])).values()].map(n=>({id:n.id,t:n.title,k:n.kind||'Owner',st:'ok',d:'Stored in '+(n.params?.['stored in']||'its owner'),own:n.category,file:n.params?.['stored in']||'',page:SYS_PAGE[n.id]}));
+    const presence={working:'Working',idle:'Idle',waiting:'Needs you',stopped:'Not running',unknown:'Status unknown'};
+    const agents=col(16,(s.agents||[]).map(a=>({id:'agent:'+a.name,t:a.name,k:'Agent',st:a.gate==='missing'?'warn':['working','idle','waiting'].includes(a.presence)?'ok':'off',
+      d:(presence[a.presence]||a.presence||'Status unknown')+' · gates '+(a.gate==='live'?'on':a.gate==='missing'?'missing':'not checked'),own:'Its own app on this PC',file:'',page:'Permissions'})));
+    const routes=col(186,owners.filter(n=>SYS_ROUTES.includes(n.id))), stores=col(356,owners.filter(n=>!SYS_ROUTES.includes(n.id)));
+    const programs=col(526,(s.hosts||[]).map(h=>{const on=['connected','listening'].includes(h.state);
+      return {id:'host:'+h.id,t:h.name,k:'Program',st:on?'ok':'off',d:[h.state||'Status unavailable',h.version||h.detail].filter(Boolean).join(' · '),own:'Host brokers',file:'',page:'Connections'};}));
+    const all=[...agents,...routes,...stores,...programs],at=id=>all.find(n=>n.id===id);
+    const edges=[...agents.flatMap(a=>['owner:workshop','owner:canvas','owner:router'].map(b=>[a.id,b])),
+      ...graph.wires.filter(w=>w.from!==w.to).map(w=>[w.from,w.to]),...programs.map(p=>['owner:brokers',p.id])].filter(([a,b])=>at(a)&&at(b));
+    const n=at(sel)||routes[0]||all[0];
+    const linked=id=>id===n.id||edges.some(([a,b])=>a===n.id&&b===id||b===n.id&&a===id);
+    const height=Math.max(...all.map(x=>x.y))+NH+24;
+    const path=(a,b)=>{const [l,r]=a.x<=b.x?[a,b]:[b,a],x1=l.x+NW,y1=l.y+NH/2,x2=r.x,y2=r.y+NH/2,m=(x1+x2)/2;return `M${x1},${y1} C${m},${y1} ${m},${y2} ${x2},${y2}`;};
+    return <div className="sysmap" data-design="settings.sysgraph">
+      <div className="sysmap-canvas" style={{height}}>
+        <div className="sysmap-cols">{[[16,'Agents'],[186,'Routes and owners'],[356,'Owners and brokers'],[526,'Programs']].map(([x,label])=><span key={label} style={{left:x}}>{label}</span>)}</div>
+        <svg className="sysmap-wires" viewBox={`0 0 692 ${height}`} aria-hidden="true">{edges.map(([a,b])=>{const p=at(a),q=at(b);
+          return <path key={a+'>'+b} d={path(p,q)} className={(a===n.id||b===n.id?'on':'')+(q.st==='off'?' off':'')}/>;})}</svg>
+        {all.map(x=><button type="button" key={x.id} data-sysmap-node={x.id} aria-pressed={x.id===n.id} className={'sysmap-node st-'+x.st+(x.id===n.id?' on':'')+(linked(x.id)?'':' dim')} style={{left:x.x,top:x.y}}
+          onClick={event=>executeAction('projects.controls.activate',{handler:()=>setSel(x.id)},event)}><i/><b>{x.t}</b><em>{x.k}</em></button>)}
+      </div>
+      <aside className="sysmap-detail" aria-live="polite"><small>{n.k}</small><h4>{n.t}</h4><p>{n.d}</p>
+        <div className="spread"><span>Owner</span><b>{n.own}</b></div>
+        {n.file&&<div className="spread"><span>File</span><b className="mono">{n.file}</b></div>}
+        <div className="spread"><span>State</span><b className={'st-'+n.st}>{n.st==='ok'?'Running':n.st==='warn'?'Needs a look':'Not running'}</b></div>
+        {n.page&&<button type="button" className="dx-link" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.go('settings/'+n.page)},event)}>Open its settings: {n.page}</button>}
+        <p className="muted">A picture of the running app. Change things on their own settings page.</p></aside>
+    </div>;
+  }
   const pcCards = [
     { id:"theme", title:"Theme and colour", icon:"palette", family:"look", rows:[
       ["theme", "Theme", "Choose the application theme", "seg", ["Dark", "Light", "System"]],
@@ -631,16 +702,10 @@
   // Settings > Updates: one choice over the two update owner values (application_update.default_update_policy).
   const UPDATE_MODES={'Install when idle':[true,true],'Ask me first':[false,true],'Install when I quit':[true,false]};
   function UpdateModeControl({label,options}) {
-    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',saved:{}}),[attempt,setAttempt]=React.useState(0);
-    React.useEffect(()=>{
-      let current=true;
-      setLoad(held=>({...held,status:'waiting'}));
-      Promise.resolve().then(()=>api.getApplicationSettings()).then(saved=>{if(current)setLoad({status:saved&&Object.keys(saved).length?'loaded':'empty',saved:saved||{}});},
-        error=>{if(current)setLoad({status:'error',saved:{},message:error.message||String(error)});});
-      return ()=>{current=false;};
-    },[attempt]);
+    const u=useApp();
+    const [load,setLoad,retry]=useOwnerRead('App settings',readAppSettings,appSettingsShape,{saved:{}},null);
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
     // empty: nothing saved yet, so both owner values are the app defaults (install automatically, also when idle).
     const auto=load.saved.update_auto_apply_on_quit!==false, idle=load.saved.update_install_when_idle!==false;
     const value=!auto?'Ask me first':idle?'Install when idle':'Install when I quit';
@@ -650,32 +715,19 @@
   // One on/off owned by another settings owner: Review before sharing (hook permissions) and Read-only for agents
   // (the workspace's workspaces.json row). read() gives the owner's value; write(on) saves it and returns the new value.
   function OwnerSwitch({label,read,write,disabled=false,note=''}) {
-    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',value:false}),[attempt,setAttempt]=React.useState(0);
-    React.useEffect(()=>{
-      let current=true;
-      setLoad(held=>({...held,status:'waiting'}));
-      Promise.resolve().then(read).then(value=>{if(current)setLoad({status:typeof value==='boolean'?'loaded':'empty',value:value===true});},
-        error=>{if(current)setLoad({status:'error',value:false,message:error.message||String(error)});});
-      return ()=>{current=false;};
-    },[attempt]);  // read is fixed per mount (key)
+    const u=useApp(),[load,setLoad,retry]=useOwnerRead(label,read,value=>({status:typeof value==='boolean'?'loaded':'empty',value:value===true}),{value:false},null);
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
-    if(load.status==='empty')return <span role="status">The app reported no value. <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
+    if(load.status==='empty')return <span role="status">The app reported no value. <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:retry},event)}>Retry</Btn></span>;
     return <>{load.status==='loaded'&&<span className="visually-hidden" role="status">Read from the app</span>}{note&&<small className="muted">{note}</small>}<D.Toggle variant="settings" label={label} disabled={disabled} checked={load.value} onCheckedChange={value=>u.act(()=>write(value)).then(saved=>{if(typeof saved==='boolean')setLoad({status:'loaded',value:saved});})}/></>;
   }
   // Conversation retention: days before an inactive transcript moves to the archive (still readable; nothing deleted).
   const RETENTION_DAYS={'20 days':20,'30 days':30,'90 days':90,Keep:0};
   function RetentionControl({label,options}) {
-    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',saved:{}}),[attempt,setAttempt]=React.useState(0);
-    React.useEffect(()=>{
-      let current=true;
-      setLoad(held=>({...held,status:'waiting'}));
-      Promise.resolve().then(()=>api.getApplicationSettings()).then(saved=>{if(current)setLoad({status:saved&&Object.keys(saved).length?'loaded':'empty',saved:saved||{}});},
-        error=>{if(current)setLoad({status:'error',saved:{},message:error.message||String(error)});});
-      return ()=>{current=false;};
-    },[attempt]);
+    const u=useApp();
+    const [load,setLoad,retry]=useOwnerRead('App settings',readAppSettings,appSettingsShape,{saved:{}},null);
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
     const days=load.saved.conversation_retention_days??load.saved._defaults?.conversation_retention_days??20;
     const value=Object.keys(RETENTION_DAYS).find(key=>RETENTION_DAYS[key]===days)||days+' days';
     const choose=option=>u.act(()=>api.setApplicationSetting('conversation_retention_days',RETENTION_DAYS[option])).then(saved=>{if(saved)setLoad({status:'loaded',saved});});
@@ -686,17 +738,10 @@
   const writeReviewShare=on=>api.setPermissions({reviewBeforeSharing:on}).then(r=>(r?.permissions||r)?.reviewBeforeSharing);
   // Settings > The app: backup place, folder, Back up now and Diagnostics (settings_owner.maintenance_settings).
   function MaintenanceControl({id,label,options}) {
-    const u=useApp(),[load,setLoad]=React.useState({status:'waiting',held:null}),[attempt,setAttempt]=React.useState(0);
-    React.useEffect(()=>{
-      let current=true;
-      setLoad(held=>({...held,status:'waiting'}));
-      Promise.resolve().then(()=>api.readMaintenance()).then(result=>{if(current)setLoad({status:result?.maintenance?'loaded':'empty',held:result?.maintenance||null});},
-        error=>{if(current)setLoad({status:'error',held:null,message:error.message||String(error)});});
-      return ()=>{current=false;};
-    },[attempt]);
+    const u=useApp(),[load,setLoad,retry]=useOwnerRead('Backup settings',()=>api.readMaintenance(),result=>({status:result?.maintenance?'loaded':'empty',held:result?.maintenance||null}),{held:null},null);
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
-    if(load.status==='empty')return <span role="status">The app reported no backup settings. <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
+    if(load.status==='empty')return <span role="status">The app reported no backup settings. <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:retry},event)}>Retry</Btn></span>;
     const shown=load.status==='loaded'&&<span className="visually-hidden" role="status">Read from the app</span>;
     const held=load.held, keep=result=>{if(result?.maintenance)setLoad({status:'loaded',held:{...held,...result.maintenance}});return result;};
     const save=(key,value)=>u.act(()=>api.setMaintenance(key,value)).then(keep);
@@ -785,7 +830,7 @@
       }
       if(owner)return <SettingControl row={owner} raw={advanced} presentation={spec[3]==='seg'&&id!=='theme'?'seg':undefined}/>;
       switch(id) {
-        case 'shortcuts': return <details open={advanced||undefined} className="sheet-keybindings"><summary>Show all</summary><KeyboardSettings/></details>;
+        case 'shortcuts': return actButton('Show all',()=>u.show('Keyboard shortcuts'));
         case 'sessions': return actButton(shortPath(s.sessionsFolder||'Choose a folder'),()=>u.act(api.chooseSessionsFolder),s.sessionsFolder);
         case 'ws': return actButton(shortPath(workspace?.path||workspace?.folder||'Choose a folder'),()=>u.act(api.addWorkspace),workspace?.path||workspace?.folder);
         case 'wsPrivacy': case 'wsRules': case 'wsShareLearn': {
@@ -802,7 +847,7 @@
         case 'secrets': return actButton('Manage protected connections',()=>u.go('settings/Connections'));
         case 'auditLog': return actButton('Open',()=>u.show('App health'));
         case 'profileIO': return <details><summary>Export or import</summary><PreferencesTransfer/></details>;
-        case 'sysgraph': return window.UI.SystemGraph?<window.UI.SystemGraph/>:<UpcomingControl spec={spec}/>;
+        case 'sysgraph': return <SystemMap/>;
         case 'lookIO': return <LookTransfer/>;
         case 'layout': case 'dockL': case 'dockB': return <DockLayoutControl id={id} label={label} options={options}/>;
         case 'updMode': return <UpdateModeControl label={label} options={options}/>;
@@ -820,10 +865,11 @@
       }
       if(id.startsWith('gate.')){
         const agent=(s.agents||[]).find(a=>a.name===label);
-        if(agent?.gate==='live')return <span>Gates on</span>;
-        if(agent?.gate==='missing')return actButton('Manage gates',()=>u.go('settings/Dependencies'));
+        // Design 'gate' row: one pill for the state, and Install gates only where a gate is missing.
+        if(agent?.gate==='live')return <Chip c={A.ok}>Gates on</Chip>;
         const live=(s.liveAgents||[]).find(a=>a.app===GATE_APPS[label]||a.name===label);
-        return <><span className="muted">{live?'Running · gates '+(live.governance||'not checked'):'Not running on this PC'}</span>{actButton('Manage gates',()=>u.go('settings/Dependencies'))}</>;
+        if(!agent&&!live)return <Chip c={A.inkSoft}>Not running on this PC</Chip>;
+        return <><Chip c={A.warn}>{agent?.gate==='missing'?'Stop gate missing':'Gates '+(live?.governance||'not checked')}</Chip>{actButton('Install gates',()=>u.go('settings/Hooks'))}</>;
       }
       if(APP_SETTING_ROWS[id])return <AppSettingControl id={id} label={label}/>;
       return <UpcomingControl spec={spec}/>;
@@ -832,12 +878,11 @@
     return [...pcCards.map(card=>{
       const visible=card.rows.filter(spec=>!spec[5]||advanced||isChangedOwner(pcOwner(s.settings,spec)));
       return <section key={card.id} data-design-section={card.title} className={'sheet-pc-card sheet-owner-card pc-'+card.id+(card.id==='sysgraph'?' sheet-card-wide':'')}><header className="sheet-card-head"><span className={'sheet-card-icon fam-'+card.family}><window.AHIcon name={card.icon} size={12}/></span><h3>{card.title}</h3></header>
-        {visible.map(spec=><div className={'sheet-property-row'+(['theme','themeSet','accent','density','layout'].includes(spec[0])?' sheet-property-visual':'')} data-row={spec[0]} key={spec[0]}><span className="sheet-property-copy">{spec[1]}<small>{spec[2]}</small></span><div className="sheet-property-control">{control(spec)}</div></div>)}
+        {visible.map(spec=><div className={'sheet-property-row'+(['theme','themeSet','accent','density','layout'].includes(spec[0])?' sheet-property-visual':'')+(spec[0]==='sysgraph'?' sheet-property-full':'')} data-row={spec[0]} key={spec[0]}><span className="sheet-property-copy">{spec[1]}<small>{spec[2]}</small></span><div className="sheet-property-control">{control(spec)}</div></div>)}
         {visible.length<card.rows.length&&actButton((card.rows.length-visible.length)+' more',()=>setAdvanced(true))}
         {card.id==='theme'&&window.UI.InterfaceStudio&&<MovedPage title="Interface studio" open={requested==='Interface studio'||undefined} owner={window.UI.InterfaceStudio}/>}
         {card.id==='app'&&<details open={updatesOpen} onToggle={event=>setUpdatesOpen(event.currentTarget.open)}><summary>Updates &amp; About</summary>{updatesOpen&&<UpdatesPage/>}</details>}
         {additional[card.title]?.length>0&&<details open={advanced||undefined}><summary>More controls</summary>{additional[card.title].map(row=><SettingControl key={row.id} row={row} raw={advanced}/>)}</details>}
-        {card.id==='sysgraph'&&<details><summary>Tools &amp; diagnostics</summary>{[['Agents','settings/Agents'],['Router','settings/BABOOM'],['Thread','workshop'],['Programs','settings/Connections'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','App health']].map(([title,route])=><Btn sm key={route} onClick={event=>executeAction('projects.controls.activate',{handler:()=>route==='App health'?u.show(route):u.go(route)},event)}>{title}</Btn>)}</details>}
       </section>;
     }), window.UI.DependenciesSection && <window.UI.DependenciesSection key="dependencies"/>];
   }
@@ -845,14 +890,13 @@
   // Settings › Agents › Checks changed outside ArchHub: every agent hook hashed against the set you approved (hook_drift).
   function HookDrift() {
     const s=useData(),u=useApp(),watching=s.settings.find(row=>row.id==='Agents.Watch agent checks for outside changes')?.value;
-    const [load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
     const show=result=>{const drift=result?.hookDrift;
       const rows=drift?[...drift.added.map(row=>[row,'added']),...drift.changed.map(row=>[row,'changed']),...drift.removed.map(row=>[row,'removed'])]:[];
-      setLoad(!drift?{status:'error',message:'The hook check did not answer.'}:{status:rows.length||drift.state==='no-baseline'?'loaded':'empty',drift,rows});};
-    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readHookDrift()).then(result=>{if(current)show(result);},failure=>{if(current)setLoad({status:'error',message:failure.message||String(failure)});});return ()=>{current=false;};},[watching,attempt]);
-    const accept=label=><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.acceptHookDrift()).then(show,failure=>setLoad({status:'error',message:failure.message||String(failure)}))},event)}>{label}</Btn>;
+      return !drift?{status:'error',message:'The hook check did not answer.'}:{status:rows.length||drift.state==='no-baseline'?'loaded':'empty',drift,rows};};
+    const [load,setLoad,retry]=useOwnerRead('Agent checks',()=>api.readHookDrift(),show,{},watching);
+    const accept=label=><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.acceptHookDrift()).then(result=>setLoad(show(result)),failure=>setLoad({status:'error',message:failure.message||String(failure)}))},event)}>{label}</Btn>;
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
     if(load.drift.state==='off')return <span className="muted">Off. Turn on Watch agent checks to see changes here.</span>;
     if(load.status==='empty')return <span>No check changed since you approved them.</span>;
     if(load.drift.state==='no-baseline')return <span>{load.drift.hooks} checks, none approved yet. {accept('Approve these checks')}</span>;
@@ -861,13 +905,12 @@
   // Settings › Agents › Programs agents may change: settings.json host_effects, one switch per program (read by every
   // host write and launch, native_host_tools._allow_effect).
   function HostEffects() {
-    const u=useApp(),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
-    const show=result=>setLoad(Array.isArray(result?.hostEffects)?{status:result.hostEffects.length?'loaded':'empty',rows:result.hostEffects}:{status:'error',message:'The program switches did not answer.'});
-    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});Promise.resolve().then(()=>api.readHostEffects()).then(result=>{if(current)show(result);},failure=>{if(current)setLoad({status:'error',message:failure.message||String(failure)});});return ()=>{current=false;};},[attempt]);
+    const u=useApp(),show=result=>Array.isArray(result?.hostEffects)?{status:result.hostEffects.length?'loaded':'empty',rows:result.hostEffects}:{status:'error',message:'The program switches did not answer.'};
+    const [load,setLoad,retry]=useOwnerRead('Program switches',()=>api.readHostEffects(),show,{},null);
     if(load.status==='waiting')return <span role="status">Reading…</span>;
-    if(load.status==='error')return <span role="alert">{load.message} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry</Btn></span>;
+    if(load.status==='error')return <ReadRefused load={load} retry={retry}/>;
     if(load.status==='empty')return <span>No programs reported.</span>;
-    return load.status==='loaded'?<div className="sheet-host-effects">{load.rows.map(row=><div className="spread" key={row.key} data-host-effect={row.key}><span>{row.name}</span><D.Toggle variant="settings" label={row.name} checked={row.on} onCheckedChange={value=>u.act(()=>api.setHostEffect(row.key,value)).then(show,failure=>setLoad({status:'error',message:failure.message||String(failure)}))}/></div>)}</div>:null;
+    return load.status==='loaded'?<div className="sheet-host-effects">{load.rows.map(row=><div className="spread" key={row.key} data-host-effect={row.key}><span>{row.name}</span><D.Toggle variant="settings" label={row.name} checked={row.on} onCheckedChange={value=>u.act(()=>api.setHostEffect(row.key,value)).then(result=>setLoad(show(result)),failure=>setLoad({status:'error',message:failure.message||String(failure)}))}/></div>)}</div>:null;
   }
   function requestGroups(requests, agents, providers) {
     const groups = new Map();
@@ -888,7 +931,7 @@
     const [attempt,setAttempt]=React.useState(0),[load,setLoad]=React.useState({status:'waiting'});
     React.useEffect(()=>{
       let current=true;setLoad({status:'waiting'});
-      api.refreshRouter(attempt>0).then(r=>{if(current){setModel(r.default_model);setLoad({status:r.requests.length?'loaded':'empty'});}},
+      budgetedRead('The model router',()=>api.refreshRouter(attempt>0)).then(r=>{if(current){setModel(r.default_model);setLoad({status:r.requests.length?'loaded':'empty'});}},
         error=>{if(current)setLoad({status:'error',message:error.message});});
       return()=>{current=false;};
     },[attempt]);
@@ -913,7 +956,7 @@
     const [attempt,setAttempt]=React.useState(0),[load,setLoad]=React.useState({status:'waiting'});
     React.useEffect(()=>{
       let current=true;setLoad({status:'waiting'});
-      api.readPermissions().then(r=>{if(current){setP(r);setLoad({status:Object.keys(r.tools||{}).length?'loaded':'empty'});}},
+      budgetedRead('Permissions',()=>api.readPermissions()).then(r=>{if(current){setP(r);setLoad({status:Object.keys(r.tools||{}).length?'loaded':'empty'});}},
         error=>{if(current)setLoad({status:'error',message:error.message});});
       return()=>{current=false;};
     },[attempt]);
@@ -973,7 +1016,7 @@
     React.useEffect(()=>{
       let current=true;
       setLoad({status:'waiting'});
-      Promise.allSettled([api.refreshSocialConnections,api.readHostAvailability,api.refreshSettingsControls].map(read=>read())).then(results=>{
+      Promise.allSettled([['Accounts',api.refreshSocialConnections],['Programs',api.readHostAvailability],['Settings',api.refreshSettingsControls]].map(([name,read])=>budgetedRead(name,read))).then(results=>{
         if(!current)return;
         const errors=results.filter(r=>r.status==='rejected').map(r=>r.reason.message);
         setLoad({status:errors.length?'error':'loaded',message:errors.join(' ')});
@@ -1183,7 +1226,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
     const [load, setLoad] = React.useState('waiting');
     const readSaved = React.useCallback(() => {
       setLoad('waiting');
-      return api.getApplicationSettings().then(saved => {
+      return budgetedRead('App settings', readAppSettings).then(saved => {
         setAutoInstall(saved.update_auto_apply_on_quit !== false);
         setLoad(Object.keys(saved).length ? 'loaded' : 'empty');
       }, error => {
@@ -1234,7 +1277,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
   // The person's own MCP servers: one field takes an address, a command or an mcp.json snippet.
   function ToolServers() {
     const s=useData(),u=useApp(),[text,setText]=React.useState(''),[load,setLoad]=React.useState({status:'waiting'}),[attempt,setAttempt]=React.useState(0);
-    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});api.refreshMcpServers().then(rows=>{if(current)setLoad({status:rows?.length?'loaded':'empty'});},error=>{if(current)setLoad({status:'error',message:error?.message||'Could not read tool servers.'});});return()=>{current=false;};},[attempt]);
+    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});budgetedRead('Tool servers',()=>api.refreshMcpServers()).then(rows=>{if(current)setLoad({status:rows?.length?'loaded':'empty'});},error=>{if(current)setLoad({status:'error',message:error?.message||'Could not read tool servers.'});});return()=>{current=false;};},[attempt]);
     const rows=s.mcpServers||[];
     const row=r=><div className="spread row" key={r.id}><span><b>{r.name}</b><small className="muted" style={{display:'block'}}>{r.where}{r.secrets?' · '+r.secrets+(r.secrets>1?' keys':' key')+' in Credential Manager':''}</small><small style={{display:'block'}}>{r.status}</small></span><span className="flex">{r.status==='Sign in needed'&&<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.signInMcpServer(r.id))},event)}>Sign in</Btn>}<Btn sm ghost disabled={!r.enabled} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.discoverMcpTools(r.id))},event)}>Check</Btn><D.Toggle label={(r.enabled?'Switch off ':'Switch on ')+r.name} checked={r.enabled} onCheckedChange={on=>u.act(()=>api.setMcpServerEnabled(r.id,on))} /><Btn sm ghost aria-label={'Remove '+r.name} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.removeMcpServer(r.id))},event)}>Remove</Btn></span></div>;
     return <div className="sheet-tool-servers">{load.status==='waiting'&&<p role="status">Reading tool servers…</p>}{load.status==='error'&&<div role="alert">{load.message}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(value=>value+1)},event)}>Retry tool servers</Btn></div>}{load.status==='empty'&&<p>No tool servers yet.</p>}{load.status==='loaded'&&<div className="sheet-fields">{rows.map(row)}</div>}<textarea aria-label="Add a tool server" rows={3} placeholder={'https://… · npx -y @scope/server · {"mcpServers": {…}}'} value={text} onChange={event=>setText(event.target.value)} /><Btn sm disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(async()=>{const result=await api.addMcpServer(text);setText('');setLoad({status:'loaded'});return result;})},event)}>Add tool server</Btn></div>;
@@ -1357,7 +1400,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
         controls:()=>api.refreshSettingsControls(),folder:()=>api.readSessionsFolder()};
       const read=async name=>{
         try {
-          const value=await reads[name]();
+          const value=await budgetedRead({sessions:'Sessions',models:'The model router',programs:'Programs',accounts:'Accounts',agents:'Agents',controls:'Settings',folder:'The sessions folder'}[name],reads[name]);
           if(!current)return;
           if(name==='models')setRouter(value);
           if(name==='sessions')setSessionChoices((value?.groups||[]).flatMap(group=>group.sessions).filter(row=>row.path && row.state!=='archived' && !window.UI.isHomeRegistration?.({id:row.task})));
@@ -1589,6 +1632,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
   window.UI.requestGroups = requestGroups;
   window.UI.PasteSettings = PasteSettings;
   window.UI.KeyboardSettings = KeyboardSettings;
+  window.UI.budgetedRead = budgetedRead;
   window.UI.Account = Account;
   window.UI.Connections = Connections;
   window.UI.WorkspaceRows = WorkspaceRows;

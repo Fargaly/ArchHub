@@ -59,9 +59,9 @@ async function mount(page,profile,extra){
  }
  await page.evaluate(()=>{
   for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers','Social','Access','Colleagues','Brain','Meetings','ModelReview','Watcher','Xray','InterfaceStudio'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
-  function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);
-   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:()=>{},settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
-   return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}));}
+  function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);const [dialog,setDialog]=React.useState('');
+   const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:k=>setDialog(k),settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
+   return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}),dialog==='Keyboard shortcuts'&&React.createElement('div',{role:'dialog','aria-label':dialog},React.createElement(window.UI.KeyboardSettings)));}
   window.ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Harness));
  });
 }
@@ -183,7 +183,8 @@ test('Settings design areas, exact owner navigation, edits, reset and global Cha
    await page.getByRole('button',{name:'Reset Theme',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'Appearance.Theme',value:'Dark'});
    const shortcut=page.getByRole('button',{name:'Change shortcut for Save workflow'});
-   if(!await shortcut.isVisible())await page.locator('[data-row=shortcuts] summary').click();
+   // Design: the Keyboard card has one row; Show all opens the shortcuts dialog.
+   await page.locator('[data-row=shortcuts]').getByRole('button',{name:'Show all',exact:true}).click();
    await shortcut.click();
    await shortcut.press('Control+Shift+K');
    assert.deepEqual(await page.evaluate(()=>window.writes.at(-1)),{id:'keyboard.save',value:'Ctrl Shift K',destination:{scope:'User',workspace:'example',session:'fixture'}});

@@ -9,12 +9,20 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 from .model_router import SUBSCRIPTION_CLIS, find_assistant
 
 # Publisher-owned package IDs; never interpolate a UI package name into a command.
 PACKAGES = {'claude-code': '@anthropic-ai/claude-code', 'codex': '@openai/codex',
             'gemini-cli': '@google/gemini-cli', 'opencode': 'opencode-ai'}
+
+
+def _processes():
+    """Command line and memory of every running process."""
+    import psutil
+    return [(p.info.get('cmdline') or [], p.info.get('memory_info'))
+            for p in psutil.process_iter(['cmdline', 'memory_info'])]
 
 
 class ManagedDependencies:
@@ -48,14 +56,19 @@ class ManagedDependencies:
         return root, json.loads(self.run(['ls', '--global', '--depth=0', '--json'])).get('dependencies', {})
 
     def check(self):
-        root, installed = self._inventory()
+        # The npm calls are independent network/disk reads: run together, one check is the slowest call, not their sum.
+        packages = [PACKAGES[id] for id, _name, _exe in SUBSCRIPTION_CLIS if id in PACKAGES]
+        with ThreadPoolExecutor(len(packages) + 1) as pool:
+            inventory = pool.submit(self._inventory)
+            views = {package: pool.submit(self.run, ['view', package, 'version', '--json']) for package in packages}
+            running = pool.submit(_processes)
+            root, installed = inventory.result()
+            latest_versions = {package: json.loads(view.result()) for package, view in views.items()}
+            try:
+                processes = running.result()
+            except (ImportError, OSError):
+                processes = None
         rows = []
-        try:
-            import psutil
-            processes = [(p.info.get('cmdline') or [], p.info.get('memory_info'))
-                         for p in psutil.process_iter(['cmdline', 'memory_info'])]
-        except (ImportError, OSError):
-            processes = None
         for id, name, executable in SUBSCRIPTION_CLIS:
             if id not in PACKAGES:
                 continue
@@ -63,7 +76,7 @@ class ManagedDependencies:
             held = installed.get(package, {})
             path = root / package
             disk = sum(p.stat().st_size for p in path.rglob('*') if p.is_file() and not p.is_symlink()) if path.is_dir() else 0
-            latest = json.loads(self.run(['view', package, 'version', '--json']))
+            latest = latest_versions[package]
             found = self.find(executable)
             version = held.get('version')
             # A tool its own installer put on PATH is Ready (npm does not own it); npm holding a package whose

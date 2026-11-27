@@ -39,7 +39,7 @@ test('the loader verifies the vendor bundle and the canvas keeps no second rende
   assert.ok(!fs.existsSync(path.join(studio, 'vendor/xyflow.js')));
   const page = read('studio.html');
   assert.ok(page.includes('manifest.vendor') && page.includes('tag.integrity=v.integrity'));
-  const canvas = read('ds_screens.jsx').split('function Canvas(')[1].split('function SystemGraph(')[0];
+  const canvas = read('ds_screens.jsx').split('function Canvas(')[1].split("// Home's map of the work")[0];
   assert.ok(canvas.includes('<RF.ReactFlow'));
   for (const gone of ['setPointerCapture', 'measureWires', "kind: 'marquee'", 'clipPath', '<NodeRenderer']) assert.ok(!canvas.includes(gone), gone);
 });

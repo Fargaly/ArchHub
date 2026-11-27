@@ -300,6 +300,18 @@
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },
+    "CONNECTORHOTRELOAD": {
+      "source": "Founder 2026-11-27: \"the connectors got updated; why don't they hot-reload with the update?\" (717 Workshop assignment feca53d3f76149668ba0dd1a0ba2de1c). Advertise capabilities.tools.listChanged=true on MCP connectors, refresh ArchHub-Runtime/mcp_supervisor.py on every Setup/update across all vendors, watch BUILD_ID and .archhub-ready generation changes in mcp_supervisor alongside .archhub-installing, synchronize handshake replay and post-install tools/list, and emit notifications/tools/list_changed when connectors reload.",
+      "scope": [
+        "01.APP/nodelang/assistant_registration.py",
+        "01.APP/nodelang/client_mcp_installation.py",
+        "01.APP/nodelang/mcp_supervisor.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "02.TESTS/tests_replica/test_mainrel_connectors.py",
+        "02.TESTS/tests_replica/test_mcp_supervisor.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "CONNECTOROPS": {
       "source": "Founder requested truthful program and broker behavior in the installed app. Workshop handoff ad114940e17e423ea632414e30db22e9: reconcile operation evidence with the runtime catalogue, real test locations and explicit unverified states without changing broker actions.",
       "scope": [

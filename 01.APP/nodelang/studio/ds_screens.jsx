@@ -726,7 +726,7 @@
     const pinnedSummary = n.type==='thing.you' ? [s.profile.name || 'Not signed in',s.profile.role].filter(Boolean).join(' · ')
       : n.type==='thing.workshop' ? messages.length+' messages'+(messages.length ? ' · '+messages.at(-1).text : '')
       : n.params.agent || 'Pick an agent, or message the thread';
-    const approval = (s.approvals || []).find(card=>card.approvalKind==='canvas' && (card.nodeId===n.id && card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.nodeId===n.id && ref.path===api.getSessionPath())) && card.status==='pending');
+    const approval = (s.approvals || []).find(card=>['canvas','ask'].includes(card.approvalKind) && (card.nodeId===n.id && card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.nodeId===n.id && ref.path===api.getSessionPath())) && card.status==='pending');
     if (n.fixed && n.type === 'thing.session') return <SessionCard n={n} s={s} u={u} selected={selected} socket={socket}/>;
     if (n.agentStep || n.workflowStart && !n.fixed) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result,
       actions:n.agentWork?<div style={{display:'grid',gap:6}}><span>Goal: {n.params.goal}</span><span>Model: {n.params.model}</span><span>{n.params.detail}</span><button className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forkNode(n.id))},event)}>Fork from here</button></div>:null,
@@ -1619,7 +1619,7 @@
         }
       }
       const members = [...childMembers, ...chips];
-      if (n.type === 'note' && !n.children?.length && !n.frameMembers) {
+      if (n.type === 'note' && !n.children?.length && !n.frameMembers && n.agentWork?.role !== 'held') {  // a held effect is a step card, not a sticky note
         if (editingNote?.id === n.id) {
           const saveInlineNote = () => {
             const txt = editingNote.text.trim() || 'Note';

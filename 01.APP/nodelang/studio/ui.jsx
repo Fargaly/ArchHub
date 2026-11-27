@@ -439,9 +439,34 @@
       {c.diff && <pre data-design="approval.diff" style={{margin: 0, whiteSpace: 'pre-wrap', font: '12px/1.45 "JetBrains Mono", monospace', background: bgSoftCol, border: '1px solid ' + lineCol, borderRadius: radMd, padding: '8px 10px'}}>{typeof c.diff === 'string' ? c.diff : JSON.stringify(c.diff, null, 2)}</pre>}
     </>;
     if (c.approvalKind === 'ask' || c.approvalKind === 'canvas') {
+      // Design apCardHTML: what will be sent, posted or written (pvHTML), the why, then what changes and whether Undo brings it back (changeHTML).
+      const pl = c.payload && typeof c.payload === 'object' ? c.payload : null;
+      const emptyHold = Boolean(pl?.missing) && !c.text;
+      const plRows = pl ? [['To', pl.to], ['Via', pl.via], ['Subject', pl.subject]].filter(([, v]) => v) : [];
+      const fileName = f => String(f).split(/[\\/]/).pop() || String(f);
+      // Review on the node: the asking session's canvas, the held node selected, the inspector open on it (it shows this same card).
+      const reviewNode = async () => {
+        if (u.modal?.kind === 'Approve') u.close();
+        if (c.taskId && u.openTaskFile) await u.openTaskFile(c.taskId);
+        else {
+          if (c.path !== api.getSessionPath?.()) { const opened = await u.act(() => api.openSession(c.path)); if (!opened || opened.cancelled) return; }
+          u.go('canvas', api.getSessionPath?.() || c.path);
+        }
+        window.UI.centreWhenShown = {nodeId: c.nodeId, ...(c.taskId ? {task: c.taskId} : {path: c.path})};
+        u.setSelectedNodeId(c.nodeId);
+        if (c.taskId) u.setHomeInspector?.({id: c.taskId, tab: 'Selection'});
+      };
+      const payloadView = pl && !emptyHold ? <div className="pv approval-pv" data-design="approval.payload">
+        {plRows.length ? <ul>{plRows.map(([k, v]) => <li key={k}><b>{k}</b><span title={v}>{v}</span></li>)}</ul> : null}
+        {pl.text ? <div><em>{pl.textLabel || (pl.action === 'send' ? 'Text to send' : pl.action === 'publish' ? 'Text to post' : 'Text')}</em><p dir="auto" data-design="approval.text">{pl.text}</p></div> : null}
+        {pl.files?.length ? <div><em>Attached</em><div className="approval-files" data-design="approval.attachments">{pl.files.map(f => <span key={f} title={f}>{/^(https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$|data:image\/)/i.test(f) ? <img alt="" src={f} /> : <window.AHIcon name="docs" size={14} />}<i>{fileName(f)}</i></span>)}</div></div> : null}
+        {pl.change ? <div><em>Change</em><pre data-design="approval.change">{pl.change}</pre></div> : null}
+        {pl.run ? <div><em>Command</em><pre data-design="approval.command">{pl.run}</pre></div> : null}
+      </div> : null;
+      const changeList = pl ? <ul className="chg" data-design="approval.undo">{pl.target ? <li><b>Target</b><span title={pl.target}>{fileName(pl.target)}</span></li> : null}<li><b>Undo</b><span className={/^Yes/.test(pl.undo || '') ? 'f-ok' : 'f-warn'}>{pl.undo || 'Not from here.'}</span></li></ul> : null;
       const word = c.status === 'approved' ? 'Approved. Running now.' : c.status === 'declined' ? 'Refused' : c.status === 'failed' ? (c.error || 'The held action failed') : c.status;
       return <Card data-design={c.approvalKind === 'canvas' ? 'approval.panel' : 'approval.card'} data-approval={id} data-ask-card="" tabIndex={0} onKeyDown={e => {
-        if (e.key === 'Enter' && c.status === 'pending' && !busy && !e.target.closest?.('button,a,input,textarea,select,summary')) {
+        if (e.key === 'Enter' && c.status === 'pending' && !busy && !emptyHold && !e.target.closest?.('button,a,input,textarea,select,summary')) {
           e.preventDefault();
           void decide('once');
         }
@@ -456,18 +481,21 @@
       }}>
         <div className="flex" style={{alignItems: 'flex-start', gap: 12}}>
           <div className="fill">
-            <div style={{fontSize: 11, fontWeight: 600, letterSpacing: '0.03em', color: c.status === 'pending' ? warnCol : okCol, marginBottom: 2}}>{c.status === 'pending' ? 'Needs your approval' : 'Approval status'}</div>
-            <h2 style={{fontSize: 15, margin: 0}}>{c.title}</h2>
-            <p className="muted" style={{fontSize: 12, margin: '4px 0 0'}}>{[taskLabel, whoLabel ? whoLabel + ' asked' : ''].filter(Boolean).join(' · ') || 'Held action'}</p>
+            <div data-design="approval.eyebrow" style={{fontSize: 11, fontWeight: 600, letterSpacing: '0.03em', color: c.status === 'pending' ? warnCol : okCol, marginBottom: 2}}>{c.status === 'pending' ? 'Needs your approval' + (pl && whoLabel ? ' · requested by ' + whoLabel : '') : 'Approval status'}</div>
+            <h2 style={{fontSize: 15, margin: 0}}>{pl?.what || c.title}</h2>
+            {pl ? <p className="muted" data-design="approval.context" style={{fontSize: 12, margin: '4px 0 0'}}>{[c.project, taskLabel].filter(Boolean).join(' · ') || 'Not part of a task'}</p> :<p className="muted" style={{fontSize: 12, margin: '4px 0 0'}}>{[taskLabel, whoLabel ? whoLabel + ' asked' : ''].filter(Boolean).join(' · ') || 'Held action'}</p>}
           </div>
           <Chip c={c.status === 'pending' ? warnCol : c.status === 'failed' ? errCol : okCol}>{c.status === 'pending' ? 'Needs your OK' : c.status === 'approved' ? 'Released' : word}</Chip>
         </div>
+        {payloadView}
+        {emptyHold && <p role="alert" data-design="approval.empty" style={{fontSize: 13, margin: 0, color: errCol}}>{pl.missing}</p>}
         {c.summary && <p style={{fontSize: 13, margin: 0, color: inkSoftCol, lineHeight: c.approvalKind === 'canvas' ? 1.45 : undefined}}>{c.summary}</p>}
         {extraEvidence}
-        {c.text && compact && approvalRows(c.text) ? <><dl className="approval-rows">{approvalRows(c.text).map(([name,value])=><React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>)}</dl><details className="approval-details"><summary>Details</summary><pre>{c.text}</pre></details></> : c.text ? <div><div style={{fontSize: 11, color: inkSoftCol, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: bgSoftCol, border: '1px solid ' + lineCol, borderRadius: radMd, padding: '10px 12px'}}>{c.text}</pre></div> : null}
+        {changeList}
+        {pl?.text && pl.text === c.text ? null : c.text && compact && approvalRows(c.text) ? <><dl className="approval-rows">{approvalRows(c.text).map(([name,value])=><React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>)}</dl><details className="approval-details"><summary>Details</summary><pre>{c.text}</pre></details></> : c.text ? <div><div style={{fontSize: 11, color: inkSoftCol, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: bgSoftCol, border: '1px solid ' + lineCol, borderRadius: radMd, padding: '10px 12px'}}>{c.text}</pre></div> : null}
         {decisionError && <p role="alert">{decisionError}</p>}
         {(justApproved || c.status === 'approved') && <p role="status" data-design="approval.confirmed" style={{margin: 0, color: okCol, fontWeight: 600}}>Approved. Running now.</p>}
-        {c.status === 'pending' ? <div className="flex" style={{gap: 8, flexWrap: 'wrap'}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve <kbd style={{marginLeft: 4, fontSize: 10}}>Enter</kbd></Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApprovalAskWhy", {c, u}, event)}>Ask why</Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>Reject</Btn></div> : c.status !== 'approved' ? <p style={{margin: 0, color: c.status === 'failed' ? errCol : inkSoftCol}}>{word}</p> : null}
+        {c.status === 'pending' ? <div className="flex" style={{gap: 8, flexWrap: 'wrap'}}>{c.nodeId && c.path ? <Btn sm={compact} data-design="approval.review-node" onClick={event => executeAction('ui.select', reviewNode, event)}>Review on the node</Btn> : null}<Btn p sm={compact} disabled={busy || emptyHold} title={emptyHold ? pl.missing : undefined} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve <kbd style={{marginLeft: 4, fontSize: 10}}>Enter</kbd></Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApprovalAskWhy", {c, u}, event)}>Ask why</Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>Reject</Btn></div> : c.status !== 'approved' ? <p style={{margin: 0, color: c.status === 'failed' ? errCol : inkSoftCol}}>{word}</p> : null}
       </Card>;
     }
     return <Card data-approval={id} style={{

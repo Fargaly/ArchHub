@@ -1890,3 +1890,21 @@ path[data-wire-list-gap]{stroke-width:calc(var(--wire-width,2px) * .85)}
 .sheet-embed>.page{padding:var(--space-sm) 0 0;background:none;overflow:visible;min-height:0;height:auto;min-width:0}.sheet-embed>.page .title h1{display:none}.sheet-embed>.page .flex{flex-wrap:wrap}.sheet-embed>.page [style*="grid-template-columns"],.sheet-embed>.page .grid{grid-template-columns:minmax(0,1fr)!important}
 /* The thread's Meeting notes box (design meetbox): its actions wrap inside the thread pane. */
 [data-design="thread.meetbox"]{min-width:0}[data-design="thread.meetbox"] .flex{flex-wrap:wrap}[data-design="thread.meetbox"] textarea{width:100%;box-sizing:border-box;min-width:0}
+/* Approve card payload (design pvHTML + changeHTML): what goes where, the words and files, then whether Undo brings it back. */
+[data-ask-card] .approval-pv{padding:8px 10px;border-radius:6px;background:var(--color-bg-soft);display:grid;gap:8px;color:var(--color-ink-soft);font-size:12px;min-width:0}
+[data-ask-card] .approval-pv em{font-style:normal;color:var(--color-ink-muted);font-size:11px;display:block;margin-bottom:2px}
+[data-ask-card] .approval-pv p{margin:0;font-size:13px;line-height:1.45;color:var(--color-ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+[data-ask-card] .approval-pv pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 "JetBrains Mono",monospace;color:var(--color-ink);max-height:180px;overflow:auto}
+[data-ask-card] .approval-pv ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+[data-ask-card] .approval-pv li{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:baseline;font-size:12.5px}
+[data-ask-card] .approval-pv li b{font-weight:500;color:var(--color-ink-muted);font-size:12px}
+[data-ask-card] .approval-pv li span{min-width:0;overflow-wrap:anywhere;color:var(--color-ink)}
+[data-ask-card] .approval-files{display:flex;flex-wrap:wrap;gap:6px}
+[data-ask-card] .approval-files span{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--color-line)}
+[data-ask-card] .approval-files img{width:48px;height:48px;object-fit:cover;border-radius:4px}
+[data-ask-card] .approval-files i{font-style:normal;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-ask-card] .chg{list-style:none;margin:0;padding:8px 10px;border-radius:6px;background:var(--color-bg-soft);display:grid;gap:4px;font-size:12.5px}
+[data-ask-card] .chg li{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:baseline}
+[data-ask-card] .chg b{font-weight:500;color:var(--color-ink-muted);font-size:12px}
+[data-ask-card] .chg span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-ink)}
+[data-ask-card] .chg span.f-warn{color:var(--color-warn);white-space:normal}[data-ask-card] .chg span.f-ok{color:var(--color-ok);white-space:normal}

@@ -40,6 +40,7 @@ import builtins
 import contextvars
 from datetime import datetime
 import fnmatch
+import functools
 import hashlib
 import json
 import logging
@@ -119,10 +120,74 @@ _SEND_TOOL = re.compile(r"(send|post_message|publish|upload|share|create_draft|d
                         r"reply|notion-create|notion-update|create_pages|tweet|categorize)", re.I)
 _SCREEN_TOOL = re.compile(r"computer-use__(?!screenshot$|zoom$|cursor_position$|list_granted_applications$)", re.I)
 _PUBLISH_CMD = re.compile(
-    r"\bgit\s+push\b|\bgh\s+(pr|issue|release|gist|repo)\s+(create|edit|comment|upload)\b|"
+    r"\bgit(?:\s+-[Cc]\s+\S+)*\s+push\b|\bgh\s+(pr|issue|release|gist|repo)\s+(create|edit|comment|upload)\b|"
     r"\bgh\s+api\b.*-X\s*(POST|PUT|PATCH)|\bnpm\s+publish\b|\btwine\s+upload\b|\bcargo\s+publish\b|"
     r"\bcurl\b.*\s(-d|--data\S*|-F|--form|-T|--upload-file|-X\s*(POST|PUT|PATCH))\b|"
     r"\bInvoke-(WebRequest|RestMethod)\b.*-(Method\s+(Post|Put|Patch)|Body|InFile)\b|\bscp\b", re.I)
+# A shell line publishes only when a command it RUNS publishes: heredoc and here-string bodies, and quoted
+# sentences, are data (a script, a test, a grep pattern), never commands. `bash -c "..."` runs its string.
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+_HERESTRING = re.compile(r"@(['\"])\r?\n.*?^\1@", re.S | re.M)
+_INNER_SHELL = re.compile(r"\b(?:bash|sh|zsh|cmd|pwsh|powershell)(?:\.exe)?\s+(?:-c|/c|-Command)\s+"
+                          r"(\"(?:\\.|[^\"\\])*\"|'[^']*')", re.I)
+_QUOTED = re.compile(r"\"((?:\\.|[^\"\\])*)\"|'([^']*)'")
+_PUBLISH_AT = re.compile(r"^(?:\$\w+\s*=\s*)?(?:(?:sudo|env|time|command|&)\s+)?(?:\w+=\S*\s+)*(?:"
+                         + _PUBLISH_CMD.pattern + ")", re.I)
+_GITHUB = re.compile(r"github\.com[:/]+([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", re.I)
+
+
+def _commands(command: str) -> list:
+    """The commands a shell line runs, in order."""
+    text = _HERESTRING.sub("''", _HEREDOC.sub("", command))
+    inner = [match.group(1)[1:-1] for match in _INNER_SHELL.finditer(text)]
+    # A quoted word (a path, a remote) stays; a quoted sentence or script is data.
+    text = _QUOTED.sub(lambda m: next(g for g in m.groups() if g is not None)
+                       if re.fullmatch(r"[^\s;&|()<>`$]*", next(g for g in m.groups() if g is not None)) else "''", text)
+    parts = [part.strip() for part in re.split(r"&&|\|\||[;&|\n()]", text)]
+    return [part for part in parts if part] + [part for body in inner for part in _commands(body)]
+
+
+def _publishes(command: str) -> list:
+    """The commands in this line that push, publish, post or upload."""
+    return [part for part in _commands(command) if _PUBLISH_AT.match(part)]
+
+
+def _repo_visibility(owner: str, repo: str) -> str:
+    """GitHub's own answer (PUBLIC, PRIVATE, INTERNAL) for one repository; "" when it cannot be read."""
+    try:
+        seen = subprocess.run(["gh", "repo", "view", owner + "/" + repo, "--json", "visibility", "--jq", ".visibility"],
+                              capture_output=True, text=True)  # bounded by the hook entry's own timeout (line 60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return seen.stdout.strip().upper() if seen.returncode == 0 else ""
+
+
+@functools.lru_cache(maxsize=32)  # one decision asks up to three times; GitHub is read once
+def _private_pushes(command: str, cwd: str) -> bool:
+    """True when every publishing command in this line is a git push to a private repository of his.
+    Unknown visibility counts as public: the card stays."""
+    published, folder = _publishes(command), cwd
+    if not published:
+        return False
+    for part in _commands(command):
+        moved = re.match(r"^(?:cd|Set-Location|pushd)\s+(?:/d\s+)?(\S+)$", part, re.I)
+        if moved:
+            folder = moved.group(1) if Path(moved.group(1)).is_absolute() else str(Path(folder or ".") / moved.group(1))
+        if part not in published:
+            continue
+        push = re.match(r"^git((?:\s+-[Cc]\s+\S+)*)\s+push\b(.*)$", part)
+        if not push:
+            return False
+        here = (re.findall(r"-C\s+(\S+)", push.group(1)) or [folder])[-1]
+        words = [w for w in push.group(2).split() if not w.startswith("-") and not re.fullmatch(r"\d?>&?\d?|\S*>\S*", w)]
+        remote = words[0] if words else "origin"
+        url = remote if "/" in remote or ":" in remote else _git(here, "remote", "get-url", remote)
+        repo = _GITHUB.search(url)
+        if not repo or _repo_visibility(repo.group(1), repo.group(2)) != "PRIVATE":
+            return False
+    return True
+
+
 _DELETE_CMD = re.compile(
     r"(^|[\s;&|(])(rm|del|erase|rmdir|rd|Remove-Item|ri)\b|\bgit\s+clean\s+-\S*f|"
     r"\bgit\s+reset\s+--hard\b|\bshutil\.rmtree\b|\bformat\s+[a-z]:|"
@@ -297,16 +362,14 @@ _HOST_TOOL = re.compile(r"(revit|acad|autocad|max|rhino|blender|excel|word|outlo
 _SESSION_WRITES = ("write", "delete", "publish", "send", "shell")
 
 
-def session_values(event) -> tuple[dict, str]:
-    """The Session node values of the session file this call's agent works in, and that agent's label.
+def session_file(event) -> tuple[str, dict, dict]:
+    """(session file path, its task row, the agent's declaration) for this call's agent; ("", {}, {}) when none.
 
     The agent's session id (the hook payload's) -> its Workshop declaration -> its task -> the task's session file.
-    ({}, "") when the call belongs to no session file.
     """
     native = str(event.get("session") or "")
     if not native:
-        return {}, ""
-    from .session_files import read_document
+        return "", {}, {}
     from .workshop_mailbox import application_history, read_declarations
     from .workshop_tasks import _declared_id, get
     try:
@@ -315,10 +378,21 @@ def session_values(event) -> tuple[dict, str]:
             row = next((d for d in read_declarations(history._db, include_archived=True)
                         if native in (d.get("native_session_id"), d.get("session"))), None)
             held = get(history, row.get("work") or _declared_id(row["session"])) if row else None
-        path = (held or {}).get("session_path")
+    except (OSError, ValueError, KeyError, IndexError) as unreadable:
+        logging.getLogger(__name__).debug("No session file for %s: %s", native, unreadable)
+        return "", {}, {}
+    return str((held or {}).get("session_path") or ""), held or {}, row or {}
+
+
+def session_values(event) -> tuple[dict, str]:
+    """The Session node values of the session file this call's agent works in, and that agent's label.
+    ({}, "") when the call belongs to no session file."""
+    from .session_files import read_document
+    path, _task, row = session_file(event)
+    try:
         document = read_document(path) if path else None
     except (OSError, ValueError, KeyError, IndexError) as unreadable:
-        logging.getLogger(__name__).debug("No session values for %s: %s", native, unreadable)
+        logging.getLogger(__name__).debug("No session values for %s: %s", path, unreadable)
         return {}, ""
     node = next((n for n in (document or {}).get("nodes", []) if n.get("type") == "thing.session" and n.get("fixed")), None)
     return dict((node or {}).get("params") or {}), str(row.get("display_name") or row.get("agent") or "") if row else ""
@@ -351,7 +425,11 @@ def _own_workspace(tool: str, data) -> bool:
     if "categorize" in name:
         return True
     connector = str(data.get("connector") or "").casefold() if isinstance(data, dict) else ""
-    local_message = name == "sendmessage" or name in {"collaboration.send_message", "collaboration.followup_task"}
+    # His own agents and sessions talking to each other (Workshop, Session Link, the desktop app's session messages,
+    # SendMessage) stay in his account: only a person outside it or the public is a real edge.
+    local_message = (name == "sendmessage" or name in {"collaboration.send_message", "collaboration.followup_task"}
+                     or bool(re.fullmatch(r"mcp__(?:ccd_session(?:_mgmt)?|archhub_agent_coordination|session[-_]link)__"
+                                          r"(?:send|send_message|reply|followup)", name)))
     if local_message and isinstance(data, dict):
         recipient = data.get("recipient") or data.get("target") or data.get("to")
         return not _outside_recipient(recipient) and not _public_target(data)
@@ -381,9 +459,13 @@ def _untrusted_content(tool: str) -> bool:
     return bool(_UNTRUSTED.search(tool))
 
 
-def _leaves_his_account(action: str, tool: str, data) -> bool:
-    """Public web, a public repo, a public post, or a recipient outside his account."""
-    return action in ("publish", "send") and not _own_workspace(tool, data)
+def _leaves_his_account(action: str, tool: str, data, cwd: str = "") -> bool:
+    """Public web, a public repo, a public post, or a recipient outside his account.
+    A git push to his own private repository stays in his account (spec 9.6: permissions at real edges)."""
+    if action not in ("publish", "send") or _own_workspace(tool, data):
+        return False
+    command = str(data.get("command") or data.get("cmd") or "") if isinstance(data, dict) else ""
+    return not (_SHELL.match(tool) and command and _private_pushes(command, cwd))
 
 
 def _draft_node_tool(tool: str) -> bool:
@@ -457,7 +539,7 @@ def classify(event: dict, environment) -> tuple[str, dict]:
     if _SCREEN_TOOL.search(tool):
         return "screen", facts
     if _SHELL.match(tool):
-        if _PUBLISH_CMD.search(command):
+        if _publishes(command):
             return "publish", facts
         if _deletes_files(command):
             return "delete", facts
@@ -1403,7 +1485,7 @@ def mode_verdict(event: dict, action: str, permissions: dict, environment):
     data = event["input"]
     if _draft_call(event["tool"], data):
         return None  # a draft in his own mailbox never asks (it sends nothing)
-    if permissions["reviewBeforeSharing"] and _leaves_his_account(action, event["tool"], data):
+    if permissions["reviewBeforeSharing"] and _leaves_his_account(action, event["tool"], data, event.get("cwd") or ""):
         return "ask", "review-before-sharing"  # Settings > This PC > Review before sharing: the one Approve card
     if tool == "host.exec" or (tool == "write" and isinstance(data, dict) and "host" in data and "code" in data):
         return "ask", "host-effect-approval"
@@ -1550,7 +1632,7 @@ def trace_rules(event, action, facts, environment):
     untrusted = facts["untrusted"] or any(t.get("untrusted") for t in trace)
     # His own workspace is not the outbound leg. The trifecta is private data,
     # untrusted web content, and a public or external send.
-    trifecta = _leaves_his_account(action, event["tool"], event["input"]) and private and untrusted
+    trifecta = _leaves_his_account(action, event["tool"], event["input"], event.get("cwd") or "") and private and untrusted
     looping = sum(1 for t in trace[-9:] if t.get("key") == key) >= 4
     trace = (trace + [{"at": time.time(), "tool": event["tool"], "action": action, "key": key,
                        "private": facts["private"], "untrusted": facts["untrusted"],
@@ -1602,7 +1684,7 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
     client = facts["others"] or any(f["kind"] == "pii" for f in findings)
     # Categorize, drafts, his Drive, his Notion and Workshop stay in his account.
     # A secret on any outbound send is still refused. Ask first can hold a real send.
-    goes_public = _leaves_his_account(action, event["tool"], event["input"])
+    goes_public = _leaves_his_account(action, event["tool"], event["input"], event.get("cwd") or "")
     context = {"secret": secret, "client_data": bool(client and goes_public),
                "founder_data": action == "delete" and founder_data_targeted(facts["command"], event["cwd"], environment,
                                                                             session=event['session']),
@@ -1836,6 +1918,182 @@ def _ask_text(action, data):
     return "", label
 
 
+# What a held effect will do, carried on its approval so the card shows it: where it goes, the words, the files.
+_TO_KEYS = ("to", "recipient", "recipients", "cc", "channel", "channel_id", "chat_id", "room", "thread", "page",
+            "platform", "provider", "account", "handle", "repo", "repository", "remote", "url", "destination")
+_TEXT_KEYS = ("text", "body", "content", "message", "caption", "post", "status", "comment", "description", "query")
+_FILE_KEYS = ("attachments", "attachment", "files", "media", "media_urls", "images", "image", "image_path", "video")
+_RUN_KEYS = ("command", "cmd", "script", "code")
+NOTHING_TO_REVIEW = "Nothing to review: the request carried no content"
+
+
+def _payload_sources(data) -> list:
+    sources = [data] if isinstance(data, dict) else []
+    for key in ("arguments", "input", "params"):
+        inner = data.get(key) if isinstance(data, dict) else None
+        if isinstance(inner, dict):
+            sources.extend(_payload_sources(inner))
+    return sources
+
+
+def _git(folder, *arguments) -> str:
+    try:
+        done = subprocess.run(["git", "-C", folder or ".", *arguments], capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def _git_push_payload(command: str, cwd: str) -> dict:
+    """Where a held push goes (repository and branch) and the commits that would leave, read from the repo."""
+    folder, push = cwd, None
+    for part in _commands(command):
+        moved = re.match(r"^(?:cd|Set-Location|pushd)\s+(?:/d\s+)?(\S+)$", part, re.I)
+        if moved:
+            folder = moved.group(1) if Path(moved.group(1)).is_absolute() else str(Path(folder or ".") / moved.group(1))
+        push = push or re.match(r"^git((?:\s+-[Cc]\s+\S+)*)\s+push\b(.*)$", part)
+        if push:
+            folder = (re.findall(r"-C\s+(\S+)", push.group(1)) or [folder])[-1]
+            break
+    words = [w for w in (push.group(2) if push else "").split() if not w.startswith("-") and ">" not in w]
+    remote = words[0] if words else "origin"
+    ref = words[1] if len(words) > 1 else _git(folder, "rev-parse", "--abbrev-ref", "HEAD") or "HEAD"
+    branch, local = ref.split(":")[-1], ref.split(":")[0] or "HEAD"
+    url = _git(folder, "remote", "get-url", remote) if folder else ""
+    named = _GITHUB.search(url) or re.search(r"([\w.-]+?)(?:\.git)?/?$", url or remote)
+    repository = (named.group(2) if named and named.re is _GITHUB else named.group(1)) if named else remote
+    payload = {"to": "%s, branch %s" % (repository, branch), "textLabel": "Commits to publish",
+               "undo": "No. Pushed commits stay on the remote; a new commit can revert them."}
+    listed = _git(folder, "log", "--oneline", "-20", "%s/%s..%s" % (remote, branch, local)) if folder else ""
+    if listed:  # what leaves: the commits the remote does not have yet
+        payload["text"] = listed
+        count = len(listed.splitlines())
+        payload["what"] = "Push %d commit%s to %s %s" % (count, "" if count == 1 else "s", repository, branch)
+    else:
+        payload["what"] = "Push to %s %s" % (repository, branch)
+    return payload
+
+
+def ask_payload(event, action, data) -> dict:
+    """The held effect's own content, secrets removed: to (where it goes), text, files, target, run (a command).
+    `missing` names what is absent when the request carried nothing to review."""
+    from .agent_work import redact
+    sources, payload = _payload_sources(data), {"action": action}
+
+    def pick(keys):
+        return next((src[k] for src in sources for k in keys if src.get(k) not in (None, "", [], {})), None)
+
+    # Destination = platform + account + where (channel, recipient, repo, url), each named once.
+    parts = [pick(keys) for keys in (("platform", "provider"), ("account", "handle"), _TO_KEYS[:10] + _TO_KEYS[14:])]
+    parts = [", ".join(map(str, part)) if isinstance(part, list) else str(part) for part in parts if part is not None]
+    if parts:
+        payload["to"] = " · ".join(dict.fromkeys(parts))
+    connector = next((str(src.get("connector")) for src in sources if src.get("connector")), "")
+    if connector and not connector.startswith("mcp:"):
+        payload["via"] = connector
+    subject = pick(("subject", "title"))
+    if subject is not None and action in ("send", "publish"):
+        payload["subject"] = str(subject)
+    text = pick(_TEXT_KEYS)
+    if isinstance(text, str):
+        payload["text"] = text
+    files = pick(_FILE_KEYS)
+    if files is not None:
+        files = files if isinstance(files, list) else [files]
+        payload["files"] = [str(f.get("name") or f.get("path") or f.get("url") or "") if isinstance(f, dict) else str(f)
+                            for f in files][:20]
+    target = pick(("file_path", "path", "filePath", "notebook_path", "host", "document"))
+    if target is not None and action in ("write", "delete"):
+        payload["target"] = str(target)
+    if action == "write" and isinstance(pick(("old_string",)), str):
+        payload["change"] = "- " + pick(("old_string",))[:1500] + "\n+ " + str(pick(("new_string",)) or "")[:1500]
+    elif action == "write" and isinstance(pick(("content",)), str):
+        payload["change"] = pick(("content",))[:3000]
+    run = pick(_RUN_KEYS)
+    if isinstance(run, str):
+        payload["run"] = run
+        if any(part.startswith("git") and " push" in part for part in _publishes(run)):
+            payload.update(_git_push_payload(run, str(event.get("cwd") or "")))
+    if not payload.get("what"):  # the one plain line of what it does
+        verb = {"send": "Send", "publish": "Post", "write": "Edit", "delete": "Delete"}.get(action, "Run")
+        where = payload.get("to") or (Path(payload["target"]).name if payload.get("target") else "")
+        payload["what"] = (verb + (" to " if action in ("send", "publish") else " ") + where) if where else (
+            "Run " + payload["run"].splitlines()[0][:80] if payload.get("run") else verb)
+    if not any(payload.get(key) for key in ("text", "files", "run", "change", "target")):
+        payload["missing"] = NOTHING_TO_REVIEW
+    payload["undo"] = payload.get("undo") or ("No. A sent message stays sent." if action == "send" else
+                       "Others see it at once; Undo removes the copies where the service allows it." if action == "publish" else
+                       "No. A deleted item does not come back from here." if action == "delete" else
+                       "Not from here: only the file's own history (git, a backup) brings it back." if action == "write" else
+                       "Only if the program you run can undo it.")
+    payload = redact(payload)
+    for key in ("text", "run", "change"):
+        if isinstance(payload.get(key), str) and len(payload[key]) > 4000:
+            payload[key] = payload[key][:4000] + "\n…"
+    return payload
+
+
+_HOLD_NODE_TITLES = {"publish": "Post", "send": "Send", "write": "Edit", "delete": "Delete", "shell": "Run a command"}
+
+
+def _hold_node(session, action, hold_id, payload, who):
+    """The held effect as a node on its agent's session canvas, wired from that agent's step: agent work is
+    visible as nodes (spec 4.6). Returns {path, nodeId, taskId} or {} when the agent has no session file."""
+    path, task, declaration = session
+    if not path or not Path(path).is_file():
+        return {}
+    from .canvas_documents import edit, free_spot
+    from .agent_work import _definitions
+    identity = "held-" + hashlib.sha256(hold_id.encode()).hexdigest()[:24]
+    params = {"status": "Waiting for your approval", "approval": hold_id}
+    for key, name in (("to", "destination"), ("subject", "subject"), ("text", "text"), ("files", "attachments"),
+                      ("target", "target"), ("change", "change"), ("run", "command")):
+        if payload.get(key):
+            params[name] = payload[key]
+    owner = str(declaration.get("session") or "")
+
+    def change(document):
+        if any(n["id"] == identity for n in document["nodes"]):
+            return []
+        step = next((n for n in document["nodes"] if n.get("params", {}).get("workshop_step")
+                     and n["params"].get("session") == owner), None) if owner else None
+        start = step["position"] if step else {"x": 80, "y": 80}
+        document["nodes"].append({
+            "id": identity, "type": "note", "title": payload.get("what") or _HOLD_NODE_TITLES.get(action, "Run"),
+            "params": params, "result": {"status": "Waiting for approval"},
+            "paramDefs": _definitions(params), "position": free_spot(document, start["x"] + 384, start["y"]),
+            "ports": {"source": [], "target": [{"id": "content", "type": "any"}]},
+            "agentWork": {"role": "held", "owner": step["id"] if step else "", "approval": hold_id}})
+        if step:
+            document["wires"].append({"id": "wire-" + identity, "from": {"node": step["id"], "socket": "result"},
+                                      "to": {"node": identity, "socket": "content"}})
+        return []
+
+    edit(path, who or "Agent", "held " + _HOLD_NODE_TITLES.get(action, "Run"), change, solve_changed=False)
+    return {"path": path, "nodeId": identity, "taskId": str(task.get("id") or "")}
+
+
+def _hold_node_status(row, status):
+    """The held node says what became of its approval."""
+    canvas = row.get("canvas") or {}
+    if not canvas.get("path") or not canvas.get("nodeId"):
+        return
+    word = {"approved": "Approved", "declined": "Rejected", "failed": "Failed"}.get(status, status)
+
+    def change(document):
+        node = next((n for n in document["nodes"] if n["id"] == canvas["nodeId"]), None)
+        if node is not None:
+            node["params"]["status"] = word
+            node["result"] = {"status": {"Approved": "Done", "Rejected": "Declined"}.get(word, word)}
+        return []
+
+    try:
+        from .canvas_documents import edit
+        edit(canvas["path"], "Approvals", "approval " + word, change, solve_changed=False)
+    except (OSError, ValueError, KeyError) as unwritable:
+        logging.getLogger(__name__).warning("Held node %s was not updated: %s", canvas["nodeId"], unwritable)
+
+
 def _ask_replay(event, action) -> dict:
     data = event["input"] if isinstance(event["input"], dict) else {}
     if event['tool'] == 'canvas.run':
@@ -1981,6 +2239,18 @@ def _ask_card(row: dict) -> dict:
             "description": row.get("summary") or "", "status": row.get("status") or "pending",
             "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
     replay = row.get('replay') or {}
+    payload = row.get('payload')
+    if not isinstance(payload, dict) and replay.get('kind') != 'canvas':  # a card held before payloads were kept
+        action = next((key for key, title in _ASK_TITLES.items() if title == row.get('title')), 'write')
+        payload = ask_payload({'tool': str(replay.get('tool') or replay.get('action') or '')}, action, replay.get('arguments'))
+    card.update({key: row[key] for key in ('taskTitle', 'project') if row.get(key)})
+    if isinstance(payload, dict):
+        card['payload'] ={key: value for key, value in payload.items() if not (key == 'missing' and card['text'])}
+    canvas = row.get('canvas') or {}
+    if canvas.get('path') and canvas.get('nodeId'):
+        card.update(path=canvas['path'], nodeId=canvas['nodeId'], canvasNodes=[dict(canvas)])
+        if canvas.get('taskId'):
+            card.update(taskId=canvas['taskId'], work=canvas['taskId'], taskIds=[canvas['taskId']])
     if str(replay.get('connector') or '').startswith('mcp:'):
         replay = {**replay, 'arguments': {}}  # his own MCP server's tool: what it does is its own, never a draft or send label
     arguments = replay.get('arguments') if isinstance(replay.get('arguments'), dict) else {}
@@ -2124,7 +2394,13 @@ def _remember(event, action, rule, digest, summary, environment, replay=None, wh
     elif event["tool"].lower() == "host.exec":
         preview = {"node": {"params": data}, "feeds": {}}
     text, label = _ask_text(action, preview)
-    saved = {"id": ""}
+    payload = None if (replay or {}).get("kind") == "canvas" else ask_payload(event, action, data)  # a canvas run shows its parameters
+    if payload and text and payload.pop("missing", None):
+        payload.update(text=text, textLabel=label)
+    # Who exactly asks, and for which task: the agent's own declaration and its task, never only its vendor.
+    session = session_file(event) if payload is not None else ("", {}, {})
+    named = str(session[2].get("display_name") or session[2].get("agent") or "")
+    saved = {"id": "", "new": False}
 
     def change(path):
         held = _read_holds(path)
@@ -2139,22 +2415,39 @@ def _remember(event, action, rule, digest, summary, environment, replay=None, wh
             while base + ":" + str(number) in held["holds"]:
                 number += 1
             identity = base + ":" + str(number)
-        asker = who or _ask_who(event, data)
+        asker = who or named or _ask_who(event, data)
         held["holds"][identity] = {
             "id": identity, "input_digest": digest, "status": "pending", "at": time.time(),
             "title": _ASK_TITLES.get(action, "Run"), "who": asker,
-            "text": text, "textLabel": label, "summary": summary, "permit_open": False,
+            "taskTitle": str(session[1].get("title") or ""), "project": str(session[1].get("project") or ""),
+            "text": text, "textLabel": label, "summary": summary, "permit_open": False, "payload": payload,
             "replay": replay if replay is not None else _ask_replay(event, action),
             "record": {"asked": {"who": asker, "when": _approval_now(), "what": summary or text or ""},
                        "decided": None}}
         _write_holds(path, held)
-        saved["id"] = identity
+        saved["id"], saved["new"], saved["who"] = identity, True, asker
         return None
 
     try:
         _with_ask_file(environment, change)
     except OSError:
         return ""
+    if saved["new"] and (replay or {}).get("kind") != "canvas":  # a canvas run is already its node
+        try:
+            canvas = _hold_node(session, action, saved["id"], payload, saved["who"])
+        except (OSError, ValueError, KeyError, TypeError) as unwritable:
+            logging.getLogger(__name__).warning("Held effect %s has no node: %s", saved["id"], unwritable)
+            canvas = {}
+        if canvas:
+            def place(path):
+                held = _read_holds(path)
+                if saved["id"] in held["holds"]:
+                    held["holds"][saved["id"]]["canvas"] = canvas
+                    _write_holds(path, held)
+            try:
+                _with_ask_file(environment, place)
+            except OSError as busy:  # the card still shows; only Review on the node is missing
+                logging.getLogger(__name__).warning("Held effect %s lost its node link: %s", saved["id"], busy)
     return saved["id"]
 
 
@@ -2268,6 +2561,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
             row["status"], row["permit_open"] = "approved", True
             _write_holds(path, held)
             claimed["card"] = _ask_card(row)
+            claimed["permitted"] = json.loads(json.dumps(row, default=str))
             return None
         row["status"] = "releasing"
         _write_holds(path, held)
@@ -2279,6 +2573,10 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
     except OSError as exc:
         raise ValueError("The approval could not be saved.") from exc
     if claimed["card"] is not None:
+        if claimed["row"] is not None and claimed["card"].get("status") == "declined":
+            _hold_node_status(claimed["row"], "declined")
+        if claimed.get("permitted"):
+            _hold_node_status(claimed["permitted"], "approved")
         if claimed['card'].get('approvalKind') == 'canvas' and claimed['card'].get('status') == 'declined':
             from .agent_work import decline_canvas
             decline_canvas((claimed['row'].get('replay') or {})['payload'])
@@ -2326,6 +2624,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
         except OSError as exc:
             if attempt == 2:
                 raise ValueError("The approval could not be saved.") from exc
+    _hold_node_status(claimed["row"], status)
     if status == "failed":
         raise ValueError(error or "The held action failed.")
     return claimed["card"]

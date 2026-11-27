@@ -205,7 +205,8 @@
     // A held run that belongs to no listed session is a row too: it needs him, so it is shown and counted.
     for(const card of held.filter((card,index)=>held.findIndex(other=>(other.input_digest||other.id)===(card.input_digest||card.id))===index))
       if(!sessionRows.some(row=>!registration(row)&&owners.get(card).has(row.id)))
-        sessionRows.unshift({id:'approval:'+card.id,title:card.title||'A run waits for your approval',kind:'agent-session',approval:card.id,who:card.who||''});
+        sessionRows.unshift({id:'approval:'+card.id,title:card.payload?.what||card.title||'A run waits for your approval',kind:'agent-session',approval:card.id,who:card.who||'',project:card.project||'',
+          ...(card.taskTitle?{description:card.taskTitle}:{})});
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
     const isLiveMember=m=>m&&(typeof m==='object'?(m.live===true||(m.live!==false&&!m.left&&!m.stale)):Boolean(m));
     const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
@@ -1105,7 +1106,7 @@
       {task && !fileWorkspace && <div className="dx-preview-actions" hidden={propertyTab !== 'Task'}>
         <Btn sm p onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id))}>Open task</Btn>
       </div>}
-      <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u}>{inspectedNode.fixed && inspectedNode.type === 'thing.workshop' && <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />}</window.UI.NodeInspector> : task ? <>{taskParameters}<window.UI.GraphProperties g={s.graph} s={s} u={u}/></> : <p>Select a node or wire.</p>}</div>
+      <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <>{(s.approvals||[]).filter(card=>card.status==='pending'&&card.nodeId===inspectedNode.id&&(!card.path||card.path===api.getSessionPath?.())).slice(0,1).map(card=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}<window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u}>{inspectedNode.fixed && inspectedNode.type === 'thing.workshop' && <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />}</window.UI.NodeInspector></> : task ? <>{taskParameters}<window.UI.GraphProperties g={s.graph} s={s} u={u}/></> : <p>Select a node or wire.</p>}</div>
     </aside>;
     // The sessions are read from their owner when Home opens and when the set of sessions or a state changes: never on a timer.
     const sessionsStamp = fileWorkspace ? '' : (s.tasks || []).map(t => t.id + ':' + t.status + ':' + (t.sessionPath || '')).join('|') + '#' + (s.graphs || []).length

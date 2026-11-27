@@ -16,8 +16,11 @@ async function mount(outcome) {
   // shortcut: JSDOM has no layout; resize behavior belongs to the browser courts.
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  win.requestAnimationFrame = callback => setTimeout(() => callback(Date.now()), 0);
+  win.cancelAnimationFrame = id => clearTimeout(id);
   const requests = [];
-  let roots = [];
+  let roots = outcome === 'boot-hangs' ? [{root_id:'second', path:'C:\\FIXTURE\\SECOND'}] : [];
+  let lists = 0;
   win.fetch = async (url, options = {}) => {
     if (url === '/api/commands') return {ok:true, status:200, json:async () => ({commands:[]})};
     // The launcher's page session, then the verified ArchHub account desktop work needs (cd19d5d4).
@@ -43,6 +46,8 @@ async function mount(outcome) {
       roots = [{root_id:'client', path:body.path}];
       data = {ok:true, roots};
     }
+    // The boot read never answers (the Canvas was in front): the list must still come from the owner when it opens.
+    if (body.action === 'list' && outcome === 'boot-hangs' && lists++ === 0) return new Promise(() => {});
     if (body.action === 'list') data = {ok:true, built_in:{id:'archhub',path:'C:\\FIXTURE\\BUILTIN',removable:false}, roots:roots.map(w=>({...w,available:outcome!=='unavailable'})), projection:'match',revision:3,health:{state:'ready',message:'Workspaces are ready.',recovery:outcome==='repaired'?{message:'Workspace list restored from the graph. Previous local files were archived.',archive:'FIXTURE/ARCHIVE'}:null}};
     return {ok:true, status:200, json:async () => data};
   };
@@ -74,12 +79,14 @@ async function mount(outcome) {
   await settle();
   // The app opens once the admitted desktop has loaded its first session file (cd19d5d4).
   for (let i = 0; i < 50 && !win.ArchHubAPI.getSnapshot().desktopAccess?.ready; i++) await settle();
-  const add = [...win.document.querySelectorAll('section button')].find(b => b.textContent === 'Add workspace' && b.closest('section').querySelector('h2')?.textContent === 'Workspaces');
+  const findAdd = () => [...win.document.querySelectorAll('section button')].find(b => b.textContent === 'Add workspace' && b.closest('section').querySelector('h2')?.textContent === 'Workspaces');
+  for (let i = 0; i < 50 && !findAdd(); i++) await settle();
+  const add = findAdd();
   assert.ok(add, 'real Settings Add rendered: '+JSON.stringify(win.ArchHubAPI.getSnapshot().desktopAccess)+' '+win.document.body.textContent.slice(0,200));
   // Record only what Add does: the admitted desktop already listed the workspaces at startup.
   requests.length = 0;
   if (outcome === 'owner-idle') await win.ArchHubAPI.listWorkspaces();
-  else add.click();
+  else if (outcome !== 'boot-hangs') add.click();
   for (let attempt = 0; attempt < 100; attempt++) {
     await settle();
     const status = win.document.querySelector('[role="status"]');
@@ -98,18 +105,30 @@ async function mount(outcome) {
 test('Add picks, registers and refreshes the rendered list', async () => {
   const page = await mount('add');
   try {
-    assert.deepEqual(page.requests.map(r => r.action), ['browse','register','list']);
-    assert.equal(page.requests[1].path, 'C:\\FIXTURE\\CLIENT');
+    // Reads may happen whenever the list is shown; the effects are one pick and one register, then the list is read again.
+    assert.deepEqual(page.requests.map(r => r.action).filter(a => a !== 'list'), ['browse','register']);
+    assert.equal(page.requests.at(-1).action, 'list');
+    assert.equal(page.requests.find(r => r.action === 'register').path, 'C:\\FIXTURE\\CLIENT');
     assert.match(page.text, /client/);
     assert.match(page.text, /Workspace added\. Your agents can work here\./);
     assert.doesNotMatch(page.text, /Action completed/);
   } finally {page.close();}
 });
 
+test('the Workspaces list reads its owner when it opens, not only at boot', async () => {
+  const page = await mount('boot-hangs');
+  try {
+    for (let i = 0; i < 50 && !/second/.test(page.win.document.body.textContent); i++) await new Promise(r => setTimeout(r, 40));
+    const text = page.win.document.body.textContent;
+    assert.match(text, /second/);
+    assert.doesNotMatch(text, /No other workspaces yet/);
+  } finally {page.close();}
+});
+
 test('cancel says cancelled and never registers', async () => {
   const page = await mount('cancel');
   try {
-    assert.deepEqual(page.requests.map(r => r.action), ['browse']);
+    assert.deepEqual(page.requests.map(r => r.action).filter(a => a !== 'list'), ['browse']);
     assert.match(page.text, /No workspace was added\./);
     assert.doesNotMatch(page.text, /Action completed|Workspace added/);
   } finally {page.close();}
@@ -142,8 +161,10 @@ test('verified recovery keeps the existing workspace controls and truthful row s
 if (process.env.WSADD_OWNER_URL) test('desktop owner Add registers the actual catalogue and renders its refreshed list', async () => {
   const page = await mount('owner');
   try {
-    assert.deepEqual(page.requests.map(r => r.action), ['browse','register','list']);
-    assert.equal(page.requests[1].path, process.env.WSADD_OWNER_FOLDER);
+    // Reads may happen whenever the list is shown; the effects are one pick and one register, then the list is read again.
+    assert.deepEqual(page.requests.map(r => r.action).filter(a => a !== 'list'), ['browse','register']);
+    assert.equal(page.requests.at(-1).action, 'list');
+    assert.equal(page.requests.find(r => r.action === 'register').path, process.env.WSADD_OWNER_FOLDER);
     assert.match(page.text, /CLIENT/);
     assert.match(page.text, /Workspace added\. Your agents can work here\./);
     assert.doesNotMatch(page.text, /Action completed/);

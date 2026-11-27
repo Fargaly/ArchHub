@@ -91,6 +91,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The website's account page (archhub.io/account/) reads /v1/* with
+# credentials:'include'. A browser Google sign-in on this host leaves the
+# session token in this HttpOnly cookie (set by /v1/auth/exchange). archhub.io
+# and api.archhub.io are the same site, so SameSite=Lax sends it on that fetch.
+WEB_SESSION_COOKIE = "archhub_session"
+# The one website page a browser sign-in may return to (/signin?next=account).
+WEB_ACCOUNT_URL = "https://archhub.io/account/"
+
+
+@app.middleware("http")
+async def _web_session_cookie(request: Request, call_next):
+    # Cookie stands in for the bearer only on reads and PATCH: a cross-site
+    # PATCH always needs a CORS preflight, and Lax keeps the cookie off
+    # cross-site POSTs, so no endpoint becomes a CSRF target.
+    cookie = request.cookies.get(WEB_SESSION_COOKIE, "")
+    if (cookie and request.method in ("GET", "HEAD", "PATCH")
+            and request.url.path.startswith("/v1/")
+            and "authorization" not in request.headers):
+        request.scope["headers"] = list(request.scope["headers"]) + [
+            (b"authorization", b"Bearer " + cookie.encode("latin-1", "ignore"))]
+    return await call_next(request)
+
 
 @app.on_event("startup")
 def _startup() -> None:
@@ -397,7 +419,7 @@ _PKCE_VERIFIER_MIN_LEN = 43
 
 
 @app.post("/v1/auth/exchange")
-def exchange(req: ExchangeReq) -> dict:
+def exchange(req: ExchangeReq, response: Response) -> dict:
     verifier = req.code_verifier or ""
     if verifier and len(verifier) < _PKCE_VERIFIER_MIN_LEN:
         # A verifier was supplied but is too short to be a real PKCE
@@ -409,6 +431,13 @@ def exchange(req: ExchangeReq) -> dict:
     )
     if payload is None:
         raise HTTPException(status_code=400, detail="invalid_or_expired")
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if token:
+        # A browser that finishes sign-in here keeps the session for the
+        # website's account page; a desktop client simply ignores it.
+        response.set_cookie(WEB_SESSION_COOKIE, str(token), httponly=True,
+                            secure=True, samesite="lax", path="/",
+                            max_age=db.TOKEN_TTL_SECONDS)
     return payload
 
 
@@ -524,7 +553,7 @@ def refresh_session(authorization: str | None = Header(None)) -> dict:
 
 
 @app.post("/v1/auth/logout")
-async def logout(req: Request,
+async def logout(req: Request, response: Response,
                  authorization: str | None = Header(None)) -> dict:
     """Revoke the caller's bearer token. Promised to users on
     web/.../security.astro; this is the real endpoint behind it.
@@ -549,6 +578,8 @@ async def logout(req: Request,
             body = {}
         if isinstance(body, dict):
             all_sessions = bool(body.get("all_sessions", False))
+    response.delete_cookie(WEB_SESSION_COOKIE, path="/", secure=True,
+                           httponly=True, samesite="lax")
     return auth.logout(token=token, all_sessions=all_sessions)
 
 
@@ -1489,8 +1520,9 @@ async function continueWithGoogle(desktop) {
   if (desktop && desktop.redirect) q.set('redirect', desktop.redirect);
   if (desktop && desktop.state) q.set('state', desktop.state);
   if (!(desktop && desktop.redirect)) {
-    try { localStorage.setItem('archhub_after_signin',
-            location.pathname + location.search); } catch (e) {}
+    const after = (typeof AFTER === 'string' && AFTER)
+      ? AFTER : location.pathname + location.search;
+    try { localStorage.setItem('archhub_after_signin', after); } catch (e) {}
   }
   try {
     const r = await fetch('/v1/auth/google/start?' + q.toString());
@@ -1508,7 +1540,8 @@ async function continueWithGoogle(desktop) {
 
 @app.get("/signin", response_class=HTMLResponse)
 def signin_landing(challenge: str = "", redirect: str = "",
-                    state: str = "", client: str = "") -> HTMLResponse:
+                    state: str = "", client: str = "",
+                    next: str = "") -> HTMLResponse:
     """The cloud's sign-in page: one "Continue with Google" button.
 
     A desktop that deep-links here with ?challenge=...&redirect=<loopback>
@@ -1553,9 +1586,13 @@ def signin_landing(challenge: str = "", redirect: str = "",
 </div>
 <script>
 const DESKTOP = __DESKTOP__;
+const AFTER = __AFTER__;
 """ + _GOOGLE_SIGNIN_JS + """
 </script></body></html>"""
-    return HTMLResponse(content=html.replace("__DESKTOP__", desktop))
+    # ?next=account (the website's sign-in links) lands on archhub.io/account/.
+    after = _json.dumps(WEB_ACCOUNT_URL if next == "account" else "")
+    return HTMLResponse(content=html.replace("__DESKTOP__", desktop)
+                        .replace("__AFTER__", after))
 
 
 @app.get("/auth/return", response_model=None)
@@ -1666,8 +1703,8 @@ const code = "{safe_code}";
     let back = '';
     try {{ back = localStorage.getItem('archhub_after_signin') || '';
           localStorage.removeItem('archhub_after_signin'); }} catch (e) {{}}
-    if (back.charAt(0) === '/' && back.charAt(1) !== '/'
-        && back.indexOf(':') < 0) {{
+    if ((back.charAt(0) === '/' && back.charAt(1) !== '/'
+         && back.indexOf(':') < 0) || back === "{WEB_ACCOUNT_URL}") {{
       location.replace(back); return;
     }}
     card.querySelector('h1').textContent = "You're signed in.";

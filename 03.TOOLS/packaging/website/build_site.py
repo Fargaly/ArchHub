@@ -69,6 +69,8 @@ ACCOUNT_SECTIONS = (
                                           ("syncFiles", "Sync .archhub files", ""))),
 )
 ACCOUNT_API = "https://api.archhub.io"
+# Every web sign-in comes back to the account page (the cloud honours only this fixed target).
+SIGNIN_URL = ACCOUNT_API + "/signin?next=account"
 ACCOUNT_SCRIPT = """<script>(()=>{const A='%s',O={credentials:'include'},m=document.getElementById('accmsg'),P={trial:'Solo',solo:'Solo',studio:'Studio',firm:'Firm'};
 const say=t=>m.textContent=t,j=(u,o)=>fetch(A+u,Object.assign({},O,o)).then(r=>r.json().then(b=>r.ok?b:Promise.reject(b.detail||r.status)));
 const show=(k,x)=>{const e=document.querySelector('.rov[data-k="'+k+'"]');if(e)e.textContent=x===true?'On':x===false?'Off':Array.isArray(x)?(x.join('\\n')||'None'):(x==null||x===''?'\u2014':x)};
@@ -252,6 +254,7 @@ def from_design(markup):
         return 'href="' + (path.rstrip("/") + "/" if path not in ("", "/") else "/")
     markup = re.sub(r'href="#(/[^"#]*)', route, markup)
     markup = markup.replace('src="site-assets/', 'src="/assets/')
+    markup = markup.replace('href="https://api.archhub.io/signin"', f'href="{SIGNIN_URL}"')
     markup = re.sub(r'<nav([^>]*) data-sidenav></nav>', lambda m: f'<nav{m.group(1)}>' + side_nav() + '</nav>', markup)
     markup = re.sub(r'(<section class="page"[^>]*?) hidden>', r'\1>', markup)
     markup = re.sub(r'\s*<a href="https://api\.archhub\.io/founder"[^>]*>.*?</a>', "", markup)
@@ -350,7 +353,7 @@ def account_page():
     return ('<section class="acc"><div class="acch"><span class="av big" id="accav">A</span><div><h1 id="accname">Your account</h1>'
             '<p class="sub" style="margin:2px 0 0">The same values as Settings › Account in ArchHub. Name and firm change here or in the app. '
             + soon_chip() + ' the rest edits here too; for now change it in ArchHub.</p></div>'
-            '<a class="open" id="accin" href="https://api.archhub.io/signin">Sign in</a><a class="open" href="archhub://settings/account">Open in ArchHub</a></div>'
+            f'<a class="open" id="accin" href="{SIGNIN_URL}">Sign in</a><a class="open" href="archhub://settings/account">Open in ArchHub</a></div>'
             '<p class="accmsg" id="accmsg" role="status"></p>'
             f'<div class="accg"><nav class="accn" aria-label="Account sections">{nav}</nav><div>{body}</div></div>'
             '<p class="foot">This PC’s settings (workspaces, files, privacy, programs) stay in the app on that PC and are not shown here.</p></section>' + ACCOUNT_SCRIPT)

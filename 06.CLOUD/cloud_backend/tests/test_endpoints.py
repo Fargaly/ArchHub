@@ -57,6 +57,35 @@ class TestAuthFlow:
         assert r.status_code == 400
 
 
+class TestWebsiteAccountSignIn:
+    """archhub.io sign-in ends signed in on archhub.io/account/ (2026-11-27)."""
+
+    def test_next_account_returns_to_account_page(self, client):
+        page = client.get("/signin?next=account").text
+        assert 'const AFTER = "https://archhub.io/account/"' in page
+        assert 'const AFTER = ""' in client.get("/signin?next=https://evil.com").text
+        finisher = client.get("/auth/return?code=abc").text
+        assert 'back === "https://archhub.io/account/"' in finisher
+
+    def test_browser_session_cookie_reads_account_and_never_posts(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        import main
+        web = TestClient(main.app, base_url="https://testserver")
+        code = google_code(web, monkeypatch, "websignin@studio.com")
+        r = web.post("/v1/auth/exchange", json={"code": code, "code_verifier": ""})
+        assert r.status_code == 200
+        cookie = r.headers["set-cookie"].lower()
+        assert "archhub_session=" in cookie and "httponly" in cookie
+        assert "secure" in cookie and "samesite=lax" in cookie
+        me = web.get("/v1/me")
+        assert me.status_code == 200 and me.json()["email"] == "websignin@studio.com"
+        assert web.get("/v1/me").status_code == 200  # a refresh keeps the session
+        # The cookie never stands in for the bearer on a POST.
+        assert web.post("/v1/auth/refresh").status_code == 401
+        web.post("/v1/auth/logout", headers={"Authorization": "Bearer " + r.json()["token"]})
+        assert web.get("/v1/me").status_code == 401
+
+
 class TestMeEndpoint:
     def test_me_requires_auth(self, client):
         r = client.get("/v1/me")

@@ -58,7 +58,7 @@ async function mount(page,profile,extra){
   await page.addScriptTag({content:transformSync(fs.readFileSync(file,'utf8'),{loader:'jsx'}).code});
  }
  await page.evaluate(()=>{
-  for(const name of ['MemoryRules','Automations','HostSkills','SystemGraph','Providers','Social','Access','Colleagues','Brain','Meetings','ModelReview','Watcher','Xray','InterfaceStudio'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
+  for(const name of ['MemoryRules','Automations','HostSkills','Providers','Social','Access','Colleagues','Brain','Meetings','ModelReview','Watcher','Xray'])window.UI[name]=()=>React.createElement('p',null,name+' owner');
   function Harness(){const [page,setPage]=React.useState('Account');const [advanced,setAdvanced]=React.useState(false);const [homeInspector,setHomeInspector]=React.useState(null);const [dialog,setDialog]=React.useState('');
    const u={homeInspector,setHomeInspector,setSelectedNodeId:()=>{},openSavedSession:async path=>{window.openedPath=path;setPage('canvas');return {ok:true};},go:route=>{window.lastRoute=route;if(route.startsWith('settings/'))setPage(route.slice(9));},act:async fn=>fn(),show:k=>setDialog(k),settingsOrigin:'home',advanced,setAdvanced};window.goSettings=u.go;
    return React.createElement(window.UI.Ctx.Provider,{value:u},page==='canvas' ? React.createElement(window.UI.Canvas,{active:true}) : React.createElement(window.UI.Settings,{key:page,page}),dialog==='Keyboard shortcuts'&&React.createElement('div',{role:'dialog','aria-label':dialog},React.createElement(window.UI.KeyboardSettings)));}
@@ -259,12 +259,17 @@ test('the five Settings pages show all 44 design cards in order with live owners
   }
   // The pages merged into Settings (founder 2026-11-26): their old routes open the card that now holds their content.
   for(const [former,area,card,owner] of [['Meetings','Agents','Meetings','Meetings'],['Model review','Agents','Models','ModelReview'],
-    ['Watcher','Agents','Automations','Watcher'],['X-RAY','Agents','Tools in the Library','Xray'],['Interface studio','Appearance','Theme and colour','InterfaceStudio']]){
+    ['Watcher','Agents','Automations','Watcher'],['X-RAY','Agents','Tools in the Library','Xray']]){
    await page.evaluate(()=>window.goSettings('settings/Account'));
    await page.evaluate(r=>window.goSettings(r),'settings/'+former);
    await page.locator(`[data-screen="settings/${area}"]`).waitFor();
    await page.locator(`[data-design-section="${card}"] details.sheet-embed[open]`).getByText(owner+' owner',{exact:true}).waitFor();
   }
+  // Design: Theme and colour has no embedded page; the former Interface studio route opens that card's rows.
+  await page.evaluate(()=>window.goSettings('settings/Account'));
+  await page.evaluate(()=>window.goSettings('settings/Interface studio'));
+  await page.locator('[data-screen="settings/Appearance"] [data-design-section="Theme and colour"]').waitFor();
+  assert.equal(await page.locator('[data-design-section="Theme and colour"] details, [data-design-section="The app"] details').count(),0,'no inline page in Theme and colour or The app');
   // The former Providers entry embeds the real owner inside Connections › AI providers.
   await page.evaluate(()=>window.goSettings('settings/Account'));
   await page.evaluate(()=>window.goSettings('settings/Providers'));

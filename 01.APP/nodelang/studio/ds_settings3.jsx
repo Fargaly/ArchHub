@@ -28,16 +28,7 @@
   "settings.ds_settings3.AccountAction2": "AccountAction2",
   "settings.ds_settings3.StorageAction0": "StorageAction0",
   "settings.ds_settings3.StorageAction1": "StorageAction1",
-  "settings.ds_settings3.StorageAction2": "StorageAction2",
-  "settings.ds_settings3.SettingsAction8": "SettingsAction8",
-  "settings.ds_settings3.SettingsAction9": "SettingsAction9",
-  "settings.ds_settings3.SettingsAction10": "SettingsAction10",
-  "settings.ds_settings3.SettingsAction11": "SettingsAction11",
-  "settings.ds_settings3.SettingsAction12": "SettingsAction12",
-  "settings.ds_settings3.SettingsAction13": "SettingsAction13",
-  "settings.ds_settings3.SettingsAction14": "SettingsAction14",
-  "settings.ds_settings3.UpdatesAutoInstall": "UpdatesAutoInstall",
-  "settings.ds_settings3.UpdatesSettingRetry": "UpdatesSettingRetry"
+  "settings.ds_settings3.StorageAction2": "StorageAction2"
 };
   const {
     A,
@@ -804,7 +795,6 @@
     const s=useData(),u=useApp();
     const workspace=(s.workspaces||[]).find(w=>w.id===s.activeWorkspace);
     const policy=s.workspacePolicies?.[workspace?.id]||workspace||{};
-    const [updatesOpen,setUpdatesOpen]=React.useState(page==='Updates & About');
     const destination=s.settingsDestination;
     const scopeDisabled=!destination||s.settingsScopePending;
     const chooseScope=(scope,id=undefined)=>u.act(()=>api.setSettingsScope(scope,destination,id));
@@ -846,7 +836,7 @@
         case 'activeWs': return <select aria-label={label} disabled={scopeDisabled} value={s.settingsScope==='Workspace'?destination?.workspace||'':''} onChange={selectWorkspace}><option value="" disabled>Choose a workspace</option>{(s.workspaces||[]).filter(w=>!w.builtIn&&w.available!==false).map(w=><option value={w.id} key={w.id}>{w.name}</option>)}</select>;
         case 'secrets': return actButton('Manage protected connections',()=>u.go('settings/Connections'));
         case 'auditLog': return actButton('Open',()=>u.show('App health'));
-        case 'profileIO': return <details><summary>Export or import</summary><PreferencesTransfer/></details>;
+        case 'profileIO': return actButton('Export or import',()=>u.show('Settings profile'));
         case 'sysgraph': return <SystemMap/>;
         case 'lookIO': return <LookTransfer/>;
         case 'layout': case 'dockL': case 'dockB': return <DockLayoutControl id={id} label={label} options={options}/>;
@@ -880,8 +870,6 @@
       return <section key={card.id} data-design-section={card.title} className={'sheet-pc-card sheet-owner-card pc-'+card.id+(card.id==='sysgraph'?' sheet-card-wide':'')}><header className="sheet-card-head"><span className={'sheet-card-icon fam-'+card.family}><window.AHIcon name={card.icon} size={12}/></span><h3>{card.title}</h3></header>
         {visible.map(spec=><div className={'sheet-property-row'+(['theme','themeSet','accent','density','layout'].includes(spec[0])?' sheet-property-visual':'')+(spec[0]==='sysgraph'?' sheet-property-full':'')} data-row={spec[0]} key={spec[0]}><span className="sheet-property-copy">{spec[1]}<small>{spec[2]}</small></span><div className="sheet-property-control">{control(spec)}</div></div>)}
         {visible.length<card.rows.length&&actButton((card.rows.length-visible.length)+' more',()=>setAdvanced(true))}
-        {card.id==='theme'&&window.UI.InterfaceStudio&&<MovedPage title="Interface studio" open={requested==='Interface studio'||undefined} owner={window.UI.InterfaceStudio}/>}
-        {card.id==='app'&&<details open={updatesOpen} onToggle={event=>setUpdatesOpen(event.currentTarget.open)}><summary>Updates &amp; About</summary>{updatesOpen&&<UpdatesPage/>}</details>}
         {additional[card.title]?.length>0&&<details open={advanced||undefined}><summary>More controls</summary>{additional[card.title].map(row=><SettingControl key={row.id} row={row} raw={advanced}/>)}</details>}
       </section>;
     }), window.UI.DependenciesSection && <window.UI.DependenciesSection key="dependencies"/>];
@@ -1205,59 +1193,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
     }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<window.UI.Soon label="Cloud backup — coming"><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></window.UI.Soon></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
   // The one update card: current build, update state and Check for updates (api.checkForUpdates).
-  function UpdateCard({runAction, autoInstall}) {
-    const s = useData();
-    return <Card style={{
-            padding: 16
-          }}><div className="spread"><div><h2>ArchHub</h2><p className="muted">{s.update.installed || 'Installed build unavailable'}</p></div>{s.update.available ? <Btn p onClick={event => runAction('settings.ds_settings3.SettingsAction8', event)}>Update</Btn> : <Chip c={s.update.state === 'idle' ? A.ok : A.warn}>{s.update.state === 'idle' ? s.update.detail : s.update.detail || 'Update status unavailable'}</Chip>}</div>
-          {s.update.restartRefusal && <p role="alert">{s.update.restartRefusal}</p>}
-          {autoInstall !== undefined && <label className="spread" data-setting="Updates.Install automatically" style={{marginTop: 12}}><span>Install updates automatically when I am away or ArchHub is in the tray</span><input type="checkbox" aria-label="Install updates automatically" disabled={autoInstall === null} checked={!!autoInstall} onChange={event => runAction('settings.ds_settings3.UpdatesAutoInstall', event.target.checked, event)} /></label>}
-          {s.update.updatedTo && <div role="status" className="spread"><span>Updated {s.update.updatedFrom || 'ArchHub'} → {s.update.updatedTo}</span><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction9', event)}>Dismiss update confirmation</Btn></div>}
-          <div className="flex" style={{
-              marginTop: 12,
-              flexWrap: 'wrap'
-            }}><Btn sm disabled={s.update.state === 'checking' || s.update.state === 'restarting'} onClick={event => runAction('settings.ds_settings3.SettingsAction10', event)}>Check for updates</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction11', event)}>What’s new</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction12', event)}>First run</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction13', event)}>Docs</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction14', event)}>Feedback</Btn></div></Card>;
-  }
   // Settings → System → Updates: the update card with its own action owner, so its failure shows here.
-  function UpdatesPage() {
-    const u = useApp();
-    // The same stored value the Workshop node's update_auto_apply_on_quit parameter edits; the update policy reads it.
-    const [autoInstall, setAutoInstall] = React.useState(null);
-    const [load, setLoad] = React.useState('waiting');
-    const readSaved = React.useCallback(() => {
-      setLoad('waiting');
-      return budgetedRead('App settings', readAppSettings).then(saved => {
-        setAutoInstall(saved.update_auto_apply_on_quit !== false);
-        setLoad(Object.keys(saved).length ? 'loaded' : 'empty');
-      }, error => {
-        setAutoInstall(null);
-        setLoad('error');
-        throw error;
-      });
-    }, []);
-    React.useEffect(() => { readSaved().catch(error => console.warn('Update setting unreadable:', error.message)); }, [readSaved]);
-    const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {
-      UpdatesSettingRetry: () => u.act(readSaved),
-      UpdatesAutoInstall: next => u.act(async () => {
-        const saved = await api.setApplicationSetting('update_auto_apply_on_quit', next);
-        setAutoInstall(saved.update_auto_apply_on_quit !== false);
-        return saved;
-      }),
-      SettingsAction8: () => u.show('Update'),
-      SettingsAction9: () => u.act(api.acknowledgeUpdate),
-      SettingsAction10: () => u.act(api.checkForUpdates),
-      SettingsAction11: () => u.show('What’s new'),
-      SettingsAction12: () => u.show('First run'),
-      SettingsAction13: () => u.go('docs'),
-      SettingsAction14: () => u.show('Send feedback')
-    });
-    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} />
-      {load === 'waiting' && <p className="muted">Reading your update setting…</p>}
-      {load === 'error' && <p role="alert">Your update setting could not be read. <Btn sm onClick={event => runAction('settings.ds_settings3.UpdatesSettingRetry', event)}>Retry</Btn></p>}
-      {load === 'empty' && <p className="muted">Automatic updates use the default (on) until you change them below.</p>}
-      {load === 'loaded' && <p className="muted">Automatic updates are {autoInstall ? 'on' : 'off'}.</p>}
-      <UpdateCard runAction={runAction} autoInstall={load === 'loaded' || load === 'empty' ? autoInstall : undefined} /></>;
-  }
   const SHEET_ACTIONS = {'settings.sheet.Refresh':'Refresh'};
   function executeAction(...args) {return window.executeAction(...args);}
   // Board r1963: one-line value box; the full value lives in the tooltip.
@@ -1632,6 +1568,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
   window.UI.requestGroups = requestGroups;
   window.UI.PasteSettings = PasteSettings;
   window.UI.KeyboardSettings = KeyboardSettings;
+  window.UI.PreferencesTransfer = PreferencesTransfer;
   window.UI.budgetedRead = budgetedRead;
   window.UI.Account = Account;
   window.UI.Connections = Connections;

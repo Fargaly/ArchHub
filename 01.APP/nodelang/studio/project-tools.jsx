@@ -5,14 +5,12 @@
     return context?.handler?.(event);
   }
   const {
-      A,
-      D,
+
       api,
       useData,
       useApp,
       Btn,
       Card,
-      Chip,
       Heading
     } = window.UI,
     Icon = window.AHIcon || (() => null);
@@ -716,62 +714,6 @@
     </main>;
   }
 
-  function InterfaceStudio() {
-    const s = useData(),
-      u = useApp(),
-      nodes = s.graph.nodes.filter(n => n.kind === 'UI element'),
-      [id, setId] = React.useState(null),
-      [colour, setColour] = React.useState(A.accent),
-      selected = nodes.find(n => n.id === id);
-    return <main className="page" data-screen="interface"><Heading title="Interface studio" sub="Build the view from editable nodes, then reuse it as a mod."><Btn sm onClick={event => executeAction("projects.project-tools.Canvas.17", {u}, event)}>Canvas</Btn><Btn p onClick={event => executeAction("projects.project-tools.MakeAMod.18", {u}, event)}>Make a mod</Btn></Heading><div className="settings-grid"><Card style={{
-          padding: 22
-        }}><h2>Elements</h2><div className="flex" style={{
-            margin: '18px 0'
-          }}>{['Button', 'Card', 'Text'].map(kind => <Btn sm key={kind} onClick={event => executeAction("projects.project-tools.Add.19", {api,kind,setId,u}, event)}>Add {kind}</Btn>)}</div>{nodes.map(n => <button key={n.id} className="listbutton spread" aria-pressed={n.id === id} onClick={event => executeAction("projects.project-tools.SetIdNId.20", {n,setId}, event)}><span>{n.params.element} · {n.params.label}</span><Icon name="arrow" size={14} /></button>)}{selected && <div className="grid" style={{
-            marginTop: 20
-          }}>{api.getNodeParameters(selected).map(p => <label key={p.key} className="parameter-row"><span>{p.label}</span>{p.type === 'boolean' ? <D.Toggle label={p.label} checked={selected.params[p.key]} onCheckedChange={v => u.act(() => api.setNodeParam(id, p.key, v))} /> : p.options ? <select aria-label={'Element ' + p.label} value={selected.params[p.key]} onChange={e => u.act(() => api.setNodeParam(id, p.key, e.target.value))}>{p.options.map(v => <option key={v}>{v}</option>)}</select> : <input aria-label={'Element ' + p.label} type={p.type === 'number' ? 'number' : p.type === 'color' ? 'color' : 'text'} value={selected.params[p.key]} onChange={e => u.act(() => api.setNodeParam(id, p.key, p.type === 'number' ? Number(e.target.value) : e.target.value))} />}</label>)}<Btn sm onClick={event => executeAction("projects.project-tools.DeleteElement.21", {api,id,u}, event)}>Delete element</Btn></div>}<div className="row"><h3>Theme</h3><div className="spread" style={{
-              marginTop: 14
-            }}><input aria-label="Interface accent" type="color" value={colour} onChange={e => setColour(e.target.value)} /><Btn onClick={event => executeAction("projects.project-tools.ApplyColour.22", {api,colour,u}, event)}>Apply colour</Btn></div></div></Card><Card style={{
-          padding: 22,
-          minHeight: 450
-        }}><div className="spread"><h2>Live view</h2><Chip>{nodes.length} elements</Chip></div><div style={{
-            position: 'relative',
-            height: 420,
-            overflow: 'auto',
-            marginTop: 18,
-            border: '1px dashed ' + A.line,
-            borderRadius: 12
-          }} onDragOver={e => e.preventDefault()} onDrop={e => {
-            e.preventDefault();
-            const node = e.dataTransfer.getData('ui-element');
-            if (node) {
-              const r = e.currentTarget.getBoundingClientRect();
-              u.act(() => api.moveNode(node, {
-                x: Math.max(0, e.clientX - r.left - 50),
-                y: Math.max(0, e.clientY - r.top - 15)
-              }));
-            }
-          }}>{nodes.map(n => <div key={n.id} draggable onDragStart={e => e.dataTransfer.setData('ui-element', n.id)} onClick={() => setId(n.id)} style={{
-              position: 'absolute',
-              left: n.x,
-              top: n.y,
-              width: Math.min(360, n.params.width),
-              outline: id === n.id ? '1px solid ' + A.accent : 'none',
-              borderRadius: 8,
-              padding: 6
-            }}>{n.params.element === 'Button' ? <button disabled={!n.params.enabled} onClick={event => executeAction("projects.project-tools.UGoNParamsAction.23", {n,u}, event)} style={{
-                background: n.params.colour,
-                border: 0,
-                color: '#fff',
-                padding: '10px 18px',
-                borderRadius: 8
-              }}>{n.params.label}</button> : n.params.element === 'Card' ? <Card style={{
-                padding: 22,
-                borderColor: n.params.colour
-              }}>{n.params.label}</Card> : <p style={{
-                color: n.params.colour
-              }}>{n.params.label}</p>}</div>)}</div></Card></div></main>;
-  }
 
   function AccountUsage() {
     const s = useData(),
@@ -805,7 +747,6 @@
     GraphManager,
     ModelReview,
     Community,
-    InterfaceStudio,
     AccountUsage
   });
 
@@ -895,37 +836,6 @@
     };
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
-  function projectsprojecttoolsjsxCanvas17({u}, event) {
-    const handler = () => u.go('canvas');
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function projectsprojecttoolsjsxMakeAMod18({u}, event) {
-    const handler = () => u.show('Make a mod');
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function projectsprojecttoolsjsxAdd19({api: apiArg, kind, setId, u}, event) {
-    const handler = async () => {
-      const n = await u.act(() => apiArg.addInterfaceElement(kind));
-      if (n) setId(n.id);
-    };
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function projectsprojecttoolsjsxSetIdNId20({n, setId}, event) {
-    const handler = () => setId(n.id);
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function projectsprojecttoolsjsxDeleteElement21({api: apiArg, id, u}, event) {
-    const handler = () => u.act(() => apiArg.deleteNode(id));
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function projectsprojecttoolsjsxApplyColour22({api: apiArg, colour, u}, event) {
-    const handler = () => u.act(() => apiArg.setSetting('Appearance.Accent colour', colour));
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function projectsprojecttoolsjsxUGoNParamsAction23({n, u}, event) {
-    const handler = () => u.go(n.params.action.toLowerCase());
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
   function projectsprojecttoolsjsxManageSubscription24({u}, event) {
     const handler = () => u.show('Subscription');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
@@ -981,18 +891,11 @@
     "projects.project-tools.SetTabT.14": "projectsprojecttoolsjsxSetTabT14",
     "projects.project-tools.ReviewShare.15": "projectsprojecttoolsjsxReviewShare15",
     "projects.project-tools.UActApiReviewCommunityPatternP.16": "projectsprojecttoolsjsxUActApiReviewCommunityPatternP16",
-    "projects.project-tools.Canvas.17": "projectsprojecttoolsjsxCanvas17",
-    "projects.project-tools.MakeAMod.18": "projectsprojecttoolsjsxMakeAMod18",
-    "projects.project-tools.Add.19": "projectsprojecttoolsjsxAdd19",
-    "projects.project-tools.SetIdNId.20": "projectsprojecttoolsjsxSetIdNId20",
-    "projects.project-tools.DeleteElement.21": "projectsprojecttoolsjsxDeleteElement21",
-    "projects.project-tools.ApplyColour.22": "projectsprojecttoolsjsxApplyColour22",
-    "projects.project-tools.UGoNParamsAction.23": "projectsprojecttoolsjsxUGoNParamsAction23",
     "projects.project-tools.ManageSubscription.24": "projectsprojecttoolsjsxManageSubscription24",
     "projects.project-tools.SignOutEverywhere.25": "projectsprojecttoolsjsxSignOutEverywhere25",
     "projects.project-tools.Transfer.26": "projectsprojecttoolsjsxTransfer26"
   };
   if (typeof window.registerActions === 'function') {
-    window.registerActions(PROJECT_ACTIONS, {projectsprojecttoolsjsxRetryCommunity,projectsprojecttoolsjsxFilterKind,projectsprojecttoolsjsxOpenPublish,projectsprojecttoolsjsxOpenNodeDocs,projectsprojecttoolsjsxAddNodeToCanvas,projectsprojecttoolsjsxOpenStandardRule,projectsprojecttoolsjsxPreviewWorkflow,projectsprojecttoolsjsxInstallWorkflow,projectsprojecttoolsjsxClosePreview,projectsprojecttoolsjsxConfirmInstall,projectsprojecttoolsjsxCloseStandardRule,projectsprojecttoolsjsxCancelPublish,projectsprojecttoolsjsxConfirmPublish,projectsprojecttoolsjsxAsyncAwaitUActApi1,projectsprojecttoolsjsxUActApiUpdateGraphG2,projectsprojecttoolsjsxUShowRenameGraphId3,projectsprojecttoolsjsxUConfirmRemoveGName4,projectsprojecttoolsjsxAddGraph5,projectsprojecttoolsjsxSaveVersion6,projectsprojecttoolsjsxRestore7,projectsprojecttoolsjsxExportGraph8,projectsprojecttoolsjsxSync9,projectsprojecttoolsjsxOpenAsNode10,projectsprojecttoolsjsxRunCheck11,projectsprojecttoolsjsxExportIssues12,projectsprojecttoolsjsxBrain13,projectsprojecttoolsjsxSetTabT14,projectsprojecttoolsjsxReviewShare15,projectsprojecttoolsjsxUActApiReviewCommunityPatternP16,projectsprojecttoolsjsxCanvas17,projectsprojecttoolsjsxMakeAMod18,projectsprojecttoolsjsxAdd19,projectsprojecttoolsjsxSetIdNId20,projectsprojecttoolsjsxDeleteElement21,projectsprojecttoolsjsxApplyColour22,projectsprojecttoolsjsxUGoNParamsAction23,projectsprojecttoolsjsxManageSubscription24,projectsprojecttoolsjsxSignOutEverywhere25,projectsprojecttoolsjsxTransfer26});
+    window.registerActions(PROJECT_ACTIONS, {projectsprojecttoolsjsxRetryCommunity,projectsprojecttoolsjsxFilterKind,projectsprojecttoolsjsxOpenPublish,projectsprojecttoolsjsxOpenNodeDocs,projectsprojecttoolsjsxAddNodeToCanvas,projectsprojecttoolsjsxOpenStandardRule,projectsprojecttoolsjsxPreviewWorkflow,projectsprojecttoolsjsxInstallWorkflow,projectsprojecttoolsjsxClosePreview,projectsprojecttoolsjsxConfirmInstall,projectsprojecttoolsjsxCloseStandardRule,projectsprojecttoolsjsxCancelPublish,projectsprojecttoolsjsxConfirmPublish,projectsprojecttoolsjsxAsyncAwaitUActApi1,projectsprojecttoolsjsxUActApiUpdateGraphG2,projectsprojecttoolsjsxUShowRenameGraphId3,projectsprojecttoolsjsxUConfirmRemoveGName4,projectsprojecttoolsjsxAddGraph5,projectsprojecttoolsjsxSaveVersion6,projectsprojecttoolsjsxRestore7,projectsprojecttoolsjsxExportGraph8,projectsprojecttoolsjsxSync9,projectsprojecttoolsjsxOpenAsNode10,projectsprojecttoolsjsxRunCheck11,projectsprojecttoolsjsxExportIssues12,projectsprojecttoolsjsxBrain13,projectsprojecttoolsjsxSetTabT14,projectsprojecttoolsjsxReviewShare15,projectsprojecttoolsjsxUActApiReviewCommunityPatternP16,projectsprojecttoolsjsxManageSubscription24,projectsprojecttoolsjsxSignOutEverywhere25,projectsprojecttoolsjsxTransfer26});
   }
 })();

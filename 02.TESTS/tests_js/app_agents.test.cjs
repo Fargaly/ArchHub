@@ -101,43 +101,6 @@ test('Native sessions button calls only discovery, without sending into a sessio
  await nodes(tree).find(n=>text(n)==='Read native sessions').props.onClick();assert.equal(calls,1);
 });
 
-function updateSettings(update){
- const c=context({pages:['Updates & About'],settings:[],capabilities:[],workspaces:[],update});
- c.app={act:async fn=>fn(),show:()=>{},go:()=>{}};c.UI.useApp=()=>c.app;
- Object.assign(c.c.React,{useCallback:fn=>fn,useMemo:fn=>fn()});
- // The Updates card is its own component (UpdatesPage > UpdateCard) inside Settings: render components as React does,
- // not just the outer element, so the real card and its actions are what the assertions read.
- const expand=tree=>Array.isArray(tree)?tree.map(expand):!tree||typeof tree!=='object'?tree:typeof tree.type==='function'?expand(tree.type(tree.props||{})):{...tree,props:{...tree.props,children:expand(tree.props?.children)}};
- load(c,'ds_settings3.jsx');return {...c,render:()=>expand(c.UI.Settings({page:'Updates & About',full:true}))};
-}
-
-test('Updates never claims up to date without a successful lifecycle read',()=>{
- for(const update of [{},{state:'failed',detail:'Feed unreachable'},{state:'checking',detail:'Checking'}]){
-  const c=updateSettings(update),tree=c.render();
-  assert.doesNotMatch(text(tree),/Up to date/);
-  assert.ok(nodes(tree).find(n=>text(n)==='Check for updates'));
- }
- const c=updateSettings({state:'idle',detail:'Up to date',installed:'running-build'});
- assert.match(text(c.render()),/Up to date/);
-});
-
-test('Updates check invokes the owner and a ready build opens the existing update review',async()=>{
- const c=updateSettings({state:'ready',available:true,installed:'running-build',next:'new-build'});
- let checks=0;const opened=[];c.UI.api.checkForUpdates=async()=>{checks++;};
- c.app.show=kind=>opened.push(kind);
- await nodes(c.render()).find(n=>text(n)==='Check for updates').props.onClick();
- await nodes(c.render()).find(n=>text(n)==='Update').props.onClick();
- assert.equal(checks,1);assert.deepEqual(opened,['Update']);
-});
-
-test('Updates retains the installed-build confirmation until the owner acknowledges it',async()=>{
- const c=updateSettings({state:'idle',installed:'new-build',updatedFrom:'old-build',updatedTo:'new-build'});
- let acknowledgements=0;c.UI.api.acknowledgeUpdate=async()=>{acknowledgements++;};
- const tree=c.render();assert.match(text(tree),/old-build.*new-build/);
- await nodes(tree).find(n=>text(n)==='Dismiss update confirmation').props.onClick();
- assert.equal(acknowledgements,1);
-});
-
 test('Connect dialog tools render with session catalogue rows, which carry no nodes',()=>{
  // Catalogue rows are {id,title,path,kind} (session_files catalogue); the open canvas holds the nodes.
  const graphs=[{id:'a.archhub',title:'A',path:'a.archhub',kind:'agent-session'}];

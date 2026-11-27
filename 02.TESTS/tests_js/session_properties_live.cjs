@@ -68,7 +68,7 @@ async function main() {
     await card.getByRole('combobox', {name: 'Permissions'}).selectOption('Accept edits');
     await page.waitForFunction(async () => (await window.ArchHubAPI.readPermissions()).runMode === 'Accept edits');
     out.permissionOwner = (await page.evaluate(() => window.ArchHubAPI.readPermissions())).runMode;
-    await card.getByRole('group', {name: /run_budget$/}).getByRole('button', {name: '1 minute', exact: true}).click();  // 4 choices: the choice buttons
+    await card.getByRole('combobox', {name: /run_budget$/}).selectOption('1 minute');  // a choice is a dropdown, as in the design
     await panel('tools').click();
     await card.getByRole('checkbox', {name: 'Revit · the agent may use it'}).click();  // controlled: it unticks once the file has the value
     await panel('context').click();

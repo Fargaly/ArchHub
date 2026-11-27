@@ -51,6 +51,18 @@ def _card(title='Write sheets.txt'):
     return hold, digest
 
 
+@pytest.mark.parametrize("tool, field", [("Write", "file_path"), ("Bash", "command")])
+@pytest.mark.parametrize("name", ["ask-approvals.json", "ask-approvals.lock", "permissions.json"])
+def test_agents_cannot_modify_approval_files(tool, field, name):
+    from nodelang import hook_decision
+
+    path = hook_decision._ask_path(os.environ).with_name(name)
+    value = str(path) if field == "file_path" else f'echo changed > "{path}"'
+    decision = hook_decision.decide({"tool_name": tool, "tool_input": {field: value}}, "codex")
+    assert decision["verdict"] == "refuse"
+    assert "approval-store-write" in decision["rules"]
+
+
 def _rows():
     from nodelang import hook_decision
     return json.loads(hook_decision._ask_path(os.environ).read_text(encoding='utf-8'))['holds']

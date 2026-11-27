@@ -1660,6 +1660,12 @@ def decide(payload: dict, vendor: str = "", *, environment=None, replay=None):
     vendor = _ALIAS.get(vendor, vendor)
     event = normalize(payload, vendor)
     action, facts = classify(event, environment)
+    if action != "read" and re.search(
+        r"(?i)(?<![\w.-])(?:ask-approvals\.(?:json|lock)|permissions\.json)(?![\w.-])",
+        facts["text"],
+    ):
+        return {"verdict": "refuse", "vendor": vendor, "tool": event["tool"], "action": action,
+                "rules": ["approval-store-write"], "notes": [], "findings": [], "scanners": {}}
     from .baboom_reactions import emit
     emit(payload, vendor, environment=environment)
     scanners = {"secrets": "skipped", "pii": "skipped", "policy": "skipped", "trace": "skipped"}
@@ -1817,7 +1823,8 @@ def _decide_approval(request: dict, environment):
     return APPROVALS[kind](request, decision)
 
 
-_REASONS = {"secret-going-public": "a secret would go public",
+_REASONS = {"approval-store-write": "approval state can only be changed through ArchHub approvals",
+            "secret-going-public": "a secret would go public",
             "client-data-going-public": "client or personal data would go public",
             "delete-founder-data": "this deletes the founder's data",
             "use-founder-screen": "this drives the founder's screen",

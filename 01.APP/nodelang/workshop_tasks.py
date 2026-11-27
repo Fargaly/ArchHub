@@ -1971,8 +1971,9 @@ def rows(history, task=None, *, include_archived=True, settle=True):
     return found
 
 
-def get(history, task):
-    return next(iter(rows(history, task)), None)
+def get(history, task, *, settle=True):
+    """settle=False for callers that only read: settling takes three write transactions (BEGIN IMMEDIATE)."""
+    return next(iter(rows(history, task, settle=settle)), None)
 
 
 def bound_session_path(task, database=None):

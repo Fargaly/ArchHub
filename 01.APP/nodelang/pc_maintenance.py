@@ -185,7 +185,7 @@ def archive_inactive_conversations(history, days, now=None) -> list:
     for task, revision in rows:
         if not workshop_tasks.archive(history, task, revision):
             continue  # it changed since the read: it stays active
-        after = workshop_tasks.get(history, task)
+        after = workshop_tasks.get(history, task, settle=False)
         if not after or not after['archived'] or (after['session_path'] and not Path(after['session_path']).is_file()):
             raise RuntimeError('Archive read-back failed for ' + task)
         archived.append(task)

@@ -394,7 +394,7 @@ def send_as_founder(text, handles, *, reply_to=None, task=None, task_peer=False)
     if task_peer:
         from .workshop_tasks import get, _live
         with application_history() as history:
-            row = get(history, task) if task else None
+            row = get(history, task, settle=False) if task else None
         if not row or row.get('archived') or row['status'] == 'done' or not row.get('session_path'):
             raise ValueError('The selected task has no open canvas to continue.')
         attached = [member for member in row['members'] if not member.get('left')]

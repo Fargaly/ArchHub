@@ -987,3 +987,23 @@ def test_send_binds_subtask_and_parent_refs_for_explicit_prefix_and_live_claim(t
     assert ("Finished Task %s" % sub_prefix[:8]) in parent_texts
     assert "Status update without explicit id" in parent_texts
 
+
+def test_read_only_task_lookups_take_no_write_transaction(tmp_path, monkeypatch):
+    """WAL, a 5 s connect wait, and a read-only get() that never asks for the writer (BEGIN IMMEDIATE)."""
+    from nodelang.workshop_mailbox import profile_database
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        task = workshop_tasks.create(history, "read me", "founder")["id"]
+        assert history._db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert history._db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    writer = sqlite3.connect(profile_database(), isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")   # another process mid-write holds the writer
+    try:
+        with application_history(read_only=True, busy_timeout_seconds=0.2) as history:
+            assert workshop_tasks.get(history, task, settle=False)["title"] == "read me"
+            with pytest.raises(Exception):
+                workshop_tasks.get(history, task)   # the settling lookup does need the writer
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
+

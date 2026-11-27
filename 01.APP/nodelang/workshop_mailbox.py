@@ -77,7 +77,7 @@ def _addresses_founder(target, reply, history):
 
 
 @contextmanager
-def application_history(source=None, *, read_only=False, busy_timeout_seconds: float = 2.0, database=None, existing_only=False):
+def application_history(source=None, *, read_only=False, busy_timeout_seconds: float = 5.0, database=None, existing_only=False):
     """One local Workshop file; source is retained only for existing caller compatibility."""
     path = Path(database) if database is not None else profile_database()
     if existing_only and not read_only:
@@ -1271,7 +1271,7 @@ class WorkshopInjection:
     def _coordinator(self, declarations, history=None):
         if history is not None:
             from . import workshop_tasks
-            seat = workshop_tasks.get(history, workshop_tasks.COORDINATOR_SEAT_ID)
+            seat = workshop_tasks.get(history, workshop_tasks.COORDINATOR_SEAT_ID, settle=False)
             if seat and seat.get("status") == "claimed" and seat.get("owner") and not seat.get("lease_expired"):
                 holder = seat["owner"]
                 matched = [row for row in declarations if row.get("current") and (
@@ -2268,7 +2268,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
 def attach_meeting_notes(history, task, text):
     """A thread attachment in the existing mailbox; attaching never sends to an agent."""
     from .workshop_tasks import get, _short_text
-    if not get(history, task):
+    if not get(history, task, settle=False):
         raise ValueError('No such Workshop task')
     text = _short_text(text, 'meeting notes', 4000)
     return history.append(ROOM, author='You', content=text, refs=[task],

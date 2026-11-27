@@ -9,7 +9,6 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 import re
-import os
 import threading
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -128,12 +127,12 @@ class AccountFiles:
             return {}
 
     def write(self, root, values):
-        with _ACCOUNT_FILE_LOCK:
+        from .canvas_documents import locked
+        with _ACCOUNT_FILE_LOCK, locked(self.path):  # read-modify-write across processes
             self._write(root, values)
 
     def _write(self, root, values):
-        import tempfile
-        from .session_files import _metadata_io
+        from .canvas_documents import write_json_atomic
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
         except FileNotFoundError:
@@ -144,15 +143,7 @@ class AccountFiles:
         encoded = json.dumps(stamp_test_write(data), ensure_ascii=False, allow_nan=False, indent=1)
         if len(encoded.encode('utf-8')) > 65536:
             raise ValueError('Settings exceed 64 KiB. Shorten workspace rules and retry.')
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix='.tmp')
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                stream.write(encoded)
-            _metadata_io(os.replace, temporary, self.path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        write_json_atomic(self.path, encoded)
 
 
 class CloudRouteUnavailable(ValueError):
@@ -273,16 +264,11 @@ class SettingsOwner:
     def setRouterSettings(self, changes):
         if type(changes) is not dict:
             raise ValueError('Router settings must be an object.')
-        with _ROUTER_LOCK:
+        from .canvas_documents import locked, write_json_atomic
+        path = router_settings_path()
+        with _ROUTER_LOCK, locked(path):  # agents change the router from their own processes too
             values = _checked_router_settings({**read_router_settings(), **changes})
-            path = router_settings_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix('.tmp')
-            try:
-                temporary.write_text(json.dumps(stamp_test_write(values), ensure_ascii=False, allow_nan=False), encoding='utf-8')
-                os.replace(temporary, path)
-            finally:
-                temporary.unlink(missing_ok=True)
+            write_json_atomic(path, json.dumps(stamp_test_write(values), ensure_ascii=False, allow_nan=False))
         return values
 
     def _secrets(self, listing=None):

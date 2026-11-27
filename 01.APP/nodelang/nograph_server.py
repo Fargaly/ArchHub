@@ -22,7 +22,6 @@ import json
 import mimetypes
 import os
 import secrets
-import tempfile
 import logging
 import threading
 import time
@@ -108,22 +107,16 @@ class JsonFile:
 
     def write(self, value):
         from .user_paths import stamp_test_write
-        from .session_files import _metadata_io
-        with self.lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix='.tmp')
-            try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                    json.dump(stamp_test_write(value), stream, ensure_ascii=False, indent=1)
-                _metadata_io(os.replace, temporary, self.path)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+        from .canvas_documents import locked, write_json_atomic
+        # Agents write settings from their own processes: the file lock spans processes, the RLock threads.
+        with self.lock, locked(self.path):
+            write_json_atomic(self.path, json.dumps(stamp_test_write(value), ensure_ascii=False, indent=1))
         return value
 
 
     def update(self, changes, remove=()):
-        with self.lock:
+        from .canvas_documents import locked
+        with self.lock, locked(self.path):
             value = {**self.read(), **changes}
             for key in remove:
                 value.pop(key, None)
@@ -961,7 +954,7 @@ def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
         from .workshop_mailbox import application_history
         from .workshop_tasks import get
         with application_history() as history:
-            if type(task) is not str or get(history, task) is None:
+            if type(task) is not str or get(history, task, settle=False) is None:
                 raise ValueError('This session is no longer in the Workshop. Reopen it from Home.')
             from .workshop_tasks import _bound_messages
             messages = _bound_messages(history, task)

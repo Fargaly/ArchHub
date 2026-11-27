@@ -575,3 +575,23 @@ def test_saved_group_boundary_aliases_solve_and_run_without_rewriting_wire(tmp_p
                                'to': {'node': '1', 'socket': 'in'}})
     with pytest.raises(ValueError, match='An input socket accepts one wire'):
         run_document(duplicate, roots=['1'], invoke=only_convert)
+
+
+def test_checkpoints_keep_the_newest_twenty_and_archive_older_ones_beside_the_file(tmp_path, monkeypatch):
+    """Checkpoints used to accumulate inside the document until it passed 8 MiB and could no longer be saved."""
+    from nodelang import session_files
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    path = tmp_path / 'long.archhub'
+    document = new_document('Long session')
+    document['nodes'].append({'id': 'note', 'item': 'param.value', 'type': 'param.value', 'title': 'v0',
+                              'params': {'type': 'text', 'value': 'x' * 1000}, 'position': {'x': 0, 'y': 0}})
+    write_document(path, document)
+    ids = [session_files.checkpoint(path, 'Checkpoint %d' % index)['id'] for index in range(25)]
+    kept = read_document(path)['properties']['checkpoints']
+    assert [row['id'] for row in kept] == ids[-20:]
+    archived = session_files.archived_checkpoints(path)
+    assert [row['id'] for row in archived] == ids[:5]          # nothing lost: the oldest five are beside the file
+    assert archived[0]['document']['id'] == document['id']
+    restored = session_files.restore_checkpoint(path, ids[0])   # an archived one still restores
+    assert restored['id'] == document['id']
+    assert [row['id'] for row in session_files.archived_checkpoints(path)] == ids[:5]   # no duplicates on rewrite

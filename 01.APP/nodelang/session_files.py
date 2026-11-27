@@ -680,9 +680,41 @@ def portable_parameters(document, path, previous=None):
                                        quote(target.relative_to(Path(match['path']).resolve()).as_posix(), safe='/')) if match else str(target)
 
 
+def checkpoint_archive_path(target):
+    """Checkpoints older than the newest few live beside the document, one JSON line each."""
+    target = Path(target)
+    return target.with_name(target.name + '.checkpoints.jsonl')
+
+
+def archived_checkpoints(target):
+    archive = checkpoint_archive_path(target)
+    if not archive.is_file():
+        return []
+    return [json.loads(line) for line in archive.read_text(encoding='utf-8').splitlines() if line.strip()]
+
+
+def _archive_old_checkpoints(target, document):
+    """Keep the newest checkpoint_limit in the document; older ones are fsynced to the archive first, never lost."""
+    rows = (document.get('properties') or {}).get('checkpoints') or []
+    limit = canvas_documents.DOCUMENT_NODE['params']['checkpoint_limit']
+    if len(rows) <= limit:
+        return
+    older, kept = rows[:-limit], rows[-limit:]
+    known = {row.get('id') for row in archived_checkpoints(target)}
+    fresh = [row for row in older if row.get('id') not in known]
+    if fresh:
+        with checkpoint_archive_path(target).open('a', encoding='utf-8') as stream:
+            for row in fresh:
+                stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+    document['properties']['checkpoints'] = kept
+
+
 def write_document(path, document):
     target = local_path(str(path))
     validate(document)
+    _archive_old_checkpoints(target, document)
     # Preserve formatting and bytes when an old document is saved without edits.
     if target.exists() and read_document(target) == document:
         return str(target)
@@ -744,7 +776,8 @@ def restore_checkpoint(path, identity):
 
     def change(document):
         props = document.get('properties') or {}
-        saved = next((row for row in props.get('checkpoints', []) if row.get('id') == identity), None)
+        saved = next((row for row in [*props.get('checkpoints', []), *archived_checkpoints(local_path(str(path)))]
+                      if row.get('id') == identity), None)
         if saved is None:
             raise ValueError('No such checkpoint')
         snapshot = copy.deepcopy(validate(saved['document']))
@@ -1711,17 +1744,26 @@ def input_signature(node, incoming, path):
 
 
 def persist_run(document, path, source=None):
-    """Caller holds the document lock; retain portable inputs for linked invocations."""
+    """Record the run's results and state into the file as it is now; retain portable inputs for linked invocations.
+
+    A run may execute outside the document lock (canvas.run, Studio run to node), so only node results and
+    canvasRun are merged under the lock: an edit or autosave made meanwhile is kept, never overwritten."""
     run = document['properties']['canvasRun']
     run.setdefault('start', time.time())
-    saved = copy.deepcopy(source) if source is not None else document
-    if source is not None:
-        results = {node['id']: node.get('result') for node in document['nodes']}
+    results = {node['id']: node.get('result') for node in document['nodes']}
+    with canvas_documents.locked(path):
+        try:
+            current = read_document(path)
+        except FileNotFoundError:
+            current = None
+        if current is None or current.get('id') != (source if source is not None else document).get('id'):
+            current = copy.deepcopy(source) if source is not None else copy.deepcopy(document)
+        saved = current
         for node in saved['nodes']:
             if results.get(node['id']) is not None:
                 node['result'] = copy.deepcopy(results[node['id']])
         saved.setdefault('properties', {})['canvasRun'] = copy.deepcopy(document['properties']['canvasRun'])
-    write_document(path, saved)
+        write_document(path, saved)
     order = set(run.get('order', (node['id'] for node in document['nodes'])))
     results = {node['id']: node.get('result') or {} for node in document['nodes'] if node['id'] in order}
     state = run.get('state')

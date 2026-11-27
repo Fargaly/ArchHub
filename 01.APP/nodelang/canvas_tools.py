@@ -270,14 +270,10 @@ def register_canvas_tools(server):
             access.require(subject=subject)
             return guard_effect(*args, **kwargs)
 
-        def change(document):
+        def run(document):
             roots = [_end(document, node + '.x')[0]['id']] if node else None
-            ran = run_document(document, invoke=invoke if access is not None else guard_effect, roots=roots, path=path)
-            for n in document['nodes']:
-                if n['id'] in ran['results']:
-                    n['result'] = {k: v for k, v in ran['results'][n['id']].items() if k in ('status', 'output', 'error', 'display')}
-            return []
-        document, _ = docs.edit(_path(path), _who(ctx), 'run' + (' to ' + node if node else ''), change, solve_changed=False)
+            return run_document(document, invoke=invoke if access is not None else guard_effect, roots=roots, path=path)
+        document, _ = docs.run_unlocked(_path(path), _who(ctx), 'run' + (' to ' + node if node else ''), run)
         return _summary(document)
 
     @server.tool(name='canvas.save')

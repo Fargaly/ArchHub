@@ -100,3 +100,46 @@ def test_every_program_archhub_opens_has_its_own_host_effects_switch():
     assert {'revit', 'acad', 'max', 'rhino', 'blender', 'office', 'photoshop', 'teams', 'lmstudio'} <= set(HOST_EFFECT_PROGRAMS)
     assert [launch_effect_host(app) for app in ('Photoshop', 'LM Studio', 'teams', 'excel', 'notepad')] == \
         ['photoshop', 'lmstudio', 'teams', 'office', '']
+
+
+_HOLDER = '''
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from nodelang.canvas_documents import locked
+with locked(sys.argv[2]):
+    print("held", flush=True)
+    time.sleep(1.5)
+'''
+
+
+@pytest.mark.parametrize('writer', ['settings', 'router'])
+def test_settings_and_router_writes_wait_for_another_process_and_fsync(tmp_path, monkeypatch, writer):
+    """Agents write settings from their own processes: a write must wait for another process's
+    read-modify-write (cross-process lock), and land flushed + fsynced through a unique temporary."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path))
+    from nodelang.nograph_server import JsonFile
+    from nodelang.settings_owner import SettingsOwner, router_settings_path
+    target = tmp_path / 'settings' / 'settings.json' if writer == 'settings' else router_settings_path()
+    app = str(Path(__file__).resolve().parents[2] / '01.APP')
+    holder = subprocess.Popen([sys.executable, '-c', _HOLDER, app, str(target)], stdout=subprocess.PIPE, text=True,
+                              env={**os.environ, 'ARCHHUB_TEST_STATE_DIR': str(tmp_path)})
+    try:
+        assert holder.stdout.readline().strip() == 'held'
+        synced = []
+        real_fsync = os.fsync
+        monkeypatch.setattr(os, 'fsync', lambda fd: synced.append(fd) or real_fsync(fd))
+        started = time.monotonic()
+        if writer == 'settings':
+            JsonFile(target, {}).update({'theme': 'dark'})
+        else:
+            SettingsOwner.setRouterSettings(object.__new__(SettingsOwner), {'free_first': True})
+        waited = time.monotonic() - started
+    finally:
+        holder.wait(timeout=10)
+    assert waited >= 0.5, waited          # it waited for the other process instead of writing over it
+    assert synced                         # flushed to disk before the replace
+    assert not list(target.parent.glob('*.tmp'))

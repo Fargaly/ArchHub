@@ -27,7 +27,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 # The .archhub document owner node: its typed parameters.
-DOCUMENT_NODE = {'id': 'canvas.document', 'params': {'history_limit': 200, 'lock_poll_seconds': 0.02,
+DOCUMENT_NODE = {'id': 'canvas.document', 'params': {'history_limit': 200, 'checkpoint_limit': 20, 'lock_poll_seconds': 0.02,
                                                      'budget': {'seconds': 60, 'calls': 1, 'cost_usd': 0.0},
                                                      'loop': {'trigger': 'Run', 'stop': 'list exhausted', 'evaluator': '', 'cap': 1000}}}
 _READ = re.compile(r'\.(read|info|list|search|inbox|get|query|ping|status|preview|probe)(_|$)')
@@ -665,14 +665,24 @@ def lock_admission(check):
         _LOCK_ADMISSION.reset(receipt)
 
 
+_HELD = threading.local()
+
+
 @contextmanager
 def locked(path, timeout=10.0):
-    """One writer per file across the app and every agent process."""
+    """One writer per file across the app and every agent process. The thread already holding it may enter
+    again (a run's persist inside an edit, a settings update() that calls write()) instead of timing out."""
     import msvcrt
     key = str(_lock_path(path))
+    held = _HELD.__dict__.setdefault('keys', set())
+    if key in held:
+        yield
+        return
     with _THREAD_GUARD:
         local = _THREAD_LOCKS.setdefault(key, threading.Lock())
-    with local:
+    if not local.acquire(timeout=timeout):
+        raise TimeoutError('Another editor holds this file; retry.')
+    try:
         with open(key, 'a+b') as handle:
             deadline = time.monotonic() + timeout
             while True:
@@ -688,10 +698,47 @@ def locked(path, timeout=10.0):
                 check = _LOCK_ADMISSION.get()
                 if check is not None:
                     check()
+                held.add(key)
                 yield
             finally:
+                held.discard(key)
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    finally:
+        local.release()
+
+
+def write_json_atomic(path, text):
+    """Unique temporary in the same folder, flushed and fsynced, then replaced: never a half-written file."""
+    import os
+    import tempfile
+    from .session_files import _metadata_io
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name + '-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _metadata_io(os.replace, temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def run_unlocked(path, by, op, run):
+    """Run a copy of the file outside its lock (model calls and host writes can take minutes), then write
+    back only each node's result fields in one short edit, so autosaves and other editors are never held."""
+    ran = run(copy.deepcopy(read(path)))
+    def record(document):
+        for node in document['nodes']:
+            if node['id'] in ran['results']:
+                node['result'] = {k: v for k, v in ran['results'][node['id']].items()
+                                  if k in ('status', 'output', 'error', 'display')}
+        return []
+    document, _ = edit(path, by, op, record, solve_changed=False)
+    return document, ran
 
 
 def revision(document):

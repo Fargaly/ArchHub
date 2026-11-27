@@ -390,6 +390,41 @@ def test_agent_canvas_tools_build_run_and_refuse_cycles(profile):
     assert tool('library.search', query='revit')['count'] >= 1
 
 
+def test_an_autosave_succeeds_while_canvas_run_is_executing(profile, monkeypatch):
+    """canvas.run used to run the whole workflow inside edit()'s lock: an autosave during a long run failed."""
+    from nodelang import canvas_documents as docs, session_files
+    from nodelang.native_agent_mcp import build_server
+    from nodelang.session_files import read_document, write_document
+    path = str(profile / 'running.archhub')
+    write_document(path, workflow())
+    real_run = session_files.run_document
+    saved = {}
+
+    def slow_run(document, **options):
+        def autosave():
+            def rename(current):
+                current['title'] = 'Renamed while running'
+                return []
+            try:
+                docs.edit(path, 'founder', 'edit in ArchHub', rename, solve_changed=False)
+                saved['ok'] = True
+            except Exception as error:  # noqa: BLE001 - the RED case
+                saved['error'] = repr(error)
+        worker = threading.Thread(target=autosave)
+        worker.start()
+        worker.join(timeout=5)
+        saved['during_run'] = saved.get('ok') is True and not worker.is_alive()
+        return real_run(document, **options)
+
+    monkeypatch.setattr(session_files, 'run_document', slow_run)
+    server = build_server()
+    asyncio.run(server.call_tool('canvas.run', {'path': path}))
+    assert saved['during_run'] is True, saved
+    after = read_document(path)
+    assert after['title'] == 'Renamed while running'                                  # the autosave was kept
+    assert next(n for n in after['nodes'] if n['id'] == 'count')['result']['output'] == {'count': 3}  # and the run's result
+
+
 def test_skill_has_typed_sockets_from_its_inner_workflow(profile):
     from nodelang.session_files import catalogue, new_document, run_document, sessions_directory, write_document
     items = {row['id']: row for row in catalogue()}

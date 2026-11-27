@@ -202,6 +202,11 @@ def test_approve_card_payload_rendered(tmp_path, monkeypatch):
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0 and 'APPROVEPAYLOAD OK' in result.stdout, result.stdout + result.stderr
+        approved = _card(push['hold'])
+        assert approved['status'] == 'approved', approved
+        # The waiting agent's identical call now runs once: the permit is taken, then the next ask holds again.
+        assert hook_decision._take_permit(approved['input_digest'], os.environ) is True
+        assert hook_decision._take_permit(approved['input_digest'], os.environ) is False
     finally:
         client.close()
         server.close()

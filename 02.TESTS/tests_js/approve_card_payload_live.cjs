@@ -23,7 +23,8 @@ const {chromium} = require('playwright');
     await page.route('**/api/universal/desktop-access', route => route.fulfill({
       json: {ok: true, admitted: true, state: 'admitted', subject: 'payload-test', email: 'payload@example.test'}}));
     await page.goto(input.url);
-    await page.waitForFunction(ids => ids.every(id => window.ArchHubAPI?.getSnapshot().approvals?.some(card => card.id === id)), [input.post, input.push, input.empty]);
+    await page.waitForFunction(ids => ids.every(id => window.ArchHubAPI?.getSnapshot().approvals?.some(card => card.id === id)), [input.post, input.push, input.empty])
+      .catch(async error => { throw Error(error.message + ' approvals=' + await page.evaluate(() => JSON.stringify((window.ArchHubAPI?.getSnapshot().approvals || []).map(c => [c.id, c.status]))) + ' page=' + (await page.locator('body').innerText()).slice(0, 300)); });
     // The bell lists every held action; "Review · <title>" opens its Approve card (the n-th of that title, in list order).
     const open = async id => {
       const pending = await page.evaluate(() => window.ArchHubAPI.getSnapshot().approvals.filter(c => ['pending', 'postponed', 'stale', 'refused', 'contested'].includes(c.status)).map(c => [c.id, c.title]));
@@ -52,7 +53,15 @@ const {chromium} = require('playwright');
     for (const words of ['Push to ' + input.repository + ' main', 'Door schedule release', input.repository + ', branch main','git push -q origin HEAD:main', 'Review on the node'])
       assert.ok(pushed.includes(words), 'the push card says ' + words + ': ' + pushed);
     await shot('02-push-card', push);
-    await close();
+    // Approve on a held command (a permit) resolves: the card says Approved and the waiting agent's call may run once.
+    const started = Date.now();
+    await push.getByRole('button', {name: /^Approve/}).click();
+    await page.waitForFunction(id => window.ArchHubAPI.getSnapshot().approvals.find(card => card.id === id)?.status === 'approved', input.push, {timeout: 15000});
+    const alerts = await page.locator('[role="alert"]').allInnerTexts();
+    assert.ok(!alerts.some(text => /did not respond/.test(text)), 'Approve answered: ' + alerts.join(' | '));
+    console.log('APPROVE-MS=' + (Date.now() - started));
+    await shot('02b-push-approved', page);
+    if (await page.locator('section[role="dialog"][aria-modal="true"]').count()) await close();
 
     // A held send with nothing in it: the card says so and Approve cannot be pressed.
     const empty = await open(input.empty);

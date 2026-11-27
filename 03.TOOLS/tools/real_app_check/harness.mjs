@@ -3,7 +3,7 @@
 // Every step writes one row (asked -> what the real window did -> screenshot) and one PNG.
 // Clicks are real CDP mouse events at the element's on-screen centre.
 // Native dialogs: ctx.native({kind:'pick-folder', title, folder}) asks real_app_check.py, which
-// answers the dialog on the hidden desktop with pywinauto.
+// answers the dialog on the hidden desktop with window messages.
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';

@@ -3,7 +3,7 @@
 The founder's rule: no ArchHub task is handed over or accepted without real-app evidence. That means
 the installed build, run isolated on a hidden Windows desktop, with one screenshot per step showing
 what was asked, what the real window did, and the screenshot. Courts are review evidence, never done
-evidence. Every agent uses this one tool, including F212 VERSIONSMOKE. Studio uses raw page CDP; native folder dialogs use pywinauto on the rig desktop.
+evidence. Every agent uses this one tool, including F212 VERSIONSMOKE. Studio uses raw page CDP; native folder dialogs (the visible #32770 window) are driven with window messages on the rig desktop.
 
 ## Run
 
@@ -89,8 +89,8 @@ The run passes only when all of these hold:
 ## Guarantees
 
 - **Hidden desktop.** `CreateDesktopW` creates a new desktop with a run-unique name; an existing name is
-  refused. Nothing draws on the founder's screen. Native dialogs open there and pywinauto drives them
-  there.
+  refused. Nothing draws on the founder's screen. Native dialogs open there and the rig drives
+  them there with window messages.
 - **Isolated profile.** APPDATA, LOCALAPPDATA, USERPROFILE (with its shell folders), HOME, TEMP,
   CLAUDE_CONFIG_DIR and ARCHHUB_TEST_STATE_DIR all point into the run folder. The launch directory is
   the run folder too. Agent and session variables are dropped. The run gets its own profile mutex and CDP port. No bytecode is written.
@@ -101,8 +101,8 @@ The run passes only when all of these hold:
   - The Job is terminated in `finally` on every exit path.
   - No process is ever killed by number.
 - **No signing.** The harness refuses signing controls and never opens CNG. The signed-owner key layer is retired (SPEC section 9.5).
-- **Native driver.** The existing desktop dependency manifest ships pywinauto and comtypes.
-  Generated COM wrappers stay under the rig's LOCALAPPDATA, outside the installed environment.
+- **Native driver.** Only the visible `#32770` dialog with the requested title is driven, by window
+  messages (set the Folder field, read it back, press OK); Qt's hidden same-titled window is ignored.
 
 ## Scenarios
 

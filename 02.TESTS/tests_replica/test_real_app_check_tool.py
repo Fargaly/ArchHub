@@ -701,42 +701,6 @@ def test_native_folder_worker_refuses_the_interactive_desktop():
         rig.native_folder_action({'desktop': 'ArchHubFixture', 'pids': [], 'title': 'Never touched', 'folder': 'C:/fixture'})
 
 
-@windows_only
-def test_native_driver_import_and_com_cache_stay_on_the_rig(tmp_path):
-    rig = _rig()
-    dependencies = APP.parent / '05.EVIDENCE/t1small-native-deps'
-    if not dependencies.is_dir() and importlib.util.find_spec('pywinauto') is None:
-        pytest.skip('Pinned native driver is not installed in this test environment')
-    program = '''import importlib.util, pathlib, sys
-spec=importlib.util.spec_from_file_location('rig',sys.argv[1]);rig=importlib.util.module_from_spec(spec);spec.loader.exec_module(rig)
-cache=pathlib.Path(sys.argv[2]);application=rig.native_application(cache)
-import comtypes.client
-assert application.__name__=='Application'
-assert pathlib.Path(comtypes.client.gen_dir).resolve()==cache.resolve()
-assert all(pathlib.Path(p).resolve().is_relative_to(cache.resolve()) for p in comtypes.gen.__path__)
-print('PYWINAUTO-RIG: native import PASS; generated COM cache confined')
-'''
-    environment = rig.isolated_env(dict(os.environ), tmp_path / 'profile')
-    script = tmp_path / 'native_driver.py'
-    script.write_text(program, encoding='utf-8')
-    if dependencies.is_dir():
-        environment['PYTHONPATH'] = str(dependencies)
-    native_before = rig.tree_digest(dependencies, entries=('comtypes', 'pywinauto'))
-    job, desktop = rig.RunJob(), None
-    try:
-        desktop = rig.HiddenDesktop(job)
-        command = subprocess.list2cmdline([sys.executable, '-B', str(script),
-            str(TOOL / 'real_app_check.py'), str(tmp_path / 'profile/LOCALAPPDATA/comtypes')])
-        result = desktop.run(command, 60, env=environment, cwd=str(tmp_path))
-        assert 'PYWINAUTO-RIG: native import PASS' in result
-        assert rig.tree_digest(dependencies, entries=('comtypes', 'pywinauto')) == native_before
-        print(result.strip())
-    finally:
-        job.close()
-        if desktop is not None:
-            desktop.close()
-
-
 @pytest.mark.parametrize('owned', [True, False])
 def test_nograph_readiness_uses_the_isolated_marker_and_owned_listener(tmp_path, monkeypatch, owned):
     import http.server

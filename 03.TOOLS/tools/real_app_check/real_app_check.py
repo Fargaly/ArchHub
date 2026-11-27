@@ -9,7 +9,7 @@ real window did). Every agent uses this one tool.
 
 Guarantees:
   * A hidden desktop with a run-unique name (CreateDesktopW). The report proves the app's window is on
-    it and belongs to this run's own processes. Native dialogs open there; pywinauto drives them there.
+    it and belongs to this run's own processes. Native dialogs open there and are driven there by window messages.
   * Isolated profile: APPDATA, LOCALAPPDATA, USERPROFILE (with its shell folders), HOME, TEMP,
     CLAUDE_CONFIG_DIR and ARCHHUB_TEST_STATE_DIR point into the run folder; agent/session variables
     are dropped; own profile lock and CDP port; no bytecode; the launch directory is the run folder. The
@@ -442,18 +442,6 @@ class HiddenDesktop:
             self.handle = None
 
 
-def native_application(cache):
-    """Keep generated COM wrappers in this run, never in the installed environment."""
-    import types
-    import comtypes
-    cache.mkdir(parents=True, exist_ok=True)
-    generated = types.ModuleType('comtypes.gen')
-    generated.__path__ = [str(cache)]
-    sys.modules['comtypes.gen'] = comtypes.gen = generated
-    from pywinauto import Application
-    return Application
-
-
 def native_folder_action(request):
     """Operate only the requested native dialog in this rig on its hidden desktop."""
     user = ctypes.windll.user32
@@ -512,19 +500,52 @@ def native_folder_action(request):
         if user.IsWindow(dialog):
             raise RuntimeError('The native Save session dialog did not close')
         return {'title': request['title'], 'cancelled': True, 'closed': True}
-    Application = native_application(Path(os.environ['LOCALAPPDATA']) / 'comtypes')
-    dialog = Application(backend='uia').connect(handle=handles[0]).window(handle=handles[0])
-    edits = dialog.descendants(control_type='Edit')
-    named = [edit for edit in edits if edit.element_info.name.rstrip(':').casefold() in
-             {'folder', 'folder name', 'file name'}]
-    edits = named or edits
-    if len(edits) != 1:
-        raise RuntimeError("Folder dialog Edit is ambiguous")
-    edits[0].set_edit_text(request['folder'])
-    if edits[0].get_value() != request['folder']:
+    # UI Automation raises COMError on the rig desktop; the #32770 dialog takes plain window messages.
+    dialog = w.HWND(handles[0])
+    user.GetDlgCtrlID.argtypes, user.GetParent.argtypes, user.GetParent.restype = (w.HWND,), (w.HWND,), w.HWND
+    user.SendMessageW.argtypes, user.SendMessageW.restype = (w.HWND, w.UINT, w.WPARAM, ctypes.c_void_p), ctypes.c_ssize_t
+    edits = []
+
+    def child(handle, _):
+        kind = ctypes.create_unicode_buffer(80)
+        user.GetClassNameW(w.HWND(handle), kind, len(kind))
+        if kind.value == 'Edit' and user.IsWindowVisible(w.HWND(handle)):
+            # The Folder / File name field is the edit inside combo box 1148 (cmb13).
+            parent, ids = handle, []
+            while parent and parent != dialog.value:
+                ids.append(user.GetDlgCtrlID(w.HWND(parent)))
+                parent = user.GetParent(w.HWND(parent))
+            edits.append((handle, ids))
+        return True
+    user.EnumChildWindows.argtypes = (w.HWND, callback, w.LPARAM)
+    user.EnumChildWindows(dialog, callback(child), 0)
+    named = [handle for handle, ids in edits if 1148 in ids]
+    chosen = named if named else [handle for handle, _ in edits]
+    if len(chosen) != 1:
+        raise RuntimeError("Folder dialog Edit is ambiguous: " + json.dumps([ids for _, ids in edits]))
+    edit = w.HWND(chosen[0])
+    text = ctypes.create_unicode_buffer(request['folder'])
+    if not user.SendMessageW(edit, 0x000C, 0, ctypes.cast(text, ctypes.c_void_p)):  # WM_SETTEXT
+        raise RuntimeError("Folder field refused the text")
+    readback = ctypes.create_unicode_buffer(len(request['folder']) + 2)
+    user.SendMessageW(edit, 0x000D, len(readback), ctypes.cast(readback, ctypes.c_void_p))  # WM_GETTEXT
+    if readback.value != request['folder']:
         raise RuntimeError("Folder field readback differs")
-    dialog.child_window(auto_id='1', control_type='Button').invoke()
-    dialog.wait_not('exists')
+    user.GetDlgItem.argtypes, user.GetDlgItem.restype = (w.HWND, ctypes.c_int), w.HWND
+    ok = user.GetDlgItem(dialog, 1)
+    if not ok:
+        raise RuntimeError('Expected the OK button in the folder dialog')
+    # The first press may only navigate into the typed folder; the next one selects it.
+    for _ in range(3):
+        if not user.PostMessageW(w.HWND(ok), 0x00F5, 0, 0):  # BM_CLICK
+            raise ctypes.WinError()
+        deadline = time.monotonic() + 3
+        while user.IsWindow(dialog) and time.monotonic() < deadline:
+            time.sleep(min(.05, max(0, deadline - time.monotonic())))
+        if not user.IsWindow(dialog):
+            break
+    if user.IsWindow(dialog):
+        raise RuntimeError('The native folder dialog did not close')
     return {'title': request['title'], 'folder': request['folder'], 'closed': True}
 
 
@@ -707,8 +728,8 @@ def main(argv=None) -> int:
         parser.error("--verify-warm-close is a native installed-only check")
     if not args.verify_warm_close and args.scenario is None:
         parser.error("--scenario is required for the Studio check")
-    if args.reuse_qa_profile and (args.verify_warm_close or args.overlay):
-        parser.error("Reusing QA sign-in is for installed Studio scenarios only")
+    if args.reuse_qa_profile and args.verify_warm_close:
+        parser.error("Reusing QA sign-in is for Studio scenarios only")
 
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
@@ -718,7 +739,7 @@ def main(argv=None) -> int:
     installed = args.app.resolve()
     python = installed / ".venv" / "Scripts" / "python.exe"
     report = {"installed": str(installed), "installed_code_before": tree_digest(installed)}
-    job = desktop = probe = profile_lease = qa_state = None
+    job = desktop = probe = profile_lease = qa_state = staged_copy = None
     qa_email = None
     failures, lines, timed_out, exit_code = [], [], False, None
     warm_trace, readbacks, warm_close_check, recent_writer = None, {}, None, None
@@ -738,7 +759,11 @@ def main(argv=None) -> int:
             run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=out))
         qa_state = run_dir / "state"
         report["stale_account_test_flags_cleared"] = clear_account_test_flags(qa_state)
-        app, label, laid = stage_app(installed, args.overlay.resolve() if args.overlay else None, run_dir)
+        # A reused QA profile stays data only. The candidate copy goes outside any governed workspace
+        # (the app derives its governed root from where its code runs) and is removed after the run.
+        if args.reuse_qa_profile and args.overlay:
+            staged_copy = Path(tempfile.mkdtemp(prefix="archhub-overlay-"))
+        app, label, laid = stage_app(installed, args.overlay.resolve() if args.overlay else None, staged_copy or run_dir)
         for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "claude-config", "state"):
             (run_dir / name).mkdir(parents=True, exist_ok=True)
         # Shell folders the Windows file dialogs list; without them a second error window opens.
@@ -864,6 +889,9 @@ def main(argv=None) -> int:
                 failures.append("FAIL: could not restore the isolated QA account connection: " + str(cleanup_error))
         if profile_lease is not None:
             profile_lease.close()
+        if staged_copy is not None:
+            shutil.rmtree(staged_copy, ignore_errors=True)
+            report["staged_copy_removed"] = not staged_copy.exists()
         report["probe"], report["probe_exit_code"], report["probe_timed_out"] = lines, exit_code, timed_out
         result = finalize_report(report, out, installed, failures)
     return result

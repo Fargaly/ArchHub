@@ -550,7 +550,7 @@ def callback(provider: str, code: str = "", state: str = "", error: str = "", er
     except (SocialOAuthError, urllib.error.URLError, ValueError, KeyError, TypeError) as exc:
         if stored:
             failure = str(exc) if isinstance(exc, SocialOAuthError) else _permission_failure(provider)
-            _LOG.warning("%s sign-in finished without a grant: %s", provider, failure)
+            _LOG.warning("%s sign-in finished without a grant: %s (%s)", provider, failure, _failure_detail(exc))
             return RedirectResponse(url=stored["return_url"] + "?" + urllib.parse.urlencode({
                 "provider": provider, "nonce": nonce, "error": failure}), status_code=302)
         raise HTTPException(status_code=400, detail={"error": str(exc)})
@@ -654,6 +654,19 @@ def whatsapp_verify_token() -> str:
 
 _WEBHOOK_STATE = {"ok": False, "error": ""}
 _LOG = logging.getLogger(__name__)
+
+
+def _failure_detail(exc: Exception) -> str:
+    """Which Meta call failed and Meta's own error code/type/message; the URL path only (no query, so no token)."""
+    if not isinstance(exc, urllib.error.HTTPError):
+        return type(exc).__name__ + ": " + str(exc)[:200]
+    try:
+        error = json.loads(exc.read(8192).decode("utf-8", "replace")).get("error", {})
+    except (ValueError, OSError, AttributeError):
+        error = {}
+    return "HTTP %d %s code=%s subcode=%s type=%s message=%s" % (
+        exc.code, urllib.parse.urlsplit(exc.url or "").path, error.get("code"), error.get("error_subcode"),
+        error.get("type"), str(error.get("message", ""))[:200])
 
 
 def _graph_error(exc: Exception) -> str:

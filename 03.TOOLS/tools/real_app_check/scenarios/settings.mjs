@@ -316,18 +316,28 @@ export default async function({input,label,shot,step:recordStep,js,until,clickTe
  });
  await step(steps[3],async()=>{
   const searchOpen=()=>js('Boolean(document.querySelector(\'[role="dialog"] [data-design="palette.input"]\')?.getClientRects().length)');
+  // Keys go to the focused element: wait on the real focus state before each key, never a fixed delay.
+  const searchFocused=()=>js('document.activeElement?.matches?.(\'[role="dialog"] [data-design="palette.input"]\')===true');
+  const capturing=()=>js('document.querySelector(\'button[aria-label="Change shortcut for Search and do"]\')?.textContent.trim()===\'Press keys...\'');
+  const pageFocused=()=>js('document.activeElement===document.body||document.activeElement===null');
+  // The header opens Search only when no dialog holds the app and nothing else holds focus.
+  await js('document.activeElement?.blur()');
+  assert.ok(await until(()=>js('!document.querySelector(\'[role="dialog"]\')'),Boolean),'A dialog was still open before Search');
+  assert.ok(await until(pageFocused,Boolean),'Focus stayed on a control before Search');
   await press('button[data-design="header.search"]');
   assert.ok(await until(searchOpen,Boolean),'The header did not open the Search input');
+  assert.ok(await until(searchFocused,Boolean),'The Search input never took focus');
   await key('Escape','Escape',27);
   assert.equal(await until(searchOpen,open=>!open),false,'Search remained open after Escape');
   const keys='details.sheet-keybindings';
   if(await js('document.querySelector('+JSON.stringify(keys)+')?.open===false'))await press(keys+' > summary');
-  await press('button[aria-label="Change shortcut for Search and do"]');await key('k','KeyK',75,3);
+  await press('button[aria-label="Change shortcut for Search and do"]');
+  assert.ok(await until(capturing,Boolean),'Shortcut capture did not start');await key('k','KeyK',75,3);
   const got=await until(snapshot,s=>s.keys?.['keyboard.search']==='Ctrl Alt K');assert.equal(got.keys['keyboard.search'],'Ctrl Alt K');
-  await js('document.activeElement?.blur()');await key('k','KeyK',75,2);
+  await js('document.activeElement?.blur()');assert.ok(await until(pageFocused,Boolean),'The page did not hold focus after blur');await key('k','KeyK',75,2);
   assert.equal(await searchOpen(),false);
   await key('k','KeyK',75,3);assert.ok(await until(searchOpen,Boolean),'The saved Ctrl Alt K shortcut did not open Search');
-  await key('Escape','Escape',27);assert.equal(json(file).properties.settings['Keyboard.keyboard.search'],'Ctrl Alt K');
+  assert.ok(await until(searchFocused,Boolean),'The Search input never took focus');await key('Escape','Escape',27);assert.equal(json(file).properties.settings['Keyboard.keyboard.search'],'Ctrl Alt K');
   return {pass:true,got:{saved:'Ctrl Alt K',oldShortcutInactive:true,newShortcutOpenedSearch:true}};
  });
  await step(steps[4],async()=>{

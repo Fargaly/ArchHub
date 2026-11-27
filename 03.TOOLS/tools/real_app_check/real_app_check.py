@@ -481,11 +481,11 @@ def native_folder_action(request):
         title = ctypes.create_unicode_buffer(user.GetWindowTextLengthW(handle) + 1)
         user.GetWindowTextW(handle, title, len(title))
         if pid.value in allowed and title.value == request['title']:
-            if cancel_save:
-                kind = ctypes.create_unicode_buffer(80)
-                user.GetClassNameW(w.HWND(handle), kind, len(kind))
-                if kind.value != '#32770' or not user.IsWindowVisible(w.HWND(handle)):
-                    return True
+            # Qt also makes a hidden same-titled top-level window; only the visible native dialog counts.
+            kind = ctypes.create_unicode_buffer(80)
+            user.GetClassNameW(w.HWND(handle), kind, len(kind))
+            if kind.value != '#32770' or not user.IsWindowVisible(w.HWND(handle)):
+                return True
             handles.append(handle)
         return True
     user.EnumDesktopWindows.argtypes = (w.HANDLE, callback, w.LPARAM)

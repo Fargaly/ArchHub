@@ -93,3 +93,73 @@ test('SESSIONWORK: one card per piece of work, lead and member avatars, interrup
     await page.close();
   } finally { await browser.close(); }
 });
+
+test('SESSIONWORK boot: workspaces, tasks and agents populate before slow update/account checks even on canvas surface', async () => {
+  const vm = require('node:vm');
+  const crypto = require('node:crypto');
+  const window = {
+    ARCHHUB_AUTHORITY: {},
+    structuredClone: globalThis.structuredClone,
+    ARCHHUB_BOOT: {home_load_ms: 60000, token: 'lease', csrf: 'csrf'},
+    Uint8Array: globalThis.Uint8Array,
+    dispatchEvent() {},
+    addEventListener() {},
+    setInterval: () => 1,
+    clearInterval() {},
+    AH: {inkSoft: '#888'},
+    crypto,
+  };
+  window.ArchHubStudioAuthority = {
+    create: ({get}) => {
+      let snapshot = null;
+      return {
+        load: async () => { snapshot = {canvas: await get('/api/universal/canvas')}; return snapshot.canvas; },
+        getSnapshot: () => snapshot,
+        clear: () => { snapshot = null; },
+        adopt: async c => { snapshot = {canvas: c}; return c; },
+        transact: async action => { const c = await action(); snapshot = {canvas: c}; return c; },
+      };
+    },
+  };
+  const never = new Promise(() => {});
+  const context = {
+    window,
+    setTimeout,
+    clearTimeout,
+    document: {hidden: false, addEventListener() {}},
+    CustomEvent: class {},
+    sessionStorage: {getItem() { return null; }, setItem() {}},
+    URLSearchParams,
+    TextEncoder: globalThis.TextEncoder,
+    AbortSignal: globalThis.AbortSignal,
+    console,
+    fetch: async (url, options) => {
+      const body = options?.body ? JSON.parse(options.body) : {};
+      if (url === '/api/universal/application-update' || url === '/api/universal/cloud-session') return never;
+      if (url === '/api/universal/desktop-access') return {ok: true, status: 200, json: async () => ({admitted: true, state: 'admitted', subject: 'test-subject', email: null})};
+      if (url === '/api/commands') return {ok: true, status: 200, json: async () => ({ok: true, contexts: [], commands: []})};
+      if (url === '/api/session-files' && body.action === 'initial') return {ok: true, status: 200, json: async () => ({ok: true, path: 'work.archhub', document: {id: 'doc-1', title: 'Work', nodes: [], wires: [], groups: [], notes: [], properties: {revision: 1}}})};
+      if (url === '/api/session-files' && body.action === 'catalogue') return {ok: true, status: 200, json: async () => ({ok: true, directory: 'sessions', items: [], sessions: []})};
+      if (url === '/api/universal/workspace-roots') return {ok: true, status: 200, json: async () => ({ok: true, roots: [{root_id: 'ws-1', label: 'Tower', path: 'C:/Work/Tower'}]})};
+      if (url === '/api/universal/workshop' && body.function === 'listTasks') return {ok: true, status: 200, json: async () => ({ok: true, result: [{id: 'task-1', title: 'Live session', status: 'WIP', workflow: []}]})};
+      if (url === '/api/universal/workshop' && body.function === 'listWorkshopMessages') return {ok: true, status: 200, json: async () => ({ok: true, result: {messages: []}})};
+      if (url === '/api/universal/workshop' && body.function === 'listLiveAgents') return {ok: true, status: 200, json: async () => ({ok: true, result: []})};
+      if (url === '/api/universal/workshop') return {ok: true, status: 200, json: async () => ({ok: true, result: []})};
+      if (url === '/api/universal/agents-canvas') return {ok: true, status: 200, json: async () => ({ok: true, agents: [{id: 'claude', name: 'Claude Code', runtime: 'claude', presence: 'working'}], sessions: [{id: 'decl-1', name: 'Builder', vendor: 'claude', status: 'working', task: 'task-1', taskTitle: 'Live session'}], tasks: [], wires: []})};
+      return {ok: true, status: 200, json: async () => ({ok: true})};
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(studio, 'api.js'), 'utf8'), context);
+  window.ArchHubAPI.setActiveSurface('canvas');
+  await window.ArchHubAPI.ready;
+  for (let i = 0; i < 20 && !window.ArchHubAPI.getSnapshot().agentGraph?.sessions?.length; i++) {
+    await new Promise(r => setTimeout(r, 10));
+  }
+  const snap = window.ArchHubAPI.getSnapshot();
+  assert.equal(snap.workspaces.length, 1);
+  assert.equal(snap.tasks.length, 1);
+  assert.equal(snap.tasks[0].id, 'task-1');
+  assert.equal(snap.agentGraph.sessions.length, 1);
+  assert.equal(snap.agentGraph.sessions[0].task, 'task-1');
+});
+

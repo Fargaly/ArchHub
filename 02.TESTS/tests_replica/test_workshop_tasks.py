@@ -815,3 +815,175 @@ def test_agents_resume_the_same_task_or_create_a_child_in_its_session(tmp_path, 
         assert workshop_tasks._matching_open_task(history, "Project B", "Review plans", "") == task
         assert workshop_tasks._matching_open_task(history, "Project A", "Review plans", "") is None
         assert len(workshop_tasks.rows(history)) == 2
+
+
+def test_stop_refresh_preserves_parent_and_subtask_claims_and_title(tmp_path, monkeypatch):
+    from nodelang.workshop_mailbox import call
+
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "Coordinate release lanes", "tester")["id"]
+        subtasks = [
+            workshop_tasks.create(history, "Subtask %d" % idx, "tester", parent=parent)["id"]
+            for idx in range(3)
+        ]
+    ctx = {"claude/sessionID": "stop-preserve-claims"}
+    declared = call(
+        "declare",
+        {"task": "Coordinate release lanes", "paths": [str(tmp_path)], "status": "working", "request_id": parent},
+        ctx,
+    )["declaration"]
+    assert declared["work"] == parent
+    for sub in subtasks:
+        assert call("task_claim", {"id": sub}, ctx)["ok"] is True
+
+    refreshed = call(
+        "declare",
+        {"task": "Session start", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned", "kind": "refresh"},
+        ctx,
+    )["declaration"]
+    assert refreshed["task"] == "Coordinate release lanes"
+    assert refreshed["request_id"] == parent
+    assert refreshed["work"] in subtasks
+
+    with application_history() as history:
+        for tid in [parent, *subtasks]:
+            row = workshop_tasks.get(history, tid)
+            assert row["status"] == "claimed" and not row["lease_expired"], (tid, row)
+
+
+def test_subtask_reclaim_after_manual_release_or_clean_lapse_while_dirty_blocks_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "Parent session", "tester")["id"]
+        sub_manual = workshop_tasks.create(history, "Manual handoff subtask", "tester", parent=parent)["id"]
+        sub_lapsed = workshop_tasks.create(history, "Long test run subtask", "tester", parent=parent)["id"]
+        sub_dirty = workshop_tasks.create(history, "Dirty write subtask", "tester", parent=parent)["id"]
+        sub_paused = workshop_tasks.create(history, "Paused subtask", "tester", parent=parent)["id"]
+        sub_quota = workshop_tasks.create(history, "Quota subtask", "tester", parent=parent)["id"]
+
+        # 1. Manual release with write_open=0 allows same sender_key (in-process subagent) to re-claim.
+        assert workshop_tasks.claim(history, sub_manual, "shared-session", "Coordinator")
+        assert workshop_tasks.release(history, sub_manual, "shared-session", reason="manual")
+        assert workshop_tasks.claim(history, sub_manual, "shared-session", "Subagent")
+
+        # 2. 15-min lease lapse with write_open=0 (outcome='interrupted') allows re-claim and completion.
+        assert workshop_tasks.claim(history, sub_lapsed, "builder-a", "Builder A", lease_seconds=30)
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (sub_lapsed,))
+        lapsed = workshop_tasks.get(history, sub_lapsed)
+        assert lapsed["status"] == "open" and lapsed["outcome"] == "interrupted"
+        assert workshop_tasks.claim(history, sub_lapsed, "builder-a", "Builder A", lease_seconds=30)
+        assert workshop_tasks.complete(history, sub_lapsed, "builder-a", "green")
+
+        # 3. write_open=1 lapse (outcome='unknown') STILL blocks replay by previous owner.
+        assert workshop_tasks.claim(history, sub_dirty, "builder-b", "Builder B", lease_seconds=30)
+        assert workshop_tasks.mark_writing(history, sub_dirty, "builder-b")
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (sub_dirty,))
+        dirty = workshop_tasks.get(history, sub_dirty)
+        assert dirty["outcome"] == "unknown"
+        assert not workshop_tasks.claim(history, sub_dirty, "builder-b", "Builder B")
+
+        # 4. Explicit paused or quota release STILL blocks replay by previous owner even with write_open=0.
+        assert workshop_tasks.claim(history, sub_paused, "builder-c", "Builder C")
+        assert workshop_tasks.release(history, sub_paused, "builder-c", reason="paused")
+        assert not workshop_tasks.claim(history, sub_paused, "builder-c", "Builder C")
+
+        assert workshop_tasks.claim(history, sub_quota, "builder-d", "Builder D")
+        assert workshop_tasks.release(history, sub_quota, "builder-d", reason="quota")
+        assert not workshop_tasks.claim(history, sub_quota, "builder-d", "Builder D")
+
+
+def test_agents_canvas_resolves_live_subtask_claim_and_idles_unbound_session_start(tmp_path, monkeypatch):
+    from nodelang import nograph_server
+    from nodelang.workshop_mailbox import call
+
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(nograph_server, "_list_agents", lambda: [])
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "Main session", "tester")["id"]
+        subtask = workshop_tasks.create(history, "Active builder piece", "tester", parent=parent)["id"]
+
+    builder_ctx = {"claude/sessionID": "canvas-subtask-builder"}
+    boot_ctx = {"claude/sessionID": "canvas-unbound-boot"}
+
+    decl = call(
+        "declare",
+        {"task": "Working on parent", "paths": [str(tmp_path)], "status": "working", "request_id": parent},
+        builder_ctx,
+    )["declaration"]
+    owner = decl["session"]
+    # Seed an archived legacy declared-* row for this owner; r_agents_canvas must never resolve to it.
+    legacy_id = workshop_tasks._declared_id(owner)
+    with application_history() as history:
+        workshop_tasks._write(
+            history,
+            "INSERT INTO workshop_tasks(id,title,status,owner,created_by,created_at,updated_at,archived) "
+            "VALUES(?,'Archived old row','done',?,'Agent',?,?,1)",
+            (legacy_id, owner, workshop_tasks._now(), workshop_tasks._now()),
+        )
+
+    assert call("task_claim", {"id": subtask}, builder_ctx)["ok"] is True
+    call(
+        "declare",
+        {"task": "Session start", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned", "kind": "start"},
+        boot_ctx,
+    )
+
+    graph = nograph_server.r_agents_canvas(None, None)
+    by_id = {s["id"]: s for s in graph["sessions"]}
+    assert by_id[decl["root"]]["task"] == subtask
+    assert by_id[decl["root"]]["status"] == "working"
+
+    # Even if work is cleared in workshop_declarations, live_claimed still resolves the active subtask (not legacy_id).
+    with application_history() as history, history._transaction(write=True):
+        history._db.execute(
+            "UPDATE workshop_declarations SET record=json_remove(record,'$.work','$.request_id') WHERE root=?",
+            (decl["root"],),
+        )
+    graph2 = nograph_server.r_agents_canvas(None, None)
+    by_id2 = {s["id"]: s for s in graph2["sessions"]}
+    assert by_id2[decl["root"]]["task"] == subtask
+    boot_session = next(s for k, s in by_id2.items() if k != decl["root"])
+    assert boot_session["task"] is None
+    assert boot_session["status"] == "idle"
+
+
+def test_send_binds_subtask_and_parent_refs_for_explicit_prefix_and_live_claim(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from mcp import types
+    from nodelang import native_agent_mcp
+    from nodelang.workshop_mailbox import call
+
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        parent = workshop_tasks.create(history, "Parent board", "tester")["id"]
+        sub_explicit = workshop_tasks.create(history, "Explicit subtask", "tester", parent=parent)["id"]
+        sub_prefix = workshop_tasks.create(history, "Prefix subtask", "tester", parent=parent)["id"]
+        sub_claimed = workshop_tasks.create(history, "Claimed subtask", "tester", parent=parent)["id"]
+
+    server = native_agent_mcp.build_server()
+    server._mailbox_stop()
+    send_tool = server._tool_manager.get_tool("send").fn
+
+    ctx_explicit = SimpleNamespace(
+        request_context=SimpleNamespace(meta=types.RequestParams.Meta(**{"threadId": "send-explicit"}))
+    )
+    send_tool("room", "Explicit task report", ctx_explicit, task=sub_explicit[:8])
+
+    call("send", {"to": "room", "text": "Finished Task %s cleanly." % sub_prefix[:8]}, {"threadId": "send-prefix"})
+
+    claim_ctx = {"threadId": "send-claimed"}
+    call("declare", {"task": "Building piece", "paths": [str(tmp_path)], "status": "working", "request_id": "SESSIONWORK"}, claim_ctx)
+    assert call("task_claim", {"id": sub_claimed}, claim_ctx)["ok"] is True
+    call("send", {"to": "room", "text": "Status update without explicit id"}, claim_ctx)
+
+    with application_history() as history:
+        cols = {r["id"]: r for r in workshop_tasks.column(history)}
+    assert any("Explicit task report" in m["text"] for m in cols[sub_explicit]["agentLog"])
+    assert any("Finished Task" in m["text"] for m in cols[sub_prefix]["agentLog"])
+    assert any("Status update without explicit id" in m["text"] for m in cols[sub_claimed]["agentLog"])
+    parent_texts = " | ".join(m["text"] for m in cols[parent]["agentLog"])
+    assert "Explicit task report" in parent_texts
+    assert ("Finished Task %s" % sub_prefix[:8]) in parent_texts
+    assert "Status update without explicit id" in parent_texts
+

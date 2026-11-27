@@ -2014,6 +2014,10 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
             archived = json.loads(record)
             if not archived.get("role") and not _session_alive(archived):
                 expired.append(archived["root"])
+    from .workshop_tasks import _request_of
+    placeholder_tasks = ("", "Session start", "Starting; task details pending")
+    incoming_task, incoming_request = task.strip(), request.strip()
+    is_stop_refresh = kind == "refresh" and incoming_task in placeholder_tasks and not _request_of(incoming_request)
     with history._transaction(write=True):
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_declarations("
                             "root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
@@ -2025,6 +2029,11 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
         if old and task == "Session start" and old.get("role") and metadata.get("role", "").startswith("builder:"):
             metadata["role"] = old["role"]
         row.update(metadata)
+        if is_stop_refresh and old:
+            if old.get("task") not in (None, *placeholder_tasks):
+                row["task"] = old["task"]
+            if _request_of(old.get("request_id")):
+                row["request_id"] = old["request_id"]
         changed = old is None or any(old.get(key) != value for key, value in row.items())
         row.update(version=(old["version"] if old else 0) + int(changed),
                    updated_at=datetime.now(timezone.utc).isoformat())
@@ -2034,10 +2043,17 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
             history._db.execute("DELETE FROM workshop_declarations WHERE root=? "
                                 "AND json_extract(record,'$.updated_at')<?", (archived, cutoff))
     if row["request_id"]:   # every declare joins a piece of work; "unassigned" is a declare with no request (rule 3)
-        from .workshop_tasks import declared
-        work = declared(history, root, row["request_id"], row["task"], row["status"],
+        from .workshop_tasks import declared, get as get_task, _live
+        work = declared(history, root, incoming_request if is_stop_refresh else row["request_id"],
+                        incoming_task if is_stop_refresh else row["task"], row["status"],
                         identity["sender_key"], identity["sender_label"], row["project"],
                         inherited=_inherited_work(history, root, row["process_lineage"]), changed=changed, kind=kind, continue_task=body.get("continue_task") or "")
+        if not work and not _request_of(incoming_request) and row["status"] != "done" and old and old.get("work"):
+            kept = get_task(history, old["work"])
+            if kept and kept["status"] != "done" and not kept.get("archived") and any(
+                m.get("owner") == identity["sender_key"] for m in _live(kept.get("members") or [])
+            ):
+                work = old["work"]
         if work:
             row["work"] = work
             with history._transaction(write=True):
@@ -2130,7 +2146,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 "declare": {"task", "paths", "status", "request_id"},  # optional kind: start, refresh (default), alias
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind", "continue_task"}, "pending":set(), "seen":set(),
+    optional = {"send": {"reply_to", "idempotency_key", "native_control", "task"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind", "continue_task"}, "pending":set(), "seen":set(),
                 "task_create": {"parent", "canvas_task", "piece", "continue_task", "intent"}, "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": {"reason", "handover"},
                 "task_complete": {"result"},
                 "task_set_session": {"begin_write", "reconcile", "acceptance", "scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},
@@ -2260,12 +2276,55 @@ def attach_meeting_notes(history, task, text):
                           idempotency_key='meeting-notes:' + sha256((task + '\0' + text).encode()).hexdigest())
 
 
+def _sync_declaration_work(history, sender_key, preferred_task=None):
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
+        return
+    decls = history._db.execute(
+        "SELECT root, json_extract(record,'$.work') FROM workshop_declarations "
+        "WHERE json_extract(record,'$.session')=? AND json_extract(record,'$.status')!='done'",
+        (sender_key,),
+    ).fetchall()
+    if not decls:
+        return
+    from . import workshop_tasks
+    best = None
+    if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
+        now = time.time()
+        live_rows = history._db.execute(
+            "SELECT id, parent_id FROM workshop_tasks WHERE " + workshop_tasks._OPEN_WORK
+            + " AND " + workshop_tasks._LIVE_MEMBER
+            + " ORDER BY (parent_id IS NOT NULL) DESC, updated_at DESC",
+            (sender_key, now),
+        ).fetchall()
+        live_ids = {r[0]: r[1] for r in live_rows}
+        if preferred_task and preferred_task in live_ids:
+            child = next((r[0] for r in live_rows if r[1] == preferred_task), None)
+            best = child or preferred_task
+        elif live_rows:
+            best = live_rows[0][0]
+    with history._transaction(write=True):
+        for root, current_work in decls:
+            if best and current_work != best:
+                history._db.execute(
+                    "UPDATE workshop_declarations SET record=json_set(record,'$.work',?) WHERE root=?",
+                    (best, root),
+                )
+            elif not best and current_work is not None:
+                history._db.execute(
+                    "UPDATE workshop_declarations SET record=json_remove(record,'$.work') WHERE root=?",
+                    (root,),
+                )
+
+
 def _task(history, method, body, identity, project=""):
     from . import workshop_tasks
     me, label = identity["sender_key"], identity["sender_label"]
     if method == "task_create":
-        return workshop_tasks.agent_task_session(history, body["title"], label, me, project=project,
+        created = workshop_tasks.agent_task_session(history, body["title"], label, me, project=project,
             **{key: body.get(key) or "" for key in ("parent", "canvas_task", "piece", "continue_task", "intent")})
+        if created.get("joined") and created.get("task"):
+            _sync_declaration_work(history, me, preferred_task=created["task"]["id"])
+        return created
     if method == "task_list":
         return {"tasks": workshop_tasks.rows(history, include_archived=False)}
     task = _text(body["id"], "task id", 64)
@@ -2295,13 +2354,19 @@ def _task(history, method, body, identity, project=""):
         return {"ok": won, "task": workshop_tasks.get(history, task)}
     if method == "task_claim":
         won = workshop_tasks.claim(history, task, me, label, body.get("lease_seconds"))
+        if won:
+            _sync_declaration_work(history, me, preferred_task=task)
     elif method == "task_release":
         won = workshop_tasks.release(history, task, me, reason=body.get("reason") or "", handover=body.get("handover"))
+        if won:
+            _sync_declaration_work(history, me)
     else:
         result = body.get("result", "")
         if type(result) is not str or len(result.encode("utf-8")) > 20000:
             raise ValueError("Invalid task result")
         won = workshop_tasks.complete(history, task, me, result)
+        if won:
+            _sync_declaration_work(history, me)
     return {"ok": won, "task": workshop_tasks.get(history, task)}
 
 
@@ -2454,6 +2519,12 @@ def _validate_send(body):
     reply = body.get("reply_to")
     if reply is not None:
         _text(reply, "reply reference", 512)
+    task_ref = body.get("task")
+    if task_ref is not None:
+        if type(task_ref) is not str:
+            raise ValueError("Invalid task reference")
+        if task_ref.strip():
+            _text(task_ref, "task reference", 128)
     retry_key = _text(body.get("idempotency_key", uuid4().hex), "retry key", 256)
     return target, text, control, reply, retry_key
 
@@ -2465,6 +2536,81 @@ def _task_refs(history, message_id):
         return ()
     return tuple(ref for ref in json.loads(held[0] or "[]") if isinstance(ref, str)
                  and history._db.execute("SELECT 1 FROM workshop_tasks WHERE id=?", (ref,)).fetchone())
+
+
+def _resolve_message_tasks(history, explicit_task, text, sender_key, sender_decl):
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
+        return ()
+    from . import workshop_tasks
+
+    def expand(rows):
+        out = []
+        for tid, parent_id in rows:
+            if tid and tid not in out:
+                out.append(tid)
+            if parent_id and parent_id not in out:
+                out.append(parent_id)
+        return tuple(out)
+
+    task_arg = str(explicit_task or "").strip()
+    if task_arg:
+        exact = history._db.execute(
+            "SELECT id, parent_id FROM workshop_tasks WHERE id=? AND IFNULL(archived,0)=0",
+            (task_arg,),
+        ).fetchone()
+        if exact:
+            return expand((exact,))
+        if re.fullmatch(r"[0-9a-f]{8,32}", task_arg):
+            matches = history._db.execute(
+                "SELECT id, parent_id FROM workshop_tasks WHERE IFNULL(archived,0)=0 "
+                "AND id NOT LIKE 'declared-%' AND id LIKE ? || '%' LIMIT 2",
+                (task_arg,),
+            ).fetchall()
+            if len(matches) == 1:
+                return expand(matches)
+
+    tokens = list(dict.fromkeys(re.findall(r"(?<!msg-)\b[0-9a-f]{8,32}\b", text or "")))
+    if tokens:
+        found = []
+        for token in tokens:
+            matches = history._db.execute(
+                "SELECT id, parent_id FROM workshop_tasks WHERE " + workshop_tasks._OPEN_WORK
+                + " AND id LIKE ? || '%' LIMIT 2",
+                (token,),
+            ).fetchall()
+            if not matches:
+                matches = history._db.execute(
+                    "SELECT id, parent_id FROM workshop_tasks WHERE IFNULL(archived,0)=0 "
+                    "AND id NOT LIKE 'declared-%' AND id LIKE ? || '%' LIMIT 2",
+                    (token,),
+                ).fetchall()
+            if len(matches) == 1:
+                found.append(matches[0])
+        if found:
+            return expand(found)
+
+    now = time.time()
+    live_rows = history._db.execute(
+        "SELECT id, parent_id FROM workshop_tasks WHERE " + workshop_tasks._OPEN_WORK
+        + " AND " + workshop_tasks._LIVE_MEMBER
+        + " ORDER BY (parent_id IS NOT NULL) DESC, updated_at DESC",
+        (sender_key, now),
+    ).fetchall()
+    work_id = (sender_decl or {}).get("work")
+    if work_id and not str(work_id).startswith("declared-"):
+        work_row = history._db.execute(
+            "SELECT id, parent_id FROM workshop_tasks WHERE id=? AND " + workshop_tasks._OPEN_WORK,
+            (work_id,),
+        ).fetchone()
+        if work_row:
+            if not work_row[1]:
+                child = next((r for r in live_rows if r[1] == work_row[0]), None)
+                if child:
+                    return expand((child,))
+            return expand((work_row,))
+    if live_rows:
+        return expand((live_rows[0],))
+    return ()
 
 
 def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_live=False, explicit=None):
@@ -2513,6 +2659,8 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
                 resolved.add(part)
     if reply and not queued:
         queued = _task_refs(history, reply)   # a reply stays in the session thread its question was asked in
+    if not queued:
+        queued = _resolve_message_tasks(history, body.get("task"), text, identity["sender_key"], sender)
     with history._transaction(write=True):
         routing = {"recipients":[{key: row.get(key) for key in
             ("session", "agent", "runtime", "native_session_id")} for row in recipients],

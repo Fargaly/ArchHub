@@ -449,8 +449,10 @@ window.addEventListener('archhub:update-ready',()=>{
 async function refreshLive() {
  if(!ready||!desktopAdmitted()||document.hidden||listeners.size===0)return state.tasks;
  if(activeSurface==='canvas'){
-  if(!canvasRefresh)canvasRefresh=api.tickSchedules(true)
-   .catch(error=>{if(error.status===403)clearCanvas();publish({connectionNotice:error.message});}).finally(()=>{canvasRefresh=null;});
+  if(!canvasRefresh)canvasRefresh=(async()=>{
+   await api.tickSchedules(true);
+   if(!agentsChecked)await refreshAgents();
+  })().catch(error=>{if(error.status===403)clearCanvas();publish({connectionNotice:error.message});}).finally(()=>{canvasRefresh=null;});
   return canvasRefresh;
  }
  // The same timer refreshes rows even while account/provider discovery is slow.
@@ -2873,7 +2875,10 @@ async function loadDesktop(){
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{
   // The saved sessions arrive with the Library catalogue above (one read of every file), so the tasks never wait behind a second one.
-  for(const refresh of [api.listWorkspaces,refreshSettingsControls,refreshApplicationUpdate,refreshAccount,api.listProviders,refreshTasks,refreshAgents]){
+  for(const refresh of [api.listWorkspaces,refreshTasks,refreshAgents]){
+   try{await refresh();}catch(error){publish({connectionNotice:error.message});}
+  }
+  for(const refresh of [refreshSettingsControls,refreshApplicationUpdate,refreshAccount,api.listProviders]){
    if(activeSurface==='canvas')break;
    try{await refresh();}catch(error){if(refresh!==refreshApplicationUpdate)publish({connectionNotice:error.message});}
   }

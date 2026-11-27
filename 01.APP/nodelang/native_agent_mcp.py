@@ -330,7 +330,7 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         return result
 
     @server.tool(name="send")
-    def send(to: str, text: str, ctx: Context, reply_to: str = "", idempotency_key: str = "") -> dict[str, object]:
+    def send(to: str, text: str, ctx: Context, reply_to: str = "", idempotency_key: str = "", task: str = "") -> dict[str, object]:
         """Post into the Workshop. Name one peer to deliver it to that agent only.
 
         to='*' is a room note: every reader in your project can see it, and it is injected
@@ -341,7 +341,8 @@ def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_
         context = _caller_context(ctx)
         start(context)
         return call("send", {"to": to, "text": text, **({"reply_to":reply_to} if reply_to else {}),
-            **({"idempotency_key": idempotency_key} if idempotency_key else {})}, context)
+            **({"idempotency_key": idempotency_key} if idempotency_key else {}),
+            **({"task": task} if task else {})}, context)
 
     @server.tool(name="read", annotations=ToolAnnotations(destructiveHint=False))
     def read(ctx: Context, since: int = 0, declarations_after: str = "", include_archived: bool = False) -> dict[str, object]:

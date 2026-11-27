@@ -486,7 +486,9 @@ def claim(history, task, owner, label, lease_seconds=None, revision=None):
                 "write_open=CASE WHEN owner=? THEN write_open ELSE 0 END, handover_route=NULL, "
                 "updated_at=?, revision=revision+1 WHERE id=? AND revision=? "
                 "AND status!='done' AND IFNULL(archived,0)=0 AND (parent_id IS NULL OR owner IS NULL OR owner=?) "
-                "AND (json_extract(handover_route,'$.previous') IS NOT ? OR owner=?) "
+                "AND (json_extract(handover_route,'$.previous') IS NOT ? OR owner=? "
+                "OR (COALESCE(outcome,'') NOT IN ('unknown','reconciled_applied') "
+                "AND COALESCE(json_extract(handover_route,'$.reason'),'') NOT IN ('paused','quota','quota_exhausted'))) "
                 "AND (json_extract(handover_route,'$.offered') IS NULL OR json_extract(handover_route,'$.offered')=?)",
                 (owner, label, lease, json.dumps(members), owner, _now(), task, expected, owner, owner, owner, owner))
     return _update(history, task, revision, statement)
@@ -940,8 +942,19 @@ def _session_for(history, owner, project, request, inherited, hours, kind="refre
 
 def _leave_other_sessions(history, task, owner):
     """An agent that moves to another piece of work ends its lease in the one it left; it stays listed there."""
-    held = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND id!=? AND status='claimed' AND "
-                               + _MEMBER, (task, owner)).fetchall()
+    current = get(history, task)
+    current_path = (current or {}).get("session_path") or ""
+    current_parent = (current or {}).get("parent_id") or ""
+    sql = (
+        "SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK
+        + " AND id!=? AND id!=? AND IFNULL(parent_id,'')!=? AND (? = '' OR IFNULL(parent_id,'')!=?)"
+        + " AND status='claimed' AND " + _MEMBER
+    )
+    params = [task, current_parent, task, current_parent, current_parent, owner]
+    if current_path:
+        sql += " AND IFNULL(session_path,'')!=?"
+        params.append(current_path)
+    held = history._db.execute(sql, params).fetchall()
     for (other,) in held:
         release(history, other, owner)
 
@@ -1040,6 +1053,29 @@ def agent_task_session(history, title, creator, owner, *, project='', intent='',
         return {"task": get(history, task), "session": view, "joined": bool(joined)}
 
 
+def _prefix_open_task(history, request, title):
+    """Resolve a unique lowercase 8..32-hex prefix in request or title to an open non-declared task."""
+    for source in (request or "", title or ""):
+        tokens = list(dict.fromkeys(re.findall(r"(?<!msg-)\b[0-9a-f]{8,32}\b", source)))
+        if not tokens:
+            continue
+        matched = set()
+        ambiguous = False
+        for token in tokens:
+            rows = history._db.execute(
+                "SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND id LIKE ? || '%' LIMIT 2",
+                (token,),
+            ).fetchall()
+            if len(rows) > 1:
+                ambiguous = True
+                break
+            if len(rows) == 1:
+                matched.add(rows[0][0])
+        if not ambiguous and len(matched) == 1:
+            return next(iter(matched))
+    return None
+
+
 def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True, kind="refresh", continue_task=""):
     """An agent's declare joins one session (a piece of work) and returns its task id, or False.
 
@@ -1053,17 +1089,48 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     request = _request_of(request_id)
     if not request and not continue_task and (status == "done" or kind == "alias"):
         return False
+    if kind == "refresh" and not request and not continue_task and status != "done":
+        now = time.time()
+        with history._transaction(write=True):
+            _ensure(history)
+            live_rows = history._db.execute(
+                "SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK
+                + " AND IFNULL(project,'') IN ('',?) AND " + _LIVE_MEMBER
+                + " ORDER BY (parent_id IS NOT NULL) DESC, updated_at DESC",
+                (project or "", owner, now),
+            ).fetchall()
+            targets = [r[0] for r in live_rows]
+            if not targets:
+                fallback = _own_membership(history, owner, project) or (
+                    _own_membership(history, owner, "") if project else None
+                )
+                if fallback:
+                    targets = [fallback]
+            if targets:
+                is_placeholder = title.strip() in ("", "Session start", "Starting; task details pending")
+                explicit = None if is_placeholder else (
+                    _matching_open_task(history, project, title, request)
+                    or _prefix_open_task(history, request, title)
+                )
+                if not explicit or explicit in targets:
+                    renewed = [tid for tid in reversed(targets) if claim(history, tid, owner, label)]
+                    return renewed[-1] if renewed else False
     task = request if request and get(history, request) else ""
     if continue_task:
         row = _open_session(history, _text(continue_task, "task", 64))
         if not row or (project and row.get("project") != project):
             raise ValueError("Choose an open task in this project.")
         task = row["id"]
+    matched_prefix = ""
     if not task:
         with history._transaction(write=True):
             _ensure(history)
-            task = _matching_open_task(history, project, title, request) or _session_for(
-                history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"], kind)
+            task = _matching_open_task(history, project, title, request)
+            if not task:
+                matched_prefix = _prefix_open_task(history, request, title) or ""
+                task = matched_prefix or _session_for(
+                    history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"], kind
+                )
             if not task:
                 return False  # no such work: a declaration only, never a new session row or file
     if status == 'done':
@@ -1078,7 +1145,7 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     won = claim(history, task, owner, label)
     if won:
         _leave_other_sessions(history, task, owner)
-    if won and request and (changed or not already):
+    if won and (request or matched_prefix) and (changed or not already):
         record_step(history, task, owner, label, title, status, request=request_id)
     return task if won else False
 

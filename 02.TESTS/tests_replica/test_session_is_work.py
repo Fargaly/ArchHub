@@ -810,3 +810,37 @@ def test_refresh_renews_live_work_only_in_the_agent_s_own_project(project):
         assert stored[tower] and stored[villa] and stored[tower] != stored[villa]
         assert tasks._session_for(history, 'agent-x', stored[tower], None, None, 24) is None
         assert tasks._session_for(history, 'agent-x', stored[villa], None, None, 24) == villa
+
+
+def test_declare_resolves_unique_hex_prefix_in_request_or_title_to_open_subtask(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+
+    with application_history() as history:
+        parent = tasks.create_session(history, 'Tower coordination', select=False, workspace='tower')['taskId']
+        subtask = tasks.create(history, 'Sessions visibility slice', 'tester', parent=parent)['id']
+        subtask2 = tasks.create(history, 'Verify slice', 'tester', parent=parent)['id']
+        sub_path = tasks.get(history, subtask)['session_path']
+    prefix = subtask[:8]
+    joined = declare(
+        CLAUDE('hex-req'),
+        project,
+        'ag-' + prefix + '-1',
+        task='Task ' + prefix + ': Wire sessions into view',
+        path=project / 'slice.py',
+    )['declaration']
+    assert joined['work'] == subtask
+    recorded = [n for n in steps(sub_path) if n.get('workshopTask') == subtask]
+    assert len(recorded) == 1 and 'Wire sessions into view' in recorded[0]['title']
+
+    # Title-only 8-hex prefix also resolves when request_id is a lane tag, while msg-... never matches.
+    joined_title = declare(
+        CODEX('hex-title'),
+        project,
+        'SESSIONWORK',
+        task='Subtask ' + subtask2[:8] + ' verification',
+        path=project / 'verify.py',
+    )['declaration']
+    assert joined_title['work'] == subtask2
+    assert declare(CLAUDE('msg-id'), project, 'msg-' + prefix, task='Unrelated note')['declaration'].get('work') is None
+

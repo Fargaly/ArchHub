@@ -2413,14 +2413,45 @@ def r_agents_canvas(s, req):
         return {'ok': True, 'agents': roster, 'sessions': sessions, 'tasks': [], 'wires': []}
     with application_history(read_only=True, existing_only=True) as history:
         declarations = [r for r in read_declarations(history._db) if r.get('current')]
-        held = {r['id']: r for r in rows(history, settle=False)}
+        all_rows = rows(history, settle=False)
+        held = {r['id']: r for r in all_rows}
+        active_held = {r['id']: r for r in all_rows if not r.get('archived') and r.get('status') != 'done'}
+        now = time.time()
         for row in declarations:
-            task = held.get(row.get('work')) or held.get(row.get('request_id')) or held.get(_declared_id(row['session'])) or held.get(row['root'])
+            live_claimed = sorted(
+                (
+                    r for r in active_held.values()
+                    if not r['id'].startswith('declared-')
+                    and any(
+                        m.get('owner') == row['session'] and not m.get('left') and (m.get('lease_until') or 0) >= now
+                        for m in (r.get('members') or [])
+                    )
+                ),
+                key=lambda r: (r.get('parent_id') is not None, r.get('updated_at') or ''),
+                reverse=True,
+            )
+            bound = active_held.get(row.get('work')) or active_held.get(row.get('request_id'))
+            if bound and not bound.get('parent_id'):
+                bound = next((r for r in live_claimed if r.get('parent_id') == bound['id']), bound)
+            task = (
+                bound
+                or (live_claimed[0] if live_claimed else None)
+                or active_held.get(_declared_id(row['session']))
+                or active_held.get(row['root'])
+            )
+            status = row['status']
+            if (
+                status == 'working'
+                and (row.get('request_id') or '') in ('', 'unassigned')
+                and (row.get('task') or '') in ('', 'Session start', 'Starting; task details pending', 'Cursor chat')
+                and task is None
+            ):
+                status = 'idle'
             message = history._db.execute(
                 'SELECT id,content,created_at FROM messages WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 1',
                 (ROOM, row['agent'] + ' [' + row['session'] + ']')).fetchone()
             session = {'id': row['root'], 'name': row.get('display_name') or row['agent'],
-                       'vendor': row.get('runtime') or row.get('app') or '', 'status': row['status'],
+                       'vendor': row.get('runtime') or row.get('app') or '', 'status': status,
                        'task': task['id'] if task else None, 'taskTitle': task['title'] if task else '',
                        'message': {'id': message[0], 'text': message[1].partition('\n')[2] or message[1], 'at': message[2]} if message else None,
                        'hasTranscript': _has_transcript(row.get('runtime'), row.get('native_session_id'))}

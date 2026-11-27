@@ -598,6 +598,27 @@ def device_heartbeat(body: DeviceHeartbeatReq,
                                               _bearer(authorization))}
 
 
+@app.get("/v1/devices")
+def my_devices(authorization: str | None = Header(None)) -> dict:
+    """The account's own signed-in devices (Settings › Account › Signed in on)."""
+    user = _require_user(authorization)
+    return {"ok": True, "devices": db.own_devices(user["id"], _bearer(authorization))}
+
+
+@app.post("/v1/devices/{device_id}/sign-out")
+def sign_out_my_device(device_id: str, authorization: str | None = Header(None)) -> dict:
+    """Sign one of the account's own devices out: the session it spoke with stops working.
+    Only the account's own devices, and never the session asking."""
+    user = _require_user(authorization)
+    try:
+        done = db.sign_out_own_device(user["id"], device_id, _bearer(authorization))
+    except ValueError:
+        raise HTTPException(status_code=409, detail="this_device_signs_out_with_sign_out")
+    if done is None:
+        raise HTTPException(status_code=404, detail="no_such_device")
+    return {"ok": True, **done}
+
+
 @app.get("/v1/me")
 def me(authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)

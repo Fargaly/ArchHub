@@ -75,3 +75,43 @@ def test_an_unknown_device_or_account_is_404(client):
                        headers=headers).status_code == 404
     assert client.get("/founder/api/devices", params={"user": "nobody@nowhere.example"},
                       headers=headers).status_code == 404
+
+
+# The account itself (Settings › Account › Signed in on, 2026-11-27): GET /v1/devices lists only its
+# own devices and marks this session's; POST /v1/devices/{id}/sign-out revokes another device's
+# session only, refuses this session's device (409) and another account's device (404).
+OTHER = "someone.else@studio.example"
+
+
+def test_an_account_lists_its_own_devices_and_signs_out_another(client):
+    import db
+    laptop, desk, stranger = _auth(USER), _auth(USER), _auth(OTHER)
+    assert _beat(client, laptop, "laptop-1", "Studio laptop").status_code == 200
+    assert _beat(client, desk, "desk-2", "Office desktop").status_code == 200
+    assert _beat(client, stranger, "theirs-9", "Not yours").status_code == 200
+    listed = client.get("/v1/devices", headers=desk)
+    assert listed.status_code == 200
+    rows = {row["device_id"]: row for row in listed.json()["devices"]}
+    assert set(rows) == {"laptop-1", "desk-2"}
+    assert rows["desk-2"]["current"] is True and rows["laptop-1"]["current"] is False
+    with db.connect() as con:
+        digests = [row[0] for row in con.execute("SELECT token FROM tokens")]
+    assert not any(digest in listed.text for digest in digests)
+    assert desk["Authorization"].split()[1] not in listed.text
+    r = client.post("/v1/devices/laptop-1/sign-out", headers=desk)
+    assert r.status_code == 200 and r.json()["sessions_revoked"] == 1
+    assert client.get("/v1/me", headers=laptop).status_code == 401
+    assert client.get("/v1/me", headers=desk).status_code == 200
+    after = {row["device_id"]: row for row in client.get("/v1/devices", headers=desk).json()["devices"]}
+    assert after["laptop-1"]["signed_out"] is True
+
+
+def test_an_account_cannot_sign_out_this_session_or_another_accounts_device(client):
+    desk, stranger = _auth(USER), _auth(OTHER)
+    _beat(client, desk, "desk-2")
+    _beat(client, stranger, "theirs-9")
+    assert client.post("/v1/devices/desk-2/sign-out", headers=desk).status_code == 409
+    assert client.get("/v1/me", headers=desk).status_code == 200
+    assert client.post("/v1/devices/theirs-9/sign-out", headers=desk).status_code == 404
+    assert client.get("/v1/me", headers=stranger).status_code == 200
+    assert client.get("/v1/devices").status_code == 401

@@ -4052,6 +4052,32 @@ def disconnect_device(user_id: str, device_id: str) -> Optional[dict]:
     return {"device_id": device_id, "disconnected_at": now, "sessions_revoked": int(revoked or 0)}
 
 
+def own_devices(user_id: str, token: str) -> list[dict]:
+    """The account's own devices for its Settings row; marks the one this session speaks for.
+    Never returns a session digest."""
+    digest = token_digest(token)
+    with connect() as con:
+        current = {row["device_id"] for row in con.execute(
+            "SELECT device_id FROM devices WHERE user_id = ? AND token_digest = ?", (user_id, digest))}
+    return [{"device_id": row["device_id"], "name": row["name"], "last_heartbeat": row["last_heartbeat"],
+             "online": row["online"], "signed_out": row["disconnected_at"] is not None,
+             "current": row["device_id"] in current}
+            for row in list_devices(user_id)]
+
+
+def sign_out_own_device(user_id: str, device_id: str, token: str) -> Optional[dict]:
+    """Sign one of the account's own devices out. Refuses the device this session speaks for
+    (sign out of this PC is the account's own Sign out). None for a device the account does not have."""
+    with connect() as con:
+        row = con.execute("SELECT token_digest FROM devices WHERE user_id = ? AND device_id = ?",
+                          (user_id, device_id)).fetchone()
+    if row is None:
+        return None
+    if row["token_digest"] == token_digest(token):
+        raise ValueError("this_session")
+    return disconnect_device(user_id, device_id)
+
+
 def relay_status(*, now: Optional[int] = None) -> dict:
     """The relay queue in numbers: how many tasks sit in each status and how
     long the oldest queued one has waited."""

@@ -1270,7 +1270,7 @@ api.sendChatTurn=async(turn,replyTo,task)=>{
   throw error;
  }
 };  // replyTo: the Workshop message this answers; task: the session thread it belongs to
-function documentationTutorials(rows){return rows.map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account','workshop':'workshop','tasks':'workshop','approvals':'settings/Hooks','routines':'canvas'})[d.id]||'canvas',bookSource:'ArchHub documentation'}));}
+function documentationTutorials(rows){return rows.map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account','workshop':'workshop','tasks':'workshop','approvals':'settings/Hooks','routines':'canvas'})[d.id]||'canvas',visual:typeof d.visual==='string'?d.visual:'',bookSource:'ArchHub documentation'}));}
 api.refreshDocs=async()=>{
  const result=await request('/api/documentation');
  if(!Array.isArray(result.tutorials)||!Array.isArray(result.glossary))throw Error('Documentation could not be read. Retry the guide.');

@@ -511,6 +511,7 @@
         title: d.title,
         summary: d.summary || '',
         steps: (d.steps || []).map(cleanStepLine).filter(Boolean),
+        visual: d.visual || '',
         route: d.route || 'canvas'
       });
     }
@@ -1000,6 +1001,8 @@
           {activeNode ? renderNodePage(activeNode) : active ? <>
             <h2>{active.title}</h2>
             <p className="dlead">{active.summary}</p>
+            {/* The picture first: archhub's own code-drawn figure (site_export.docs_visual, same on archhub.io). */}
+            {active.visual ? <div className="dvhost" data-doc-visual={active.id} dangerouslySetInnerHTML={{ __html: active.visual }} /> : null}
             {active.steps?.length > 0 && <ul className="dsteps">
               {active.steps.map((st, idx) => <li key={idx} className={cuedStep === idx ? 'cue' : undefined}>{st}</li>)}
             </ul>}

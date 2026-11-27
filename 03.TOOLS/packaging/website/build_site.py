@@ -303,6 +303,15 @@ def app_guides():
     return ast.literal_eval(value.args[0])
 
 
+def doc_visual(key):
+    """The guide's code-drawn figure (01.APP/nodelang/docs_visuals.py), read from its syntax tree, never imported."""
+    tree = ast.parse((ROOT / "01.APP/nodelang/docs_visuals.py").read_text(encoding="utf-8"))
+    found = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body
+             if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("DOCS_VISUAL_CSS", "DOCS_VISUALS")}
+    figure = found["DOCS_VISUALS"].get(key)
+    return "<style>" + found["DOCS_VISUAL_CSS"] + "</style>" + figure if figure else ""
+
+
 def doc_article(template, index, build_id):
     esc = html.escape
     rows = guides()
@@ -318,6 +327,7 @@ def doc_article(template, index, build_id):
         parts = text.replace("{build}", build_id).split("\n## ")
         body = markdown("\n## ".join(part for offset, part in enumerate(parts)
                                       if not offset or "\n" in part.strip()))
+        body = doc_visual(row[0]) + body
         if row[0] == "getting-started":
             issues_url = next(link["url"] for link in load_links() if link["kind"] == "issues")
             body += ('<p><a href="/download/">Download ArchHub</a> · <a href="/account/">Your account</a> · '

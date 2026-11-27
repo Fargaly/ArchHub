@@ -195,9 +195,16 @@ def documentation_pages(*, build_id=None, host_artifacts=None, catalogue=None):
     return pages
 
 
+def docs_visual(key):
+    """The code-drawn figure for one guide, with its stylesheet; empty when the guide has none."""
+    from .docs_visuals import DOCS_VISUAL_CSS, DOCS_VISUALS
+    return "<style>" + DOCS_VISUAL_CSS + "</style>" + DOCS_VISUALS[key] if key in DOCS_VISUALS else ""
+
+
 def project_documentation(catalogue=None):
     return {"nodes": _documentation_nodes(catalogue),
-            "tutorials": [{"id": key, "title": title, "description": description, "text": body}
+            "tutorials": [{"id": key, "title": title, "description": description, "text": body,
+                           "visual": docs_visual(key)}
                           for key, (title, description, body) in documentation_pages(catalogue=catalogue).items()]}
 
 
@@ -432,7 +439,8 @@ _DOCS_TEMPLATES = MappingProxyType({'getting-started': ('Getting started',
            '\n'
            '## The local brain\n'
            '\n'
-           'Brain entries live in the application graph. The app has no separate brain service.\n'
+           'Your work is kept in your .archhub files. Settings > Account > Brain and cloud sync shows '
+           'the state of shared memory.\n'
            '\n'
            '## Skills\n'
            '\n'
@@ -552,7 +560,8 @@ _DOCS_TEMPLATES = MappingProxyType({'getting-started': ('Getting started',
                 'One setting decides when an agent asks you first.',
                 'Documentation for build {build}.\n'
                 '\n'
-                'Open Settings > Hooks.\n'
+                'Open Settings > Agents > What agents may do. Choose the scope at the top of Settings: '
+                'Everywhere, the current project or the current session. The narrowest scope wins.\n'
                 '\n'
                 '## Run mode (for every agent)\n'
                 '\n'
